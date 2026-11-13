@@ -118,7 +118,7 @@ uv run --no-sync pytest tests/integration/product
 ```sh
 # 执行全部对应样本，但不写验证或发布默认版本。
 uv run --no-sync python -m scripts.official_suites validate --revision-id <official-revision-uuid>
-# 明确使用真实文本/视觉模型和 Paddle，不读写 replay。
+# 明确使用真实文本/视觉模型，不读写 replay。
 uv run --no-sync python -m scripts.official_suites validate --revision-id <official-revision-uuid> --model live
 # 显式写入验证；CAS revision 来自 read。此步骤仍不发布。
 uv run --no-sync python -m scripts.official_suites validate --revision-id <official-revision-uuid> --record --expected-validation-revision <revision>
@@ -130,9 +130,9 @@ uv run --no-sync python -m scripts.official_suites publish --revision-id <offici
 
 操作人员用 `--revision-id` 选定确切版本。验证只消费仓库当前完整 corpus 中规则含义与该版本相同的全部目标，其他代际（如 v2 与 v3）的标记不沿用也不阻断；没有样本筛选或 proof JSON 导入选项。每个样本保留整个原件组合，只执行所选 Suite。运行正式 Core 的固定程序子进程，默认 `--model disabled` 不提供模型授权；`--model live` 显式允许文本 LLM 和模型 OCR 读取原件。两种模式都不录制或回放模型答案，不更改现有 timeout。它只适用于已审阅的平台程序；本地子进程不是敌对代码沙箱，不能据此声称具备生产隔离。
 
-Live 与生产相同，按用途读取平台模型：文本 `PPAP_MODEL_TEXT_*`，视觉 `PPAP_MODEL_VISION_*`（默认关闭推理），编码 `PPAP_MODEL_CODING_*`（未配置时用文本模型）；没有文本或视觉 key 时不调用模型。`PPAP_CORPUS_OFFLINE=1` 与 live 冲突，普通 corpus 的 `PPAP_CORPUS_MODEL` 不会悄悄改变官方 runner 的模式。配置 `PPAP_PADDLE_URL` / `PPAP_PADDLE_TOKEN` 时，子进程经与生产相同的 bridge 读取本样本的 PDF。密钥只留在 host，子进程只拿本次 loopback 临时 grant 和 Paddle capability。
+Live 与生产相同，按用途读取平台模型：文本 `PPAP_MODEL_TEXT_*`，视觉 `PPAP_MODEL_VISION_*`（默认关闭推理），编码 `PPAP_MODEL_CODING_*`（未配置时用文本模型）；没有文本或视觉 key 时不调用模型。`PPAP_CORPUS_OFFLINE=1` 与 live 冲突，普通 corpus 的 `PPAP_CORPUS_MODEL` 不会悄悄改变官方 runner 的模式。密钥只留在 host，子进程只拿本次 loopback 临时 grant。
 
-CI 和开发环境的模型与 Paddle 用量属于开发预算，不设限额。每个样本后输出已知用量，结束撤销授权并输出最终回执；用量未知会阻断验证，不自动重试。进程被外部终止可能没有最终回执，先核对既有输出和供应商账单，不能假定没有计费。回执只保留所选模型身份、endpoint 摘要和供应商确认的 token 数，不含密钥、原件、提示词或模型原始回答；返回模型名称和货币费用仍未知。证明绑定本次模型身份，`read` / `publish` 不需要模型密钥，也不调用模型。
+CI 和开发环境的模型用量属于开发预算，不设限额。每个样本后输出已知用量，结束撤销授权并输出最终回执；用量未知会阻断验证，不自动重试。进程被外部终止可能没有最终回执，先核对既有输出和供应商账单，不能假定没有计费。回执只保留所选模型身份、endpoint 摘要和供应商确认的 token 数，不含密钥、原件、提示词或模型原始回答；返回模型名称和货币费用仍未知。证明绑定本次模型身份，`read` / `publish` 不需要模型密钥，也不调用模型。
 
 这里的 `--record` 仅表示写入正式 validation，和模型答案录制无关。可将它与 `--model live` 及 CAS revision 同时使用；不带它仍会执行、可能计费，但不保存发布证明。跳过 replay 不能跳过人工来源、样本独立性或实际结果取证。
 

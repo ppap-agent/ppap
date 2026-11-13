@@ -48,8 +48,7 @@ function composeEnv(overrides) {
       key.startsWith('PPAP_') ||
       key.startsWith('FEISHU_') ||
       key.startsWith('LLM_') ||
-      key.startsWith('OCR_') ||
-      key.startsWith('PADDLE_')
+      key.startsWith('OCR_')
     ) {
       delete env[key]
     }
@@ -255,8 +254,6 @@ if (config) {
   assert(!('PPAP_PG_WORKER_PASSWORD' in apiEnv), 'api must not have worker password')
   assert('PPAP_PG_WORKER_PASSWORD' in workerEnv, 'worker has worker password')
   assert(!('PPAP_PG_API_PASSWORD' in workerEnv), 'worker must not have API password')
-  assert(!('PPAP_PADDLE_TOKEN' in apiEnv), 'api must not have PPAP_PADDLE_TOKEN')
-  assert('PPAP_PADDLE_TOKEN' in workerEnv, 'worker has PPAP_PADDLE_TOKEN')
 }
 
 // Defaults come from env.example through `docker compose config`, not from
@@ -292,8 +289,6 @@ assert(!('PPAP_PG_WORKER_PASSWORD' in api.environment), 'api spec has no worker 
 assert('FEISHU_APP_SECRET' in api.environment, 'api spec has Feishu secret')
 assert(!('FEISHU_APP_SECRET' in worker.environment), 'worker spec has no Feishu secret')
 assert(!('PPAP_PG_API_PASSWORD' in worker.environment), 'worker spec has no API password')
-assert('PPAP_PADDLE_TOKEN' in worker.environment, 'worker spec has PPAP_PADDLE_TOKEN')
-assert(!('PPAP_PADDLE_TOKEN' in api.environment), 'api spec has no PPAP_PADDLE_TOKEN')
 for (const spec of [api, worker]) {
   const blob = JSON.stringify(spec)
   assert(!blob.includes('edge-function'), `${spec.name} is not an edge function`)

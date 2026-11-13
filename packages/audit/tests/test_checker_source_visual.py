@@ -19,8 +19,6 @@ def controlled_ocr(monkeypatch):
     monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled-visual")
     monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled-key")
     monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid/v1")
-    monkeypatch.delenv("PPAP_PADDLE_URL", raising=False)
-    monkeypatch.delenv("PPAP_PADDLE_BRIDGE_URL", raising=False)
 
 
 def pdf_source(tmp_path, *, pages=1, rotated=False):
@@ -231,33 +229,6 @@ def test_excel_original_replaced_during_observation_cannot_publish(tmp_path, mon
     witness.assert_not_called()
 
 
-def test_paddle_presence_has_verified_original_region_and_does_not_need_llm(tmp_path):
-    path = pdf_source(tmp_path)
-    audit, witness = audit_input(path), Mock()
-    paddle = Mock(
-        return_value={
-            "source_sha256": audit.file_metadata["source_sha256"],
-            "pages": [{"page": 1, "frame": {"pdf_width": 200, "pdf_height": 100}, "seals": [{"detected": True, "pdf_bbox": [20, 20, 60, 60], "recognized_text": "受控章"}]}],
-        }
-    )
-    read = Mock(side_effect=AssertionError("No second tool is needed for a proven presence fact"))
-    with bind_runtime(SimpleNamespace(read_paddle_page=paddle, read_ocr_visual_facts=read)):
-        assert read_original_visual_facts(audit, {"controlled_stamp": "原件有受控章"}, witness, cache={}, existential_fields=frozenset({"controlled_stamp"})) == {"controlled_stamp": True}
-    assert witness.call_args.args[0]["bbox"] == [20, 20, 60, 60]
-    assert witness.call_args.args[0]["engine"] == "paddle"
-    read.assert_not_called()
-
-
-def test_empty_paddle_receipt_does_not_prove_absent_seal(tmp_path):
-    path = pdf_source(tmp_path)
-    audit = audit_input(path)
-    paddle = Mock(return_value={"source_sha256": audit.file_metadata["source_sha256"], "pages": [{"page": 1, "frame": {"pdf_width": 200, "pdf_height": 100}, "seals": []}]})
-    read = Mock(return_value={"seal": None})
-    with bind_runtime(SimpleNamespace(read_paddle_page=paddle, read_ocr_visual_facts=read)):
-        assert read_original_visual_facts(audit, {"seal": "真实印章"}, Mock(), cache={}, existential_fields=frozenset({"seal"})) == {"seal": None}
-    assert read.call_count == 2
-
-
 @pytest.mark.parametrize("second", [False, None])
 @pytest.mark.parametrize("suffix", [".pdf", ".xlsx"])
 def test_only_explicit_existential_fact_can_use_one_scopes_positive(tmp_path, monkeypatch, second, suffix):
@@ -278,21 +249,6 @@ def test_existential_fact_still_needs_complete_coverage_to_prove_absence(tmp_pat
         assert read_original_visual_facts(audit_input(path), {"seal": "存在真实印章"}, Mock(), cache={}, existential_fields=frozenset({"seal"})) == {"seal": None}
 
 
-def test_noncontrolled_stamp_does_not_establish_controlled_stamp(tmp_path):
-    path = pdf_source(tmp_path)
-    audit = audit_input(path)
-    paddle = Mock(
-        return_value={
-            "source_sha256": audit.file_metadata["source_sha256"],
-            "pages": [{"page": 1, "frame": {"pdf_width": 200, "pdf_height": 100}, "seals": [{"detected": True, "pdf_bbox": [20, 20, 60, 60], "recognized_text": "非受控文件"}]}],
-        }
-    )
-    read = Mock(return_value={"controlled_stamp": None})
-    with bind_runtime(SimpleNamespace(read_paddle_page=paddle, read_ocr_visual_facts=read)):
-        assert read_original_visual_facts(audit, {"controlled_stamp": "原件有受控章"}, Mock(), cache={}, existential_fields=frozenset({"controlled_stamp"})) == {"controlled_stamp": None}
-    assert read.call_count == 2
-
-
 def test_picture_outside_native_cell_dimension_is_not_cropped_away(tmp_path, monkeypatch):
     from openpyxl.drawing.image import Image as ExcelImage
 
@@ -311,18 +267,6 @@ def test_picture_outside_native_cell_dimension_is_not_cropped_away(tmp_path, mon
     with bind_runtime(SimpleNamespace(read_ocr_visual_facts=Mock(return_value={"signature": True}))):
         assert read_original_visual_facts(audit_input(path), {"signature": "实际签字图形"}, Mock(), cache={}) == {"signature": True}
     assert rendering == [("Sheet1", None)]
-
-
-def test_paddle_technical_failure_is_cached_and_not_silently_replaced(tmp_path):
-    path = pdf_source(tmp_path)
-    paddle = Mock(side_effect=TimeoutError("controlled"))
-    read, cache = Mock(), {}
-    with bind_runtime(SimpleNamespace(read_paddle_page=paddle, read_ocr_visual_facts=read)):
-        for _ in range(2):
-            with pytest.raises(TimeoutError):
-                read_original_visual_facts(audit_input(path), {"seal": "真实印章"}, Mock(), cache=cache, existential_fields=frozenset({"seal"}))
-    assert paddle.call_count == 1
-    read.assert_not_called()
 
 
 @pytest.mark.parametrize("suffix", [".pdf", ".xlsx"])
@@ -361,22 +305,8 @@ def test_empty_or_missing_field_cannot_establish_visual_facts(tmp_path):
 
 def test_any_detected_seal_cannot_prove_an_undeclared_complete_predicate(tmp_path):
     path = pdf_source(tmp_path)
-    paddle = Mock(side_effect=AssertionError("A seal detection is not a full-field observation"))
     read = Mock(return_value={"seal": None})
-    with bind_runtime(SimpleNamespace(read_paddle_page=paddle, read_ocr_visual_facts=read)):
+    with bind_runtime(SimpleNamespace(read_ocr_visual_facts=read)):
         result = read_original_visual_facts(audit_input(path), {"seal": "同页四份报告各自签章处全部有实际印章"}, Mock(), cache={})
     assert result == {"seal": None}
-    paddle.assert_not_called()
     assert read.call_count == 2
-
-
-def test_paddle_cache_does_not_borrow_another_audits_runtime_receipt(tmp_path):
-    path = pdf_source(tmp_path)
-    first, cache = audit_input(path), {}
-    second = first.model_copy(update={"audit_id": "second-audit"})
-    receipt = {"source_sha256": first.file_metadata["source_sha256"], "pages": [{"page": 1, "frame": {"pdf_width": 200, "pdf_height": 100}, "seals": []}]}
-    paddle = Mock(return_value=receipt)
-    with bind_runtime(SimpleNamespace(read_paddle_page=paddle, read_ocr_visual_facts=Mock(return_value={"seal": None}))):
-        for audit in (first, second):
-            assert read_original_visual_facts(audit, {"seal": "实际印章"}, Mock(), cache=cache, existential_fields=frozenset({"seal"})) == {"seal": None}
-    assert paddle.call_count == 2

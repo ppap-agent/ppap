@@ -180,16 +180,10 @@ class PdfExcelDelegatorAgent(PDFAgent):
         if diagnostics.get("error_code") in {
             "native_table_unconfirmed",
             "native_visual_evidence_required",
-            "paddle_evidence_unconfigured",
             "ocr_evidence_unconfigured",
             "ocr_page_selection_required",
             "ocr_table_unconfirmed",
             "ocr_cell_unconfirmed",
-            "paddle_page_selection_required",
-            "paddle_table_unconfirmed",
-            "paddle_table_incomplete",
-            "paddle_request_budget_exhausted",
-            "paddle_scope_closed",
         }:
             result = self.create_error_result("当前原件未取得可确认的表格证据，需核对原件。", ith)
             return result.model_copy(update={"status": "UNABLE", "checks_performed": 0})

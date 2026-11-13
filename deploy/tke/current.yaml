@@ -436,21 +436,11 @@ spec:
                 secretKeyRef:
                   name: ppap-current
                   key: PPAP_MODEL_VISION_EXTRA_BODY_JSON
-            - name: PPAP_PADDLE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: ppap-current
-                  key: PPAP_PADDLE_URL
             - name: PPAP_MODEL_VISION_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: ppap-current
                   key: PPAP_MODEL_VISION_API_KEY
-            - name: PPAP_PADDLE_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: ppap-current
-                  key: PPAP_PADDLE_TOKEN
             - name: PPAP_PG_API_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -564,17 +554,6 @@ spec:
                 secretKeyRef:
                   name: ppap-current
                   key: PPAP_MODEL_VISION_EXTRA_BODY_JSON
-            - name: PPAP_PADDLE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: ppap-current
-                  key: PPAP_PADDLE_URL
-            # The paddle bridge in this container calls Paddle for the guest; the guest never holds the token.
-            - name: PPAP_PADDLE_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: ppap-current
-                  key: PPAP_PADDLE_TOKEN
             - name: PPAP_PG_WORKER_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -652,21 +631,11 @@ spec:
                 secretKeyRef:
                   name: ppap-current
                   key: PPAP_MODEL_VISION_EXTRA_BODY_JSON
-            - name: PPAP_PADDLE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: ppap-current
-                  key: PPAP_PADDLE_URL
             - name: PPAP_MODEL_VISION_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: ppap-current
                   key: PPAP_MODEL_VISION_API_KEY
-            - name: PPAP_PADDLE_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: ppap-current
-                  key: PPAP_PADDLE_TOKEN
             - name: PPAP_PG_WORKER_PASSWORD
               valueFrom:
                 secretKeyRef:

@@ -117,7 +117,6 @@ class _Objects:
                         self._note,
                         page=number,
                         source_sha256=digest,
-                        visual=False,
                     )
                     self.facts[number].update({field: value for field, value in native.items() if value is not None})
                 authorizations = page.search_for("部门章授权声明")

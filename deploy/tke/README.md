@@ -90,10 +90,8 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 | `PPAP_MODEL_TEXT_MODEL`、`PPAP_MODEL_TEXT_BASE_URL` | ConfigMap `ppap-current` | API、Worker；Deep 沿用其需要的公共配置 |
 | `PPAP_MODEL_TEXT_API_KEY` | Secret `ppap-current-text-model-v1` | API、Worker、Deep Controller（Checker 试跑的文本调用经本地网关）|
 | `PPAP_MODEL_CODING_*` | 当前未设置：Coding 使用文本模型 | 需要 Deep 专用端点时，新建 Secret 存放 `PPAP_MODEL_CODING_API_KEY` 并只在 Deep Controller 显式引用 |
-| `PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_EXTRA_BODY_JSON`、`PPAP_PADDLE_URL` | Secret `ppap-current` | API、Worker、Deep 的配置身份 |
-| `PPAP_PADDLE_TOKEN` | Secret `ppap-current` | API、Worker、Deep Controller（paddle bridge）；不向 Deep guest 注入 |
+| `PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_EXTRA_BODY_JSON` | Secret `ppap-current` | API、Worker、Deep 的配置身份 |
 | `PPAP_MODEL_VISION_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller；不向 Deep guest 注入 |
-| `PPAP_PADDLE_TOKEN` | Secret `ppap-current` | API、Worker；不向 Deep guest 注入 |
 | `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS`、`PPAP_DEEP_MODEL_MAX_REQUESTS` | ConfigMap `ppap-current` | API、Worker、Deep（企业 Key 的允许地址；每个 Deep Attempt 的请求次数熔断）|
 | 企业 Key（企业 BYOK） | 表 `product.tenant_model_credentials`（密文） | 运营用 `python -m product.tenant_models` 设置；无客户接口 |
 
@@ -128,7 +126,7 @@ kubectl -n ppap-test rollout status deployment/ppap-current-api --timeout=180s
 kubectl -n ppap-test rollout status deployment/ppap-current-web --timeout=180s
 ```
 
-API／Web readiness 和 Deep 本地通信探针由 Kubernetes 持续执行，不在发布命令中重复实现。Worker 当前没有独立 readinessProbe；Pod Ready 不等于已验证队列消费。仅在本次修改涉及消费链路或出现异常时检查 Worker 心跳。普通发布不调用真实模型、Paddle 或通知接口。
+API／Web readiness 和 Deep 本地通信探针由 Kubernetes 持续执行，不在发布命令中重复实现。Worker 当前没有独立 readinessProbe；Pod Ready 不等于已验证队列消费。仅在本次修改涉及消费链路或出现异常时检查 Worker 心跳。普通发布不调用真实模型或通知接口。
 
 
 此 apply 命令只更新应用的 ConfigMap 与 Deployment；Secret 已按前述步骤单独同步。不运行初始化 Job、数据库迁移，也不修改旧版入口、Office 或存储卷。变更 Worker 协议或数据库结构时，按该变更的兼容要求安排更新顺序。
@@ -149,7 +147,7 @@ kubectl -n ppap-test rollout restart deployment/ppap-current-web
 
 不重建镜像，不等待完整验收。修改 Secret 时使用明确的 key 或新版本 Secret，通过 `secretKeyRef` 引用；密钥不写入 Markdown、Git 或命令输出。更新凭据引用后同样会触发滚动更新。
 
-清单变更已经触发滚动时，不再重复 `rollout restart`；配置内容未变化时不为同步配置额外重启。配置注入完成表示服务具备调用条件，真实服务可达性和识别效果是另一项验收，不在默认发布中调用模型或 Paddle。
+清单变更已经触发滚动时，不再重复 `rollout restart`；配置内容未变化时不为同步配置额外重启。配置注入完成表示服务具备调用条件，真实服务可达性和识别效果是另一项验收，不在默认发布中调用模型。
 
 ### 出错后诊断
 

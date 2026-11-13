@@ -67,57 +67,6 @@ def test_photo_success_does_not_claim_correct_part_content(tmp_path):
     assert "需人工确认样品照片是否符合要求" in result.suggestions
 
 
-@pytest.mark.parametrize(
-    ("text", "detected", "expected"),
-    [("受控", True, "PASS"), ("受控文件", True, "PASS"), ("存档资料", True, "UNABLE"), ("不受控", True, "UNABLE"), ("非受控", True, "UNABLE"), ("受控", False, "UNABLE")],
-)
-def test_controlled_stamp_uses_located_paddle_seal_facts_not_preprinted_labels(tmp_path, monkeypatch, text, detected, expected):
-    from types import SimpleNamespace
-
-    import fitz
-    from audit.checker_lib.uaes.records import UaesControlledDocumentAgent
-    from audit.engine.runtime import bind_runtime
-    from documents.ocr.paddle import build_evidence
-
-    path = tmp_path / "controlled.pdf"
-    with fitz.open() as document:
-        document.new_page(width=400, height=200).insert_text((20, 20), "controlled stamp label")
-        document.save(path)
-    original = path.read_bytes()
-    reads, calls = [], []
-
-    def read(file_path, page_number):
-        reads.append((file_path, page_number))
-        raw = {
-            "dataInfo": {"pages": [{"width": 400, "height": 200}]},
-            "layoutParsingResults": [
-                {
-                    "prunedResult": {
-                        "layout_det_res": {"boxes": [{"label": "seal", "coordinate": [10, 10, 60, 60]}] if detected else []},
-                        "seal_res_list": [{"rec_texts": [text], "bbox": [10, 10, 60, 60]}] if detected else [],
-                        "parsing_res_list": [],
-                        "table_res_list": [],
-                    }
-                }
-            ],
-        }
-        return build_evidence(raw, page_count=1, pdf_path=file_path, source_pages=[page_number])
-
-    monkeypatch.setattr("documents.ai.run_json", lambda *args, **kwargs: calls.append(kwargs))
-    body = preset_rule_body("UAES", "U10")
-    agent = UaesControlledDocumentAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="rules", **{key: value for key, value in body.items() if key != "kind"}))
-    with bind_runtime(SimpleNamespace(read_paddle_page=read)):
-        result = agent.check(0)
-        second = agent.check(0)
-    assert result.status == second.status == expected
-    # A pass resting on the read seal is a check made; the runtime refuses a pass with none.
-    assert expected != "PASS" or result.checks_performed == second.checks_performed == 1
-    assert reads == [(str(path), 1)] and calls == []
-    assert result.evidence.used == ("visual" if detected else "none")
-    assert all(source.kind == "visual" for source in result.evidence.sources)
-    assert path.read_bytes() == original
-
-
 # U04:3 names 同项目、同物料编号 only; customer and revision do not pair the drawing.
 # A fully read drawing of another part number is not this part's drawing: the clause fails.
 @pytest.mark.parametrize(("variant", "expected"), [("same", "PASS"), ("wrong_part", "NG"), ("wrong_customer", "PASS"), ("wrong_revision", "PASS"), ("duplicate", "UNABLE"), ("unreadable", "ERR")])

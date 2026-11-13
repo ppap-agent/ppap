@@ -159,32 +159,20 @@ def test_execution_id_derivation_is_unchanged_for_existing_executions():
 
 
 @pytest.mark.parametrize("allow_model_calls", [False, True])
-def test_manifest_model_permission_controls_visual_runtime_even_with_inherited_paddle_environment(tmp_path, monkeypatch, allow_model_calls):
+def test_manifest_model_permission_controls_visual_runtime(tmp_path, monkeypatch, allow_model_calls):
     from dataclasses import replace
 
     calls = []
-    monkeypatch.setenv("PPAP_PADDLE_URL", "http://127.0.0.1:1/forbidden-upstream")
-    monkeypatch.setenv("PPAP_PADDLE_TOKEN", "inherited-token")
-    monkeypatch.setenv("PPAP_PADDLE_BRIDGE_URL", "http://127.0.0.1:1/paddle-page")
-    monkeypatch.setenv("PPAP_PADDLE_BRIDGE_TOKEN", "forged-capability")
-
-    def paddle(*args):
-        calls.append("paddle")
-        return {}
 
     def ocr(**kwargs):
         calls.append("ocr")
         return {}
 
-    monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", paddle)
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", ocr)
     code = b"""from audit.contracts import AuditResultItem
 
 def check(context):
-    if context.clause_id == 'A':
-        context.runtime.read_paddle_page(context.audit_file.file_url, 1)
-    else:
-        context.runtime.read_ocr_visual_facts(images=[b'original'], prompt='Read', response_schema={})
+    context.runtime.read_ocr_visual_facts(images=[b'original'], prompt='Read', response_schema={})
     return AuditResultItem(classification='rule', item=context.clause_id, priority='P0', status='PASS',
                            suggestions='Controlled visual observation', clause_id=context.clause_id, checks_performed=1)
 """
@@ -200,7 +188,7 @@ def check(context):
     assert len(result["findings"]) == 4
     if allow_model_calls:
         assert {row["status"] for row in result["findings"]} == {"PASS"}
-        assert calls == ["paddle", "ocr", "paddle"]
+        assert calls and set(calls) == {"ocr"}
     else:
         assert {row["status"] for row in result["findings"]} == {"UNABLE"}
         assert calls == []

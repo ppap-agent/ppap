@@ -47,18 +47,18 @@
 
 ## 按规则读取审核证据
 
-当前合同由 [Issue #246](https://github.com/ppap-agent/ppap/issues/246) 拥有。所有适用审核使用同一流程：规则确定所需事实 → 原生提取 → 按具体缺口选择 Paddle 或 LLM OCR → 固定程序/有来源的文本语义检查。没有新旧流程开关，不把发布批准变成运行时分支。生产启用仍须产品负责人明确确认；开发完成不等于已部署。
+当前合同由 [Issue #246](https://github.com/ppap-agent/ppap/issues/246) 拥有。所有适用审核使用同一流程：规则确定所需事实 → 原生提取 → 按具体缺口使用 LLM OCR → 固定程序/有来源的文本语义检查。没有新旧流程开关，不把发布批准变成运行时分支。生产启用仍须产品负责人明确确认；开发完成不等于已部署。
 
-- 原生 Excel、PDF 文字和可靠表格优先。非扫描 PDF 的表格审核先走 PDF→Excel，保留原 PDF SHA、页码、单元格和区域映射；没有可靠转换或页面未覆盖时，不能退到 OCR 猜表格并报告通过。Paddle 提供扫描文字、表格、坐标和章区域；坏表不清空其他有效元素，空响应不证明没有内容。
-- 签字、实际勾选、照片及复杂图形事实使用原图和专用 OCR 模型，不先等待 Paddle 失败。PSW、V4、检具、尺寸和通用图像规则复用同一事实入口；专属规则用代码判定，通用规则将可定位观察交给文本语义检查。
-- `PPAP_MODEL_TEXT_*` 是文本配置。`PPAP_MODEL_VISION_API_KEY`、`PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_MODEL` 是独立 OCR 配置，缺少时不能借用文本配置。OCR 事实提取默认使用 `reasoning.effort=none`（关闭推理）；推理强度与输出上限是能力约束，不保证服务必定成功。可选 `PPAP_MODEL_VISION_EXTRA_BODY_JSON` 只给 OCR；显式 `reasoning` 原样优先，实际参数进入配置摘要。Paddle 使用 `PPAP_PADDLE_URL`、`PPAP_PADDLE_TOKEN`。Secret 仅通过现有进程环境注入，不写日志。
+- 原生 Excel、PDF 文字和可靠表格优先。非扫描 PDF 的表格审核先走 PDF→Excel，保留原 PDF SHA、页码、单元格和区域映射；没有可靠转换或页面未覆盖时，不能退到 OCR 猜表格并报告通过。空的 OCR 结果不证明没有内容。
+- 印章、签字、实际勾选、照片及复杂图形事实使用原图和专用 OCR 模型。PSW、V4、检具、尺寸和通用图像规则复用同一事实入口；专属规则用代码判定，通用规则将可定位观察交给文本语义检查。
+- `PPAP_MODEL_TEXT_*` 是文本配置。`PPAP_MODEL_VISION_API_KEY`、`PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_MODEL` 是独立 OCR 配置，缺少时不能借用文本配置。OCR 事实提取默认使用 `reasoning.effort=none`（关闭推理）；推理强度与输出上限是能力约束，不保证服务必定成功。可选 `PPAP_MODEL_VISION_EXTRA_BODY_JSON` 只给 OCR；显式 `reasoning` 原样优先，实际参数进入配置摘要。Secret 仅通过现有进程环境注入，不写日志。
 - OCR 复用 `documents.ocr.client` 的 OpenAI Responses 调用，`store=False`、严格 schema、单次 HTTP connect/read/write/pool timeout 20 秒、零自动重试；没有整页或整份文件的总墙钟预算。持续接收数据可能超过 20 秒。视觉事实每次最多 4096 tokens，包含推理与可见 JSON；截断或空白结果为技术失败，不解析残缺证据。
 - 同轮同源页及同组事实复用成功/失败回执。缓存绑定原件、原页、模型/端点与提取配置；原件或配置改变不能覆盖冻结依据。局部未知保留来源，不抹除其余可靠原生内容。
 - 扫描 PDF 优先级低，当前不自动做整份表格转录或多页补格。没有可靠原生表格时明确返回无法检查；仍可由具体条款请求指定页/区域的视觉事实。不要为补齐工作簿触发整份 OCR。
 - 文本模型只接收相关条款和有原件位置的片段，引用须回查；部分范围不能声称全篇通过。不能用语义分析补造视觉内容或替代缺失 AP 标准表。
 - 实际 OCR SDK 回执并入现有审核用量；有回执才记录 token、供应商费用及耗时，缺回执为未知。供应商费用不是客户业务收费。原件文字、模型隐藏推理和密钥不得写入诊断日志。
 
-单页 Paddle 服务核验仍可使用现有 `python -m documents.ocr.paddle --help`；离线回放和真实调用分别报告。人工样本答案只作差异参考，不是绝对真值；不能为匹配标签把未知硬改为 PASS/NG。确定的误判、权限和数据完整性仍是必须修复的问题。当前实现测试与真实效果验收入口见 [测试入口](../tests/README.md)。
+离线回放和真实调用分别报告。人工样本答案只作差异参考，不是绝对真值；不能为匹配标签把未知硬改为 PASS/NG。确定的误判、权限和数据完整性仍是必须修复的问题。当前实现测试与真实效果验收入口见 [测试入口](../tests/README.md)。
 
 ## 当前命令
 

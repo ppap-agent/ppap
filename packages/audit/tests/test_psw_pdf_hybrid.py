@@ -112,12 +112,7 @@ def use_established_psw_facts(monkeypatch, read):
         ("download_failed", "ERR"),
         ("", "ERR"),
         ("ocr_evidence_unconfigured", "UNABLE"),
-        ("paddle_evidence_unconfigured", "UNABLE"),
-        ("paddle_page_selection_required", "UNABLE"),
-        ("paddle_table_unconfirmed", "UNABLE"),
-        ("paddle_table_incomplete", "UNABLE"),
-        ("paddle_request_budget_exhausted", "UNABLE"),
-        ("paddle_scope_closed", "UNABLE"),
+        ("ocr_table_unconfirmed", "UNABLE"),
     ],
 )
 def test_failed_table_conversion_does_not_become_a_business_ng(original_pdf, monkeypatch, profile, error_code, expected):
@@ -270,7 +265,7 @@ def no_psw_llm_or_render(monkeypatch):
 
     def reject(*args, **kwargs):
         attempts.append("LLM or image rendering")
-        raise AssertionError("PSW facts must use native/Paddle only")
+        raise AssertionError("PSW facts must not use the text model or legacy image rendering")
 
     monkeypatch.setattr("documents.ai.run_json", reject)
     monkeypatch.setattr(V2PswPDFAgent, "_get_pdf_images_sync", reject)
@@ -279,7 +274,7 @@ def no_psw_llm_or_render(monkeypatch):
     assert attempts == []
 
 
-def test_rule_eight_uses_native_paddle_facts_without_llm_fallback(original_pdf, converted_table, monkeypatch, profile):
+def test_rule_eight_unconfirmed_facts_have_no_llm_fallback(original_pdf, converted_table, monkeypatch, profile):
     use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
     calls = []
 
@@ -293,7 +288,7 @@ def test_rule_eight_uses_native_paddle_facts_without_llm_fallback(original_pdf, 
     results = run_audit_engine(AuditInput(audit_id="psw-no-checkbox-proof", file_url=str(original_pdf)), psw_rules(profile, count=10))
 
     assert results[7].status == "UNABLE"
-    assert results[7].evidence.diagnostics[0].code == "psw.paddle.fact_unconfirmed"
+    assert results[7].evidence.diagnostics[0].code == "psw.visual.fact_unconfirmed"
     assert [operation for operation, _, _ in calls] == ["psw_rule_3", "psw_rule_5", "psw_rule_7", "psw_rule_8", "psw_rule_9", "psw_rule_10"]
     assert len({cache_id for _, _, cache_id in calls}) == 1
     assert original_pdf.read_bytes() == original
@@ -307,7 +302,7 @@ def test_signature_rule_uses_established_facts_and_preserves_unknown(original_pd
     use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
 
     def read(audit, fields, witness, **kwargs):
-        witness({"kind": "pdf_region", "page": 1, "engine": "paddle", "bbox": [0, 0, 20, 20]}, "已确认的原件区域", visual=True)
+        witness({"kind": "pdf_region", "page": 1, "engine": "ocr_llm", "bbox": [0, 0, 20, 20]}, "已确认的原件区域", visual=True)
         return {"psw_stamp_ends_with_company": None, "authorized_signature_present": signature, "psw_stamp_present": stamp}
 
     use_established_psw_facts(monkeypatch, read)
@@ -315,12 +310,12 @@ def test_signature_rule_uses_established_facts_and_preserves_unknown(original_pd
     assert results[4].status == expected
     assert results[1].status == "PASS"
     assert results[4].evidence.used == "visual"
-    assert results[4].evidence.conversion_strategies == ("native_pdf", "paddle_single_page")
+    assert results[4].evidence.conversion_strategies == ("native_pdf", "ocr_llm")
     assert not converted_table.exists()
 
 
 @pytest.mark.parametrize("failure", [RuntimeError, TypeError, TimeoutError])
-def test_paddle_service_failure_preserves_structured_results_without_retry(original_pdf, converted_table, monkeypatch, profile, failure):
+def test_visual_reader_failure_preserves_structured_results_without_retry(original_pdf, converted_table, monkeypatch, profile, failure):
     use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
     calls = []
 
@@ -329,7 +324,7 @@ def test_paddle_service_failure_preserves_structured_results_without_retry(origi
         raise failure("private provider detail must not appear in diagnostics")
 
     use_established_psw_facts(monkeypatch, unavailable)
-    results = run_audit_engine(AuditInput(audit_id="psw-paddle-failed", file_url=str(original_pdf)), psw_rules(profile, count=5))
+    results = run_audit_engine(AuditInput(audit_id="psw-visual-failed", file_url=str(original_pdf)), psw_rules(profile, count=5))
     assert results[1].status == "PASS"
     assert [results[index].status for index in (2, 4)] == ["ERR", "ERR"]
     assert all(results[index].evidence.diagnostics[0].code == "psw.visual.runtime_error" for index in (2, 4))
@@ -375,13 +370,13 @@ def disposition_page_response(*, complete=True, approved="□批准"):
 def psw_checker(monkeypatch, path, profile):
     # Use the public PSW constructor and check entrypoint. The external
     # converter is isolated so this verifies original-page fact selection.
-    use_external_conversion(monkeypatch, path, ConversionArtifact(success=False, diagnostics={"error_code": "paddle_table_unconfirmed"}))
+    use_external_conversion(monkeypatch, path, ConversionArtifact(success=False, diagnostics={"error_code": "ocr_table_unconfirmed"}))
     agent_type = V2PswPDFAgent if profile == "v2" else V3PswPDFAgent
     return agent_type(AuditInput(audit_id="frozen-native-psw", file_url=str(path)), psw_rules(profile))
 
 
 def ocr_response_boundary(monkeypatch, response):
-    """Controlled OCR Responses boundary; Paddle is not sent before checkboxes."""
+    """Controlled OCR Responses boundary."""
     attempts = []
     for name, value in (("PPAP_MODEL_VISION_MODEL", "controlled-ocr"), ("PPAP_MODEL_VISION_API_KEY", "controlled"), ("PPAP_MODEL_VISION_BASE_URL", "https://ocr.invalid/v1")):
         monkeypatch.setenv(name, value)
@@ -426,12 +421,12 @@ def ocr_response_boundary(monkeypatch, response):
     return attempts
 
 
-def test_public_rule_eight_native_empty_checkboxes_need_no_paddle(tmp_path, monkeypatch, profile):
+def test_public_rule_eight_native_empty_checkboxes_need_no_ocr(tmp_path, monkeypatch, profile):
     path = write_disposition_pdf(tmp_path / "native-controls.pdf", ("□批准", "□条件批准", "□拒绝"))
     with fitz.open(path) as document:
         # The case depends on actual native PDF characters, not a reader stub.
         assert all(text in document[0].get_text() for text in ("□批准", "□条件批准", "□拒绝"))
-    attempts = ocr_response_boundary(monkeypatch, AssertionError("Native controls must avoid Paddle"))
+    attempts = ocr_response_boundary(monkeypatch, AssertionError("Native controls must avoid OCR"))
     with bind_runtime(None):
         checker = psw_checker(monkeypatch, path, profile)
         try:
@@ -469,7 +464,7 @@ def test_public_rule_eight_retains_known_native_state_over_conflicting_ocr(tmp_p
             result = checker.check(7)
         finally:
             checker.close()
-    # Native approved=False remains authoritative; Paddle supplies only the
+    # Native approved=False remains authoritative; OCR supplies only the
     # two previously unknown states, so the empty disposition is still NG.
     assert result.status == "NG"
     assert len(attempts) == 1

@@ -48,8 +48,6 @@ class Settings(BaseSettings):
     model_coding_model: str = Field(default="", alias="PPAP_MODEL_CODING_MODEL")
     model_coding_reasoning_effort: Literal["xhigh", "high", "medium", "low"] = Field(default="medium", alias="PPAP_MODEL_CODING_REASONING_EFFORT")
 
-    paddle_url: str = Field(default="", alias="PPAP_PADDLE_URL")
-
     feishu_app_id: str = Field(default="", alias="FEISHU_APP_ID")
     feishu_app_secret: str = Field(default="", alias="FEISHU_APP_SECRET")
     feishu_notifications_enabled: bool = Field(default=False, alias="PPAP_FEISHU_NOTIFICATIONS_ENABLED")
@@ -229,9 +227,7 @@ class Settings(BaseSettings):
             tool_config_revision=config_digest(
                 {
                     "ocr_model_identity": identity,
-                    "vision_protocol": "native_paddle_responses_v5",
-                    "paddle_endpoint": self.paddle_url.strip(),
-                    "paddle_http_timeout_seconds": 20,
+                    "vision_protocol": "responses_v6",
                     "ocr_http_timeout_seconds": 20,
                     "ocr_max_retries": 0,
                     "ocr_output_limit": 4096,

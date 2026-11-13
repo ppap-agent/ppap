@@ -47,13 +47,12 @@ def scanned(tmp_path, monkeypatch):
         document.save(path)
     calls = []
 
-    def build(facts, seals=()):
+    def build(facts):
         def request(**kwargs):
             calls.append(kwargs["response_schema"]["name"])
             return facts
 
         monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", request)
-        monkeypatch.setattr(UaesWarrantAgent, "paddle_seals", lambda self: None if seals is None else [list(texts) for texts in seals])
         rule = RuleInput(rule_id="u17", **preset_rule_body("UAES", "U17"))
         return UaesWarrantAgent(AuditInput(audit_id="psw", file_url=str(path)), rule)
 
@@ -66,7 +65,7 @@ def test_one_transcription_decides_every_clause(scanned):
     results = [checker.check(index) for index in range(5)]
     assert [result.status for result in results] == ["PASS", "NG", "NG", "PASS", "PASS"]
     assert "应用（Application）为空" in results[1].suggestions
-    assert "均未找到印章" in results[2].suggestions
+    assert "未在原页找到印章" in results[2].suggestions
     assert calls == ["transcription"]
     assert all(result.evidence and result.evidence.sources for result in (results[0], results[1], results[3], results[4]))
     # The one transcription serves every clause; each pass still counts the facts it read, or the runtime refuses it.
@@ -80,17 +79,16 @@ def test_an_unreadable_value_is_unable_but_a_known_violation_still_fails(scanned
     assert checker.check(4).status == "NG"
 
 
-def test_a_located_seal_with_a_handwritten_signature_passes(scanned):
+def test_a_seen_seal_with_a_handwritten_signature_passes(scanned):
     build, _calls = scanned
-    assert build(_transcription(), seals=[["质量专用章"]]).check(2).status == "PASS"
-    assert build(_transcription(supplier_authorized_signature={"present": True, "handwritten": False, "value": "pki, BOSCH"}), seals=[["质量专用章"]]).check(2).status == "NG"
+    result = build(_transcription(ink_seal=True)).check(2)
+    assert result.status == "PASS" and result.evidence and result.evidence.sources
+    assert build(_transcription(ink_seal=True, supplier_authorized_signature={"present": True, "handwritten": False, "value": "pki, BOSCH"})).check(2).status == "NG"
 
 
-def test_a_seal_only_one_reader_finds_or_an_unread_page_is_left_for_review(scanned):
+def test_an_unreadable_seal_is_left_for_review(scanned):
     build, _calls = scanned
-    # The image model sees a seal Paddle does not locate; or Paddle could not read a page: neither proves absence.
-    assert build(_transcription(ink_seal=True)).check(2).status == "UNABLE"
-    assert build(_transcription(), seals=None).check(2).status == "UNABLE"
+    assert build(_transcription(ink_seal=None)).check(2).status == "UNABLE"
 
 
 def test_other_reason_needs_its_explanation(scanned):

@@ -1,4 +1,4 @@
-"""A controlled stamp on a PDF original fails only when neither the image model nor Paddle on every page finds one."""
+"""A controlled stamp on a PDF original is decided by the image model alone."""
 
 import fitz
 import pytest
@@ -10,23 +10,19 @@ from audit.presets import preset_rule_body
 
 
 @pytest.mark.parametrize(
-    ("image", "seals", "expected"),
+    ("image", "expected"),
     [
-        (("UNABLE", "受控章尚未核实"), [], "NG"),
-        (("NG", "原件没有受控章。"), [], "NG"),
-        (("UNABLE", "受控章尚未核实"), [["受控"]], "PASS"),
-        (("UNABLE", "受控章尚未核实"), [["质量专用章"]], "UNABLE"),
-        (("UNABLE", "受控章尚未核实"), None, "UNABLE"),
-        (("PASS", "已从原件核实受控章。"), [], "PASS"),
+        (("NG", "原件没有受控章。"), "NG"),
+        (("UNABLE", "受控章尚未核实"), "UNABLE"),
+        (("PASS", "已从原件核实受控章。"), "PASS"),
     ],
 )
-def test_neither_reader_finding_a_stamp_fails(tmp_path, monkeypatch, image, seals, expected):
+def test_the_image_model_decides_a_pdf_stamp(tmp_path, monkeypatch, image, expected):
     path = tmp_path / "flow.pdf"
     with fitz.open() as document:
         document.new_page().insert_text((40, 40), "Process Flow")
         document.save(path)
     monkeypatch.setattr(UaesSourceAgent, "controlled_stamp", lambda self: image)
-    monkeypatch.setattr(UaesProcessFlowAgent, "paddle_seals", lambda self: seals)
     body = preset_rule_body("UAES", "U16")
     agent = UaesProcessFlowAgent(AuditInput(audit_id="flow", file_url=str(path)), RuleInput(rule_id="u16", **{key: value for key, value in body.items() if key != "kind"}))
     try:

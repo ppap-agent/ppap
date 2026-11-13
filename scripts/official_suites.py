@@ -1,7 +1,7 @@
 """Validate, read back, or explicitly publish one reviewed official Suite.
 
 Validation defaults to no model access. --model live explicitly authorizes
-real text, visual and Paddle inference without replay or answer recording. --record
+real text and visual inference without replay or answer recording. --record
 writes validation evidence; publication remains a separate command.
 Do not run against production without a separately authorized release.
 """

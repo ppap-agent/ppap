@@ -44,8 +44,6 @@ jobs:
           PPAP_MODEL_TEXT_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
           PPAP_MODEL_TEXT_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
           PPAP_MODEL_TEXT_MODEL: ${{ secrets.CI_LLM_MODEL }}
-          PPAP_PADDLE_URL: ${{ secrets.PADDLE_OCR_URL }}
-          PPAP_PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
           PPAP_MODEL_VISION_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
           PPAP_MODEL_VISION_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
           PPAP_MODEL_VISION_MODEL: ${{ secrets.OCR_MODEL_NAME }}

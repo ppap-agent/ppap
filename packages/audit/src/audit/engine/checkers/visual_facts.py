@@ -1,4 +1,4 @@
-"""Rule-driven native/Paddle facts and dedicated OCR Responses observations."""
+"""Rule-driven native facts and dedicated OCR Responses observations."""
 
 from __future__ import annotations
 
@@ -67,133 +67,6 @@ def _native_disposition_texts(page):
                     }
                 )
     return entries
-
-
-def _read_paddle_visual_facts(
-    audit,
-    fields: dict[str, str],
-    witness,
-    *,
-    operation="v4_original_visual_facts",
-    cache: dict[Any, Any] | None = None,
-) -> dict[str, bool | None]:
-    """Located seal detection proves presence only; other facts stay unknown.
-
-    One-page sources select themselves. For longer PDFs, native labels must
-    identify one relevant page. No label means no OCR, not a full-document scan.
-    The authorized checker owns the cache and its frozen source.
-    """
-    from documents.ocr.paddle.reader import PaddleEvidenceUnavailable, read_pdf_page_evidence
-
-    from audit.engine.checkers.psw_checkbox_evidence import read_disposition_facts
-    from audit.engine.rule_engine import GuardStop
-    from audit.engine.runtime import get_runtime
-    from audit.pdf_tables import valid_pdf_bbox
-
-    result: dict[str, bool | None] = dict.fromkeys(fields)
-    needs_seal = bool(_SEAL_FIELDS.intersection(fields))
-    needs_disposition = bool(_DISPOSITION_FIELDS.intersection(fields))
-    if not needs_seal and not needs_disposition:
-        return result
-    path = Path(audit.file_url)
-    if path.suffix.casefold() != ".pdf":
-        raise VisualFactsUnavailable("此载体没有可用的Paddle原页证据，需人工核对原件。")
-    with path.open("rb") as source:
-        digest = hashlib.file_digest(source, "sha256").hexdigest()
-    cache = {} if cache is None else cache
-    identity = ("frozen_source", audit.audit_id)
-    if identity in cache and cache[identity] != digest:
-        raise ValueError("Frozen PDF identity changed")
-    cache[identity] = digest
-    metadata = audit.file_metadata or {}
-    expected = metadata.get("source_sha256") or metadata.get("sha256")
-    if expected and expected != digest:
-        raise ValueError("Frozen PDF identity changed")
-    with fitz.open(path) as document:
-        if document.needs_pass or not len(document):
-            raise VisualFactsUnavailable("原件页或访问权限不可确认。")
-        if len(document) == 1:
-            selected = 1
-        else:
-            labels = ("认可情况",) if needs_disposition else ("零件提交保证书", "供方代表签字") if "psw_stamp_present" in fields else ("盖章", "印章", "零件提交保证书")
-            candidates = [page.number + 1 for page in document if any(label in page.get_text() for label in labels)]
-            if len(candidates) != 1:
-                return result
-            selected = candidates[0]
-        if needs_disposition:
-            native = read_disposition_facts(
-                [item for item in _native_disposition_texts(document[selected - 1]) if valid_pdf_bbox(item["pdf_bbox"], document[selected - 1].rect.width, document[selected - 1].rect.height)],
-                lambda locator, excerpt, **kwargs: witness({**locator, "file_version_id": audit.audit_id}, excerpt, **kwargs),
-                page=selected,
-                source_sha256=digest,
-                visual=False,
-            )
-            result.update({field: native[field] for field in _DISPOSITION_FIELDS.intersection(fields)})
-            if not needs_seal and all(native[field] is not None for field in _DISPOSITION_FIELDS):
-                return result
-    key = (digest, selected)
-    if key not in cache:
-        runtime = get_runtime()
-        reader = getattr(runtime, "read_paddle_page", None)
-        try:
-            cache[key] = reader(str(path), selected) if callable(reader) else read_pdf_page_evidence(path, selected)
-        except PaddleEvidenceUnavailable:
-            cache[key] = None
-        except GuardStop as exc:
-            cache[key] = VisualFactsUnavailable(exc.message) if exc.status == "UNABLE" else exc
-        except Exception as exc:
-            # Retain failures: another rule must not replay this request.
-            cache[key] = exc
-    value = cache[key]
-    if isinstance(value, Exception):
-        raise value
-    if value is None:
-        return result
-    if value.get("source_sha256") != digest:
-        raise ValueError("Paddle source identity invalid")
-    pages = value.get("pages", [])
-    if len(pages) != 1 or pages[0].get("page") != selected:
-        raise ValueError("Paddle page identity invalid")
-    page = pages[0]
-    frame = page.get("frame") or {}
-    if needs_disposition:
-        texts = [item for item in page.get("texts", []) if valid_pdf_bbox(item.get("pdf_bbox"), frame.get("pdf_width"), frame.get("pdf_height"))]
-        observed = read_disposition_facts(
-            texts,
-            lambda locator, excerpt, **kwargs: witness({**locator, "file_version_id": audit.audit_id}, excerpt, **kwargs),
-            page=selected,
-            source_sha256=digest,
-            visual=True,
-        )
-        for field in _DISPOSITION_FIELDS.intersection(fields):
-            if result[field] is None:
-                result[field] = observed[field]
-    for index, seal in enumerate(page.get("seals", []) if needs_seal else []):
-        bounds = seal.get("pdf_bbox")
-        if seal.get("detected") is not True or not valid_pdf_bbox(bounds, frame.get("pdf_width"), frame.get("pdf_height")):
-            continue
-        witness(
-            {
-                "kind": "pdf_region",
-                "page": selected,
-                "bbox": bounds,
-                "coordinate_system": "pdf_points_unrotated",
-                "source_sha256": digest,
-                "file_version_id": audit.audit_id,
-                "element": "seal",
-                "element_index": index,
-                "engine": value.get("engine"),
-            },
-            "Paddle检测到此区域存在印章；未确认完整文字、真伪或签字。",
-            visual=True,
-        )
-        for field in _SEAL_FIELDS.intersection(fields):
-            if field != "controlled_stamp" or any("".join(str(text).split()) in {"受控", "受控章", "受控文件"} for text in seal.get("recognized_text", [])):
-                result[field] = True
-    if needs_seal and all(value is None for value in result.values()) and any(item.get("element") == "seal" and item.get("outcome", "error") != "unknown" for item in value.get("diagnostics", [])):
-        raise ValueError("Paddle seal extraction failed")
-    # Empty output proves neither absence, checkbox state nor authenticity.
-    return result
 
 
 _EXISTENCE_FIELDS = frozenset({"seal", "controlled_stamp", "authorization_table_present", "authorization_company_stamp_present", "before", "during", "after"})
@@ -447,7 +320,6 @@ def read_psw_pdf_visual_facts(audit, fields: dict[str, str], witness, *, cache: 
                 lambda locator, excerpt, **kwargs: witness({**locator, "file_version_id": audit.audit_id}, excerpt, **kwargs),
                 page=number,
                 source_sha256=digest,
-                visual=False,
             )
             for field in _DISPOSITION_FIELDS.intersection(all_fields):
                 native_by_scope.setdefault(field, {})[f"pdf:{number}"] = native[field]
@@ -614,13 +486,11 @@ def read_original_pdf_visual_facts(
     source_pages: Sequence[int] | None = None,
     batch_fields: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Native facts first; supported Paddle facts or dedicated OCR observations.
+    """Native facts first, then dedicated OCR observations.
 
     Callers may supply explicitly planned original page numbers. Otherwise the
     small source is covered as separate page scopes, with no guessed page role.
     """
-    from documents.ocr.env import ocr_model_name, ocr_openai_api_key, ocr_openai_base_url
-
     cache = {} if cache is None else cache
     if Path(audit.file_url).suffix.casefold() in {".png", ".jpg", ".jpeg", ".webp"}:
         if source_pages is not None and list(source_pages) != [1]:
@@ -657,7 +527,6 @@ def read_original_pdf_visual_facts(
                     lambda locator, excerpt, **kwargs: witness({**locator, "file_version_id": audit.audit_id}, excerpt, **kwargs),
                     page=number,
                     source_sha256=digest,
-                    visual=False,
                 )
                 by_page.append(native)
             for field in _DISPOSITION_FIELDS.intersection(fields):
@@ -667,23 +536,7 @@ def read_original_pdf_visual_facts(
     unresolved = {field: description for field, description in fields.items() if result[field] is None}
     if not unresolved:
         return result
-    # Signatures, checkboxes, photos and graphic semantics go directly to the
-    # dedicated OCR model. A seal-only request may benefit from Paddle first.
-    if set(unresolved).issubset(_SEAL_FIELDS):
-        try:
-            paddle = _read_paddle_visual_facts(audit, unresolved, witness, operation=operation, cache=cache)
-            result.update({field: value for field, value in paddle.items() if value is not None})
-        except Exception:
-            # This is a configured alternative evidence capability, not a
-            # replay of an uncertain Paddle request. Its failure stays cached.
-            try:
-                configured = bool(ocr_model_name() and ocr_openai_api_key() and ocr_openai_base_url())
-            except ValueError:
-                configured = False
-            if not configured:
-                raise
-    unresolved = {field: description for field, description in fields.items() if result[field] is None}
-    if unresolved:
-        observed = _ocr_pdf_facts(audit, unresolved, witness, pages=pages, cache=cache)
-        result.update({field: value if type(value) is bool else None for field, value in observed.items()})
+    # Seals, signatures, checkboxes, photos and graphic semantics go to the dedicated OCR model.
+    observed = _ocr_pdf_facts(audit, unresolved, witness, pages=pages, cache=cache)
+    result.update({field: value if type(value) is bool else None for field, value in observed.items()})
     return result

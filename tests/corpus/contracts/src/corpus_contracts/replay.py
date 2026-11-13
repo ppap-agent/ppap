@@ -159,14 +159,12 @@ def ocr_request(images: list[bytes], prompt: str, response_schema: dict, max_out
 
 
 def install(monkeypatch: Any, recorder: Recorder) -> None:
-    """Replace the model and Paddle calls below every product decision."""
+    """Replace the model calls below every product decision."""
     import documents.ai
     from audit.engine.checkers import ocr_visual_facts
-    from documents.ocr.paddle import client as paddle_client
 
     real_vision = ocr_visual_facts.read_visual_facts
     real_direct = documents.ai.run_json_async
-    real_paddle = paddle_client._post_page_sync
 
     async def vision_request(images: list[bytes], prompt: str, *, response_schema: dict, max_output_tokens: int = 4096) -> dict:
         request = ocr_request(images, prompt, response_schema, max_output_tokens)
@@ -190,18 +188,8 @@ def install(monkeypatch: Any, recorder: Recorder) -> None:
             return answer
         return documents.ai.AIResult(json.loads(entry["answer"]), model=entry.get("model") or "")
 
-    def paddle_request(endpoint: str, payload: dict, headers: dict, timeout: float) -> object:
-        entry = recorder.lookup("paddle", payload)
-        if entry is None:
-            recorder.require_live("paddle")
-            answer = real_paddle(endpoint, payload, headers, timeout)
-            recorder.add("paddle", payload, answer)
-            return answer
-        return entry["answer"]
-
     monkeypatch.setattr(ocr_visual_facts, "read_visual_facts", vision_request)
     monkeypatch.setattr(documents.ai, "run_json_async", direct_request)
-    monkeypatch.setattr(paddle_client, "_post_page_sync", paddle_request)
 
 
 def current_model_access_name(purpose: ModelPurpose) -> str | None:

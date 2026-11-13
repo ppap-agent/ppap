@@ -211,13 +211,12 @@ def run_audit(
         try:
             from audit.usage import get_token_tracker, track_model_usage
             from documents.model_access import ModelUnavailable, model_access_scope, model_access_scoped
-            from documents.ocr.paddle.reader import paddle_page_scope
 
             tracker = get_token_tracker()
             previous_request = tracker.get_current_request_id()
             request_id = tracker.start_request_tracking()
             model_scope = contextlib.nullcontext() if model_access_scoped() else model_access_scope(None)
-            with model_scope, bind_runtime(runtime), paddle_page_scope(), track_model_usage():
+            with model_scope, bind_runtime(runtime), track_model_usage():
                 for index, target in enumerate(snapshot.targets):
                     if target.file_version_id in unavailable_sources:
                         results = [_evidence_references(_error(clause, "ERR", "checker_input_unavailable"), target.file_version_id) for clause in target.binding.entrypoints]
@@ -361,7 +360,6 @@ def run_audit_process(
     cancelled: Callable[[], bool] = lambda: False,
     model_grant: dict[str, str] | None = None,
     allow_model_tools: bool = True,
-    tool_env: Mapping[str, str] | None = None,
     unavailable_sources: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Local test harness only; production must use the existing ContainerRuntime.
@@ -397,7 +395,6 @@ def run_audit_process(
         grant.chmod(0o400)
         output = root / "output.json"
         env = {key: value for key, value in os.environ.items() if key in {"PATH", "LANG", "LC_ALL", "VIRTUAL_ENV"}}
-        env.update(tool_env or {})
         env.update(HOME=work, TMPDIR=work, PYTHONDONTWRITEBYTECODE="1")
         process = subprocess.Popen(
             [sys.executable, "-m", "agent.execution.audit_runtime", str(request), str(output), str(grant)],

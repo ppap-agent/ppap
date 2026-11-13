@@ -83,11 +83,6 @@ class _AppAuditRuntime(AuditRuntime):
         file_content, file_type = _load_file_bytes(file_url)
         return extract_images_from_bytes(file_content, file_type, render_all_pages=render_all_pages)
 
-    def read_paddle_page(self, file_url: str, page_number: int) -> dict[str, Any]:
-        from documents.ocr.paddle.reader import read_pdf_page_evidence
-
-        return read_pdf_page_evidence(file_url, page_number)
-
     def read_ocr_visual_facts(self, *, images: list[bytes], prompt: str, response_schema: dict[str, Any]) -> dict[str, Any]:
         from audit.engine.checkers.ocr_visual_facts import request_ocr_visual_facts
 

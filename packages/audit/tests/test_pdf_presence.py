@@ -42,7 +42,6 @@ def observations(monkeypatch):
     monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
     monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
     monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid")
-    monkeypatch.setattr("audit.engine.checkers.visual_facts._read_paddle_visual_facts", lambda *args, **kwargs: {"seal": None})
     calls = []
 
     def read(*, images, prompt, response_schema):

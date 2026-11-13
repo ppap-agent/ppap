@@ -341,28 +341,6 @@ def test_real_generations_of_one_document_type_do_not_block_each_other(selector,
     assert "oracle_rules_changed" not in plan.reasons
 
 
-def test_live_validation_gives_paddle_only_through_the_run_local_bridge(tmp_path, monkeypatch):
-    context, paths = corpus_fixture(tmp_path, monkeypatch)
-    monkeypatch.setenv("PPAP_PADDLE_URL", "http://paddle.invalid/ocr")
-    monkeypatch.setenv("PPAP_PADDLE_TOKEN", "host-only-paddle-token")
-    plan = official_suites.prepare(context, **paths)
-    sample = replace(plan.samples[0], sources={key: b"%PDF-1.7 fixture" for key in plan.samples[0].sources})
-    with official_suites._paddle(sample, live=True) as env:
-        assert set(env) == {"PPAP_PADDLE_BRIDGE_URL", "PPAP_PADDLE_BRIDGE_TOKEN"}
-        assert env["PPAP_PADDLE_BRIDGE_URL"].startswith("http://127.0.0.1:")
-        assert "host-only-paddle-token" not in env.values()
-
-    seen = []
-
-    def stop(*_args, tool_env, **_kwargs):
-        seen.append(tool_env)
-        raise official_suites.AuditRunError("stop")
-
-    monkeypatch.setattr(official_suites, "run_audit_process", stop)
-    assert official_suites.evaluate(plan).reasons == ("official_execution_incomplete",)
-    assert seen == [{}]
-
-
 def test_corpus_selector_is_the_installed_u08_leaf():
     from audit.standard_suites import predefined_directory_suites
 

@@ -229,23 +229,7 @@ class ContainerRuntime:
     def _execute(
         self, run: Path, deadline: float, cancelled: threading.Event, on_progress: Callable[[Progress], None] | None, execution_id: UUID, on_activity: Callable[[Activity], None] | None = None
     ) -> None:
-        from agent.execution.paddle_bridge import paddle_bridge
-
-        with paddle_bridge(run / "inputs", deadline, cancelled) as tool_env:
-            self._execute_guest(run, deadline, cancelled, on_progress, execution_id, tool_env, on_activity)
-
-    def _execute_guest(
-        self,
-        run: Path,
-        deadline: float,
-        cancelled: threading.Event,
-        on_progress: Callable[[Progress], None] | None,
-        execution_id: UUID,
-        tool_env: dict[str, str],
-        on_activity: Callable[[Activity], None] | None = None,
-    ) -> None:
         env = {
-            **tool_env,
             "PATH": "/usr/local/bin:/usr/bin:/bin",
             "HOME": str(run / "work"),
             "LANG": "C.UTF-8",

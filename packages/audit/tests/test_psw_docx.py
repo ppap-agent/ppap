@@ -105,7 +105,7 @@ class WordVisualRuntime:
 
     def run_image_prompt(self, **kwargs):
         self.calls.append(kwargs)
-        raise AssertionError("Native/Paddle PSW must not call LLM vision")
+        raise AssertionError("Native PSW must not call LLM vision")
 
     def __getattr__(self, name):
         self.unexpected_calls.append(name)

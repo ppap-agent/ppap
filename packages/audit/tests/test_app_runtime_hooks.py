@@ -133,7 +133,6 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
     monkeypatch.setattr("audit.checker_lib.li.pdf_agent.convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
     monkeypatch.setattr("documents.ai.run_json", lambda *a, **k: pytest.fail("PSW images must not enter text LLM"))
-    monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", lambda *a, **k: pytest.fail("PSW must not wait for Paddle first"))
     rules = RuleInput(
         rule_id="confirmed-psw-rules",
         rule_profile=profile,
@@ -153,30 +152,3 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
     assert len({tuple(sorted(fields)) for fields in fact_sets}) == len(fact_sets)
     assert {"submission_any_checked", "submission_other_present"} in fact_sets
     assert source.read_bytes() == original_bytes
-
-
-def test_fixed_runtime_missing_paddle_replay_stays_unknown_and_does_not_fall_through_to_network(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-
-    from audit.engine.checkers.visual_facts import VisualFactsUnavailable, read_original_pdf_visual_facts
-    from audit.engine.rule_engine import Decision, GuardStop
-    from audit.engine.runtime import bind_runtime
-
-    source = tmp_path / "frozen.pdf"
-    with fitz.open() as document:
-        document.new_page()
-        document.save(source)
-    calls, witnesses, cache = [], [], {}
-
-    def fixed_reader(path, page_number):
-        calls.append((path, page_number))
-        raise GuardStop(Decision.UNABLE, "No replayable Paddle observation")
-
-    monkeypatch.setattr("documents.ocr.paddle.reader.read_pdf_page_evidence", lambda *_a, **_kw: pytest.fail("Fixed runtime must not fall through to live Paddle"))
-    audit = AuditInput(audit_id="frozen-version", file_url=str(source))
-    with bind_runtime(SimpleNamespace(read_paddle_page=fixed_reader)):
-        for _ in range(2):
-            with pytest.raises(VisualFactsUnavailable, match="No replayable Paddle observation"):
-                read_original_pdf_visual_facts(audit, {"seal": "Actual seal"}, lambda *a, **k: witnesses.append((a, k)), cache=cache)
-    assert calls == [(str(source), 1)]
-    assert witnesses == []

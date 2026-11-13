@@ -156,26 +156,22 @@ def test_provider_credentials_not_inherited(monkeypatch):
 
 def test_tools_reuse_success_and_failed_receipts(monkeypatch):
     from audit.engine.checkers import ocr_visual_facts
-    from documents.ocr.paddle import reader
 
     calls = []
 
     def ocr(**kwargs):
-        calls.append("ocr")
+        calls.append(kwargs["prompt"])
+        if kwargs["prompt"] == "fail":
+            raise RuntimeError("unknown external receipt")
         return {"observed": True}
 
-    def paddle(*args):
-        calls.append("paddle")
-        raise RuntimeError("unknown external receipt")
-
     monkeypatch.setattr(ocr_visual_facts, "request_ocr_visual_facts", ocr)
-    monkeypatch.setattr(reader, "read_pdf_page_evidence", paddle)
     runtime = CheckerRuntime(allow_model_tools=True)
     for _ in range(2):
         assert runtime.read_ocr_visual_facts(images=[b"original page"], prompt="read", response_schema={}) == {"observed": True}
         with pytest.raises(RuntimeError):
-            runtime.read_paddle_page("/tmp/frozen.pdf", 1)
-    assert calls == ["ocr", "paddle"]
+            runtime.read_ocr_visual_facts(images=[b"original page"], prompt="fail", response_schema={})
+    assert calls == ["read", "fail"]
     runtime.close()
 
 

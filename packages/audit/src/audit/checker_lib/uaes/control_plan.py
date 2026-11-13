@@ -127,15 +127,6 @@ class UaesControlPlanAgent(UaesExcelAgent):
     DOCUMENT_MODULE = resources
     EXTRA_RESOURCE = combine(resources.DOCUMENT, pgqp1.DOCUMENT, pgqp1_counterpart.DOCUMENT, flowchart_counterpart.DOCUMENT, pfmea_counterpart.DOCUMENT)
 
-    def _execute_rule_check(self, rule_no: int):
-        result = super()._execute_rule_check(rule_no)
-        from audit.engine.checkers.paddle_evidence import observe_shadow
-
-        # The Paddle shadow reads the original on its own; it never changes the formal result.
-        if 0 < rule_no <= len(self.declared_rules()):
-            observe_shadow(self, self.declared_rules()[rule_no - 1][0])
-        return result
-
     # ---- the control plan itself -------------------------------------------------------
 
     def plan_sheets(self, ctx: RuleContext) -> list[Sheet]:

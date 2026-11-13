@@ -101,7 +101,7 @@ def test_seal_decision_reports_native_authorization_facts_without_changing_unkno
             return host
 
     result = Agent()._run_fact_rule(2, 3)
-    assert result.status == "UNABLE" and result.evidence.diagnostics[0].code == "psw.paddle.fact_unconfirmed"
+    assert result.status == "UNABLE" and result.evidence.diagnostics[0].code == "psw.visual.fact_unconfirmed"
     (record,) = [r for r in caplog.records if r.getMessage().startswith("PSW seal decision: ")]
     detail = json.loads(record.getMessage().partition(": ")[2])
     assert detail["facts"]["authorization_table_present"] is True and detail["facts"]["authorization_company_stamp_present"] is False

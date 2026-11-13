@@ -8,19 +8,15 @@ an adversarial-code sandbox or a production execution service.
 from __future__ import annotations
 
 import json
-import tempfile
-import threading
-import time
 from collections import Counter
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager, nullcontext
+from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 from typing import Literal, cast
 
 from agent.execution.audit_runtime import AuditRunError, run_audit_process
-from agent.execution.paddle_bridge import paddle_bridge
 from agent.mapping import _checker_finding
 from audit.checker_core import ExecutionSnapshot, FrozenTarget, RuleBinding, checker_digest, runtime_revision
 from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
@@ -192,22 +188,6 @@ def _report(plan: OfficialPlan, cases=(), reasons=()) -> SuiteValidationReport:
     )
 
 
-@contextmanager
-def _paddle(sample: Sample, *, live: bool) -> Iterator[dict[str, str]]:
-    """Host keeps the upstream token; the guest gets one capability for this sample's PDFs."""
-    if not live:
-        yield {}
-        return
-    with tempfile.TemporaryDirectory(prefix="ppap-official-paddle-") as work:
-        root = Path(work)
-        names = {key: f"source-{index}" for index, key in enumerate(sample.sources)}
-        for key, name in names.items():
-            (root / name).write_bytes(sample.sources[key])
-        (root / "manifest.json").write_text(json.dumps({"operation": "execute-audit", "spec": {"allow_model_calls": True}, "source_paths": names}), encoding="utf-8")
-        with paddle_bridge(root, time.monotonic() + 600, threading.Event()) as env:
-            yield env
-
-
 def evaluate(plan: OfficialPlan, *, models: LiveModels | None = None, on_progress: Callable[[dict], None] | None = None) -> SuiteValidationReport:
     """Execute fixed code; live grants are explicit and labels never enter the guest."""
     if plan.reasons:
@@ -225,8 +205,7 @@ def _evaluate(plan: OfficialPlan, *, models: LiveModels | None, grant: dict[str,
     for sample in plan.samples:
         target = sample.snapshot.targets[0]
         try:
-            with _paddle(sample, live=models is not None) as tool_env:
-                result = run_audit_process(sample.snapshot, sample.sources, plan.programs, allow_model_tools=models is not None, model_grant=grant, tool_env=tool_env)
+            result = run_audit_process(sample.snapshot, sample.sources, plan.programs, allow_model_tools=models is not None, model_grant=grant)
         except AuditRunError:
             # Never promote partial/unknown execution to a successful proof.
             return _report(plan, cases, ("official_execution_incomplete",))

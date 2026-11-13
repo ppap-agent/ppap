@@ -16,7 +16,6 @@ from typing import Any
 _FIELDS = ("approved_checked", "conditional_checked", "rejected_checked")
 _OPTION_FIELDS = {"批准": "approved_checked", "条件批准": "conditional_checked", "拒绝": "rejected_checked"}
 _ATTACHED_OPTION = re.compile(r"([□☐☑☒])(批准|条件批准|拒绝)(?:[（(]需提供整改计划[）)])?")
-_MIN_OCR_CONFIDENCE = 0.97
 
 
 def _bounds(value: object) -> tuple[float, float, float, float] | None:
@@ -32,13 +31,10 @@ def read_disposition_facts(
     *,
     page: int,
     source_sha256: str,
-    visual: bool,
 ) -> dict[str, bool | None]:
-    """Return known states only for exact symbols in one disposition row.
+    """Return known states only for exact symbols of the native text layer in one disposition row.
 
-    OCR confidence is an admission threshold, not proof of correctness. A
-    caller must validate the original-page identity and coordinate mapping.
-    Native observations use the same geometry with no OCR confidence claim.
+    A caller must validate the original-page identity and coordinate mapping.
     """
     facts: dict[str, bool | None] = dict.fromkeys(("disposition_visible", *_FIELDS))
     if type(page) is not int or page < 1 or re.fullmatch(r"[0-9a-f]{64}", source_sha256) is None:
@@ -49,23 +45,19 @@ def read_disposition_facts(
     for item in texts:
         if not isinstance(item.get("text"), str) or type(item.get("index")) is not int or item["index"] < 0:
             continue
-        if visual and (item.get("source") != "paddle_overall_ocr" or item.get("type") != "ocr_word"):
-            continue
         bbox = _bounds(item.get("pdf_bbox"))
         if bbox is None:
             continue
-        score = item.get("score")
-        credible = not visual or (isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score) and _MIN_OCR_CONFIDENCE <= score <= 1)
         text = re.sub(r"\s+", "", item["text"])
-        entries.append((item, text, bbox, credible))
+        entries.append((item, text, bbox))
     # Duplicated IDs cannot provide distinct, trustworthy source locations.
-    counts = Counter(item["index"] for item, _, _, _ in entries)
+    counts = Counter(item["index"] for item, _, _ in entries)
     if any(count != 1 for count in counts.values()):
         return facts
-    anchors = [(item, box, credible) for item, text, box, credible in entries if text.rstrip(":：") == "认可情况"]
-    if len(anchors) != 1 or not anchors[0][2]:
+    anchors = [(item, box) for item, text, box in entries if text.rstrip(":：") == "认可情况"]
+    if len(anchors) != 1:
         return facts
-    anchor, anchor_box, _ = anchors[0]
+    anchor, anchor_box = anchors[0]
 
     def note(item, bbox, fact):
         witness(
@@ -81,13 +73,13 @@ def read_disposition_facts(
                 "fact": fact,
             },
             item["text"],
-            visual=visual,
+            visual=False,
         )
 
     facts["disposition_visible"] = True
     note(anchor, anchor_box, "disposition_visible")
-    options: dict[str, list[tuple[bool, Mapping[str, Any], tuple[float, float, float, float], bool]]] = {field: [] for field in _FIELDS}
-    for item, text, box, credible in entries:
+    options: dict[str, list[tuple[bool, Mapping[str, Any], tuple[float, float, float, float]]]] = {field: [] for field in _FIELDS}
+    for item, text, box in entries:
         match = _ATTACHED_OPTION.fullmatch(text)
         if match is None or box[0] <= anchor_box[2]:
             continue
@@ -95,13 +87,11 @@ def read_disposition_facts(
         if overlap < 0.5 * min(box[3] - box[1], anchor_box[3] - anchor_box[1]):
             continue
         field = _OPTION_FIELDS[match[2]]
-        options[field].append((match[1] in {"☑", "☒"}, item, box, credible))
+        options[field].append((match[1] in {"☑", "☒"}, item, box))
     for field, candidates in options.items():
         if len(candidates) != 1:
             continue
-        state, item, box, credible = candidates[0]
-        if not credible:
-            continue
+        state, item, box = candidates[0]
         facts[field] = state
         note(item, box, field)
     return facts

@@ -50,7 +50,7 @@ def ocr_extra_body() -> dict:
 
 
 def ocr_policy_identity() -> str:
-    """Hash the vision model identity and Paddle endpoint, never credentials."""
+    """Hash the vision model identity, never credentials."""
     from documents.model_access import ModelUnavailable, current_model_access
 
     try:
@@ -58,9 +58,8 @@ def ocr_policy_identity() -> str:
     except ModelUnavailable:
         model = {"source": "unavailable"}
     value = {
-        "protocol": "native_paddle_responses_v5",
+        "protocol": "responses_v6",
         "model": model,
         "timeout": 20,
-        "paddle_endpoint_sha256": hashlib.sha256(_env("PPAP_PADDLE_URL").encode()).hexdigest(),
     }
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

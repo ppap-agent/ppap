@@ -141,21 +141,16 @@ def test_text_answers_are_recorded_and_replayed_through_the_direct_layer(tmp_pat
     assert entry["request"] == {"task": "rule_text_evidence", "instructions": "judge", "prompt": "shown", "schema": None, "max_tokens": 10}
 
 
-@pytest.mark.parametrize("kind", ["ocr", "text", "paddle"])
+@pytest.mark.parametrize("kind", ["ocr", "text"])
 def test_offline_miss_never_calls_or_records_a_provider(kind, tmp_path, monkeypatch):
-    from documents.ocr.paddle import client as paddle_client
-
     calls = _answering_model(monkeypatch, AssertionError("external provider must not run"))
-    monkeypatch.setattr(paddle_client, "_post_page_sync", lambda *args: calls.append("paddle"))
     recorder = Recorder("offline", tmp_path, tmp_path, offline=True)
     install(monkeypatch, recorder)
     with pytest.raises(OfflineReplayMiss, match="external model calls are disabled"):
         if kind == "ocr":
             _read()
-        elif kind == "text":
-            run_json("probe", prompt="shown")
         else:
-            paddle_client._post_page_sync("https://provider.invalid", {"file": "shown"}, {}, 1)
+            run_json("probe", prompt="shown")
     recorder.finish(keep=True)
     assert recorder.misses == [kind]
     assert calls == []

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
@@ -24,7 +23,6 @@ class VisualFactsUnavailable(ValueError):
 _MAX_SCOPES = 10
 _MAX_IMAGE_PIXELS = 12_000_000
 _MAX_TOTAL_PIXELS = 32_000_000
-_SEAL_FIELDS = frozenset({"seal", "controlled_stamp"})
 
 
 def _source_identity(audit, cache):
@@ -123,79 +121,6 @@ def _raster_images(audit, digest):
             resized.height,
         )
     ], {}
-
-
-def _paddle_seals(audit, fields, digest, cache, witness):
-    """A located seal proves presence only. It never proves a blank region."""
-    from documents.ocr.paddle.reader import PaddleEvidenceUnavailable, read_pdf_page_evidence
-
-    from audit.engine.runtime import get_runtime
-    from audit.pdf_tables import valid_pdf_bbox
-
-    result = dict.fromkeys(fields)
-    runtime = get_runtime()
-    hook = getattr(runtime, "read_paddle_page", None)
-    if not callable(hook):
-        if runtime is not None or not (os.environ.get("PPAP_PADDLE_BRIDGE_URL", "").strip() or os.environ.get("PPAP_PADDLE_URL", "").strip()):
-            return result
-    with fitz.open(audit.file_url) as document:
-        # No guessed page role and no full-document Paddle sweep.
-        if document.needs_pass or len(document) != 1:
-            return result
-        original_bounds = document[0].rect * document[0].derotation_matrix
-    key = ("directory_paddle_page", audit.audit_id, digest, 1)
-    if key not in cache:
-        try:
-            cache[key] = hook(str(audit.file_url), 1) if callable(hook) else read_pdf_page_evidence(Path(audit.file_url), 1)
-        except PaddleEvidenceUnavailable:
-            cache[key] = None
-        except Exception as error:
-            cache[key] = error
-    value = cache[key]
-    if isinstance(value, Exception):
-        raise value
-    if value is None:
-        return result
-    if value.get("source_sha256") != digest:
-        raise ValueError("Paddle source identity invalid")
-    pages = value.get("pages", [])
-    if len(pages) != 1 or pages[0].get("page") != 1:
-        raise ValueError("Paddle page identity invalid")
-    page = pages[0]
-    frame = page.get("frame") or {}
-    if any(
-        type(frame.get(name)) not in (int, float) or not math.isclose(frame[name], expected, abs_tol=0.01)
-        for name, expected in (("pdf_width", original_bounds.width), ("pdf_height", original_bounds.height))
-    ):
-        raise ValueError("Paddle original frame invalid")
-    for index, seal in enumerate(page.get("seals", [])):
-        bounds = seal.get("pdf_bbox")
-        if seal.get("detected") is not True or not valid_pdf_bbox(bounds, frame.get("pdf_width"), frame.get("pdf_height")):
-            continue
-        for field in fields:
-            # A substring also matches “非受控”. Only an unambiguous stamp
-            # designation can establish this named presence capability.
-            if field == "controlled_stamp" and "".join(str(seal.get("recognized_text", "")).split()) not in {"受控", "受控章", "受控文件"}:
-                continue
-            result[field] = True
-            witness(
-                {
-                    "kind": "pdf_region",
-                    "page": 1,
-                    "bbox": bounds,
-                    "coordinate_system": "pdf_points_unrotated",
-                    "source_sha256": digest,
-                    "file_version_id": str((audit.file_metadata or {}).get("file_version_id") or audit.audit_id),
-                    "scope": "pdf:1",
-                    "element": "seal",
-                    "element_index": index,
-                    "fact": field,
-                    "engine": "paddle",
-                },
-                str(seal.get("recognized_text") or "已定位原件印章"),
-                visual=True,
-            )
-    return result
 
 
 def _excel_facts(audit, fields, cache, witness, existential_fields):
@@ -315,9 +240,6 @@ def read_original_visual_facts(
                             raise VisualFactsUnavailable("原件不能完整读取，或超过十页视觉读取范围。")
                         if len(document) > 1:
                             selected = {field: description for field, description in fields.items() if field in existential_fields}
-                    seal_fields = {field: description for field, description in selected.items() if field in _SEAL_FIELDS and field in existential_fields}
-                    if seal_fields:
-                        facts.update(_paddle_seals(audit, seal_fields, digest, cache, collect))
                 missing = {field: description for field, description in selected.items() if facts[field] is None}
                 if missing:
                     images, context = _pdf_images(audit, digest) if suffix == ".pdf" else _raster_images(audit, digest)

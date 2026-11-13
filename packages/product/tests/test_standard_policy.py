@@ -11,7 +11,6 @@ from product.settings import Settings
     [
         ("git_sha", "b" * 40),
         ("MAX_FILE_SIZE", "10MB"),
-        ("paddle_url", "https://paddle.invalid"),
     ],
 )
 def test_standard_revision_tracks_effective_configuration(field, value):
@@ -49,14 +48,6 @@ def test_tool_environment_changes_identity_without_disclosing_paths(monkeypatch,
     changed = settings.standard_execution_policy()
     assert changed.engine_revision() != original.engine_revision()
     assert "private-alternate" not in changed.model_dump_json()
-
-
-def test_paddle_endpoint_changes_revision_without_disclosing_credentials():
-    settings = Settings(PPAP_PADDLE_URL="https://private-paddle.invalid")
-    original = settings.standard_execution_policy()
-    changed = settings.model_copy(update={"paddle_url": "https://another.invalid"}).standard_execution_policy()
-    assert changed != original
-    assert "private-paddle" not in original.model_dump_json()
 
 
 @pytest.mark.parametrize(

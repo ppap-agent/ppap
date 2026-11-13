@@ -47,7 +47,6 @@ def test_submission_visual_fallback_keeps_only_verified_original_locations(tmp_p
         return ConversionArtifact(success=True, xlsx_path=str(prepared))
 
     monkeypatch.setattr(f"audit.checker_lib.{'li' if version == 'v2' else 'nio'}.pdf_agent.convert_pdf_to_excel_auto", convert)
-    monkeypatch.setattr("audit.engine.checkers.paddle_evidence.observe_psw_shadow", lambda *args: None)
     calls = []
 
     def read(audit, fields, witness, *, operation, **kwargs):

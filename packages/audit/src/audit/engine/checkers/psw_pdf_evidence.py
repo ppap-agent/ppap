@@ -292,19 +292,13 @@ class PswPdfEvidenceMixin:
         diagnostics = getattr(artifact, "diagnostics", {}) if artifact is not None else {}
         error_code = str(diagnostics.get("error_code", "") or "")
         if error_code in {
-            "paddle_evidence_unconfigured",
-            "paddle_page_selection_required",
-            "paddle_table_unconfirmed",
-            "paddle_table_incomplete",
-            "paddle_request_budget_exhausted",
-            "paddle_scope_closed",
             "ocr_page_selection_required",
             "ocr_evidence_unconfigured",
             "ocr_table_unconfirmed",
             "ocr_cell_unconfirmed",
         }:
             return self._trace_result(
-                AuditResult(classification="PDF结构化证据", item=f"PSW - 规则{ith + 1}", priority="P0", status="UNABLE", suggestions="原生或Paddle证据尚未形成可确认的表格，请核对原件。"),
+                AuditResult(classification="PDF结构化证据", item=f"PSW - 规则{ith + 1}", priority="P0", status="UNABLE", suggestions="原生或OCR证据尚未形成可确认的表格，请核对原件。"),
                 rule_no=ith + 1,
                 used="none",
                 diagnostic=EvidenceDiagnostic(code="psw.pdf." + error_code, stage="conversion", severity="warning", message="当前原件表格内容未能确认；未作通过或不符合判断。"),
@@ -384,9 +378,6 @@ class PswPdfEvidenceMixin:
 
         if result is not None:
             host.log_audit_result(result, ith)
-        from audit.engine.checkers.paddle_evidence import observe_psw_shadow
-
-        observe_psw_shadow(self, rule_no)
         return result
 
     async def run(self) -> list[AuditResult]:
@@ -443,8 +434,8 @@ class PswPdfEvidenceMixin:
                 return
             sources.append(EvidenceSource(kind="visual" if visual else "structure", locator=json.dumps(locator, ensure_ascii=False, separators=(",", ":")), excerpt=excerpt[:500]))
 
-        if not hasattr(self, "_paddle_page_cache"):
-            self._paddle_page_cache: dict = {}
+        if not hasattr(self, "_original_page_cache"):
+            self._original_page_cache: dict = {}
         facts: dict[str, object] = {}
         try:
             slots = len(getattr(getattr(self, "rule", None), "rules", []) or [])
@@ -455,17 +446,17 @@ class PswPdfEvidenceMixin:
                 host.audit_file,
                 rule_no,
                 witness,
-                self._paddle_page_cache,
+                self._original_page_cache,
                 lambda: read_original_pdf_visual_facts(
-                    host.audit_file, PSW_RULE_FIELDS[rule_no], witness, operation=f"psw_rule_{rule_no}", cache=self._paddle_page_cache, batch_fields=batch_fields or PSW_RULE_FIELDS[rule_no]
+                    host.audit_file, PSW_RULE_FIELDS[rule_no], witness, operation=f"psw_rule_{rule_no}", cache=self._original_page_cache, batch_fields=batch_fields or PSW_RULE_FIELDS[rule_no]
                 ),
             )
             diagnostic = None
             if result.status == "UNABLE":
-                diagnostic = EvidenceDiagnostic(code="psw.paddle.fact_unconfirmed", stage="visual", severity="warning", message="原生、Paddle或OCR模型证据未能确认所需事实，请核对原件。")
+                diagnostic = EvidenceDiagnostic(code="psw.visual.fact_unconfirmed", stage="visual", severity="warning", message="原生或OCR模型证据未能确认所需事实，请核对原件。")
         except VisualFactsUnavailable:
             result = evaluate_psw_observation(rule_no, {})
-            diagnostic = EvidenceDiagnostic(code="psw.paddle.fact_unconfirmed", stage="visual", severity="warning", message="当前原件不能提供可确认的视觉事实，请核对原件。")
+            diagnostic = EvidenceDiagnostic(code="psw.visual.fact_unconfirmed", stage="visual", severity="warning", message="当前原件不能提供可确认的视觉事实，请核对原件。")
         except Exception as exc:
             result = host.create_error_result(f"视觉证据读取失败（{type(exc).__name__}）。", ith)
             diagnostic = EvidenceDiagnostic(code=DIAGNOSTIC_VISUAL_RUNTIME_ERROR, stage="visual", severity="error", message="视觉证据读取发生技术错误，未形成业务判断。")
@@ -485,12 +476,10 @@ class PswPdfEvidenceMixin:
         # The original-page predicate owns its evidence. A preceding table
         # attempt does not establish a located structural fact for this result.
         traced = self._trace_result(result, rule_no=rule_no, used=evidence_used, diagnostic=diagnostic, sources=_original_pdf_sources(host.audit_file, sources))
-        # Report the actual native/Paddle/OCR backend used by these sources.
+        # Report the actual native/OCR backend used by these sources.
         if traced.evidence is not None:
-            engines = {json.loads(source.locator).get("engine") for source in sources if source.kind == "visual" and source.locator.startswith("{")}
-            backend = "ocr_llm" if "ocr_llm" in engines else "paddle_single_page"
             carrier = "native_pdf" if Path(host.audit_file.file_url).suffix.casefold() == ".pdf" else "original_image"
-            strategies = (carrier, backend) if "visual" in source_kinds else (carrier,)
+            strategies = (carrier, "ocr_llm") if "visual" in source_kinds else (carrier,)
             traced = traced.model_copy(update={"evidence": traced.evidence.model_copy(update={"conversion_strategies": strategies, "prepared_format": "pdf" if carrier == "native_pdf" else "png"})})
         return traced
 

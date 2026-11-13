@@ -2,7 +2,7 @@
 
 The UAES corpus warrant (CFG-1001) is a scan. Its page is transcribed once into this schema: what is printed
 or written in each field and which boxes are marked. The model transcribes; the clauses decide in code.
-The transcription also says whether an ink seal is seen; Paddle's seal detection locates one.
+The transcription also says whether an ink seal is seen.
 """
 
 from . import PER_PAGE, STITCHED

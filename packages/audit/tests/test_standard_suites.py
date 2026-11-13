@@ -207,9 +207,6 @@ def test_pdf_suite_keeps_original_page_visual_policy(module, monkeypatch):
         return AuditResultItem(classification="stamp", item="original PDF", priority="P0", status="UNABLE", suggestions="Original fact is unconfirmed")
 
     checker._run_fact_rule = original
-    from audit.engine.checkers import paddle_evidence
-
-    monkeypatch.setattr(paddle_evidence, "observe_psw_shadow", lambda *args: None)
     suite = leaf("理想:L17" if ".li." in module else "蔚来:N17")
     context = SimpleNamespace(audit_file=checker.audit_file, clause_id="3", cache={("standard-checker", "frozen", f"{module}:PswPDFAgent"): checker})
     methods = discover_declared_rules(cls.TARGET_EXCEL_AGENT_CLASS)

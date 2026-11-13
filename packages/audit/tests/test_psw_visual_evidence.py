@@ -120,7 +120,7 @@ class ConditionalVisualDecisionTests(unittest.TestCase):
         self.assertEqual(decide_disposition_visual_rule(8, _observation(disposition_visible=False), today=_TODAY)[0], "NG")
 
 
-class NativePaddleDecisionTests(unittest.TestCase):
+class NativeDecisionTests(unittest.TestCase):
     def test_rule_eight_rejects_verdict_without_facts(self):
         self.assertEqual(evaluate_psw_observation(8, {"status": "PASS"}).status, "UNABLE")
 
