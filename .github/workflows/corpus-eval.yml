@@ -44,9 +44,9 @@ jobs:
           PPAP_MODEL_TEXT_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
           PPAP_MODEL_TEXT_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
           PPAP_MODEL_TEXT_MODEL: ${{ secrets.CI_LLM_MODEL }}
-          PPAP_MODEL_VISION_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
-          PPAP_MODEL_VISION_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
-          PPAP_MODEL_VISION_MODEL: ${{ secrets.OCR_MODEL_NAME }}
+          PPAP_MODEL_VISION_API_KEY: ${{ secrets.PPAP_MODEL_VISION_API_KEY }}
+          PPAP_MODEL_VISION_BASE_URL: ${{ secrets.PPAP_MODEL_VISION_BASE_URL }}
+          PPAP_MODEL_VISION_MODEL: ${{ secrets.PPAP_MODEL_VISION_MODEL }}
         run: |
           set -uo pipefail
           [[ "$ROUNDS" =~ ^[1-9][0-9]*$ ]] || { echo "rounds must be a positive integer" >&2; exit 2; }

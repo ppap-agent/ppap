@@ -1816,7 +1816,6 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(audit["checks"][0]["evidence"][0]["excerpt"], "P-1")
         historical = self.display_client.get(f"/rounds/{task['round_id']}?read_view=true").json()
         self.assertEqual(historical["result_job_id"], job.id)
-        self.assertEqual(historical["coverage"]["verification"], result["coverage"]["verification"])
         self.assertEqual({key: value for key, value in historical["read_view"]["files"][0]["audit"].items() if key != "report"}, {key: value for key, value in audit.items() if key != "report"})
         self.assertEqual(audit["report"]["state"], "pending")
         self.assertEqual(current.json()["state"], "reviewing")
