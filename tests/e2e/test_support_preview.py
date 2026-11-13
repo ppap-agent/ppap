@@ -99,7 +99,7 @@ class SupportPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1280, "height": 900})
             page.goto(PREVIEW + "/preview/audit.html")
             page.get_by_role("combobox", name="客户（可选）").click()
-            page.get_by_role("option", name=re.compile(r"^示例客户 已支持 ")).click()
+            page.get_by_role("option", name="示例客户", exact=True).click()
             pick_audit_files(page, {"name": "保留本次文件.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
             page.get_by_role("button", name="用量记录", exact=True).click()
             page.get_by_role("button", name="联系我们", exact=True).click()

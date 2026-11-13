@@ -10,7 +10,7 @@ export function RequirementSourceSelect({basis, clause, disabled, onChange}: {ba
       if (unit) onChange({...citeRequirementSource(clause, unit, basis), checked: false})
     }}>
       <SelectTrigger className="w-full"><SelectValue placeholder="选择与条款对应的原文"/></SelectTrigger>
-      <SelectContent>{basis.server.sources?.units.map(unit => <SelectItem key={unit.id} value={unit.id}>{unit.location} · {unit.excerpt.slice(0, 80)}</SelectItem>)}</SelectContent>
+      <SelectContent>{basis.server.sources?.units.map(unit => <SelectItem key={unit.id} value={unit.id} description={unit.excerpt.slice(0, 80)}>{unit.location}</SelectItem>)}</SelectContent>
     </Select>
   </label>
 }

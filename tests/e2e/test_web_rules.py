@@ -25,7 +25,7 @@ def confirm_clause_source(page, clause, location, excerpt):
 
     clause.get_by_role("button", name="核对出处", exact=True).click()
     page.get_by_role("combobox", name="原文位置", exact=True).click()
-    page.get_by_role("option", name=re.compile("^" + re.escape(location) + " ·")).click()
+    page.get_by_role("option", name=location, exact=True).click()
     expect(page.get_by_role("blockquote")).to_contain_text(excerpt)
     page.get_by_role("button", name="返回条款", exact=True).click()
 

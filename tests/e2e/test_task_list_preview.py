@@ -28,7 +28,7 @@ def release_list(page, query="全部", *, failed=False, offset=0):
 
 
 def task_row(listing, number):
-    return listing.get_by_role("button", name=re.compile(r"^PPAP-" + number + r"(?:\s|$)"))
+    return listing.get_by_role("button", name="PPAP-" + number, exact=True)
 
 
 def expect_unresolved(listing):

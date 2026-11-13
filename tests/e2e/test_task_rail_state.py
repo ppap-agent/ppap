@@ -2,7 +2,6 @@
 
 import copy
 import os
-import re
 from urllib.parse import urlsplit
 
 import pytest
@@ -126,7 +125,7 @@ def test_rail_marks_execution_errors_and_keeps_the_task_through_its_state_filter
         calls, _summary = task_routes(page, partial_error)
         page.goto(WEB + "/tasks/new")
         listing = rail(page)
-        row = listing.get_by_role("button", name=re.compile(r"^PPAP-状态核对(?:\s|$)"))
+        row = listing.get_by_role("button", name="PPAP-状态核对", exact=True)
         expect(row).to_contain_text("审核异常" if partial_error else "已完成")
         expect(row).to_contain_text("共 2 份文件" if partial_error else "共 1 份文件")
         listing.get_by_role("combobox", name="任务状态", exact=True).click()
@@ -162,9 +161,9 @@ def test_opened_task_remains_in_the_rail_until_its_list_page_is_loaded():
         page.goto(WEB + "/tasks/" + TASK)
         expect(page.get_by_role("region", name="全部文件概览", exact=True)).to_be_visible()
         listing = rail(page)
-        current = listing.get_by_role("button", name=re.compile(r"^PPAP-状态核对(?:\s|$)"))
+        current = listing.get_by_role("button", name="PPAP-状态核对", exact=True)
         # The first list page does not contain the open task; its detail keeps it in the rail.
-        expect(listing.get_by_role("button", name=re.compile(r"^PPAP-另一任务(?:\s|$)"))).to_be_visible()
+        expect(listing.get_by_role("button", name="PPAP-另一任务", exact=True)).to_be_visible()
         expect(current).to_have_attribute("aria-current", "page")
         listing.get_by_role("button", name="加载更多任务", exact=True).click()
         expect(listing.get_by_role("button", name="加载更多任务", exact=True)).to_have_count(0)

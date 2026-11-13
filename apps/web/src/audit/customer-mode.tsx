@@ -25,9 +25,10 @@ export function CustomerAvatar({name, className = ''}: {name: string; className?
   const tone = name === '自动识别' ? 'bg-muted-foreground' : avatarTones[[...name].reduce((sum, char) => sum + (char.codePointAt(0) ?? 0), 0) % avatarTones.length]
   return <span aria-hidden="true" data-avatar="" className={`flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold text-white ${tone} ${className}`}>{[...name.trim()][0] ?? '?'}</span>
 }
-/** One customer in the picker: avatar, name and how many standard file types its rules cover. The trigger shows the name only. */
+/** One customer in the picker: avatar and name (its accessible name, shown in the trigger), plus how many standard file types its rules cover as its description. */
 export function CustomerItem({value, label, coverage}: {value: string; label: string; coverage?: Coverage | null}) {
-  return <SelectItem value={value} aria-label={label}><span className="flex min-w-0 items-center gap-3"><CustomerAvatar name={label}/><span className="grid min-w-0 gap-0.5 text-left"><span className="truncate">{label}</span>{value === 'auto' ? <span data-coverage="" className="text-xs text-muted-foreground">按文件内容匹配客户规则</span> : coverage && <span data-coverage="" className="text-xs text-muted-foreground tabular-nums">已支持 {coverage.supported} / {coverage.total} 类 PPAP 文件</span>}</span></span></SelectItem>
+  const description = value === 'auto' ? '按文件内容匹配客户规则' : coverage ? `已支持 ${coverage.supported} / ${coverage.total} 类 PPAP 文件` : undefined
+  return <SelectItem value={value} description={description && <span className="-mt-1 block pl-10 tabular-nums">{description}</span>}><span className="flex min-w-0 items-center gap-3"><CustomerAvatar name={label}/><span className="truncate">{label}</span></span></SelectItem>
 }
 export const CustomerListNote = ({count}: {count: number}) => <p className="px-2 pt-1.5 pb-1 text-xs text-muted-foreground">已开通 {count} 家客户的模板与规则</p>
 
@@ -63,7 +64,7 @@ export function CustomerMode({value, ready, options, adapter, onChange, onInitia
   return <div className="grid gap-2">
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><Label htmlFor="audit-customer">审核客户</Label>{hint}</div>
     <div className="flex flex-wrap items-center gap-2">
-      <Select value={ready ? value : ''} onValueChange={onChange} onOpenChange={open => {if (open) onRefresh?.()}}><SelectTrigger id="audit-customer" className="h-10 w-80 max-w-full [&_[data-coverage]]:hidden"><SelectValue placeholder="请选择本次审核客户"/></SelectTrigger><SelectContent><CustomerListNote count={choices.length}/><CustomerItem value="auto" label="自动识别"/>{choices.map(option => <CustomerItem key={option.value} value={option.value} label={option.label} coverage={coverage?.(option.value)}/>)}</SelectContent></Select>
+      <Select value={ready ? value : ''} onValueChange={onChange} onOpenChange={open => {if (open) onRefresh?.()}}><SelectTrigger id="audit-customer" className="h-10 w-80 max-w-full"><SelectValue placeholder="请选择本次审核客户"/></SelectTrigger><SelectContent><CustomerListNote count={choices.length}/><CustomerItem value="auto" label="自动识别"/>{choices.map(option => <CustomerItem key={option.value} value={option.value} label={option.label} coverage={coverage?.(option.value)}/>)}</SelectContent></Select>
       <Button variant="ghost" disabled={!current || saving || !canSave} onClick={() => setConfirming(true)}>设为企业默认</Button>
       {/* The enterprise default sits beside its action in one quiet line; choosing here changes only this task. */}
       {current ? <span className="text-sm text-muted-foreground">企业默认：{presetCustomers.find(option => option.value === current.customer_preference)?.label || '自动识别'}</span> : !message && <span role="status" className="flex items-center gap-1.5 text-sm text-muted-foreground"><Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none"/>正在读取企业默认…</span>}

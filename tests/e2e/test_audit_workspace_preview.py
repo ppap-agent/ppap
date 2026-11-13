@@ -63,7 +63,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 960})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
-            page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合")).click()
+            page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True).click()
             page.get_by_role("button", name="逐条复核", exact=True).click()
             focus = page.get_by_role("region", name="专注复核", exact=True)
             focus.get_by_role("button", name="下一待复核", exact=True).click()
@@ -82,7 +82,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(page).to_have_url(address)
             expect(focus.get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()
             page.get_by_role("button", name="返回审核项", exact=True).click()
-            expect(page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^不符合"))).to_have_attribute("aria-pressed", "true")
+            expect(page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True)).to_have_attribute("aria-pressed", "true")
             browser.close()
 
     def test_escape_closes_only_the_display_editor_and_returns_focus_to_file_info(self):
@@ -129,7 +129,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
             first = page.get_by_role("button", name="查看依据 1.1", exact=True)
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
-            page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^全部")).click()
+            page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="全部", exact=True).click()
             first.click()
             basis = page.get_by_role("dialog").filter(has=page.get_by_role("tab", name="核对原件", exact=True))
             expect(basis.get_by_role("heading", name="第 1 条 · 频次一致性", exact=True)).to_be_visible()

@@ -35,7 +35,14 @@ function scopeLabel(scope: string) {
 }
 
 function SourceSelect({label, value, onChange, files, current}: {label: string; value: string; onChange: (value: string) => void; files: SourceFile[]; current: SourceFile[]}) {
-  return <Select value={value} onValueChange={onChange}><SelectTrigger aria-label={label} className="w-full min-w-0"><SelectValue className="min-w-0" placeholder="选择文件"/></SelectTrigger><SelectContent className="max-w-[calc(100vw-2rem)]">{files.map((file, index) => <SelectItem key={sourceKey(file)} value={sourceKey(file)} textValue={file.name}><FileIcon name={file.name}/><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{file.name}{file.material ? '' : ' · '}{file.material ? '' : file.localFile ? ['未解析', '未读取', '未知', '待确认'].includes(file.revision) ? '修订待确认' : `登记修订 ${file.revision}` : `Rev ${file.revision}`} · {sourceVersionLabel(file)}{files.filter(item => item.name === file.name).length > 1 ? file.material ? ` · 上传版本 ${file.material.file_version_id}` : ` · 第 ${index + 1} 份` : ''}{current.some(item => sourceKey(item) === sourceKey(file)) ? '' : ' · 历史'}</span></SelectItem>)}</SelectContent></Select>
+  /** The file's revision, version and whether it is historical: the option's description, never part of its name. */
+  const sourceReadStatus = (file: SourceFile, index: number) => [
+    file.material ? null : file.localFile ? ['未解析', '未读取', '未知', '待确认'].includes(file.revision) ? '修订待确认' : `登记修订 ${file.revision}` : `Rev ${file.revision}`,
+    sourceVersionLabel(file),
+    files.filter(item => item.name === file.name).length > 1 ? file.material ? `上传版本 ${file.material.file_version_id}` : `第 ${index + 1} 份` : null,
+    current.some(item => sourceKey(item) === sourceKey(file)) ? null : '历史',
+  ].filter(Boolean).join(' · ')
+  return <Select value={value} onValueChange={onChange}><SelectTrigger aria-label={label} className="w-full min-w-0"><SelectValue className="min-w-0" placeholder="选择文件"/></SelectTrigger><SelectContent className="max-w-[calc(100vw-2rem)]">{files.map((file, index) => <SelectItem key={sourceKey(file)} value={sourceKey(file)} textValue={file.name} className="whitespace-normal [overflow-wrap:anywhere]" description={<span className="block pl-6">{sourceReadStatus(file, index)}</span>}><FileIcon name={file.name}/><span className="min-w-0">{file.name}</span></SelectItem>)}</SelectContent></Select>
 }
 
 export function DocumentPane({file, documents, row, current, onClose, side, focus}: {file?: SourceFile; documents: DemoDocument[]; row?: DecisionEvidence; current: SourceFile[]; onClose: () => void; side: string; focus?: SourceFocus}) {

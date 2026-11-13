@@ -1,7 +1,6 @@
 """Controlled navigation interactions, not backend or audit acceptance evidence."""
 
 import os
-import re
 import unittest
 from urllib.parse import parse_qs, urlparse
 
@@ -55,7 +54,7 @@ class TaskNavigationPreviewTests(unittest.TestCase):
             expect(page.get_by_role("region", name="全部文件概览", exact=True)).to_be_visible()
             expand.click()
             expect(listing.get_by_role("textbox", name="搜索审核任务", exact=True)).to_have_value("恢复示例")
-            expect(listing.get_by_role("button", name=re.compile(r"^PPAP-恢复示例(?:\s|$)"))).to_have_attribute("aria-current", "page")
+            expect(listing.get_by_role("button", name="PPAP-恢复示例", exact=True)).to_have_attribute("aria-current", "page")
             self.assertEqual(parse_qs(urlparse(page.url).query)["task"], ["preview-recovery-task"])
             browser.close()
 
@@ -68,12 +67,12 @@ class TaskNavigationPreviewTests(unittest.TestCase):
             listing = page.get_by_role("complementary", name="审核任务", exact=True).get_by_role("navigation", name="审核任务列表", exact=True)
             rows = listing.get_by_role("list").get_by_role("button")
             expect(rows).to_have_count(2)
-            current = listing.get_by_role("button", name=re.compile(r"^PPAP-恢复示例(?:\s|$)"))
+            current = listing.get_by_role("button", name="PPAP-恢复示例", exact=True)
             expect(current).to_have_attribute("aria-current", "page")
             expect(current).to_contain_text("共 3 份文件")
             search = listing.get_by_role("textbox", name="搜索审核任务", exact=True)
             search.fill("第二个任务")
-            other = listing.get_by_role("button", name=re.compile(r"^PPAP-第二个任务(?:\s|$)"))
+            other = listing.get_by_role("button", name="PPAP-第二个任务", exact=True)
             expect(rows).to_have_count(1)
             other.click()
             expect(page).to_have_url(PREVIEW + "/preview/audit.html?scene=restore-notification-tasks&task=preview-second-task")

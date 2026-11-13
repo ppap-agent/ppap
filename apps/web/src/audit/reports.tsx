@@ -1,5 +1,5 @@
 // Stitch: projects/13261964020862199279/screens/ad9a81d6958e49eea105a9ea887cc3cf
-import {useEffect, useRef, useState} from 'react'
+import {useEffect, useId, useRef, useState} from 'react'
 import {createPortal} from 'react-dom'
 import {Download, Package, RefreshCw, Share2} from 'lucide-react'
 import type {components} from '../generated/openapi'
@@ -79,6 +79,8 @@ export function AuditReports({task, initialFile, onChoose, onRead, busy, readErr
     } catch {if (alive.current) setZipDownloadError('ZIP 暂时无法下载。已就绪 PDF 保留，只需重试下载。')}
     finally {if (alive.current) setDownloading(false)}
   }
+  // Each report button is named by its file; status and duplicate position describe it.
+  const listId = useId()
   const readyRows = rows.filter(row => reportReady(task, row))
   // Each report is a card; reports without a ready PDF stay visible but greyed and cannot be selected.
   const list = <div className="space-y-2"><div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">{/* Select all reports that can be packed or shared together. */}<Checkbox aria-label="全选可下载报告" title="勾选报告后可打包下载或分享" disabled={!readyRows.length} checked={readyRows.length > 0 && readyRows.every(row => checked.includes(row.file.id)) ? true : checked.length ? 'indeterminate' : false} onCheckedChange={value => setChecked(value === true ? readyRows.map(row => row.file.id) : [])}/>全选</div><ul aria-label="逐文件报告清单" className="grid gap-2">{rows.map(row => {
@@ -91,7 +93,7 @@ export function AuditReports({task, initialFile, onChoose, onRead, busy, readErr
     const type = row.match?.document_type ? documentTypeLabel(row.match.document_type) : '', generated = row.audit?.report.generated_at ? reportDay(row.audit.report.generated_at) : ''
     return <li key={row.file.id} data-ready={ready || undefined} data-selected={file?.file.id === row.file.id || undefined} className="flex items-start gap-2 rounded-sm border bg-muted/40 py-2.5 pr-2 pl-3 text-muted-foreground transition-colors hover:border-primary-line data-ready:bg-card data-ready:text-foreground data-selected:border-primary data-selected:bg-primary-soft">
       <div className="pt-0.5"><Checkbox aria-label={`选择报告 ${row.file.original_filename}${suffix}`} disabled={!ready} checked={checked.includes(row.file.id)} onCheckedChange={value => setChecked(ids => value === true ? [...ids, row.file.id] : ids.filter(id => id !== row.file.id))}/></div>
-      <div className="min-w-0 flex-1"><button type="button" aria-label={`${row.file.original_filename} ${status}${suffix}`} aria-pressed={file?.file.id === row.file.id} className="flex w-full items-start gap-2 rounded-sm text-left focus-visible:outline-ring" onClick={choose}>
+      <div className="min-w-0 flex-1"><span id={`${listId}-${row.file.id}`} hidden>{status}{suffix}</span><button type="button" aria-label={row.file.original_filename} aria-describedby={`${listId}-${row.file.id}`} aria-pressed={file?.file.id === row.file.id} className="flex w-full items-start gap-2 rounded-sm text-left focus-visible:outline-ring" onClick={choose}>
         <span className="min-w-0 flex-1 space-y-1"><span className={`block text-sm leading-relaxed [overflow-wrap:anywhere] ${ready ? 'text-primary' : ''}`}>{row.audit?.report.artifact?.filename || auditReportFilename(row.file.original_filename)}</span><span className="block text-xs text-muted-foreground">{[type || '类型未定', generated, suffix.slice(3)].filter(Boolean).join(' · ')}</span></span>
         {ready ? <Badge shape="square" variant={resultTone(row.audit?.conclusion)}>{row.audit?.conclusion ? conclusionLabel[row.audit.conclusion] ?? '结果未知' : '结果未知'}</Badge> : <Badge shape="square" variant="outline">{status}</Badge>}
       </button>{outcome?.state === 'failed' && <p className="pt-1 text-xs text-destructive">上次打包：{outcome.reason}</p>}</div>
