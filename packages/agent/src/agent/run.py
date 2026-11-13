@@ -18,8 +18,10 @@ from audit.storage_errors import ObjectMissing
 from pydantic import ValidationError
 
 from agent.client import DeepError, DeepUnavailable, read_frame, write_frame
+from agent.execution.activity import Activity
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.protocol import (
+    ActivityEnvelope,
     DeepProgress,
     ErrorEnvelope,
     ExecuteRequest,
@@ -36,6 +38,7 @@ FileSource = Callable[[str, int], bytes]
 class ExecutionContext:
     cancelled: threading.Event = field(default_factory=threading.Event)
     on_progress: Callable[[dict], None] = lambda _state: None
+    on_activity: Callable[[dict], None] = lambda _step: None
     unavailable_sources: frozenset[str] = frozenset()
 
     def raise_if_cancelled(self) -> None:
@@ -45,6 +48,10 @@ class ExecutionContext:
     def progress(self, state: dict) -> None:
         self.raise_if_cancelled()
         self.on_progress(DeepProgress.model_validate(state).model_dump(exclude_none=True))
+
+    def activity(self, step: Activity) -> None:
+        """A live step for viewers. It never cancels or fails the execution."""
+        self.on_activity(step.model_dump())
 
 
 class Runtime(Protocol):
@@ -297,7 +304,11 @@ class UnixControllerServer:
                 def progress(state):
                     write_frame(conn, ProgressEnvelope(op="progress", progress=DeepProgress.model_validate(state)).model_dump())
 
+                def activity(step):
+                    write_frame(conn, ActivityEnvelope(op="activity", activity=Activity.model_validate(step)).model_dump())
+
                 context.on_progress = progress
+                context.on_activity = activity
                 watcher = threading.Thread(target=watch_disconnect, daemon=True)
                 watcher.start()
                 try:

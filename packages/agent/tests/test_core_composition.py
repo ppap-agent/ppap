@@ -60,7 +60,7 @@ class ControlledGuest:
     def ready(self, operation="audit"):
         return True
 
-    def run(self, job, inputs, work, deadline, cancelled):
+    def run(self, job, inputs, work, deadline, cancelled, on_activity=None):
         self.calls += 1
         grant = self.root / f"grant-{self.calls}"
         grant.mkdir()

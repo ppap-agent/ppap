@@ -87,7 +87,7 @@ class Guest:
     def ready(self, operation="audit"):
         return True
 
-    def run(self, job, inputs, work, deadline, cancelled):
+    def run(self, job, inputs, work, deadline, cancelled, on_activity=None):
         self.modes.append(job.analysis_mode)
         grant = self.root / f"grant-{uuid.uuid4().hex}"
         grant.mkdir()
@@ -253,7 +253,7 @@ def test_a_failed_deep_guest_falls_back_to_the_suite_programs_without_repeating_
     controlled_pi(monkeypatch, confirm)
 
     class Failing(Guest):
-        def run(self, job, inputs, work, deadline, cancelled):
+        def run(self, job, inputs, work, deadline, cancelled, on_activity=None):
             if job.analysis_mode == "deep":
                 self.modes.append("deep")
                 raise ControllerFault("MODEL_TIMEOUT")
@@ -277,7 +277,7 @@ def test_a_standard_round_never_runs_or_accepts_a_review(tmp_path, monkeypatch):
     assert all("deep_review" not in row for row in result.coverage.checker_execution["targets"])
 
     class Injecting(Guest):
-        def run(self, job, inputs, work, deadline, cancelled):
+        def run(self, job, inputs, work, deadline, cancelled, on_activity=None):
             super().run(job, inputs, work, deadline, cancelled)
             bundle = work / "result" / "bundle.json"
             bundle.write_text(json.dumps({**json.loads(bundle.read_text()), "deep_reviews": {}}))

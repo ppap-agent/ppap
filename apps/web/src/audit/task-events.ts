@@ -3,12 +3,19 @@ import {apiUrl} from '../api.ts'
 /** A task changed; the reader fetches it through the authorized task API. */
 export type TaskChange = {kinds: string[]; tasks: string[]}
 
+/** One live step of a running deep review. Broadcast only: it is never stored or read back. */
+export type TaskActivity = {kind: 'read' | 'view' | 'run' | 'edit' | 'note'; text: string}
+
+const ACTIVITY_KINDS = new Set<TaskActivity['kind']>(['read', 'view', 'run', 'edit', 'note'])
+
 export type TaskStreamHandlers = {
   /** The stream is (re)connected: read once, since a notice may have been missed while it was down. */
   onReady: () => void
   onChange: (change: TaskChange) => void
   /** Live notices are not available: fall back to reading on a timer. */
   onUnavailable: () => void
+  /** A live deep step, shown while the page is open. */
+  onActivity?: (step: TaskActivity) => void
 }
 
 export type TaskEvents = {
@@ -39,6 +46,14 @@ function subscribe(path: string, handlers: TaskStreamHandlers): () => void {
       handlers.onChange({kinds: Array.isArray(body.kinds) ? body.kinds : [], tasks: Array.isArray(body.tasks) ? body.tasks : []})
     } catch {
       handlers.onChange({kinds: [], tasks: []})
+    }
+  })
+  source.addEventListener('activity', event => {
+    try {
+      const body = JSON.parse((event as MessageEvent<string>).data) as Partial<TaskActivity>
+      if (body.kind && ACTIVITY_KINDS.has(body.kind) && typeof body.text === 'string' && body.text) handlers.onActivity?.({kind: body.kind, text: body.text.slice(0, 160)})
+    } catch {
+      // A malformed step is skipped; steps are only a live view.
     }
   })
   // The server ended the stream (for example, the session expired): reading shows why.

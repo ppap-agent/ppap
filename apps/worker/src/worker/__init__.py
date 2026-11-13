@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import socket
@@ -18,6 +19,8 @@ from product.settings import get_settings
 from product.store import AuthStore
 
 from worker.intake import analyze_file, parse_rule_file, validate_file
+
+logger = logging.getLogger(__name__)
 
 STOP = False
 
@@ -255,12 +258,20 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
                     cancelled.set()
                     raise DeepError("deep_lease_lost")
 
+            def activity(step):
+                # Live steps are a broadcast: a lost one never affects the audit.
+                try:
+                    store.broadcast_activity(claimed, step)
+                except Exception:  # noqa: BLE001
+                    logger.debug("deep_activity_broadcast_failed", exc_info=True)
+
             # A deep round may run a second (Suite) guest after its deep guest failed.
             timeout = DEEP_MODE_REQUEST_TIMEOUT if spec.analysis_mode == "deep" else DEEP_REQUEST_TIMEOUT
             response = DeepClient(socket_path, timeout=timeout).execute(
                 spec,
                 cancelled=cancelled,
                 on_progress=progress,
+                on_activity=activity,
             )
             if cancelled.is_set():
                 raise DeepError("deep_lease_lost")

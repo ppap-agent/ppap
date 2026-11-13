@@ -1,7 +1,9 @@
 """Live task change notices over Server-Sent Events.
 
 The database sends `audit_task_events` at commit whenever a task, its rounds, findings,
-reports, jobs or job progress change (migration 0073). One listener per API process fans
+reports, jobs or job progress change (migration 0073). A running deep review also sends
+`activity` notices: short live steps that only the task's current viewers receive and
+nothing stores. One listener per API process fans
 the notices out to subscribers. A notice only says that a task changed: the browser reads
 the task through its authorized endpoints, so nothing here is a source of results. After a
 reconnect the browser reads once more, so a missed notice never leaves a stale view.
@@ -113,6 +115,12 @@ class TaskEventHub:
         with self._lock:
             task_members = set(self._tasks.get(task_id, ()))
             user_keys = [key for key in self._users if key[0] == tenant_id]
+        if kind == "activity":
+            # A live deep step: only viewers of this task, and only while they watch.
+            if isinstance(body.get("activity"), dict):
+                for member in task_members:
+                    member.push({"kind": "activity", "task": task_id, "activity": body["activity"]})
+            return
         item = {"kind": kind, "task": task_id}
         for member in task_members:
             member.push(item)
@@ -175,13 +183,22 @@ async def _stream(request: Request, subscriber: Subscriber, still_allowed, unsub
                     return
             if item is None:
                 continue
-            kinds, tasks = {item["kind"]}, {item.get("task")}
+            if item["kind"] == "activity":
+                # Steps are shown as they come and never cause a read.
+                yield _frame("activity", item["activity"])
+                continue
+            kinds, tasks, steps = {item["kind"]}, {item.get("task")}, []
             await asyncio.sleep(COALESCE_SECONDS)
             while not subscriber.queue.empty():
                 more = subscriber.queue.get_nowait()
+                if more["kind"] == "activity":
+                    steps.append(more["activity"])
+                    continue
                 kinds.add(more["kind"])
                 tasks.add(more.get("task"))
             yield _frame("change", {"kinds": sorted(kinds), "tasks": sorted(task for task in tasks if task)})
+            for step in steps:
+                yield _frame("activity", step)
     finally:
         unsubscribe()
 

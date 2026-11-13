@@ -157,9 +157,12 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     if job.analysis_mode == "deep":
         assert grant is not None
         from agent.deep_review import review_targets
+        from agent.execution.activity import ACTIVITY_FILE
         from agent.execution.guest_model import PiRunner
 
         runner = PiRunner(grant.model_dump(mode="json"))
+        # Live steps for viewers; the Controller forwards them and nothing stores them.
+        runner.activity = work / ACTIVITY_FILE
         deep = review_targets(snapshot, sources, programs, result["findings"], runner=runner, work=work / "deep-review", seconds=min(runner.wall_seconds, DEEP_REVIEW_SECONDS), unavailable=unavailable)
     payload = {
         **result,
@@ -214,7 +217,9 @@ class CoreRuntime(SemanticRuntime):
             work.mkdir()
             job = write_audit_manifest(inputs, snapshot, sources, programs, analysis_mode=analysis_mode, allow_model_calls=allow_model_calls, unavailable_sources=context.unavailable_sources)
             try:
-                self.runtime.run(job, inputs, work, time.monotonic() + self.timeout, context.cancelled)
+                # Only a deep review has live steps to show.
+                live = {"on_activity": context.activity} if analysis_mode == "deep" else {}
+                self.runtime.run(job, inputs, work, time.monotonic() + self.timeout, context.cancelled, **live)
                 result = read_json(work, ("result", "bundle.json"), MAX_BUNDLE)
             except ControllerFault as exc:
                 # A failed paid operation is not automatically repeated: the

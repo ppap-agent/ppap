@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -30,13 +31,16 @@ from pydantic import Field
 
 from agent.checker_spec import CheckerJobSpec
 from agent.core_program import AuditJobSpec
+from agent.execution.activity import ACTIVITY_FILE, Activity, parse_steps
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.execution.gateway import grant_request
 from agent.execution.guest_model import ModelGrant
-from agent.execution.secure_files import read_json, read_regular
+from agent.execution.secure_files import read_appended, read_json, read_regular
 
 from .progress import Progress
 from .storage import write_json
+
+logger = logging.getLogger(__name__)
 
 MAX_OUTPUT = 16 * 1024 * 1024
 MAX_OUTER_STDERR = 4096
@@ -222,13 +226,24 @@ class ContainerRuntime:
         os.chown(target, 0, GUEST_UID)
         target.chmod(0o440)
 
-    def _execute(self, run: Path, deadline: float, cancelled: threading.Event, on_progress: Callable[[Progress], None] | None, execution_id: UUID) -> None:
+    def _execute(
+        self, run: Path, deadline: float, cancelled: threading.Event, on_progress: Callable[[Progress], None] | None, execution_id: UUID, on_activity: Callable[[Activity], None] | None = None
+    ) -> None:
         from agent.execution.paddle_bridge import paddle_bridge
 
         with paddle_bridge(run / "inputs", deadline, cancelled) as tool_env:
-            self._execute_guest(run, deadline, cancelled, on_progress, execution_id, tool_env)
+            self._execute_guest(run, deadline, cancelled, on_progress, execution_id, tool_env, on_activity)
 
-    def _execute_guest(self, run: Path, deadline: float, cancelled: threading.Event, on_progress: Callable[[Progress], None] | None, execution_id: UUID, tool_env: dict[str, str]) -> None:
+    def _execute_guest(
+        self,
+        run: Path,
+        deadline: float,
+        cancelled: threading.Event,
+        on_progress: Callable[[Progress], None] | None,
+        execution_id: UUID,
+        tool_env: dict[str, str],
+        on_activity: Callable[[Activity], None] | None = None,
+    ) -> None:
         env = {
             **tool_env,
             "PATH": "/usr/local/bin:/usr/bin:/bin",
@@ -274,6 +289,25 @@ class ContainerRuntime:
         )
         self.active[execution_id] = process
         last_progress: Progress | None = None
+        activity_offset = 0
+
+        def forward_activity() -> None:
+            # Untrusted guest lines: only valid, bounded steps pass; a bad file only stops the steps.
+            nonlocal activity_offset
+            if on_activity is None or activity_offset < 0:
+                return
+            try:
+                steps, used = parse_steps(read_appended(run / "work", ACTIVITY_FILE, activity_offset, 64 * 1024))
+            except (OSError, ValueError):
+                activity_offset = -1
+                return
+            activity_offset += used
+            for step in steps:
+                try:
+                    on_activity(step)
+                except Exception:  # noqa: BLE001 - a lost live step never affects the audit
+                    logger.debug("deep_activity_forward_failed", exc_info=True)
+
         stderr_tail = bytearray()
         assert process.stderr is not None
         try:
@@ -293,7 +327,9 @@ class ContainerRuntime:
                     if progress is not None and progress != last_progress:
                         on_progress(progress)
                         last_progress = progress
+                forward_activity()
                 time.sleep(0.1)
+            forward_activity()
         finally:
             try:
                 _kill_tree(process)
@@ -431,6 +467,7 @@ class ContainerRuntime:
         deadline: float,
         cancelled: threading.Event,
         on_progress: Callable[[Progress], None] | None = None,
+        on_activity: Callable[[Activity], None] | None = None,
     ) -> None:
         runtime_id = spec.execution_id
         runtime_attempt, source_attempt, job_key = 1, None, ""
@@ -495,7 +532,7 @@ class ContainerRuntime:
                     if audit_marker is not None:
                         write_json(audit_marker, {"attempt": runtime_attempt, "job_key": job_key, "uncertain": True})
                     self._write_grant(runtime_id, run)
-                self._execute(run, deadline, cancelled, on_progress, runtime_id)
+                self._execute(run, deadline, cancelled, on_progress, runtime_id, on_activity)
                 if cancelled.is_set() or time.monotonic() >= deadline:
                     raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
                 if model_operation:

@@ -3811,6 +3811,18 @@ class AuthStore:
             ).fetchone()
             return row is not None
 
+    def broadcast_activity(self, claimed: ClaimedJob, step: dict) -> None:
+        """A live deep step to the task's viewers: a notice only, nothing is stored."""
+        if not claimed.round_id:
+            return
+        with self._conn() as conn:
+            conn.execute(
+                """SELECT pg_notify('audit_task_events', json_build_object(
+                       'tenant', r.tenant_id, 'task', r.source_draft_id, 'kind', 'activity', 'activity', %s::jsonb)::text)
+                   FROM product.audit_rounds r WHERE r.id = %s AND r.source_draft_id IS NOT NULL""",
+                (Jsonb(step), claimed.round_id),
+            )
+
     def complete_job(self, claimed: ClaimedJob, worker_ident: str, result: dict, outcome: str = "succeeded") -> bool:
         coverage = result.get("coverage") or {}
         findings = result.get("findings") or []

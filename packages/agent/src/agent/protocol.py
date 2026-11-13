@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from agent.execution.activity import Activity
+
 
 class FrozenFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -105,6 +107,15 @@ class DeepProgress(BaseModel):
     phase: Literal["reading", "planning", "checking", "validating"]
     completed_count: int | None = Field(default=None, ge=0)
     total_count: int | None = Field(default=None, ge=0)
+
+
+class ActivityEnvelope(BaseModel):
+    """A live deep step for viewers; the Worker broadcasts it and nothing stores it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    op: Literal["activity"]
+    activity: Activity
 
 
 class ProgressEnvelope(BaseModel):

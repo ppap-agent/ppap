@@ -100,3 +100,51 @@ def test_owner_lookup_reuses_one_connection_and_never_caches_a_missing_task(auth
     first.close()
     assert hub._owner(missing) is None and hub._lookup is not None and not hub._lookup.closed
     hub._lookup.close()
+
+
+def test_live_steps_reach_only_the_tasks_viewers_and_never_ask_for_a_read(monkeypatch):
+    monkeypatch.setattr(task_events, "COALESCE_SECONDS", 0.01)
+
+    async def scenario():
+        hub = TaskEventHub(store=None)  # type: ignore[arg-type]
+        hub._ensure_listener = lambda: None  # type: ignore[method-assign]
+        hub._owner = lambda task_id: "owner"  # type: ignore[method-assign]
+        loop = asyncio.get_running_loop()
+        viewer, owner_list = Subscriber(loop), Subscriber(loop)
+        hub.subscribe_task("t1", viewer)
+        hub.subscribe_user("tenant", "owner", owner_list)
+        step = {"kind": "note", "text": "第 3 条维持 NG"}
+        hub._dispatch(json.dumps({"tenant": "tenant", "task": "t1", "kind": "activity", "activity": step}))
+        await asyncio.sleep(0)
+        assert owner_list.queue.empty()
+        request = FakeRequest()
+        frames = _stream(request, viewer, lambda: True, lambda: None)
+        assert "event: ready" in await frames.__anext__()
+        assert await frames.__anext__() == 'event: activity\ndata: {"kind": "note", "text": "第 3 条维持 NG"}\n\n'
+        # A change and the steps around it: one change frame, then the steps in order.
+        viewer.queue.put_nowait({"kind": "progress", "task": "t1"})
+        viewer.queue.put_nowait({"kind": "activity", "task": "t1", "activity": {"kind": "read", "text": "cp.xlsx"}})
+        assert (await frames.__anext__()).startswith("event: change")
+        assert (await frames.__anext__()).startswith('event: activity\ndata: {"kind": "read"')
+        request.closed = True
+        await frames.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_a_step_for_an_unknown_round_runs_and_sends_nothing(auth_store_factory):
+    from audit.audits import ClaimedJob
+
+    store = auth_store_factory()
+
+    async def scenario():
+        hub = TaskEventHub(store)
+        subscriber = Subscriber(asyncio.get_running_loop())
+        hub.subscribe_task(str(uuid.uuid4()), subscriber)
+        assert await asyncio.wait_for(subscriber.queue.get(), timeout=10) == {"kind": "resync"}
+        claimed = ClaimedJob(id=str(uuid.uuid4()), kind="audit", payload={}, attempt=1, round_id=str(uuid.uuid4()), tenant_id=str(uuid.uuid4()))
+        await asyncio.to_thread(store.broadcast_activity, claimed, {"kind": "read", "text": "cp.xlsx"})
+        await asyncio.sleep(0.5)
+        assert subscriber.queue.empty()
+
+    asyncio.run(scenario())

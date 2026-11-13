@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState} from 'react'
 import type {components} from '../generated/openapi'
 import {shareUnresolved} from './share-actions'
+import {appendStep, NO_STEPS, type LiveSteps} from './live-steps'
 import type {TaskEvents} from './task-events'
 
 type Task = components['schemas']['AuditTask']
@@ -18,10 +19,13 @@ export type ObservationMode = 'live' | 'polling' | 'idle'
  * With live notices a read happens only when the task changed (and once after each reconnect);
  * without them, or after the stream fails, reads fall back to the backoff timer.
  */
-export function useTaskObservation(taskId: string | undefined, enabled: boolean, read: () => Promise<boolean | null>, events?: TaskEvents['task']): ObservationMode {
+export function useTaskObservation(taskId: string | undefined, enabled: boolean, read: () => Promise<boolean | null>, events?: TaskEvents['task']): {mode: ObservationMode; steps: LiveSteps} {
   const latest = useRef({taskId, enabled, read})
   latest.current = {taskId, enabled, read}
   const [mode, setMode] = useState<ObservationMode>('idle')
+  const [steps, setSteps] = useState<LiveSteps>(NO_STEPS)
+  // Steps belong to the task on screen; another task starts from none.
+  useEffect(() => setSteps(NO_STEPS), [taskId])
   useEffect(() => {
     if (!enabled || !taskId) {setMode('idle'); return}
     let alive = true, reading = false, again = false, delay = 3000, retryAt = 0, polling = !events
@@ -51,6 +55,7 @@ export function useTaskObservation(taskId: string | undefined, enabled: boolean,
       onReady: () => void refresh(true),
       onChange: () => void refresh(true),
       onUnavailable: () => {if (!alive || polling) return; polling = true; setMode('polling'); schedule()},
+      onActivity: step => {if (alive) setSteps(previous => appendStep(previous, step))},
     })
     schedule()
     function wake() {if (document.hidden) clearTimeout(timer); else void refresh()}
@@ -64,5 +69,5 @@ export function useTaskObservation(taskId: string | undefined, enabled: boolean,
       document.removeEventListener('visibilitychange', wake)
     }
   }, [taskId, enabled, events])
-  return mode
+  return {mode, steps}
 }

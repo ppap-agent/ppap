@@ -39,6 +39,27 @@ def read_regular(root: Path, parts: tuple[str, ...], limit: int) -> bytes:
     raise RuntimeError("Artifact read did not complete")
 
 
+def read_appended(root: Path, name: str, offset: int, limit: int) -> bytes:
+    """Up to `limit` bytes after `offset` of a growing run-local file; empty while it does not exist."""
+    if not name or name in {".", ".."} or "/" in name or "\\" in name:
+        raise ValueError("Invalid artifact components")
+    parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        except FileNotFoundError:
+            return b""
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError("Artifact must be a regular file with no external hard links")
+            return os.pread(fd, limit, offset)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(parent)
+
+
 def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:

@@ -143,8 +143,8 @@ class CoreRoundTests(unittest.TestCase):
         controller = Controller(runtime, read, executor_revision=self.revision, authorize=allowed)
         store = SimpleNamespace(settings=self.settings, round_work=lambda identity: work, complete_job=complete, audit_progress=lambda *args: True, model_user_for_job=lambda job: "initiator")
 
-        def transport(spec, *, cancelled, on_progress):
-            return controller.handle(spec, ExecutionContext(cancelled=cancelled, on_progress=on_progress))
+        def transport(spec, *, cancelled, on_progress, on_activity=None):
+            return controller.handle(spec, ExecutionContext(cancelled=cancelled, on_progress=on_progress, on_activity=on_activity or (lambda _step: None)))
 
         original_context = audit_runtime.CheckerContext
 

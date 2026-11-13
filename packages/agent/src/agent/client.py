@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from agent.execution.budget import DEEP_TOTAL_SECONDS
-from agent.protocol import ErrorEnvelope, ExecuteRequest, ExecuteResponse, ProgressEnvelope, RequestEnvelope, ResultEnvelope
+from agent.protocol import ActivityEnvelope, ErrorEnvelope, ExecuteRequest, ExecuteResponse, ProgressEnvelope, RequestEnvelope, ResultEnvelope
 
 MAX_FRAME = 32 * 1024 * 1024
 DEEP_REQUEST_TIMEOUT = DEEP_TOTAL_SECONDS + 30.0
@@ -120,11 +120,13 @@ class DeepClient:
         self.socket_path = str(socket_path or "").strip()
         self.timeout = timeout
 
-    def execute(self, spec: ExecuteRequest, *, cancelled: threading.Event | None = None, on_progress: Callable[[dict], None] | None = None) -> ExecuteResponse:
-        raw = self._request(RequestEnvelope(op="execute", spec=spec).model_dump(), cancelled=cancelled, on_progress=on_progress)
+    def execute(
+        self, spec: ExecuteRequest, *, cancelled: threading.Event | None = None, on_progress: Callable[[dict], None] | None = None, on_activity: Callable[[dict], None] | None = None
+    ) -> ExecuteResponse:
+        raw = self._request(RequestEnvelope(op="execute", spec=spec).model_dump(), cancelled=cancelled, on_progress=on_progress, on_activity=on_activity)
         return ResultEnvelope.model_validate(raw).result
 
-    def _request(self, payload: dict, *, cancelled=None, on_progress=None) -> dict:
+    def _request(self, payload: dict, *, cancelled=None, on_progress=None, on_activity=None) -> dict:
         deadline = time.monotonic() + self.timeout
         _check_active(deadline, cancelled)
         if not self.socket_path:
@@ -139,6 +141,12 @@ class DeepClient:
                 write_frame(sock, payload, deadline=deadline, cancelled=cancelled)
                 while True:
                     raw = read_frame(sock, deadline=deadline, cancelled=cancelled)
+                    if raw.get("op") == "activity":
+                        step = ActivityEnvelope.model_validate(raw).activity
+                        _check_active(deadline, cancelled)
+                        if on_activity:
+                            on_activity(step.model_dump())
+                        continue
                     if raw.get("op") != "progress":
                         break
                     progress = ProgressEnvelope.model_validate(raw).progress

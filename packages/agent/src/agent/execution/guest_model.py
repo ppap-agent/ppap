@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from audit.models import Artifact
 from pydantic import BaseModel, Field, ValidationError
 
+from agent.execution.activity import ActivityRelay
 from agent.execution.secure_files import read_json, read_regular, reject_constant, unique_object
 
 # What Pi loads natively from its agent directory: the fixed instructions (AGENTS.md) and the
@@ -225,6 +226,9 @@ def install_deep_agent(home: Path) -> None:
 
 
 class PiRunner(ModelRunner):
+    # Where live steps go while Pi runs (deep review only); None sends none.
+    activity: Path | None = None
+
     """Fixed Pi SDK process with the same artifact and execution-grant contract."""
 
     def _run(self, work: Path, prompt: str, deadline: float, *, reasoning_effort: ReasoningEffort) -> dict[str, Any]:
@@ -269,13 +273,18 @@ class PiRunner(ModelRunner):
                 stderr=stderr,
                 start_new_session=separate_session,
             )
+            relay = ActivityRelay(work / "stdout.jsonl", self.activity) if self.activity is not None else None
             try:
                 while process.poll() is None:
                     if time.monotonic() >= deadline:
                         raise TimeoutError("Model stage deadline exceeded")
                     if stdout.tell() > 16 * 1024 * 1024 or stderr.tell() > 1024 * 1024:
                         raise ModelProtocolError("Model log limit exceeded")
+                    if relay is not None:
+                        relay.pump()
                     time.sleep(0.05)
+                if relay is not None:
+                    relay.pump()
             finally:
                 if separate_session:
                     try:
