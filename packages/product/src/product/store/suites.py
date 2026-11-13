@@ -138,23 +138,6 @@ class SuiteStore:
             insert_facts(db, revision.id, tenant_id, derive_facts(all_files, source_path))
             return revision
 
-    def official_revision_id_for_source(self, source_path: str, *, conn=None) -> str | None:
-        """Latest official revision stored for one predefined directory path.
-
-        Content digest is not part of the lookup, so ``uaes/U08`` and an identical
-        leaf at another path stay distinct. Legacy asset paths are not stored.
-        """
-        if not isinstance(source_path, str) or not source_path or source_path.strip() != source_path:
-            raise ValueError("invalid_suite_source_path")
-        with nullcontext(conn) if conn is not None else self._conn() as db:
-            row = db.execute(
-                """SELECT id FROM product.suite_revisions
-                   WHERE tenant_id IS NULL AND source_path=%s AND NOT history_only
-                   ORDER BY revision_number DESC, id DESC LIMIT 1""",
-                (source_path,),
-            ).fetchone()
-        return str(row[0]) if row else None
-
     def save_snapshot(self, conn, *, snapshot: ExecutionSnapshot) -> None:
         """Called inside acceptance, after audit_rounds exists and before its job is queued."""
         if not snapshot.round_id:

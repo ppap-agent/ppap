@@ -816,13 +816,6 @@ class SuiteReleaseStore:
         ).fetchall()
         return [{"id": str(row[0]), "task_id": str(row[1]) if row[1] else None, "created_at": row[2].isoformat()} for row in rows]
 
-    def record_validation(self, principal, revision_id: str, proof: SuiteValidationReport, *, expected_revision: int) -> dict:
-        """Host-only completion. There is intentionally no HTTP endpoint accepting proof."""
-        with self._conn() as conn, conn.transaction():
-            _member(conn, principal)
-            _lock(conn, principal.tenant_id)
-            return self._record_validation(conn, principal.tenant_id, principal.user_id, revision_id, proof, expected_revision)
-
     def record_official_validation(self, revision_id: str, proof: SuiteValidationReport, *, expected_revision: int) -> dict:
         """Platform corpus runner only; never infer verification from an official label."""
         if self.role != "migrator":

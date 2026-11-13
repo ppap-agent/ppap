@@ -5,13 +5,10 @@ import logging
 import re
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from audit.checker_lib.nio.control_plan_shared import (
     CP_FIELD_ALIASES as _CP_FIELD_ALIASES,
-)
-from audit.checker_lib.nio.control_plan_shared import (
-    DATA_PREVIEW_ROWS as _DATA_PREVIEW_ROWS,
 )
 from audit.checker_lib.nio.control_plan_shared import (
     HEADER_SCAN_COLS as _HEADER_SCAN_COLS,
@@ -356,29 +353,6 @@ class ControlPlanAgent(ExcelAgent):
         )
         if not rows:
             return None, f"{doc_type.get_type_name()}无法识别必要列结构"
-        return rows, ""
-
-    def _extract_scl_rows_for_cp_cross_rules(self) -> Any:
-        files = self.get_related_files(PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST)
-        if not files:
-            return None, f"缺少关联文档: {PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name()}"
-
-        rows: List[Dict[str, str]] = []
-        for related_file in files:
-            file_url = str(getattr(related_file, "file_url", "") or "")
-            file_name = Path(file_url).name if file_url else "特殊特性清单"
-            workbook = self.load_related_workbook(related_file)
-            ws = self._find_special_characteristic_list_worksheet(workbook)
-            extracted_rows = self._extract_rows_from_single_sheet(ws, _SCL_FIELD_ALIASES_V2, ("char_description",)) if ws is not None else []
-            if not extracted_rows:
-                return None, f"特殊特性清单“{file_name}”无法识别必要列结构"
-            for row in extracted_rows:
-                if not self._is_valid_scl_cross_row(row):
-                    continue
-                rows.append({**row, _SCL_FILE_NAME_KEY: file_name})
-
-        if not rows:
-            return None, "特殊特性清单未提取到有效特性项"
         return rows, ""
 
     def _find_special_characteristic_list_worksheet(self, workbook: Any) -> Any:
@@ -1239,134 +1213,6 @@ class ControlPlanAgent(ExcelAgent):
             return "NG", f"控制方法/样本数/频次不一致: {display_values(mismatch_items)}"
         return "Pass", "控制计划与特殊特性清单在控制方法/样本数/频次一致"
 
-    # ------------------------------------------------------------------
-    # 一些通用工具
-    # ------------------------------------------------------------------
-    def _find_column(self, ws: Any, keywords: List[str]) -> Optional[int]:
-        """Return the *first* column index whose header (within the first
-        `_HEADER_SCAN_ROWS` rows) contains ANY of `keywords`.  Returns None when
-        nothing is found."""
-
-        # 检查是否是样本量相关的关键词，如果是则使用专门的样本量查找逻辑
-        sample_related_keywords = {
-            "样本容量",
-            "样本量",
-            "数量",
-            "样本",
-            "Sample Size",
-            "Sample",
-            "Size",
-        }
-        is_sample_search = any(kw in sample_related_keywords for kw in keywords)
-
-        if is_sample_search:
-            return self._find_sample_column(ws, keywords)
-        else:
-            return self._find_general_column(ws, keywords)
-
-    def _find_sample_column(self, ws: Any, keywords: List[str]) -> Optional[int]:
-        """专门用于查找样本量列的方法"""
-        # 第一轮：精确匹配优先级高的关键词
-        priority_keywords = ["样本容量", "样本量", "数量"]
-        for row in range(1, min(_HEADER_SCAN_ROWS, ws.max_row) + 1):
-            for col in range(1, min(_HEADER_SCAN_COLS, ws.max_column) + 1):
-                val = ws.cell(row=row, column=col).value
-                if not isinstance(val, str):
-                    continue
-                val_clean = val.replace("\n", "").replace("\r", "").replace(" ", "").strip()
-
-                # 优先匹配完整的中文关键词
-                for kw in priority_keywords:
-                    if kw in val_clean:
-                        return col
-
-        # 第二轮：模糊匹配，但要避免误匹配
-        secondary_keywords = ["样本", "Sample Size", "Sample", "Size"]
-        for row in range(1, min(_HEADER_SCAN_ROWS, ws.max_row) + 1):
-            for col in range(1, min(_HEADER_SCAN_COLS, ws.max_column) + 1):
-                val = ws.cell(row=row, column=col).value
-                if not isinstance(val, str):
-                    continue
-                val_clean = val.strip()
-
-                # 避免匹配到明显错误的列
-                exclude_keywords = [
-                    "日期",
-                    "Date",
-                    "时间",
-                    "Time",
-                    "版本",
-                    "Version",
-                    "审批",
-                    "Approval",
-                ]
-                if any(exclude in val_clean for exclude in exclude_keywords):
-                    continue
-
-                for kw in secondary_keywords:
-                    if kw in val_clean:
-                        # 进一步验证：检查这个列是否真的像样本量列
-                        if self._validate_sample_column(ws, col):
-                            return col
-
-        return None
-
-    def _find_general_column(self, ws: Any, keywords: List[str]) -> Optional[int]:
-        """通用的列查找方法，适用于频率、测量技术等列"""
-        for row in range(1, min(_HEADER_SCAN_ROWS, ws.max_row) + 1):
-            for col in range(1, min(_HEADER_SCAN_COLS, ws.max_column) + 1):
-                val = ws.cell(row=row, column=col).value
-                if not isinstance(val, str):
-                    continue
-                val_clean = val.replace("\n", "").replace("\r", "").replace(" ", "").strip()
-
-                # 检查是否包含任何关键词
-                for kw in keywords:
-                    if kw in val_clean:
-                        return col
-
-        return None
-
-    def _validate_sample_column(self, ws: Any, col: int) -> bool:
-        """验证这个列是否真的是样本量列
-        注意：这个验证应该宽松，避免过度过滤掉可能的样本量列
-        """
-        # 检查前几行数据，看是否包含数字或数量相关的内容
-        valid_sample_patterns = 0
-        total_checked = 0
-
-        for row in range(1, min(20, ws.max_row) + 1):
-            cell_value = ws.cell(row, col).value
-            if cell_value is None:
-                continue
-
-            if isinstance(cell_value, (int, float)):
-                valid_sample_patterns += 1
-                total_checked += 1
-                continue
-
-            if isinstance(cell_value, str):
-                v = cell_value.strip()
-                total_checked += 1
-
-                # 跳过明显的标题行
-                if any(header_kw in v for header_kw in ["样本", "Sample", "容量", "Size", "数量"]):
-                    total_checked -= 1  # 不计入统计
-                    continue
-
-                # 检查是否包含数字
-                if re.search(r"\d+", v):
-                    valid_sample_patterns += 1
-                # 检查是否是100%格式
-                elif v == "100%" or (v.endswith("%") and v[:-1].isdigit()):
-                    valid_sample_patterns += 1
-
-        # 只要有一些数字相关的内容，就认为可能是样本量列
-        # 不要过度过滤，让后续的数据验证逻辑来判断NG
-        if total_checked > 0:
-            return (valid_sample_patterns / total_checked) >= 0.1  # 降低阈值，更宽松
-        return False
-
     def _find_special_char_column(self, ws: Any) -> Tuple[Optional[int], Optional[int]]:
         """更精确地查找特殊特性分类列，避免误匹配。
 
@@ -1560,99 +1406,6 @@ class ControlPlanAgent(ExcelAgent):
                         if kw.lower() in val_lower:
                             return row, col
         return None, None
-
-    def _iter_data_cells(self, ws: Any, data_col: int) -> Iterator[Any]:
-        """Yield at most `_DATA_PREVIEW_ROWS` cell values from `data_col`,
-        starting from the first row *below* the header row where the header was
-        detected."""
-        header_row = None
-
-        # 找到样本量相关的标题行，一旦找到就停止
-        for row in range(1, min(_HEADER_SCAN_ROWS, ws.max_row) + 1):
-            cell_value = ws.cell(row, data_col).value
-            if isinstance(cell_value, str) and cell_value.strip():
-                # 检查是否包含样本量相关关键词
-                cell_clean = cell_value.replace("\n", "").replace("\r", "").replace(" ", "").strip()
-                sample_keywords = ["样本", "Sample", "容量", "Size", "数量", "Quantity"]
-                if any(kw in cell_clean for kw in sample_keywords):
-                    header_row = row
-                    break  # 找到样本量标题后立即停止
-
-        # 如果没找到标题行，从第一行开始
-        if header_row is None:
-            header_row = 1
-
-        # 从标题行的下一行开始迭代数据
-        start_row = header_row + 1
-        for row in range(start_row, min(ws.max_row, start_row + _DATA_PREVIEW_ROWS) + 1):
-            cell_value = ws.cell(row=row, column=data_col).value
-            # 排除明显的标题内容，但保留其他数据
-            if isinstance(cell_value, str):
-                cell_clean = cell_value.strip()
-                # 只跳过明显是标题的内容
-                if any(header_kw in cell_clean for header_kw in ["容量", "Size", "样本", "Sample"]) and not any(c.isdigit() for c in cell_clean):
-                    continue
-            yield cell_value
-
-    def _iter_freq_data_cells(self, ws: Any, data_col: int) -> Iterator[Any]:
-        """为频率列专门设计的数据迭代方法"""
-        header_row = None
-
-        # 找到频率相关的标题行
-        for row in range(1, min(_HEADER_SCAN_ROWS, ws.max_row) + 1):
-            cell_value = ws.cell(row, data_col).value
-            if isinstance(cell_value, str) and cell_value.strip():
-                # 检查是否包含频率相关关键词
-                freq_keywords = ["频率", "频次", "Frequency", "Freq"]
-                if any(kw in cell_value for kw in freq_keywords):
-                    header_row = row
-                    break
-
-        # 如果没找到标题行，尝试找到数据开始的行
-        if header_row is None:
-            # 寻找第一个有意义的数据行（跳过明显的标题、版本信息等）
-            for row in range(1, min(_HEADER_SCAN_ROWS, ws.max_row) + 1):
-                cell_value = ws.cell(row, data_col).value
-                if isinstance(cell_value, str) and cell_value.strip():
-                    cell_clean = cell_value.strip()
-                    # 跳过明显的版本信息、修订信息等
-                    skip_keywords = [
-                        "Content",
-                        "修订",
-                        "初版",
-                        "版本",
-                        "Version",
-                        "Revision",
-                    ]
-                    if not any(skip_kw in cell_clean for skip_kw in skip_keywords):
-                        # 找到第一个可能的数据行
-                        header_row = row - 1  # 假设前一行是标题
-                        break
-
-            # 如果还是没找到，默认从第一行开始
-            if header_row is None:
-                header_row = 1
-
-        # 从标题行的下一行开始迭代数据
-        start_row = header_row + 1
-        for row in range(start_row, min(ws.max_row, start_row + _DATA_PREVIEW_ROWS) + 1):
-            cell_value = ws.cell(row=row, column=data_col).value
-            # 过滤掉明显不是频率数据的内容
-            if isinstance(cell_value, str):
-                cell_clean = cell_value.strip()
-                # 跳过版本信息、修订信息等
-                skip_keywords = [
-                    "Content",
-                    "修订",
-                    "初版",
-                    "版本",
-                    "Version",
-                    "Revision",
-                    "内容",
-                ]
-                if any(skip_kw in cell_clean for skip_kw in skip_keywords):
-                    continue
-            yield cell_value
 
     @staticmethod
     def _normalize_header_text(value: Any) -> str:

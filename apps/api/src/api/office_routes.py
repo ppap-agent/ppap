@@ -24,7 +24,7 @@ def register_office_routes(app, store, principal_of, settings):
             return JSONResponse({"error": "invalid_onlyoffice_configuration"}, status_code=503)
 
     @app.get("/office/content")
-    def office_content(ticket: str):
+    def office_content(ticket: str) -> Response:
         try:
             claims = read_ticket(ticket, settings.onlyoffice_secret)
         except ValueError:

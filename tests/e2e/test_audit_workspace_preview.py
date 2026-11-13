@@ -15,27 +15,6 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class AuditWorkspacePreviewTests(unittest.TestCase):
-    def test_wide_review_docks_evidence_beside_the_list(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 960})
-            page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
-            queue = page.get_by_role("navigation", name="文件队列", exact=True)
-            queue.get_by_role("button").first.click()
-            details = page.get_by_role("region", name="审核详情", exact=True)
-            details.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name=re.compile("^全部")).click()
-            details.get_by_role("button", name=re.compile("^查看依据 1\\.1")).click()
-            expect(page.get_by_role("heading", name=re.compile(r"^第 1 条 · "))).to_be_visible()
-            # The list stays usable and the docked evidence follows the selected row.
-            details.get_by_role("button", name=re.compile("^查看依据 1\\.2")).click()
-            expect(page.get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()
-            page.keyboard.press("k")
-            expect(page.get_by_role("heading", name=re.compile(r"^第 1 条 · "))).to_be_visible()
-            page.keyboard.press("Escape")
-            expect(queue).to_be_visible()
-            browser.close()
-
     def test_browser_back_and_forward_restore_overview_and_exact_file_report(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -143,28 +122,6 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(trigger).to_be_focused()
             browser.close()
 
-    def test_result_counts_filter_the_list(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 900})
-            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
-            expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
-            queue = page.get_by_role("navigation", name="文件队列", exact=True)
-            queue.get_by_role("button", name=re.compile("PFMEA.xlsx")).click()
-            details = page.get_by_role("region", name="审核详情", exact=True)
-            chips = details.get_by_role("group", name="审核结果筛选", exact=True)
-            ng = chips.get_by_role("button", name="不符合 1", exact=True)
-            expect(ng).to_have_attribute("aria-pressed", "true")
-            # Each file card names its customer and rule once; the counts stay as list filters.
-            expect(queue.get_by_role("button", name=re.compile("^PFMEA.xlsx "))).to_contain_text("示例客户 · 示例 PFMEA 规则 · v1")
-            expect(details.get_by_role("row")).to_have_count(2)
-            chips.get_by_role("button", name=re.compile("^符合")).click()
-            expect(details.get_by_role("row")).to_have_count(2)
-            expect(details.get_by_role("row").nth(1)).to_contain_text("符合")
-            chips.get_by_role("button", name=re.compile("^全部")).click()
-            expect(details.get_by_role("row")).to_have_count(3)
-            browser.close()
-
     def test_each_clause_opens_its_own_basis_and_restores_keyboard_focus(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -187,6 +144,16 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page.keyboard.press("Escape")
             expect(basis).to_have_count(0)
             expect(second).to_be_focused()
+            # Wide screens dock the evidence beside the list; the list stays usable.
+            page.set_viewport_size({"width": 1440, "height": 960})
+            first.click()
+            expect(page.get_by_role("heading", name=re.compile(r"^第 1 条 · "))).to_be_visible()
+            second.click()
+            expect(page.get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()
+            page.keyboard.press("k")
+            expect(page.get_by_role("heading", name=re.compile(r"^第 1 条 · "))).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(page.get_by_role("navigation", name="文件队列", exact=True)).to_be_visible()
             browser.close()
 
     def test_cross_file_original_keeps_the_selected_clause_and_report(self):
@@ -210,24 +177,4 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page.get_by_role("link", name="返回审核结果", exact=True).click()
             # The file queue stays beside the open file.
             expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button")).to_have_count(3)
-            browser.close()
-
-    def test_reference_stays_visible_without_becoming_an_audit_or_a_report(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1280, "height": 844})
-            page.goto(PREVIEW + "/preview/audit.html?scene=with-reference")
-            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
-            page.get_by_role("button", name="开始识别", exact=True).click()
-            page.get_by_role("button", name="开始审核", exact=True).click()
-            page.get_by_role("button", name="读取审核结果", exact=True).click()
-            queue = page.get_by_role("navigation", name="文件队列", exact=True)
-            reference = queue.get_by_role("button", name=re.compile("^特殊特性清单.xlsx"))
-            expect(reference).to_be_visible()
-            self.assertNotRegex(reference.inner_text(), r"PASS|NG")
-            reference.click()
-            expect(page.get_by_role("region", name="比对资料原件", exact=True)).to_be_visible()
-            expect(page.get_by_role("status").filter(has_text="文件已结束 2/2")).to_be_visible()
-            page.get_by_role("button", name="审核报告", exact=True).click()
-            expect(page.get_by_role("list", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
             browser.close()

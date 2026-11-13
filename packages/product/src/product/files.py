@@ -112,14 +112,6 @@ def public_addresses(hostname: str, port: int | None) -> tuple[str, ...]:
     return tuple(addresses)
 
 
-def host_blocked(hostname: str, port: int | None) -> bool:
-    try:
-        public_addresses(hostname, port)
-    except UnsafeSource:
-        return True
-    return False
-
-
 def _pinned_url(parts, ip: str) -> str:
     port = parts.port or (443 if parts.scheme == "https" else 80)
     host = f"[{ip}]" if ":" in ip else ip

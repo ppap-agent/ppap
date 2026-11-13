@@ -13,7 +13,7 @@ from agent.protocol import DeepCoverage, DeepFinding, ExecuteRequest, ExecuteRes
 
 
 def spec_from_work(work: RoundWork, executor: str, executor_revision: str, protocol_revision: str, *, checker_snapshot_digest: str = "") -> ExecuteRequest:
-    if executor not in {"ppap-deep", "ppap-checker-core"}:
+    if executor != "ppap-checker-core":
         raise DeepError("deep_executor_mismatch")
     files = []
     for item in work.inputs:
@@ -38,7 +38,7 @@ def spec_from_work(work: RoundWork, executor: str, executor_revision: str, proto
         protocol_revision=protocol_revision,
         round_id=work.round_id,
         files=files,
-        executor=cast(Literal["ppap-deep", "ppap-checker-core"], executor),
+        executor="ppap-checker-core",
         executor_revision=executor_revision,
         tenant_id=work.tenant_id,
         initiating_user_id=work.initiating_user_id,
@@ -134,12 +134,7 @@ def checker_response(
     usage: dict[str, int] | None = None,
     usage_source: Literal["unknown", "provider", "controlled"] = "controlled",
 ) -> ExecuteResponse:
-    """Map fixed checker results into the existing product response.
-
-    ``host_source_trace_v1`` stays reserved for trace validation. A Python
-    program that ran is not that proof. Historical responses keep their own
-    verification label.
-    """
+    """Map fixed checker results into the existing product response."""
     from audit.contracts import AuditResultItem
 
     findings: list[DeepFinding] = []
@@ -375,7 +370,6 @@ def checker_response(
             locator_gap=locator_gap,
             rule_items=rule_items,
             clarifications=clarifications,
-            verification=None,
         ),
         note="deep_checker_audit",
         usage=dict(usage or {}),
@@ -634,38 +628,3 @@ def product_result(response: ExecuteResponse, work: RoundWork) -> dict:
         "usage": response.usage,
         "usage_source": response.usage_source,
     }
-
-
-def passing_response(spec: ExecuteRequest) -> ExecuteResponse:
-    """Deterministic ScriptedRuntime helper used by tests, not production Settings."""
-    findings: list[DeepFinding] = []
-    checked: list[str] = []
-    unchecked: list[str] = []
-    for item in spec.files:
-        if item.role == TARGET:
-            findings.append(
-                DeepFinding(
-                    item_key=f"target:{item.file_version_id}",
-                    classification="资料",
-                    item="深度审核已完成",
-                    priority="P0",
-                    status="PASS",
-                    suggestions="",
-                    locator={
-                        "kind": "file_version",
-                        "file_version_id": item.file_version_id,
-                        "filename": item.filename,
-                    },
-                )
-            )
-            checked.append(item.filename)
-        else:
-            unchecked.append(f"{item.filename}（参考，未作为待审完整检查）")
-    return ExecuteResponse(
-        protocol_revision=spec.protocol_revision,
-        round_id=spec.round_id,
-        files=list(spec.files),
-        findings=findings,
-        coverage=DeepCoverage(checked=checked, unchecked=unchecked, locator_gap=False),
-        note="deep_audit",
-    )

@@ -17,7 +17,7 @@ from audit.audits import DEEP_PROTOCOL_REVISION
 from audit.storage_errors import ObjectMissing
 from pydantic import ValidationError
 
-from agent.client import DeepError, DeepUnavailable, read_frame, write_frame
+from agent.client import DeepError, read_frame, write_frame
 from agent.execution.activity import Activity
 from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from agent.protocol import (
@@ -58,21 +58,6 @@ class Runtime(Protocol):
     def execute(self, spec: ExecuteRequest, files: dict[str, bytes], *, context: ExecutionContext) -> ExecuteResponse: ...
 
 
-class UnconfiguredRuntime:
-    def execute(self, spec: ExecuteRequest, files: dict[str, bytes], *, context: ExecutionContext) -> ExecuteResponse:
-        raise DeepUnavailable()
-
-
-class ScriptedRuntime:
-    """Test-only injectable runtime. Not selected by Settings or RPC."""
-
-    def __init__(self, handler: Callable[[ExecuteRequest, dict[str, bytes]], ExecuteResponse]):
-        self._handler = handler
-
-    def execute(self, spec: ExecuteRequest, files: dict[str, bytes], *, context: ExecutionContext) -> ExecuteResponse:
-        return self._handler(spec, files)
-
-
 class Controller:
     def __init__(
         self,
@@ -99,8 +84,6 @@ class Controller:
         context = context or ExecutionContext()
         if spec.protocol_revision != self.protocol_revision:
             raise DeepError("deep_protocol_mismatch")
-        if spec.executor not in {"ppap-deep", "ppap-checker-core"}:
-            raise DeepError("deep_executor_mismatch")
         try:
             expected_revision = self.executor_revision_for_request(spec) if self.executor_revision_for_request is not None else self.executor_revision
         except (ValueError, KeyError, TypeError):
@@ -124,15 +107,13 @@ class Controller:
                 try:
                     data = self.file_source(item.file_version_id, remaining)
                 except DeepError as exc:
-                    if exc.code == "deep_input_missing" and spec.executor == "ppap-checker-core":
+                    if exc.code == "deep_input_missing":
                         unavailable.add(item.file_version_id)
                         continue
                     raise
-                except (ObjectMissing, FileNotFoundError) as exc:
-                    if spec.executor == "ppap-checker-core":
-                        unavailable.add(item.file_version_id)
-                        continue
-                    raise DeepError("deep_input_missing") from exc
+                except (ObjectMissing, FileNotFoundError):
+                    unavailable.add(item.file_version_id)
+                    continue
                 except Exception as exc:
                     raise DeepError("deep_input_missing") from exc
                 context.raise_if_cancelled()
@@ -170,21 +151,18 @@ class Controller:
         expected = {
             f"{item.file_version_id}:rule:{clause.get('id') or index}" for item in spec.files if item.role == "target" for index, clause in enumerate((item.rule_body or {}).get("rules") or [], 1)
         }
-        if spec.executor == "ppap-checker-core":
-            # Unsupported clauses remain explicit coverage, not fabricated ERR
-            # findings. Require an exact, unique disposition for every clause.
-            coverage = result.coverage.rule_items
-            covered = {f"{row.get('file_version_id')}:rule:{row.get('rule_item_id')}" for row in coverage}
-            if len(covered) != len(coverage) or covered != expected:
-                raise DeepError("deep_output_invalid")
-            unsupported = {f"{row.get('file_version_id')}:rule:{row.get('rule_item_id')}" for row in coverage if row.get("coverage") == "unsupported"}
-            if seen != expected - unsupported:
-                raise DeepError("deep_output_invalid")
-            identity = result.coverage.checker_execution or {}
-            if identity.get("input_digest") != spec.checker_snapshot_digest or identity.get("runtime_revision") != spec.executor_revision:
-                raise DeepError("deep_output_identity_mismatch")
-        elif expected and seen != expected:
+        # Unsupported clauses remain explicit coverage, not fabricated ERR
+        # findings. Require an exact, unique disposition for every clause.
+        coverage = result.coverage.rule_items
+        covered = {f"{row.get('file_version_id')}:rule:{row.get('rule_item_id')}" for row in coverage}
+        if len(covered) != len(coverage) or covered != expected:
             raise DeepError("deep_output_invalid")
+        unsupported = {f"{row.get('file_version_id')}:rule:{row.get('rule_item_id')}" for row in coverage if row.get("coverage") == "unsupported"}
+        if seen != expected - unsupported:
+            raise DeepError("deep_output_invalid")
+        identity = result.coverage.checker_execution or {}
+        if identity.get("input_digest") != spec.checker_snapshot_digest or identity.get("runtime_revision") != spec.executor_revision:
+            raise DeepError("deep_output_identity_mismatch")
         return result
 
     def handle_raw(self, payload: dict, context: ExecutionContext | None = None) -> dict:

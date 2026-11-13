@@ -4,25 +4,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
-
-from pydantic import BaseModel
-
-
-class TokenUsageInfo(BaseModel):
-    """Token使用信息"""
-
-    request_id: str
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
-    total_thinking_tokens: int = 0
-    total_tokens: int = 0
-    llm_calls_count: int = 0
-    llm_calls: List[Dict[str, Any]] = []
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
-    duration_seconds: Optional[float] = None
 
 
 class PpapDocumentType(Enum):

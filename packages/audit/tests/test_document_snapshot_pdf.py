@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-from copy import deepcopy
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -10,7 +9,6 @@ import fitz
 import pytest
 from audit import document_tools
 from audit.document_tools import ParserLimitError, ReadLimits, effective, snapshot
-from audit.validation import validate_snapshot
 from documents.pdf import PdfConversionError
 from documents.table.models import CellRegion, TableGrid
 from PIL import Image
@@ -45,7 +43,7 @@ def original_pdf(tmp_path, *, extra_page=None, rotation=0, crop=False, images=Fa
 
 def checked(path, **kwargs):
     data = snapshot(path, **kwargs)
-    validate_snapshot(data, hashlib.sha256(path.read_bytes()).hexdigest(), ".pdf")
+    assert data["source"]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert json.loads(json.dumps(data, allow_nan=False)) == data
     return data
 
@@ -139,9 +137,6 @@ def test_uninterpreted_vector_mark_cannot_be_known_blank(tmp_path, mark):
     # The parser places the nearby short bar across its reconstructed boundary;
     # both affected cells must then remain unknown.
     assert table["cells"]["A1"]["state"] == ("unknown_visual_evidence" if mark == "near_edge_short_bar" else "known")
-    cell["state"] = "known"
-    with pytest.raises(ValueError, match="uninterpreted visual"):
-        validate_snapshot(data, data["source"]["sha256"], ".pdf")
 
 
 @pytest.mark.parametrize("mark", [None, "cell_background", "table_background", "thin_rules", "adjacent_backgrounds"])
@@ -175,23 +170,6 @@ def test_native_text_remains_observed_when_uninterpreted_vector_overlaps(tmp_pat
     cell = checked(vector_pdf(tmp_path, "circle", native_text=True))["tables"][0]["cells"]["A2"]
     assert (cell["value"], cell["state"], cell["visual_overlap"]) == ("Native", "known", True)
     assert cell["vector_path_indices"] == [7]
-
-
-@pytest.mark.parametrize("failure", ["path_count", "path_index", "missing_paths", "missing_overlap"])
-def test_vector_observation_requires_original_path_references(tmp_path, failure):
-    data = checked(vector_pdf(tmp_path, "circle"))
-    table = data["tables"][0]
-    cell = table["cells"]["A2"]
-    if failure == "path_count":
-        table["vector_path_count"] = -1
-    elif failure == "path_index":
-        cell["vector_path_indices"] = [8]
-    elif failure == "missing_paths":
-        del cell["vector_path_indices"]
-    else:
-        del cell["visual_overlap"]
-    with pytest.raises(ValueError):
-        validate_snapshot(data, data["source"]["sha256"], ".pdf")
 
 
 @pytest.mark.parametrize("rotation,crop", [(90, False), (0, True)])
@@ -238,42 +216,6 @@ def test_nonfinite_or_nonmonotonic_grid_retains_page_as_unresolved(tmp_path, mon
     assert data["coverage"]["unresolved_reasons"] == {"1": "invalid_grid_boundaries"}
 
 
-@pytest.mark.parametrize("failure", ["source", "page", "bounds", "overlap", "omitted_cell", "boundary", "coverage", "transform"])
-def test_snapshot_validation_rejects_false_pdf_geometry_and_coverage(tmp_path, failure):
-    data = checked(original_pdf(tmp_path))
-    table = data["tables"][0]
-    if failure == "source":
-        del table["cells"]["B2"]["source"]
-    elif failure == "page":
-        table["cells"]["B2"]["source"]["page"] = 2
-    elif failure == "bounds":
-        table["cells"]["B2"]["source"]["bbox"][2] = 301
-    elif failure == "overlap":
-        table["merges"] = [[1, 1, 1, 2]]
-    elif failure == "omitted_cell":
-        del table["cells"]["B2"]
-    elif failure == "boundary":
-        table["cells"]["B2"]["source"]["bbox"][0] = 149
-    elif failure == "coverage":
-        data["coverage"]["unresolved_pages"] = [1]
-        data["coverage"]["unresolved_reasons"] = {"1": "not_bound"}
-    else:
-        data["pages"][0]["rotation"] = 90
-    with pytest.raises(ValueError):
-        validate_snapshot(data, data["source"]["sha256"], ".pdf")
-
-
-def test_unknown_geometry_preserves_raw_bbox_but_cannot_be_promoted_to_known(tmp_path):
-    data = checked(original_pdf(tmp_path))
-    cell = data["tables"][0]["cells"]["B2"]
-    cell["state"] = "unknown_geometry"
-    cell["source"]["bbox"] = [150, 100, 301, 150]
-    validate_snapshot(data, data["source"]["sha256"], ".pdf")
-    cell["state"] = "known"
-    with pytest.raises(ValueError, match="geometry exceeds"):
-        validate_snapshot(data, data["source"]["sha256"], ".pdf")
-
-
 @pytest.mark.parametrize("limits", [ReadLimits(source_bytes=1), ReadLimits(pages=1), ReadLimits(cells=1), ReadLimits(tables=1), ReadLimits(blocks=1), ReadLimits(output_bytes=1)])
 def test_native_grid_read_budgets_propagate(tmp_path, limits):
     with pytest.raises(ParserLimitError):
@@ -313,8 +255,3 @@ def test_backend_unavailable_grid_is_distinct_from_other_parser_and_integrity_fa
     monkeypatch.setattr(document_tools, "digest", lambda path: "0" * 64)
     with pytest.raises(ValueError, match="source changed"):
         snapshot(path)
-
-
-def test_text_block_only_observation_keeps_existing_contract():
-    data = {"source": {"sha256": "a" * 64, "format": ".pdf"}, "tables": [], "pages": [{"page": 1, "blocks": [{"text": "Observed paragraph"}]}]}
-    validate_snapshot(deepcopy(data), "a" * 64, ".pdf")

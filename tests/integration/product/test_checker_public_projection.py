@@ -77,7 +77,7 @@ def _frozen_target(raw: bytes, clauses: list[dict]) -> "FrozenFile":
 
 
 def request() -> ExecuteRequest:
-    return ExecuteRequest(protocol_revision="test", round_id="round-1", files=[], executor="ppap-deep", executor_revision=REVISION, job_id="job-1")
+    return ExecuteRequest(protocol_revision="test", round_id="round-1", files=[], executor="ppap-checker-core", executor_revision=REVISION, job_id="job-1")
 
 
 REVISION = "checker-test-revision"
@@ -156,7 +156,7 @@ def test_pdf_page_keeps_a_related_file_cell(tmp_path: Path) -> None:
         protocol_revision="test",
         round_id="round-1",
         files=[frozen, reference],
-        executor="ppap-deep",
+        executor="ppap-checker-core",
         executor_revision="rev",
         job_id="job-1",
     )

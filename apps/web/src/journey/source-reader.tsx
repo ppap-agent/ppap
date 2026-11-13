@@ -135,4 +135,3 @@ export function SourceReaderButton(props: Props) {
   const [open, setOpen] = useState(false)
   return <Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant={props.variant ?? 'outline'} className={props.className} size="sm" aria-label={props.file ? props.label === props.file.name ? `阅读 ${props.file.name}` : `${props.label ?? '打开原件'} · ${props.file.name}` : undefined}>{props.file ? <FileIcon name={props.file.name}/> : <BookOpen/>}<span className="min-w-0 [overflow-wrap:anywhere]">{props.label ?? '打开原件与证据'}</span></Button></DialogTrigger>{open && <Reader {...props} onClose={() => setOpen(false)}/>}</Dialog>
 }
-

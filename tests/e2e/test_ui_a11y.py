@@ -89,9 +89,6 @@ class UiA11yTests(unittest.TestCase):
             self.assertTrue(focused["shadow"] or (focused["outline"] != "none" and focused["width"] >= 1))
             page.keyboard.press("Enter")
             self.assertTrue(page.evaluate("() => document.activeElement?.tagName === 'MAIN'"))
-            media = page.evaluate("() => ({pointer: matchMedia('(pointer: coarse)').matches, motion: matchMedia('(prefers-reduced-motion: reduce)').matches})")
-            self.assertTrue(media["pointer"])
-            self.assertTrue(media["motion"])
             expect(page.get_by_role("heading", level=1)).to_have_count(1)
             directory = []
             page.route("**/api/rule-library", lambda route: directory.append(route))

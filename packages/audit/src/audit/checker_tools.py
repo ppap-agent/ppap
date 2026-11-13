@@ -84,7 +84,7 @@ def _local_predicate(check: FieldCheck) -> Predicate:
 
 
 def check_fields(snapshot: dict[str, Any], request: CheckRequest) -> CheckOutput:
-    """Replay two simple predicates from the frozen table. This does not build a RulePlan or AuditTrace."""
+    """Replay two simple predicates from the frozen table; a local condition is not a customer-rule verdict."""
     binding = request.binding
     source = snapshot.get("source")
     if not isinstance(source, dict) or source.get("format") not in {".xlsx", ".xlsm", ".xls", ".docx", ".pdf"}:

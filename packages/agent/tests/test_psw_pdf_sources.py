@@ -18,12 +18,12 @@ from documents.contracts import ConversionArtifact
 from openpyxl import Workbook
 
 
-@pytest.mark.parametrize("version", ["v2", "v3"])
+@pytest.mark.parametrize("company", ["li", "nio"])
 @pytest.mark.parametrize(
     ("alteration", "expected"),
     [(None, "PASS"), ("file_version_id", "UNABLE"), ("source_sha256", "UNABLE"), ("page", "UNABLE"), ("bbox", "UNABLE"), ("coordinate_system", "UNABLE")],
 )
-def test_submission_visual_fallback_keeps_only_verified_original_locations(tmp_path, monkeypatch, version, alteration, expected):
+def test_submission_visual_fallback_keeps_only_verified_original_locations(tmp_path, monkeypatch, company, alteration, expected):
     pdf = tmp_path / "original.pdf"
     with fitz.open() as document:
         page = document.new_page(width=240, height=320)
@@ -46,7 +46,7 @@ def test_submission_visual_fallback_keeps_only_verified_original_locations(tmp_p
         assert file_ref.location == str(pdf)
         return ConversionArtifact(success=True, xlsx_path=str(prepared))
 
-    monkeypatch.setattr(f"audit.checker_lib.{'li' if version == 'v2' else 'nio'}.pdf_agent.convert_pdf_to_excel_auto", convert)
+    monkeypatch.setattr(f"audit.checker_lib.{company}.pdf_agent.convert_pdf_to_excel_auto", convert)
     calls = []
 
     def read(audit, fields, witness, *, operation, **kwargs):
@@ -78,7 +78,7 @@ def test_submission_visual_fallback_keeps_only_verified_original_locations(tmp_p
         return facts, evaluate_psw_observation(rule_no, facts)
 
     monkeypatch.setattr("audit.engine.checkers.psw_scope.evaluate_psw_pdf_rule", observe)
-    cls = importlib.import_module(f"audit.checker_lib.{'li' if version == 'v2' else 'nio'}.psw_pdf_agent").PswPDFAgent
+    cls = importlib.import_module(f"audit.checker_lib.{company}.psw_pdf_agent").PswPDFAgent
     with bind_runtime(None):
         checker = cls(
             AuditInput(audit_id="frozen-pdf", file_url=str(pdf), file_metadata={"source_sha256": digest}),

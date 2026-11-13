@@ -13,20 +13,25 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from agent.client import DeepClient, DeepError, read_frame
+from agent.client import DeepClient, DeepError, DeepUnavailable, read_frame
 from agent.execution.budget import MAX_INPUT_FILES
 from agent.protocol import ExecuteRequest, FrozenFile
-from agent.run import Controller, ExecutionContext, UnconfiguredRuntime, UnixControllerServer
+from agent.run import Controller, ExecutionContext, UnixControllerServer
 from agent.source import object_file_source
 from audit.audits import DEEP_PROTOCOL_REVISION
 from audit.storage_errors import ObjectTooLarge
+
+
+class UnconfiguredRuntime:
+    def execute(self, spec, files, *, context):
+        raise DeepUnavailable()
 
 
 def controller_request() -> tuple[ExecuteRequest, dict[str, bytes]]:
     blobs = {"target-version": b"frozen target", "reference-version": b"frozen reference"}
     spec = ExecuteRequest(
         protocol_revision=DEEP_PROTOCOL_REVISION,
-        executor="ppap-deep",
+        executor="ppap-checker-core",
         executor_revision="a" * 64,
         tenant_id="tenant-one",
         round_id="round-one",

@@ -44,7 +44,7 @@ def test_duplicate_and_delayed_delivery_do_not_replace_the_newest_ticket_after_r
     assert restored.app_ticket(settings.feishu_app_id) == "latest-ticket"
     with TestClient(create_app(settings, auth_store=restored)) as restarted:
         assert restarted.get("/capabilities").json()["feishu"]["app_ticket"] == "received"
-    assert not store.has_app_ticket("other-app")
+    assert store.app_ticket("other-app") is None
 
 
 def test_concurrent_deliveries_keep_the_newest_provider_event(ticket_system):
@@ -64,7 +64,7 @@ def test_challenge_requires_the_configured_token_without_creating_a_ticket(ticke
         assert response.status_code == status
         if status == 200:
             assert response.json() == {"challenge": "challenge-value"}
-        assert not store.has_app_ticket(settings.feishu_app_id)
+        assert store.app_ticket(settings.feishu_app_id) is None
 
 
 @pytest.mark.parametrize("timestamp", [None, "", "NaN", "Infinity", "-1", True, 1700000000, "99999999999999999", "1700000000.1234567890123456789"])
@@ -75,10 +75,10 @@ def test_unordered_or_malformed_tickets_do_not_create_state(ticket_system, times
     response = client.post("/integrations/feishu/events", json=event)
     assert response.status_code == 400
     assert response.json() == {"error": "invalid_ticket_timestamp"}
-    assert not store.has_app_ticket(settings.feishu_app_id)
+    assert store.app_ticket(settings.feishu_app_id) is None
 
 
-def test_wrong_app_or_token_and_future_event_cannot_poison_a_valid_ticket(ticket_system):
+def test_wrong_app_token_future_or_encrypted_event_cannot_poison_a_valid_ticket(ticket_system):
     client, store, settings = ticket_system
     now = datetime.now(timezone.utc)
     assert client.post("/integrations/feishu/events", json=ticket_event("valid-ticket", now)).status_code == 200
@@ -87,6 +87,7 @@ def test_wrong_app_or_token_and_future_event_cannot_poison_a_valid_ticket(ticket
         (ticket_event("foreign-ticket", now, app_id="other-app"), 403),
         ({**ticket_event("conflicting-app-ticket", now, app_id="other-app"), "header": {"app_id": settings.feishu_app_id}}, 403),
         (ticket_event("future-ticket", now + timedelta(days=1)), 400),
+        ({"encrypt": "blob"}, 400),
     ):
         assert client.post("/integrations/feishu/events", json=event).status_code == status
         assert store.app_ticket(settings.feishu_app_id) == "valid-ticket"

@@ -18,7 +18,7 @@ from typing import Any, cast
 
 from documents.model_access import ModelUnavailable
 
-from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource, RuleItem
+from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
 from audit.document_tools import ReadLimits, TableReader, snapshot, source_title_location
 from audit.engine.rule_engine.context import GuardStop
 from audit.evidence import EvidenceBudget, cell_locator
@@ -492,7 +492,6 @@ class SourceAudit:
         self.logger = logging.getLogger(type(self).__name__)
         self._native = None
         self._visual_cache = {}
-        self._text_cache = {}
         self._evidence_sources: list[EvidenceSource] = []
         rows = getattr(rule, "rules", ()) or ()
         self._rule_rows = {str(row.get("id") if isinstance(row, dict) else row.id): row for row in rows}
@@ -517,7 +516,6 @@ class SourceAudit:
     def close(self):
         self._native = None
         self._visual_cache.clear()
-        self._text_cache.clear()
 
     def witness(self, locator, value, version=None, *, visual=False):
         source = EvidenceSource(
@@ -616,20 +614,6 @@ class SourceAudit:
             )
         except VisualFactsUnavailable as exc:
             raise UnknownFact(str(exc)) from exc
-
-    def text_result(self, fields, description):
-        """Use the configured text model only for source-located meanings."""
-        from audit.engine.checkers.text_evidence import evaluate_text_rule
-
-        if not fields or any(not str(value).strip() for value in fields.values()):
-            raise UnknownFact("没有明确的文字事实需求，不能判为通过。")
-        self.native()
-        item = RuleItem(id="source_text", category=description, priority="P0", type_of_rule="text", rule_to_check="；".join(fields.values()))
-        result = evaluate_text_rule(self.audit_file, item, self._text_cache)
-        if result.evidence:
-            for source in result.evidence.sources:
-                self.witness(json.loads(source.locator), source.excerpt, visual=source.kind == "visual")
-        return result.status, result.suggestions
 
     def visual_result(self, fields, description, *, existential_fields=()):
         values = self.visual_pdf(fields, existential_fields=existential_fields) if existential_fields else self.visual_pdf(fields)

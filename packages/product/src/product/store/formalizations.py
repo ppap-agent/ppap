@@ -14,8 +14,7 @@ from documents.model_access import ModelUnavailable
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from product.formalization.spec import FormalizationError
-from product.formalization.text import accept_text_points, carried_rejections, clarified, reject_reading
+from product.formalization.text import FormalizationError, accept_text_points, carried_rejections, clarified, reject_reading
 
 
 def _id(value: str) -> str:

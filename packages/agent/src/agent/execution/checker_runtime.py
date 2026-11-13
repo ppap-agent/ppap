@@ -60,9 +60,6 @@ class CheckerRuntime:
         key = ("pdf_images", str(Path(file_url).resolve()), render_all_pages)
         return list(self._once(key, lambda: extract_images_from_bytes(Path(file_url).read_bytes(), "pdf", render_all_pages=render_all_pages)))
 
-    def run_image_prompt(self, **kwargs: Any) -> str:
-        raise GuardStop(Decision.UNABLE, "固定 checker 没有可重放的视觉观察，需通过带来源的 OCR 视觉事实接口读取原件")
-
     def read_ocr_visual_facts(self, *, images: list[bytes], prompt: str, response_schema: dict[str, Any]) -> dict[str, Any]:
         if not self.allow_model_tools:
             raise GuardStop(Decision.UNABLE, "固定 checker 没有可重放的 OCR 视觉观察，需补充证据")

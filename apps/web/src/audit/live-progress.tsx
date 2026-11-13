@@ -44,4 +44,3 @@ export function LiveProgress({label, since, live}: {label: string; since?: strin
     </span>
   </div>
 }
-

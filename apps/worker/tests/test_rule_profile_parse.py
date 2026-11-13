@@ -98,23 +98,12 @@ def _item() -> dict:
     }
 
 
-def test_json_parse_without_profile_becomes_v2() -> None:
-    payload = {"kind": "engine", "type": "控制计划", "rules": [_item()]}
+@pytest.mark.parametrize(("declared", "expected"), [({}, RULE_PROFILE_V2), ({"rule_profile": "v3"}, RULE_PROFILE_V3), ({"rule_profile": "default"}, RULE_PROFILE_V2)])
+def test_json_parse_resolves_the_rule_profile(declared, expected) -> None:
+    payload = {"kind": "engine", "type": "控制计划", **declared, "rules": [_item()]}
     body = parse_rule_file("rules.json", json.dumps(payload).encode())
-    assert body["rule_profile"] == RULE_PROFILE_V2
+    assert body["rule_profile"] == expected
     assert body["type"] == "控制计划"
-
-
-def test_json_parse_keeps_explicit_v3() -> None:
-    payload = {"kind": "engine", "type": "控制计划", "rule_profile": "v3", "rules": [_item()]}
-    body = parse_rule_file("rules.json", json.dumps(payload).encode())
-    assert body["rule_profile"] == RULE_PROFILE_V3
-
-
-def test_json_parse_maps_default_profile_to_v2() -> None:
-    payload = {"kind": "engine", "type": "控制计划", "rule_profile": "default", "rules": [_item()]}
-    body = parse_rule_file("rules.json", json.dumps(payload).encode())
-    assert body["rule_profile"] == RULE_PROFILE_V2
 
 
 def test_json_parse_rejects_a_different_requested_document_type() -> None:

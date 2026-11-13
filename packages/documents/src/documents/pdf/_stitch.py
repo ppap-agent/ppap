@@ -10,10 +10,6 @@ from .result import PageExtraction
 from .spec import ColumnPolicy, StitchMode, StitchSpec
 
 
-def stitch_pages(page_results: list[PageExtraction], stitch: StitchSpec) -> TableGrid:
-    return stitch_pages_with_outcome(page_results, stitch).table_grid
-
-
 @dataclass(frozen=True)
 class StitchOutcome:
     table_grid: TableGrid

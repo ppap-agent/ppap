@@ -1,5 +1,6 @@
 """Current file preparation preserves deterministic suggestions and version scope."""
 
+from collections import OrderedDict
 from io import BytesIO
 
 import pytest
@@ -40,10 +41,8 @@ def rule(rule_id: str, title: str, document_type: str, **fields) -> dict:
 
 
 @pytest.fixture(autouse=True)
-def empty_matching_cache():
-    RuleMatchingAIService.clear_cache()
-    yield
-    RuleMatchingAIService.clear_cache()
+def empty_matching_cache(monkeypatch):
+    monkeypatch.setattr(RuleMatchingAIService, "_match_cache", OrderedDict())
 
 
 def test_no_available_rules_returns_an_explicit_miss_not_a_model_guess() -> None:

@@ -39,7 +39,6 @@ Distribution closure:
 ```sh
 python3 scripts/validate_distribution.py --discover
 python3 scripts/validate_distribution.py --member audit
-python3 scripts/validate_distribution.py --prove-missing-dependency
 ```
 
 Python module groups:

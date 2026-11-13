@@ -111,7 +111,6 @@ def public_locator(value: object) -> dict | None:
 
 
 Scalar: TypeAlias = str | int | float | bool | None
-Diagnostic: TypeAlias = Literal["parser_unknown", "unresolved_relation", "visual_only_evidence", "budget_exhausted", "unsupported_structure", "rule_ambiguity"]
 
 
 class Predicate(Artifact):
@@ -119,12 +118,6 @@ class Predicate(Artifact):
     op: Literal["not_empty", "empty", "eq", "ne", "in", "gt", "ge", "lt", "le"]
     value: Scalar = None
     values: list[Scalar] = Field(default_factory=list, max_length=256)
-
-
-class InterpretationCandidate(Artifact):
-    id: str = Field(min_length=1, max_length=256)
-    label: str = Field(min_length=1, max_length=1024)
-    explanation: str = Field(min_length=1, max_length=4096)
 
 
 class Citation(Artifact):

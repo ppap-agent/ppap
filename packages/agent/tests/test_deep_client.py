@@ -22,8 +22,16 @@ from pathlib import Path
 import pytest
 from agent.client import DeepClient, DeepError, DeepUnavailable, read_frame
 from agent.protocol import DeepCoverage, DeepFinding, ExecuteRequest, ExecuteResponse, FrozenFile
-from agent.run import Controller, ScriptedRuntime, UnixControllerServer
+from agent.run import Controller, UnixControllerServer
 from audit.audits import DEEP_PROTOCOL_REVISION
+
+
+class ScriptedRuntime:
+    def __init__(self, handler):
+        self._handler = handler
+
+    def execute(self, spec, files, *, context):
+        return self._handler(spec, files)
 
 
 @pytest.mark.parametrize("endpoint", ["missing", "ordinary_file", "unlistened_socket"])
@@ -31,7 +39,7 @@ def test_undelivered_request_can_explicitly_recover_without_changing_frozen_iden
     blobs = {"target-version": b"frozen target", "reference-version": b"frozen reference"}
     spec = ExecuteRequest(
         protocol_revision=DEEP_PROTOCOL_REVISION,
-        executor="ppap-deep",
+        executor="ppap-checker-core",
         executor_revision="a" * 64,
         tenant_id="tenant-one",
         round_id="round-one",
@@ -74,7 +82,13 @@ def test_undelivered_request_can_explicitly_recover_without_changing_frozen_iden
                 locator={"file_version_id": "reference-version"},
             )
         ],
-        coverage=DeepCoverage(checked=["control-plan.xlsx"], unchecked=["process-flow.xlsx (reference)"], locator_gap=False),
+        coverage=DeepCoverage(
+            checked=["control-plan.xlsx"],
+            unchecked=["process-flow.xlsx (reference)"],
+            locator_gap=False,
+            rule_items=[{"file_version_id": "target-version", "rule_item_id": "CP-1", "coverage": "mapped"}],
+            checker_execution={"input_digest": "", "runtime_revision": "a" * 64},
+        ),
         usage={"input_tokens": 3, "output_tokens": 2},
     )
     authorized: list[dict] = []
@@ -140,7 +154,7 @@ def test_undelivered_request_can_explicitly_recover_without_changing_frozen_iden
 def transport_request() -> ExecuteRequest:
     return ExecuteRequest(
         protocol_revision=DEEP_PROTOCOL_REVISION,
-        executor="ppap-deep",
+        executor="ppap-checker-core",
         executor_revision="a" * 64,
         tenant_id="test-tenant",
         round_id="test-round",

@@ -37,7 +37,7 @@ def process_rule_formalization(store, claimed, ident: str, *, ai=None) -> dict:
         rejected = [part for item in carried_rejections(parent) for part in item.get("parts") or []]
         system, user = text_prompts(clause_text=clause_text, prior_points=prior_points(parent), instruction=row["user_instruction"], chosen=chosen, rejected=rejected)
         with audit_lease(store, claimed, ident):
-            # The optimizer reasons at length to keep meaning; the output budget leaves room for that reasoning.
+            # The model reasons at length to keep meaning; the output budget leaves room for that reasoning.
             completed = (ai or documents.ai.run_json)("rule_formalization", instructions=system, prompt=user, max_tokens=32000, reasoning_effort="high", timeout=600)
         # The store validates the reading strictly; it receives the model's JSON as text.
         raw = json.dumps(completed.output, ensure_ascii=False) if completed.output else ""

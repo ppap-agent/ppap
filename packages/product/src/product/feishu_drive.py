@@ -66,21 +66,8 @@ class FetchPlan:
             return cls(kind, FetchMode.EXPORT_WITH_DOCX_LINKS)
         raise UnsupportedDocType("unsupported docType: " + kind)
 
-    def scans_docx_links(self) -> bool:
-        return self.mode is FetchMode.EXPORT_WITH_DOCX_LINKS
-
     def downloads_drive_file(self) -> bool:
         return self.mode is FetchMode.DRIVE_FILE
-
-    def main_fetch_urls(self, file_token: str) -> list[str]:
-        urls: list[str] = []
-        if self.scans_docx_links():
-            urls.append(docx_blocks_url(file_token))
-        if self.downloads_drive_file():
-            urls.append(files_download_url(file_token))
-        else:
-            urls.append(export_tasks_url())
-        return urls
 
 
 def files_download_url(file_token: str) -> str:

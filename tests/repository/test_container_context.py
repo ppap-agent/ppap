@@ -4,13 +4,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("local_output", [False, True], ids=["clean", "local-research-output"])
-def test_production_context_keeps_runtime_files_and_excludes_research(local_output):
+def test_production_context_keeps_runtime_files_and_excludes_research():
     with tempfile.TemporaryDirectory(prefix="ppap-context-") as directory:
         base = Path(directory)
         context = base / "context"
@@ -34,22 +31,11 @@ def test_production_context_keeps_runtime_files_and_excludes_research(local_outp
             "packages/example/tests/test_module.py",
             "apps/api/tests/test_api.py",
             "apps/web/tests/test_web.ts",
-            "packages/agent/prototypes/typed_evidence_holes/cases.py",
-            "packages/agent/prototypes/typed_evidence_holes/test_local_grok_runner.py",
-            "packages/agent/prototypes/typed_evidence_holes/oracle/expected.json",
             ".env",
             "assets/li/rules/08 过程流程图.docx",
             "assets/corpus/oracle.json",
             "assets/uaes/prechecks/rule.json",
         ]
-        if local_output:
-            excluded.extend(
-                [
-                    "packages/agent/prototypes/typed_evidence_holes/output/run/model-inputs.jsonl",
-                    "packages/agent/prototypes/typed_evidence_holes/output/run/inputs/customer.xlsx",
-                    "packages/agent/prototypes/typed_evidence_holes/output/run/code/guest.py",
-                ]
-            )
         for name in kept + excluded:
             path = context / name
             path.parent.mkdir(parents=True, exist_ok=True)

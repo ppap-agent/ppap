@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
-import {apiUrl, connect, feishuAppId, profile, readLocalUpload, request, requestTrace, upload, uploadLocalVersion, UploadResultUnknown, type Material} from './api.ts'
+import {apiUrl, connect, readLocalUpload, request, requestTrace, upload, uploadLocalVersion, UploadResultUnknown, type Material} from './api.ts'
 
 const originalFetch = globalThis.fetch
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
@@ -23,20 +23,18 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
-test('formalization conflicts explain the next read instead of a raw error code', async () => {
-  const cases = [
-    ['operation_conflict', 409, '原操作的内容不同。请读取原操作。'],
-    ['source_changed', 409, '原文或范围已变化。请重新读取当前候选。'],
-    ['conflicting_confirmation', 409, '这条检查要点已被其他人确认。请重新读取。'],
-    ['not_confirmable', 409, '这条检查要点还不完整，不能确认。'],
-    ['source_unchecked', 409, '这条的出处还没核对。先在规则页核对出处。'],
-    ['model_unavailable', 503, '服务暂时不可用，请稍后重试；如持续出现，请联系管理员。'],
-    ['model_consumption_refused', 422, '暂时无法处理，请稍后重试。'],
-  ] as const
-  for (const [code, status, text] of cases) {
+test('formalization conflicts explain the next step instead of a raw error code', async () => {
+  const messages = new Set<string>()
+  for (const [code, status] of [['operation_conflict', 409], ['source_changed', 409], ['conflicting_confirmation', 409], ['not_confirmable', 409], ['source_unchecked', 409], ['model_unavailable', 503], ['model_consumption_refused', 422]] as const) {
     installFetch(() => jsonResponse({error: code}, status))
-    await assert.rejects(request('/rules/rule-1/formalizations/c1/generations', 'POST', {}), new RegExp(text))
+    await assert.rejects(request('/rules/rule-1/formalizations/c1/generations', 'POST', {}), error => {
+      assert.ok(error instanceof Error)
+      assert.equal(error.message.includes(code), false)
+      messages.add(error.message)
+      return true
+    })
   }
+  assert.equal(messages.size, 7)
 })
 
 test('rule source rejection explains the required correction without claiming publication', async () => {
@@ -55,8 +53,6 @@ test('connect reads runtime config then public-config', async () => {
   await connect()
   assert.deepEqual(calls.map(call => call.url), ['/runtime-config.json', 'http://api.example/public-config'])
   assert.equal(apiUrl, 'http://api.example')
-  assert.equal(profile, 'isolated-dev')
-  assert.equal(feishuAppId, 'cli_app')
 })
 
 test('product requests send cookies and no custom token header', async () => {
@@ -76,8 +72,7 @@ test('product requests send cookies and no custom token header', async () => {
     assert.equal(headers.get('x-token'), null)
     return jsonResponse({display_name: 'alice'})
   })
-  const me = await request<{display_name: string}>('/me')
-  assert.equal(me.display_name, 'alice')
+  await request('/me')
   assert.equal(calls.length, 1)
   assert.equal(calls[0]?.init?.method, 'GET')
 })

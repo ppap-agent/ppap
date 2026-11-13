@@ -1,6 +1,5 @@
 """Shared checker_lib identity, import lint, and direct helper delegation."""
 
-import ast
 import json
 import shutil
 import subprocess
@@ -9,7 +8,6 @@ from pathlib import Path
 
 import pytest
 from audit.checker_core import ValidationRecord, checker_digest
-from audit.checker_lib.imports import import_violations
 from audit.standard_suites import hash_library, library_files, library_revision, load_predefined_checkers
 
 _AUDIT = Path(__file__).resolve().parents[1] / "src" / "audit"
@@ -111,39 +109,6 @@ def test_implementation_edit_expires_proofs_and_company_leaf_edit_does_not(tmp_p
     shared.write_bytes(shared.read_bytes() + b"\n# shared library\n")
     assert hash_library(entries) != after_implementation
     assert checker_digest({"checker.py": checker.read_bytes(), "resources.py": leaf_files["resources.py"]}) == leaf_after
-
-
-def test_import_lint_flags_static_and_dynamic_legacy_imports():
-    source = "\n".join(
-        [
-            "import audit.checkers.v4.uaes",
-            "from audit.checkers.v2.base_agent import BaseAgent",
-            "from audit import checkers",
-            "from audit.standard_library import check_clause, check_factory",
-            "from importlib import import_module",
-            "import importlib",
-            "import_module('audit.checkers.v3.excel_agent')",
-            "importlib.import_module('audit.checkers.v4.uaes.native')",
-            "import_module('audit.checker_lib.excel')",
-            "name = 'audit.checkers.v2'",
-            "import_module(name)",
-            "import audit.checker_lib.nio.excel_agent",
-            "# import audit.engine.checkers.visual_facts",
-            "",
-        ]
-    )
-    problems = "\n".join(import_violations(ast.parse(source)))
-    assert "audit.checkers.v4.uaes" in problems
-    assert "audit.checkers.v2.base_agent" in problems
-    assert "audit.checkers" in problems
-    assert "audit.standard_library.check_clause" in problems
-    assert "audit.checkers.v3.excel_agent" in problems
-    assert "audit.checkers.v4.uaes.native" in problems
-    assert "audit.checker_lib.nio.excel_agent" in problems
-    assert "non_literal_import" in problems
-    assert "audit.checker_lib.excel" not in problems
-    assert "audit.engine.checkers.visual_facts" not in problems
-    assert import_violations(ast.parse("# from audit.checkers.v4.uaes import Agent\nfrom audit.checker_lib.excel import load_workbook\n")) == ()
 
 
 @pytest.mark.parametrize(

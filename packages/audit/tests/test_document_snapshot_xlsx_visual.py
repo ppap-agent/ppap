@@ -8,10 +8,9 @@ from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
-from audit.document_tools import ParserLimitError, ReadLimits, TableReader, _print_view, bind, effective, snapshot
+from audit.document_tools import ParserLimitError, ReadLimits, TableReader, _print_view, effective, snapshot
 from audit.evidence import EvidenceBudget, cell_locator, resolve
 from audit.models import ExcelRange
-from audit.validation import validate_snapshot
 from openpyxl import Workbook
 
 SS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -136,7 +135,6 @@ def test_only_empty_native_scalars_with_visual_overlap_are_unknown(tmp_path):
     assert effective(table, 6, 5) == {"value": None, "state": "known", "cell": "E6", "anchor": "E6", "merge": None}
     assert observed["tables"][0]["visual_evidence"][0]["content_observed"] is False
     assert effective(observed["tables"][1], 2, 2)["state"] == "known"
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 def test_visual_blank_is_lazy_source_addressed_and_merge_aliases_inherit_unknown(tmp_path):
@@ -232,17 +230,6 @@ def test_compact_view_pages_recover_all_visual_source_metadata(tmp_path, capsys,
     assert next(record for record in records if record["kind"] == "cell")["state"] == "unknown_visual_evidence"
 
 
-def test_visual_unknown_cannot_become_a_native_fact_in_snapshot_validation(tmp_path):
-    observed = snapshot(workbook(tmp_path))
-    visual = observed["tables"][0]["visual_evidence"][0]
-    for change in ({"content_observed": True}, {"range": [1, 2, 1, 1]}, {"value": "manufacturing"}):
-        invalid = deepcopy(observed)
-        invalid["tables"][0]["visual_evidence"][0].update(change)
-        with pytest.raises(ValueError):
-            validate_snapshot(invalid, invalid["source"]["sha256"], ".xlsx")
-    assert visual["content_observed"] is False
-
-
 def test_zero_height_line_covers_the_cells_on_both_sides_of_its_boundary(tmp_path):
     observed = snapshot(workbook(tmp_path, [anchor(first=(2, 2), last=(2, 4))]))
     visual = observed["tables"][0]["visual_evidence"][0]
@@ -250,7 +237,6 @@ def test_zero_height_line_covers_the_cells_on_both_sides_of_its_boundary(tmp_pat
     assert visual["bounds"] == [1, 2, 2, 3]
     assert effective(observed["tables"][0], 2, 3)["state"] == "unknown_visual_evidence"
     assert effective(observed["tables"][0], 3, 3)["state"] == "known"
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 def test_one_cell_anchor_covers_the_cells_its_extent_can_reach(tmp_path):
@@ -261,7 +247,6 @@ def test_one_cell_anchor_covers_the_cells_its_extent_can_reach(tmp_path):
     assert visual["bounds"] == [2, 2, 2, 2]
     assert effective(table, 2, 2)["state"] == "unknown_visual_evidence"
     assert effective(table, 7, 5)["state"] == "known"
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 def test_alternate_content_uses_the_anchor_inside_each_alternative(tmp_path):
@@ -271,15 +256,6 @@ def test_alternate_content_uses_the_anchor_inside_each_alternative(tmp_path):
     visual = observed["tables"][0]["visual_evidence"][0]
     assert (visual["kind"], visual["range"]) == ("twoCellAnchor", [2, 2, 2, 2])
     assert effective(observed["tables"][0], 7, 5)["state"] == "known"
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
-
-
-@pytest.mark.parametrize("change", [{"bounds": [2, 2, 2, 2]}, {"bound_emu": {"row": [], "column": []}}, {"unresolved_reason": "unsupported_anchor_geometry"}])
-def test_validation_rejects_bounds_the_recorded_sizes_do_not_give(tmp_path, change):
-    observed = snapshot(sized_workbook(tmp_path, [anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(300000, 1000))], row_height=20))
-    observed["tables"][0]["visual_evidence"][0].update(change)
-    with pytest.raises(ValueError, match="visual bounds"):
-        validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 @pytest.mark.parametrize("endpoint", ["from", "to"])
@@ -310,31 +286,14 @@ def test_offsets_outside_the_measured_cell_are_native_hints_not_cell_coverage(tm
     assert effective(observed["tables"][1], 7, 5)["state"] == "known"
     assert path.read_bytes() == original
     assert observed["source"]["sha256"] == hashlib.sha256(original).hexdigest()
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
-
-
-@pytest.mark.parametrize("endpoint", ["from", "to"])
-@pytest.mark.parametrize("axis", ["row", "column"])
-@pytest.mark.parametrize("offset", [-1, 1, 10**12])
-def test_snapshot_validation_rejects_precise_coverage_with_nonzero_offsets(tmp_path, endpoint, axis, offset):
-    observed = snapshot(workbook(tmp_path))
-    observed["tables"][0]["visual_evidence"][0][endpoint][f"{axis}_offset_emu"] = offset
-    with pytest.raises(ValueError):
-        validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 @pytest.mark.parametrize("kind", ["oneCellAnchor", "absoluteAnchor", "legacyDrawing", "control", "oleObject", "picture"])
 def test_unsupported_visual_kind_cannot_claim_precise_cell_coverage(tmp_path, kind):
-    observed = snapshot(workbook(tmp_path))
-    visual = observed["tables"][0]["visual_evidence"][0]
-    visual["kind"] = kind
-    with pytest.raises(ValueError, match="visual range"):
-        validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
     # Source-looking markers on an unsupported object do not establish geometry.
     path = workbook(tmp_path, [anchor().replace("twoCellAnchor", kind)])
     observed = snapshot(path)
     assert observed["tables"][0]["visual_evidence"][0]["range"] is None
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 def sized_workbook(tmp_path, anchors, *, column_width=None, row_height=None, hidden_row=False, cells=None):
@@ -370,7 +329,6 @@ def test_image_inside_one_measured_cell_leaves_other_blank_cells_known(tmp_path)
     assert effective(table, 2, 2)["state"] == "unknown_visual_evidence"
     assert effective(table, 3, 2)["state"] == "known"
     assert effective(table, 2, 3)["state"] == "known"
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 def test_end_offset_includes_its_cell_and_a_boundary_end_does_not(tmp_path):
@@ -401,22 +359,6 @@ def test_offsets_that_do_not_fit_cover_every_cell_they_can_reach(tmp_path, place
     assert visual["bounds"] == bounds
     assert effective(table, min(bounds[2], 7), bounds[3])["state"] == "unknown_visual_evidence"
     assert effective(table, 7, 5)["state"] == "known"
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
-
-
-@pytest.mark.parametrize("measured", [{"from_row": 1}, {"from_row": -1, "from_column": 1, "to_row": 1, "to_column": 1}, "wide"])
-def test_validation_rejects_a_malformed_measurement(tmp_path, measured):
-    observed = snapshot(sized_workbook(tmp_path, [anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(100, 100))], row_height=20))
-    observed["tables"][0]["visual_evidence"][0]["measured_emu"] = measured
-    with pytest.raises(ValueError, match="visual measurement"):
-        validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
-
-
-def test_validation_rejects_offsets_beyond_the_recorded_measurement(tmp_path):
-    observed = snapshot(sized_workbook(tmp_path, [anchor((2, 2), (2, 2), first_offsets=(1, 1), offsets=(100, 100))], row_height=20))
-    observed["tables"][0]["visual_evidence"][0]["to"]["row_offset_emu"] = 10**7
-    with pytest.raises(ValueError, match="visual range"):
-        validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 @pytest.mark.parametrize("offset", [-27273042329601, 27273042316901])
@@ -424,12 +366,6 @@ def test_anchor_offsets_outside_native_coordinate_bounds_fail_closed(tmp_path, o
     path = workbook(tmp_path, [anchor(offsets=(offset, 0))])
     with pytest.raises(ValueError, match="anchor marker"):
         snapshot(path)
-    observed = snapshot(workbook(tmp_path))
-    visual = observed["tables"][0]["visual_evidence"][0]
-    visual.update(range=None, unresolved_reason="unsupported_anchor_geometry")
-    visual["from"]["row_offset_emu"] = offset
-    with pytest.raises(ValueError, match="visual marker"):
-        validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 @pytest.mark.parametrize("hyperlink", [None, "hlinkClick", "hlinkHover", "missing_relation", "external_content", "blip_hyperlink", "navigation_content"])
@@ -480,7 +416,6 @@ def test_native_image_and_navigation_relationships_preserve_visual_sources_witho
     assert visual["references"] == [{"relationship_id": "rId1", "part": "xl/media/image1.png"}]
     assert visual["content_observed"] is False
     assert effective(observed["tables"][0], 2, 2)["state"] == "unknown_visual_evidence"
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 @pytest.mark.parametrize("cached", [False, True])
@@ -522,28 +457,9 @@ def test_linked_images_remain_explicitly_unavailable_without_external_reads(tmp_
     assert all(effective(table, 2, column)["state"] == "known" for column in (2, 3, 4))
     assert effective(table, 3, 2)["state"] == "unknown_formula_cache"
     assert effective(observed["tables"][1], 3, 3)["state"] == "known"
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
     assert path.read_bytes() == original
     assert observed["source"]["sha256"] == hashlib.sha256(original).hexdigest()
     assert not calls
-
-
-@pytest.mark.parametrize(
-    "reference",
-    [
-        {"relationship_id": "linked0", "state": "known"},
-        {"relationship_id": "linked0", "state": "internal"},
-        {"relationship_id": "linked0", "state": "internal", "part": "xl/media/image1.png"},
-        {"relationship_id": "linked0", "state": "external_unavailable", "part": "xl/media/image1.png"},
-        {"relationship_id": "linked0", "state": "external_unavailable", "target": "file:///private.png"},
-        {"relationship_id": "", "state": "external_unavailable"},
-    ],
-)
-def test_external_visual_reference_state_cannot_be_forged_as_available(tmp_path, reference):
-    observed = snapshot(linked_image_workbook(tmp_path, cached=True))
-    observed["tables"][0]["visual_evidence"][0]["references"][-1] = reference
-    with pytest.raises(ValueError, match="visual reference"):
-        validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 @pytest.mark.parametrize("defect", ["missing_relation", "hyperlink_type", "internal_hyperlink_type", "missing_cache", "invalid_cache_path"])
@@ -666,7 +582,6 @@ def test_vml_native_primitives_are_unresolved_visual_sources(tmp_path, kind):
     rewrite(path, parts)
     observed = snapshot(path)
     assert effective(observed["tables"][0], 2, 2)["state"] == "unknown_visual_evidence"
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 def test_vml_client_anchor_bounds_the_object_to_its_cells(tmp_path):
@@ -689,7 +604,6 @@ def test_vml_client_anchor_bounds_the_object_to_its_cells(tmp_path):
     assert table["visual_evidence"][0]["bounds"] == [2, 2, 2, 2]
     assert effective(table, 2, 2)["state"] == "unknown_visual_evidence"
     assert effective(table, 7, 5)["state"] == "known"
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
 
 
 def test_vml_xml_nodes_use_the_existing_visual_block_budget(tmp_path):
@@ -707,62 +621,3 @@ def test_vml_xml_nodes_use_the_existing_visual_block_budget(tmp_path):
         snapshot(path, limits=ReadLimits(blocks=3))
     observed = snapshot(path, limits=ReadLimits(blocks=13))
     assert effective(observed["tables"][0], 2, 2)["state"] == "unknown_visual_evidence"
-    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
-
-
-def visual_budget_document(count=1000):
-    class Visual(dict):
-        reads = 0
-
-        def __getitem__(self, key):
-            if key == "range":
-                type(self).reads += 1
-            return super().__getitem__(key)
-
-    table = {"id": "Process", "rows": 130, "cols": 26, "cells": {}, "merges": [], "visual_evidence": []}
-    for index in range(count):
-        table["visual_evidence"].append(
-            Visual(
-                {
-                    "source": {"part": "xl/drawings/drawing1.xml", "anchor_index": index + 1},
-                    "kind": "twoCellAnchor",
-                    "content_observed": False,
-                    "from": {"row": 1, "column": 25, "row_offset_emu": 0, "column_offset_emu": 0},
-                    "to": {"row": 2, "column": 26, "row_offset_emu": 0, "column_offset_emu": 0},
-                    "range": [1, 25, 1, 25],
-                }
-            )
-        )
-    return {"source": {"file": "source.xlsx", "sha256": "f" * 64, "format": ".xlsx"}, "tables": [table]}, Visual
-
-
-def test_explicit_object_field_native_reread_cannot_bypass_visual_budget():
-    from audit.bindings import Binding, BindingScope, scoped_records
-
-    document, _visual = visual_budget_document()
-    binding = Binding.model_validate(
-        {
-            "id": "body",
-            "document_id": "target",
-            "source_sha256": document["source"]["sha256"],
-            "table": "Process",
-            "header_rows": [1],
-            "first_row": 2,
-            "last_row": 2,
-            "columns": {"field": "B"},
-            "mapping_basis": "Column B is the declared field.",
-            "boundary_basis": "Row 2 is the declared body.",
-        }
-    )
-    materialized = bind(document, binding.model_dump())
-    scope = BindingScope.model_validate(
-        {
-            "binding_id": "body",
-            "objects": [{"id": "item", "rows": [2], "fields": {"field": [{"kind": "xlsx_cell", "sheet": "Process", "cell": "B2"}]}}],
-        }
-    )
-    with pytest.raises(ValueError, match="budget"):
-        scoped_records(materialized, binding, scope, document, EvidenceBudget(remaining=15000))
-    selected, _excluded = scoped_records(materialized, binding, scope, document, EvidenceBudget(remaining=30000))
-    assert selected[0]["values"]["field"] is None
-    assert selected[0]["states"]["field"] == "known"

@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -210,50 +209,6 @@ def assert_wheel_install(target: str) -> None:
             )
 
 
-def prove_missing_dependency_fails() -> None:
-    """Removing a real workspace dependency must break the isolated wheel import."""
-    source = ROOT / "packages/product"
-    with tempfile.TemporaryDirectory(prefix="ppap-missing-dep-") as raw:
-        work = Path(raw)
-        mutated = work / "product"
-        shutil.copytree(source, mutated)
-        pyproject = mutated / "pyproject.toml"
-        text = pyproject.read_text()
-        required = '    "audit",\n'
-        source_rule = "audit = { workspace = true }\n"
-        if required not in text or source_rule not in text:
-            raise RuntimeError("product dependency fixture changed")
-        pyproject.write_text(text.replace(required, "").replace(source_rule, ""))
-
-        wheelhouse = work / "wheelhouse"
-        wheelhouse.mkdir()
-        run(["uv", "build", "--wheel", "--out-dir", str(wheelhouse), str(mutated)], cwd=work, env=clean_env())
-        wheels = list(wheelhouse.glob("*.whl"))
-        if len(wheels) != 1:
-            raise RuntimeError("mutated store did not produce exactly one wheel")
-
-        constraints = lock_constraints(work)
-        venv = work / "venv"
-        run(["uv", "venv", "--python", "3.12", str(venv)], cwd=work, env=clean_env())
-        python = venv / "bin" / "python"
-        run(
-            ["uv", "pip", "install", "--python", str(python), "--constraint", str(constraints), str(wheels[0])],
-            cwd=work,
-            env=clean_env(),
-        )
-        completed = subprocess.run(
-            [str(python), "-c", "import product"],
-            cwd="/tmp",
-            env=clean_env(),
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        diagnostic = completed.stdout + completed.stderr
-        if completed.returncode == 0 or "No module named 'audit'" not in diagnostic:
-            raise RuntimeError("removing audit did not fail the isolated product import as expected\n" + diagnostic)
-
-
 def discover() -> None:
     rows = [
         {
@@ -273,16 +228,13 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--discover", action="store_true")
     group.add_argument("--member")
-    group.add_argument("--prove-missing-dependency", action="store_true")
     args = parser.parse_args()
     if args.discover:
         discover()
-    elif args.member:
+    else:
         if args.member not in production_members():
             raise SystemExit(f"not a production member: {args.member}")
         assert_wheel_install(args.member)
-    else:
-        prove_missing_dependency_fails()
 
 
 if __name__ == "__main__":

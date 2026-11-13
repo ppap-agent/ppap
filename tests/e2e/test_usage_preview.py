@@ -48,23 +48,23 @@ class UsagePreviewTests(unittest.TestCase):
     def test_cross_month_debit_keeps_one_original_acceptance_and_a_separate_debit_time(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width in (1440,):
-                page = browser.new_page(viewport={"width": width, "height": 900})
-                page.goto(PREVIEW + "/preview/audit.html?scene=usage-cross-month&view=usage&usageRange=all")
-                table = page.get_by_role("table", name="逐文件用量记录", exact=True)
-                expect(table.get_by_role("columnheader", name="时间", exact=True)).to_be_visible()
-                row = page.get_by_role("row", name="消费记录 示例消费-1", exact=True)
-                expect(row).to_contain_text("待扣")
-                expect(row.locator('time[datetime="2026-10-28T10:00:00+08:00"]')).to_have_count(1)
-                expect(row.locator("time")).to_have_count(1)
-                page.get_by_role("button", name="刷新用量", exact=True).click()
-                expect(row.get_by_title(re.compile("示例补扣订单"))).to_have_count(1)
-                expect(row.locator('time[datetime="2026-10-28T10:00:00+08:00"]')).to_have_count(1)
-                expect(row.locator('time[datetime="2026-11-03T11:00:00+08:00"]')).to_have_count(1)
-                expect(table.get_by_role("row")).to_have_count(2)
-                for label in ("本月消费次数", "消费点数", "待扣费点数"):
-                    expect(page.get_by_role("group", name=label, exact=True)).to_contain_text("0")
-                page.close()
+            width = 1440
+            page = browser.new_page(viewport={"width": width, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html?scene=usage-cross-month&view=usage&usageRange=all")
+            table = page.get_by_role("table", name="逐文件用量记录", exact=True)
+            expect(table.get_by_role("columnheader", name="时间", exact=True)).to_be_visible()
+            row = page.get_by_role("row", name="消费记录 示例消费-1", exact=True)
+            expect(row).to_contain_text("待扣")
+            expect(row.locator('time[datetime="2026-10-28T10:00:00+08:00"]')).to_have_count(1)
+            expect(row.locator("time")).to_have_count(1)
+            page.get_by_role("button", name="刷新用量", exact=True).click()
+            expect(row.get_by_title(re.compile("示例补扣订单"))).to_have_count(1)
+            expect(row.locator('time[datetime="2026-10-28T10:00:00+08:00"]')).to_have_count(1)
+            expect(row.locator('time[datetime="2026-11-03T11:00:00+08:00"]')).to_have_count(1)
+            expect(table.get_by_role("row")).to_have_count(2)
+            for label in ("本月消费次数", "消费点数", "待扣费点数"):
+                expect(page.get_by_role("group", name=label, exact=True)).to_contain_text("0")
+            page.close()
             browser.close()
 
     def test_service_notice_opens_shared_support_and_keeps_the_usage_view(self):

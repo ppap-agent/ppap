@@ -8,7 +8,6 @@ from pathlib import Path
 from audit.presets import customer_presets
 
 ROOT = Path(__file__).resolve().parents[4]
-NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 
 def test_nio_t12_source_clauses_run_over_the_actual_template_and_controlled_changes():

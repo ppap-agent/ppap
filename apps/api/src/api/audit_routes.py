@@ -633,7 +633,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         return JSONResponse(body)
 
     @app.get("/rounds/{round_id}/files/{file_id}/versions/{version_id}/download")
-    def rounds_download(round_id: str, file_id: str, version_id: str, request: Request):
+    def rounds_download(round_id: str, file_id: str, version_id: str, request: Request) -> Response:
         principal, denied = require_principal(request)
         if denied:
             return denied
@@ -659,7 +659,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         )
 
     @app.get("/rounds/{round_id}/bundle")
-    def rounds_bundle(round_id: str, request: Request):
+    def rounds_bundle(round_id: str, request: Request) -> Response:
         principal, denied = require_object(request, round_id)
         if denied:
             return denied

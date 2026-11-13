@@ -14,8 +14,16 @@ from PIL import Image
 from product import build_product_store
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
-from product.store.suite_releases import SuiteReleaseStore
+from product.store.suite_releases import SuiteReleaseStore, _lock, _member
 from worker import process_claimed
+
+
+def record_tenant_validation(releases, principal, revision_id, proof, expected_revision):
+    # Host-only tenant proof: member check and tenant lock, then the shared recorder.
+    with releases._conn() as conn, conn.transaction():
+        _member(conn, principal)
+        _lock(conn, principal.tenant_id)
+        return releases._record_validation(conn, principal.tenant_id, principal.user_id, revision_id, proof, expected_revision)
 
 
 @pytest.fixture
@@ -285,7 +293,7 @@ def test_validation_risk_change_alone_changes_confirmation_basis(system, core_sy
             for i in range(1, 5)
         ),
     )
-    assert releases.record_validation(principal, suite.revision.id, report, expected_revision=0)["verified"] is True
+    assert record_tenant_validation(releases, principal, suite.revision.id, report, 0)["verified"] is True
     current = client.get(path).json()
     assert current["files"][0]["match"]["rule"] == before["files"][0]["match"]["rule"]
     assert current["confirmation_basis_digest"] != before["confirmation_basis_digest"]
@@ -568,7 +576,7 @@ def verify_current_suite(system, key):
             for i in range(1, 5)
         ),
     )
-    proof = releases.record_validation(principal, suite.revision.id, report, expected_revision=selected["validation"]["write_revision"])
+    proof = record_tenant_validation(releases, principal, suite.revision.id, report, selected["validation"]["write_revision"])
     assert proof["verified"] is True
     return releases, active
 
@@ -681,7 +689,7 @@ def test_round_discloses_accepted_samples_not_rerun_after_later_validation(syste
             for i in range(1, 5)
         ),
     )
-    validation = releases.record_validation(principal, suite.revision.id, proof, expected_revision=0)
+    validation = record_tenant_validation(releases, principal, suite.revision.id, proof, 0)
     assert validation["verified"] and validation["samples_not_rerun"]
     releases.publish(principal, suite.revision.suite_key, suite.revision.id, active["revision"], str(uuid.uuid4()))
     task = client.get(path).json()
@@ -691,7 +699,7 @@ def test_round_discloses_accepted_samples_not_rerun_after_later_validation(syste
     assert frozen["status"] == "verified" and frozen["samples_not_rerun"]
     assert "平台已更新，样本未重跑" in frozen["notice"]
     current_proof = proof.model_copy(update={"library_revision": library_revision()})
-    releases.record_validation(principal, suite.revision.id, current_proof, expected_revision=validation["write_revision"])
+    record_tenant_validation(releases, principal, suite.revision.id, current_proof, validation["write_revision"])
     assert releases.active(principal, suite.revision.suite_key)["validation"]["samples_not_rerun"] is False
     assert client.get(path).json()["files"][0]["audit"]["checker_verification"] == frozen
     assert client.get("/rounds/" + accepted.json()["round_id"]).json()["inputs"][0]["checker_verification"] == frozen

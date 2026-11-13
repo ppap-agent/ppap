@@ -4,7 +4,7 @@ Clause text comes from each checker leaf's rules.json, the current authority.
 The DOCX files are the historical import archive: they only supply document
 identity, clause numbering, category and locator, never clause text.
 This neither generates Checker code nor claims that a clause is implemented.
-Run --check in Corpus tests.
+CI runs --check in the Repository job; it exits nonzero when preset_rules.json drifts.
 """
 
 from __future__ import annotations
@@ -170,10 +170,10 @@ def main() -> None:
     args = parser.parse_args()
     compiled = compile_presets()
     if args.check:
-        if OUTPUT.read_text() != compiled:
+        if OUTPUT.read_text(encoding="utf-8") != compiled:
             raise SystemExit("V4 preset rule text differs from its product-owned sources")
     else:
-        OUTPUT.write_text(compiled)
+        OUTPUT.write_text(compiled, encoding="utf-8")
 
 
 if __name__ == "__main__":

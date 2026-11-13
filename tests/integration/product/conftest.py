@@ -303,16 +303,13 @@ def core_system(monkeypatch, tmp_path):
             else:
                 run_audit_manifest(inputs, work, grants)
 
-        def install(self, store, *, controlled_model=False, guest_process=False):
-            if guest_process and controlled_model:
-                raise ValueError("Controlled model transport patches cannot cross the guest process boundary")
+        def install(self, store, *, guest_process=False):
             self.guest_process = guest_process
 
             class ControlledRuntime(CoreRuntime):
                 def execute_snapshot(self, *args, **kwargs):
-                    # Model capability is opt-in only when the test provides a
-                    # controlled provider boundary, never a default credential.
-                    kwargs["allow_model_calls"] = controlled_model and kwargs.get("allow_model_calls", True)
+                    # Integration tests never reach a default model credential.
+                    kwargs["allow_model_calls"] = False
                     return super().execute_snapshot(*args, **kwargs)
 
             settings = store.settings

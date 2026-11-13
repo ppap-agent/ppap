@@ -25,8 +25,6 @@ UNABLE = "UNABLE"
 NA = "NA"
 FINDING_STATUSES = {PASS, NG, ERR, UNABLE, NA}
 
-KIND_PRESENCE = "presence"
-KIND_ENGINE = "engine"
 
 DEEP_PROTOCOL_REVISION = "ppap-deep-v2"
 
@@ -76,9 +74,6 @@ class RoundInput:
     rule_execution: dict[str, Any] | None = None
     rule_source_file_version_id: str | None = None
 
-    def rule_kind(self) -> str:
-        return str((self.rule_body or {}).get("kind") or KIND_ENGINE)
-
 
 @dataclass
 class RoundWork:
@@ -98,23 +93,6 @@ class ClaimedJob:
     attempt: int
     round_id: str | None = None
     tenant_id: str | None = None
-
-
-def execution_error_result(code: str, *, target: RoundInput | None = None) -> dict[str, Any]:
-    return {
-        "findings": [
-            {
-                "item_key": f"{target.file_version_id}:execution" if target else "execution",
-                "classification": "执行",
-                "item": "审核执行",
-                "priority": "P0",
-                "status": ERR,
-                "suggestions": code,
-                "locator": {"kind": "file_version", "file_id": target.file_id, "file_version_id": target.file_version_id, "filename": target.filename} if target else None,
-            }
-        ],
-        "coverage": {"checked": [], "unchecked": ["执行未完成"], "locator_gap": True},
-    }
 
 
 def normalize_review(judgment: Any, rationale: Any, next_step: Any, version: Any) -> tuple[str, str, str, int]:

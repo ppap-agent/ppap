@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from functools import lru_cache
 from typing import Literal, Self
 from urllib.parse import urlsplit
@@ -11,7 +10,7 @@ from audit.policy import DeepExecutionPolicy
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from product.standard_policy import StandardExecutionPolicy, config_digest
+from product.standard_policy import config_digest
 
 ISOLATED_DEV_SECRET = "ppap_isolated_dev"
 ISOLATED_DEV_S3_ENDPOINT = "http://127.0.0.1:9000"
@@ -54,8 +53,6 @@ class Settings(BaseSettings):
     feishu_verification_token: str = Field(default="", alias="FEISHU_VERIFICATION_TOKEN")
     feishu_ai_item_id: str = Field(default="", alias="FEISHU_AI_ITEM_ID")
     feishu_free_trial_quota_points: int = Field(default=10000, alias="FEISHU_FREE_TRIAL_QUOTA_POINTS")
-    partner_ai_endpoint: str = Field(default="", alias="PPAP_PARTNER_AI_ENDPOINT")
-    legacy_engine_url: str = Field(default="", alias="PPAP_LEGACY_ENGINE_URL")
     onlyoffice_url: str = Field(default="", alias="PPAP_ONLYOFFICE_URL")
     onlyoffice_api_url: str = Field(default="", alias="PPAP_ONLYOFFICE_API_URL")
     onlyoffice_secret: str = Field(default="", alias="PPAP_ONLYOFFICE_SECRET")
@@ -78,10 +75,7 @@ class Settings(BaseSettings):
     s3_access_key: str = Field(default=ISOLATED_DEV_SECRET, alias="PPAP_S3_ACCESS_KEY")
     s3_secret_key: str = Field(default=ISOLATED_DEV_SECRET, alias="PPAP_S3_SECRET_KEY")
 
-    api_bind: str = Field(default="127.0.0.1", alias="PPAP_API_BIND")
-    api_port: int = Field(default=8080, alias="PPAP_API_PORT")
     public_api_url: str = Field(default="http://127.0.0.1:8080", alias="PPAP_PUBLIC_API_URL")
-    web_bind: str = Field(default="127.0.0.1", alias="PPAP_WEB_BIND")
     web_port: int = Field(default=4173, alias="PPAP_WEB_PORT")
     web_url: str = Field(default="", alias="PPAP_WEB_URL")
     worker_id: str = Field(default="", alias="PPAP_WORKER_ID")
@@ -100,20 +94,8 @@ class Settings(BaseSettings):
     template_root: str = Field(default="assets", alias="PPAP_TEMPLATE_ROOT")
 
     # Names kept from the migrated engine.
-    APP_NAME: str = "PPAP"
-    APP_VERSION: str = "0.1.0"
-    APP_GIT_SHA: str = "unknown"
-    DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "text"
-    DEVELOPMENT: bool = False
-    AI_RATE_LIMIT_PER_MINUTE: int = 60
-    MAX_PARALLEL_WORKERS: int = 7
-    LANGFUSE_SECRET_KEY: str = ""
-    LANGFUSE_PUBLIC_KEY: str = ""
-    LANGFUSE_HOST: str = ""
-    MAX_FILE_SIZE: str = "100MB"
-    ALLOWED_EXTENSIONS: str = ".pdf,.doc,.docx,.pptx,.xlsx,.xls,.xlsm,.jpg,.jpeg,.png,.gif,.md"
 
     @model_validator(mode="after")
     def production_must_not_inherit_isolated_dev(self) -> Self:
@@ -166,9 +148,6 @@ class Settings(BaseSettings):
             raise ValueError("production must set PPAP_WEB_URL explicitly")
         return self
 
-    def get_allowed_extensions(self) -> list[str]:
-        return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
-
     def deep_model_policy(self) -> tuple[str, str]:
         """Resolve non-secret model identity without requiring provider credentials."""
         values = (self.model_coding_base_url.strip(), self.model_coding_model.strip())
@@ -211,36 +190,6 @@ class Settings(BaseSettings):
 
     def deep_execution_revision(self, model_identity: dict[str, str] | None = None) -> str:
         return self.deep_execution_policy(model_identity).engine_revision()
-
-    def standard_execution_policy(self, model_identity: dict[str, str] | None = None) -> StandardExecutionPolicy:
-        identity = dict(model_identity) if model_identity else {"source": "unconfigured"}
-        return StandardExecutionPolicy(
-            app_revision=self.git_sha or None,
-            model=identity.get("model", "unconfigured"),
-            model_config_revision=config_digest(
-                {
-                    "identity": identity,
-                    "credential_source": identity.get("source", "unconfigured"),
-                    "max_retries": 0,
-                }
-            ),
-            tool_config_revision=config_digest(
-                {
-                    "ocr_model_identity": identity,
-                    "vision_protocol": "responses_v6",
-                    "ocr_http_timeout_seconds": 20,
-                    "ocr_max_retries": 0,
-                    "ocr_output_limit": 4096,
-                    "ocr_page_scope": "required_source_pages",
-                    "max_file_size": self.MAX_FILE_SIZE,
-                    "ng_topn": os.environ.get("PPAP_NG_TOPN", ""),
-                    "vision_page_workers": 2,
-                    "doc_converter": os.environ.get("LEGACY_DOC_CONVERTER_EXECUTABLE", ""),
-                    "doc_sandbox": os.environ.get("LEGACY_DOC_SANDBOX_EXECUTABLE", "ppap-local-converter-sandbox"),
-                    "doc_broker": os.environ.get("LEGACY_DOC_CONVERTER_SOCKET", ""),
-                }
-            ),
-        )
 
     def dsn(self, role: Literal["api", "worker", "migrator", "bootstrap"]) -> str:
         user, password = {

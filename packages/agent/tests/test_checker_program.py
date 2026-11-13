@@ -140,7 +140,7 @@ class Checker:
 
 
 def request() -> ExecuteRequest:
-    return ExecuteRequest(protocol_revision="test", round_id="round-1", files=[], executor="ppap-deep", executor_revision=REVISION, job_id="job-1")
+    return ExecuteRequest(protocol_revision="test", round_id="round-1", files=[], executor="ppap-checker-core", executor_revision=REVISION, job_id="job-1")
 
 
 def broken_draft() -> dict:
@@ -293,7 +293,6 @@ def test_zero_assertions_stay_err_even_when_a_source_is_present() -> None:
 
     assert response.findings[0].status == "ERR"
     assert "零断言不能判为通过" in response.findings[0].suggestions
-    assert response.coverage.verification is None
     empty = checker_response(request().model_copy(update={"files": [frozen]}), [(frozen, [result.model_copy(update={"suggestions": "", "evidence": None})])])
     assert empty.findings[0].status == "ERR"
     assert "空结果不能判为通过" in empty.findings[0].suggestions
@@ -564,7 +563,6 @@ def test_pdf_page_and_region_reach_the_product_finding_without_trace_verificatio
     assert response.findings[0].status == "UNABLE"
     assert response.findings[0].locator["semantic"]["diagnostics"][0]["code"] == "page_location_failed"
     assert response.findings[0].locator["semantic"]["sources"][0]["excerpt"] == ""
-    assert response.coverage.verification is None
     valued = evidence.model_copy(update={"sources": (EvidenceSource(kind="structure", locator="file:version-1;page:3;region:[0, 12, 400, 700]", excerpt="0"),)})
     valued_result = result.model_copy(update={"evidence": valued, "status": "NG", "suggestions": "原值为 0", "checks_performed": 1})
     valued_response = checker_response(request().model_copy(update={"files": [frozen]}), [(frozen, [valued_result])])
@@ -576,7 +574,6 @@ def test_pdf_page_and_region_reach_the_product_finding_without_trace_verificatio
     assert blocked.findings[0].status == "UNABLE"
     assert "不能判为通过" in blocked.findings[0].suggestions
     assert blocked.findings[0].locator["semantic"]["sources"][0]["locator"]["page"] == 3
-    assert blocked.coverage.verification is None
 
     for locator in (
         "file:version-1;page:5;region:not-json",
@@ -1765,7 +1762,6 @@ def test_a_read_cell_points_at_this_file_without_trace_verification(tmp_path: Pa
     response = checker_response(request().model_copy(update={"files": [frozen]}), [(frozen, results)])
 
     assert response.note == "deep_checker_audit"
-    assert response.coverage.verification is None
     assert response.coverage.locator_gap is False
     source = response.findings[0].locator["semantic"]["sources"][0]
     assert source["file_version_id"] == "version-1"
@@ -1828,7 +1824,6 @@ def test_a_related_cell_keeps_its_own_file_version(tmp_path: Path) -> None:
     response = checker_response(request().model_copy(update={"files": [target, reference]}), [(target, [result])])
     sources = response.findings[0].locator["semantic"]["sources"]
 
-    assert response.coverage.verification is None
     assert response.coverage.locator_gap is False
     assert sources[0]["file_version_id"] == "version-1"
     assert sources[0]["locator"] == {"kind": "xlsx_cell", "sheet": "过程流程图", "cell": "A2"}
@@ -1993,7 +1988,6 @@ def test_an_extra_clause_binding_is_reported_without_dropping_the_rule_clause(tm
     by_clause = {item.locator["semantic"]["clause_id"]: item for item in response.findings}
 
     assert [(item.clause_id, item.status) for item in results] == [("R4", "UNABLE"), ("EXTRA", "ERR")]
-    assert response.coverage.verification is None
     assert [item["id"] for item in response.coverage.rule_items] == ["R4"]
     assert by_clause["R4"].status == "UNABLE"
     assert by_clause["EXTRA"].status == "ERR"
@@ -2102,7 +2096,6 @@ def test_a_related_workbook_cell_is_attributed_to_that_file_version(tmp_path: Pa
     source = response.findings[0].locator["semantic"]["sources"][0]
 
     assert results[0].status == "NG"
-    assert response.coverage.verification is None
     assert source["file_version_id"] == "related-version"
     assert source["locator"] == {"kind": "xlsx_cell", "sheet": "特殊特性清单", "cell": "B2"}
 
@@ -2177,7 +2170,6 @@ def test_a_method_without_a_clause_id_is_reported_without_dropping_the_rule_clau
     assert missing.status == "ERR"
     assert "检查入口缺少条款 ID" in missing.suggestions
     assert missing.locator["semantic"]["binding"] == "missing_clause_id"
-    assert response.coverage.verification is None
 
 
 def _gap_program(gap: str) -> str:
@@ -2320,7 +2312,6 @@ def test_fixed_execution_keeps_a_completed_clause_when_another_is_missing_or_dup
     assert by_key["version-1:binding:missing-clause-id-1"].locator["semantic"]["binding"] == "missing_clause_id"
     assert [item["id"] for item in response.coverage.rule_items] == ["A", "B"]
     assert [item["status"] for item in stored["findings"] if item["item_key"].endswith(":rule:A") or item["item_key"].endswith(":rule:B")] == ["NG", "ERR"]
-    assert response.coverage.verification is None
 
 
 def test_duplicate_rule_ids_fail_before_authored_code_or_model_runs(tmp_path: Path) -> None:
@@ -2392,7 +2383,6 @@ def create_audit(audit_file, rule, group_context=None):
     assert question["rule_ids"] == ["A"]
     assert question["scope"]["rule_targets"] == [{"document_id": "version-1", "rule_id": "A"}]
     assert question["candidates"][0]["explanation"] == "按左列表头理解"
-    assert response.coverage.verification is None
 
 
 def test_two_results_for_one_clause_do_not_reject_the_other_clause() -> None:
@@ -2446,7 +2436,6 @@ def test_two_results_for_one_clause_do_not_reject_the_other_clause() -> None:
     assert by_key["version-1:rule:B"].status == "NG"
     assert by_key["version-1:rule:B"].suggestions == "保留"
     assert [row["item_key"] for row in stored["findings"]] == ["version-1:rule:A", "version-1:rule:B", "version-1:rule:A:2"]
-    assert response.coverage.verification is None
 
 
 def test_frozen_suite_formalization_is_the_development_what(tmp_path: Path) -> None:

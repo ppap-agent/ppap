@@ -160,9 +160,6 @@ def run_target(target: Target, suite: str, project: str) -> None:
         with_postgres(command, project)
     else:
         run(command)
-    if suite == "distributions" and target.name == "product":
-        # Preserve the original missing-dependency negative control.
-        run([sys.executable, "scripts/validate_distribution.py", "--prove-missing-dependency"])
 
 
 def main() -> None:

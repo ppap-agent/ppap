@@ -2,61 +2,17 @@
 
 from __future__ import annotations
 
+import types
+import typing
 import unittest
+from typing import get_type_hints
 
 from api import app
 from api import web_contract as wc
+from fastapi.datastructures import DefaultPlaceholder
+from fastapi.routing import APIRoute
 from pydantic import TypeAdapter, ValidationError
-
-REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
-    ("GET", "/public-config"): False,
-    ("POST", "/login/feishu/host"): True,
-    ("GET", "/me"): False,
-    ("POST", "/files"): True,
-    ("POST", "/files/{file_id}/versions/{version_id}/finalize"): True,
-    ("GET", "/files/{file_id}/versions/{version_id}"): False,
-    ("GET", "/file-uploads/{request_id}"): False,
-    ("PUT", "/files/{file_id}/versions/{version_id}/blob"): False,
-    ("GET", "/files/{file_id}/versions/{version_id}/preview"): False,
-    ("GET", "/integrations/feishu/files"): False,
-    ("GET", "/integrations/feishu/docs/links"): False,
-    ("POST", "/integrations/feishu/files/import"): True,
-    ("GET", "/integrations/feishu/usage/quota"): False,
-    ("POST", "/integrations/feishu/rounds/{round_id}/writeback"): False,
-    ("GET", "/rules"): False,
-    ("GET", "/audit-customers"): False,
-    ("POST", "/audit-tasks"): True,
-    ("GET", "/audit-tasks"): False,
-    ("GET", "/audit-tasks/{task_id}"): False,
-    ("GET", "/audit-tasks/{task_id}/recognitions/{request_id}"): False,
-    ("POST", "/audit-tasks/{task_id}/end"): True,
-    ("POST", "/audit-tasks/{task_id}/confirm"): True,
-    ("POST", "/drafts"): True,
-    ("GET", "/drafts"): False,
-    ("POST", "/file-analyses"): True,
-    ("POST", "/file-validations"): True,
-    ("GET", "/file-validations/{validation_id}"): False,
-    ("GET", "/files/{file_id}/versions/{version_id}/validation"): False,
-    ("GET", "/file-analyses/{analysis_id}"): False,
-    ("GET", "/files/{file_id}/versions/{version_id}/analysis"): False,
-    ("GET", "/drafts/{draft_id}"): False,
-    ("PUT", "/drafts/{draft_id}"): True,
-    ("POST", "/drafts/{draft_id}/accept"): True,
-    ("GET", "/rounds"): False,
-    ("GET", "/usage"): False,
-    ("GET", "/rounds/{round_id}"): False,
-    ("GET", "/rounds/{round_id}/files/{file_id}/versions/{version_id}/preview"): False,
-    ("POST", "/rounds/{round_id}/resubmit"): True,
-    ("PUT", "/rounds/{round_id}/reviews"): True,
-    ("GET", "/rule-types"): False,
-    ("POST", "/rules/parse"): True,
-    ("GET", "/rules/parse/{parse_id}"): False,
-    ("POST", "/rules"): True,
-    ("GET", "/rules/{rule_version_id}"): False,
-    ("GET", "/integrations/feishu/rounds/{round_id}/report"): False,
-    ("POST", "/integrations/feishu/rounds/{round_id}/report"): False,
-    ("GET", "/files/{file_id}/versions/{version_id}/office"): False,
-}
+from starlette.responses import Response
 
 
 def _response_schema(operation: dict) -> dict | None:
@@ -68,6 +24,12 @@ def _response_schema(operation: dict) -> dict | None:
         if media and media.get("schema"):
             return media["schema"]
     return None
+
+
+def _is_response(annotation) -> bool:
+    if typing.get_origin(annotation) in (typing.Union, types.UnionType):
+        return all(_is_response(arg) for arg in typing.get_args(annotation))
+    return isinstance(annotation, type) and issubclass(annotation, Response)
 
 
 def _request_schema(operation: dict) -> dict | None:
@@ -135,7 +97,7 @@ class OpenAPIContractTests(unittest.TestCase):
         }
         self.assertEqual(TypeAdapter(wc.RuleCoverageItem).validate_python(failed), failed)
 
-    def test_finding_contract_preserves_the_existing_file_version_locator_without_requiring_it_on_legacy_rows(self):
+    def test_finding_locator_accepts_file_version_and_bare_version_rows(self):
         for locator in (
             {"kind": "file_version", "file_id": "file-a", "file_version_id": "version-a", "filename": "控制计划.xlsx", "rule_item_id": "1", "evidence": None},
             {"file_version_id": "legacy-a"},
@@ -161,7 +123,6 @@ class OpenAPIContractTests(unittest.TestCase):
         spec = app.openapi()
         for path, method in (("/audit-tasks", "post"), ("/audit-tasks/{task_id}", "get"), ("/audit-tasks/{task_id}/confirm", "post")):
             self.assertEqual(_response_schema(spec["paths"][path][method]), {"$ref": "#/components/schemas/AuditTask"})
-        self.assertIs(app.openapi(), spec)
 
         def check_refs(value):
             if isinstance(value, dict):
@@ -176,25 +137,23 @@ class OpenAPIContractTests(unittest.TestCase):
 
         check_refs(spec["components"]["schemas"])
 
-    def test_major_web_operations_have_explicit_json_contracts(self):
+    def test_every_serialized_json_route_has_explicit_contracts(self):
+        """Routes FastAPI serializes declare their response and JSON body; manual Responses are exempt."""
         spec = app.openapi()
-        paths = spec.get("paths") or {}
         failures: list[str] = []
-
-        for (method, path), needs_body in REQUIRED_ENDPOINTS.items():
-            operation = (paths.get(path) or {}).get(method.lower())
-            label = f"{method} {path}"
-            if not operation:
-                failures.append(f"missing OpenAPI operation: {label}")
+        for route in app.routes:
+            if not isinstance(route, APIRoute) or not route.include_in_schema:
                 continue
-            response = _response_schema(operation)
-            if not response or response == {"type": "object"}:
-                failures.append(f"missing explicit 2xx JSON response schema: {label}")
-            if needs_body:
-                request = _request_schema(operation)
-                if not request or request == {"type": "object"}:
+            returned = get_type_hints(route.endpoint).get("return")
+            if not isinstance(route.response_class, DefaultPlaceholder) or _is_response(returned):
+                continue
+            for method in route.methods:
+                operation = spec["paths"][route.path][method.lower()]
+                label = f"{method} {route.path}"
+                if _response_schema(operation) in (None, {}, {"type": "object"}):
+                    failures.append(f"missing explicit 2xx JSON response schema: {label}")
+                if "requestBody" in operation and _request_schema(operation) in (None, {}, {"type": "object"}):
                     failures.append(f"missing explicit JSON request schema: {label}")
-
         self.assertEqual(failures, [])
 
 

@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, Set, Type, cast
+from typing import Dict, Type, cast
 
 from .base import BaseExtractor
 from .excel import ExcelExtractor
@@ -104,22 +104,6 @@ class ExtractorFactory:
             bool: 是否支持该文件类型
         """
         return file_extension.lower() in self._extractors
-
-    def get_supported_extensions(self) -> Set[str]:
-        """获取所有支持的文件扩展名
-
-        Returns:
-            Set[str]: 支持的文件扩展名集合
-        """
-        return set(self._extractors.keys())
-
-    def get_extractors_info(self) -> Dict[str, str]:
-        """获取所有注册的提取器信息
-
-        Returns:
-            Dict[str, str]: 文件扩展名到提取器类名的映射
-        """
-        return {ext: extractor_class.__name__ for ext, extractor_class in self._extractors.items()}
 
 
 # 创建全局工厂实例

@@ -23,8 +23,7 @@ test-results/
 .insforge/
 .cache/
 
-# Local grok agent state.
-.grok/
 output/
 
 /deploy/tke/.build.lock
+.grok/

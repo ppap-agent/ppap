@@ -15,7 +15,7 @@ import {Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHea
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {Textarea} from '../components/ui/textarea'
 import {ReadSkeleton} from '../components/read-skeleton'
-import {clauseSourceReady, type RequirementBasis, type RequirementClause} from './requirements-state'
+import {clauseSourceReady, type RequirementClause} from './requirements-state'
 import {verifiedClauseCount} from './requirement-sources'
 import {RequirementSourceSelect} from './requirement-source-select'
 import {clauseContent, libraryDraftIssues, scopeFields, scopeLabel, type RequirementCollection, type RequirementDraft, type RequirementUse, type RequirementVersion} from './requirement-library-state'
@@ -32,13 +32,6 @@ import {ProgramStatus} from '../audit/program-status'
 
 const routeSelection = () => ({id: new URLSearchParams(location.search).get('requirement') ?? '', version: new URLSearchParams(location.search).get('reqVersion') ?? ''})
 const routeContent = () => new URLSearchParams(location.search).get('reqTab') === 'changes' ? 'changes' : 'clauses'
-function reviewedBasisContent(basis: RequirementBasis) {
-  return canonical({
-    ...basis,
-    server: basis.server ? {...basis.server, sources: undefined} : undefined,
-    clauses: basis.clauses.map(clause => [clause, clauseSourceReady(clause, basis)]),
-  })
-}
 function requirementHref(id = '', version = '') {
   const url = new URL(location.href)
   if (url.pathname.replace(/\/$/, '') === '/requirements') url.searchParams.delete('view')
@@ -154,7 +147,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     window.addEventListener('popstate', sync); window.addEventListener(auditAddressChanged, sync)
     return () => {mounted.current = false; window.removeEventListener('popstate', sync); window.removeEventListener(auditAddressChanged, sync)}
   }, [])
-  function edit(update: (draft: RequirementDraft) => RequirementDraft, invalidateAcknowledgement = true) {
+  function edit(update: (draft: RequirementDraft) => RequirementDraft) {
     if (working.current || loading || !collection?.draft || !draftSelected) return
     setFeedback(null)
     onChange(items => items.map(item => item.id === collection.id && item.draft ? {...item, draft: update(item.draft)} : item))
@@ -248,7 +241,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
       </header>
       {draftSelected ? <fieldset disabled={locked} className="min-w-0 space-y-4">
         <p className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground"><Info aria-hidden="true" className="size-3.5 shrink-0"/>草稿只存在这台电脑的浏览器里，记得保存。</p>
-        <RuleExtraction basis={current.basis} readonly={locked} onChange={basis => edit(draft => ({...draft, basis}), reviewedBasisContent(current.basis) !== reviewedBasisContent(basis))}/>
+        <RuleExtraction basis={current.basis} readonly={locked} onChange={basis => edit(draft => ({...draft, basis}))}/>
         <div className="grid gap-4 grid-cols-2"><label className="grid gap-1.5">规则名称{missing(!current.basis.source.title.trim())}<Input aria-invalid={attempted && !current.basis.source.title.trim()} value={current.basis.source.title} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, title: value}}}))}}/></label><label className="grid gap-1.5">版本号{missing(!current.basis.source.version.trim(), versionTaken ? '这个版本号已经用过了' : '必填')}<Input aria-invalid={attempted && (!current.basis.source.version.trim() || versionTaken)} value={current.basis.source.version} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, version: value}}}))}}/></label></div>
         <div className="grid gap-4 grid-cols-3">{scopeFields.map(({key, flag, label}) => <div className="min-w-0 space-y-1.5" key={key}><label className="grid gap-1.5">{key === 'customer' ? '所属模板' : `适用${label}`}{missing(current.scope[flag] !== true && !current.scope[key].trim())}<Input aria-invalid={attempted && current.scope[flag] !== true && !current.scope[key].trim()} disabled={locked || current.scope[flag] === true} value={current.scope[key]} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, scope: {...draft.scope, [key]: value}}))}}/></label><label className="flex min-h-9 items-center gap-2 text-muted-foreground"><Checkbox disabled={locked} checked={current.scope[flag] === true} onCheckedChange={value => edit(draft => ({...draft, scope: {...draft.scope, [flag]: value === true}}))}/>{key === 'customer' ? '放入通用规则' : `不限定${label}`}</label></div>)}</div>
         <label className="grid gap-1.5">这次改了什么{missing(!current.reason.trim())}<Textarea aria-invalid={attempted && !current.reason.trim()} value={current.reason} onChange={event => {const value = event.currentTarget.value; edit(draft => ({...draft, reason: value}))}}/></label>

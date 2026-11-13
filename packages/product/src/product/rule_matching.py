@@ -135,11 +135,6 @@ class RuleMatchingAIService:
             while len(cls._match_cache) > cls._cache_max_entries:
                 cls._match_cache.popitem(last=False)
 
-    @classmethod
-    def clear_cache(cls) -> None:
-        with cls._cache_lock:
-            cls._match_cache.clear()
-
     @staticmethod
     def _infer_candidate_doc_type(rule: Dict[str, str]) -> Optional[PpapDocumentType]:
         doc_type = PpapDocumentType.infer_from_signals(

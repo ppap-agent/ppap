@@ -7,13 +7,8 @@ from dataclasses import dataclass
 
 from product.feishu_drive import OPEN_API
 
-DEFAULT_FREE_TRIAL_QUOTA_POINTS = 10000
 AUDIT_COST_PER_FILE = 500
 DEEP_SURCHARGE_PER_FILE = 250
-TRIAL_UNREPORTED = "none"
-PARTNER_PENDING = "pending"
-PARTNER_CONFIRMED = "confirmed"
-PARTNER_FAILED = "failed"
 
 
 class FeishuUsageError(Exception):
@@ -250,21 +245,6 @@ def report_usage_record(http, tenant_token: str, report_token: str, ai_item_id: 
     if not _ok(response) or not record_id:
         raise FeishuUsageError("feishu_usage_report_failed")
     return record_id
-
-
-def report_partner_usage(http, user_token: str, tenant_token: str, event: dict) -> str:
-    trace_id = str(event.get("trace_id") or "").strip()
-    if not trace_id:
-        raise FeishuUsageError("invalid_trace_id")
-    report_token = apply_report_credential(http, user_token, event["ai_item_id"], trace_id)
-    return report_usage_record(
-        http,
-        tenant_token,
-        report_token,
-        event["ai_item_id"],
-        trace_id,
-        int(event["consumed_points"]),
-    )
 
 
 def estimate_audit(

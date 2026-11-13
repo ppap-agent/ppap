@@ -182,55 +182,6 @@ def test_authored_collective_failure_is_not_repeated_for_later_clauses():
     assert calls == ["external"]
 
 
-@pytest.mark.parametrize("module", ["audit.checker_lib.li.psw_pdf_agent", "audit.checker_lib.nio.psw_pdf_agent"])
-def test_pdf_suite_keeps_original_page_visual_policy(module, monkeypatch):
-    """Dispatch regression only: a converted grid cannot stand in for a PDF stamp."""
-    import importlib
-
-    from audit.contracts import AuditResultItem
-    from audit.engine.checkers.rule_declarations import discover_declared_rules
-
-    cls = importlib.import_module(module).PswPDFAgent
-    checker = object.__new__(cls)
-    checker.temp_files = []
-    checker.audit_file = AuditInput(audit_id="frozen", file_url="/frozen/original.pdf")
-    checker.excel_agent = SimpleNamespace(_execute_rule_check=lambda *_: pytest.fail("PDF visuals must not use the converted workbook"))
-    checker.log_audit_start = checker.log_audit_result = lambda *args: None
-    calls = []
-
-    def original(ith, rule_no, **kwargs):
-        calls.append((ith, rule_no))
-        return AuditResultItem(classification="stamp", item="original PDF", priority="P0", status="UNABLE", suggestions="Original fact is unconfirmed")
-
-    checker._run_fact_rule = original
-    suite = leaf("理想:L17" if ".li." in module else "蔚来:N17")
-    context = SimpleNamespace(audit_file=checker.audit_file, clause_id="3", cache={("standard-checker", "frozen", f"{module}:PswPDFAgent"): checker})
-    methods = discover_declared_rules(cls.TARGET_EXCEL_AGENT_CLASS)
-    result = check_clause(context, {"carriers": {".pdf": f"{module}:PswPDFAgent"}, "methods": {"3": methods[2][0]}})
-    assert resources(suite)["methods"][suite.source_entry + ":3"] == methods[2][0]
-    assert calls == [(2, 3)]
-    assert result.status == "UNABLE" and result.clause_id == "3"
-
-
-@pytest.mark.parametrize("version", ["li", "nio"])
-def test_word_suite_uses_original_visual_hook_instead_of_excel(version):
-    from audit.contracts import AuditResultItem
-
-    module = f"{COMPANY_MODULES[version]}.psw_docx_agent"
-    cls = importlib.import_module(module).PswDocxAgent
-    checker = object.__new__(cls)
-    checker.temp_files = []
-    checker.audit_file = AuditInput(audit_id="frozen", file_url="/frozen/original.docx")
-    checker._execute_rule_check = lambda *_: pytest.fail("Word visual clauses must not read an XLSX carrier")
-    calls = []
-    checker.check_source_rule = lambda ith: calls.append(ith) or AuditResultItem(classification="stamp", item="stamp", priority="P0", status="UNABLE", suggestions="unconfirmed")
-    implementation = f"{module}:PswDocxAgent"
-    context = SimpleNamespace(audit_file=checker.audit_file, clause_id="3", cache={("standard-checker", "frozen", implementation): checker})
-    result = check_clause(context, {"carriers": {".docx": implementation}, "methods": {"3": discover_declared_rules(cls)[2][0]}})
-    assert calls == [2]
-    assert result.status == "UNABLE" and result.clause_id == "3"
-
-
 @pytest.mark.parametrize("version", ["li", "nio"])
 @pytest.mark.parametrize("performed", [False, True])
 def test_native_adapter_publishes_only_actual_predicate_count(tmp_path, version, performed):

@@ -2346,16 +2346,6 @@ def test_deep_mode_is_chosen_before_acceptance_frozen_on_the_round_and_estimated
     assert locked.status_code == 409
 
 
-def test_a_standard_task_keeps_its_job_payload_without_a_mode(matched_task):
-    client, worker, path, _body, _rule = matched_task
-    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
-    assert accepted.status_code == 201, accepted.text
-    assert accepted.json()["deep_mode"] is False
-    with worker._conn() as conn:
-        payload = conn.execute("SELECT payload FROM engine.jobs WHERE audit_round_id=%s AND kind='audit'", (accepted.json()["round_id"],)).fetchone()[0]
-    assert payload.get("analysis_mode") != "deep"
-
-
 def test_deep_mode_is_refused_when_unavailable(matched_task):
     client, worker, path, _body, _rule = matched_task
     # Without the deep runtime the switch is off with a reason; acceptance never falls back silently.

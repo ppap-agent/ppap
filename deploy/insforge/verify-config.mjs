@@ -44,14 +44,7 @@ function commandText(service) {
 function composeEnv(overrides) {
   const env = {...process.env, ...overrides}
   for (const key of Object.keys(env)) {
-    if (
-      key.startsWith('PPAP_') ||
-      key.startsWith('FEISHU_') ||
-      key.startsWith('LLM_') ||
-      key.startsWith('OCR_')
-    ) {
-      delete env[key]
-    }
+    if (key.startsWith('PPAP_') || key.startsWith('FEISHU_')) delete env[key]
   }
   return {...env, ...overrides}
 }

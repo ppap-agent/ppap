@@ -10,7 +10,7 @@ from unittest.mock import patch
 from api import create_app
 from dotenv import dotenv_values
 from product.capabilities import report
-from product.llm import llm_configured, responses_url
+from product.llm import llm_configured
 from product.settings import ISOLATED_DEV_LLM_BASE_URL, ISOLATED_DEV_LLM_MODEL, ISOLATED_DEV_SECRET, Settings
 from pydantic import ValidationError
 
@@ -57,14 +57,6 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.model_text_base_url, ISOLATED_DEV_LLM_BASE_URL)
         self.assertEqual(settings.model_text_model, ISOLATED_DEV_LLM_MODEL)
         self.assertTrue(llm_configured(settings))
-
-    def test_openai_names_are_not_application_authority(self):
-        with _clean_env(OPENAI_API_KEY="from-openai", OPENAI_BASE_URL="https://example.invalid/v1", MODEL_NAME="hidden"):
-            settings = Settings()
-        self.assertEqual(settings.model_text_api_key, "")
-        self.assertEqual(settings.model_text_base_url, ISOLATED_DEV_LLM_BASE_URL)
-        self.assertEqual(settings.model_text_model, ISOLATED_DEV_LLM_MODEL)
-        self.assertFalse(llm_configured(settings))
 
     def test_production_rejects_isolated_dev_credentials(self):
         with _clean_env(PPAP_PROFILE="production"):
@@ -163,9 +155,6 @@ class SettingsTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 Settings()
 
-    def test_responses_url_does_not_invent_protocol(self):
-        self.assertEqual(responses_url("https://example.invalid/v1/"), "https://example.invalid/v1/responses")
-
 
 class ApiSurfaceTests(unittest.TestCase):
     def setUp(self):
@@ -217,8 +206,6 @@ class ApiSurfaceTests(unittest.TestCase):
     def test_missing_optional_integrations_do_not_block_core(self):
         caps = self.client.get("/capabilities").json()
         self.assertEqual(caps["feishu"]["state"], "disabled")
-        self.assertEqual(caps["partner_ai"]["state"], "disabled")
-        self.assertEqual(caps["legacy_engine"]["state"], "disabled")
         self.assertEqual(caps["llm"]["state"], "disabled")
         self.assertEqual(caps["deep"]["state"], "disabled")
         self.assertFalse(llm_configured(self.settings))
@@ -229,15 +216,12 @@ class ApiSurfaceTests(unittest.TestCase):
             PPAP_MODEL_TEXT_API_KEY="sk-test",
             FEISHU_APP_ID="cli_test",
             FEISHU_APP_SECRET="secret",
-            PPAP_PARTNER_AI_ENDPOINT="https://example.invalid",
             PPAP_DEEP_CONTROLLER_SOCKET="/tmp/ppap-deep.sock",
         ):
             settings = Settings()
         caps = report(settings)
         self.assertEqual(caps["llm"]["state"], "configured")
         self.assertEqual(caps["feishu"]["state"], "configured")
-        self.assertEqual(caps["partner_ai"]["state"], "configured")
-        self.assertEqual(caps["legacy_engine"]["state"], "disabled")
         self.assertEqual(caps["deep"]["state"], "configured")
         for body in caps.values():
             self.assertEqual(set(body), {"state"})

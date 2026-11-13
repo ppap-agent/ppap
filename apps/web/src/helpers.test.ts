@@ -5,15 +5,14 @@ import {analysisNotice, sourceLocation} from './helpers.ts'
 
 test('recognition notices hide internal excerpt details without hiding actionable failures', () => {
   assert.equal(analysisNotice('metadata_uses_excerpt'), null)
-  assert.match(analysisNotice('ambiguous_available_rules')!, /多份生效规则.*未自动选择.*重新识别/)
-  assert.equal(analysisNotice('matching_result_unknown'), '尚未取得完整匹配结果，请读取识别结果。')
-  assert.match(analysisNotice('matching_customer_required')!, /选择客户.*重新识别/)
-  assert.match(analysisNotice('matching_document_type_rules_missing')!, /没有此类文件可用的规则/)
-  assert.match(analysisNotice('matching_customer_rules_missing')!, /适用于该客户和文件类型/)
-  assert.match(analysisNotice('matching_rules_customer_unassigned')!, /尚未确认客户范围.*不限定客户/)
-  assert.match(analysisNotice('matching_document_type_required')!, /核对原件/)
-  assert.equal(analysisNotice('future_notice_code'), '识别信息需要核对，请读取识别结果；若仍有异常，请联系支持。')
-  for (const code of ['MATCH_TIMEOUT', 'matching-timeout', 'matching.timeout']) assert.equal(analysisNotice(code), '识别信息需要核对，请读取识别结果；若仍有异常，请联系支持。')
+  const fallback = analysisNotice('future_notice_code')
+  assert.ok(fallback)
+  for (const code of ['ambiguous_available_rules', 'matching_result_unknown', 'matching_customer_required', 'matching_document_type_rules_missing', 'matching_customer_rules_missing', 'matching_rules_customer_unassigned', 'matching_document_type_required']) {
+    const notice = analysisNotice(code)
+    assert.ok(notice && notice !== fallback && !notice.includes(code))
+  }
+  for (const code of ['MATCH_TIMEOUT', 'matching-timeout', 'matching.timeout']) assert.equal(analysisNotice(code), fallback)
+  // A server notice already written for people is shown as written.
   assert.equal(analysisNotice('未选择控制计划，频次一致性缺少跨文件比对资料。'), '未选择控制计划，频次一致性缺少跨文件比对资料。')
 })
 

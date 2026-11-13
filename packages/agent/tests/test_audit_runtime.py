@@ -1,4 +1,4 @@
-"""Controlled native/process validation; no test invokes a paid provider."""
+"""In-process audit runtime validation, plus the corpus harness subprocess boundary; no paid provider."""
 
 import hashlib
 import json
@@ -247,7 +247,7 @@ def check(context):
     inputs = tuple(FrozenInput(key, hashlib.sha256(value).hexdigest(), "target", key + extension) for (key, value), extension in zip(sources.items(), (".xlsx", ".pdf", ".docx")))
     targets = tuple(FrozenTarget(key, "revision", "suite", "a" * 64, {"rules": [{"id": "read"}]}, RuleBinding("suite", digest, {"read": "checker:check"})) for key in sources)
     snapshot = ExecutionSnapshot("tenant", "initiator", inputs, targets, "runtime", "library", {})
-    result = run_audit_process(snapshot, sources, {digest: files})
+    result = run_audit(snapshot, sources, {digest: files})
     assert [row["suggestions"] for row in result["findings"]] == ["native Excel", "native PDF", "native DOCX"]
 
 
@@ -321,7 +321,7 @@ def test_reference_type_is_visible_without_a_reference_rule():
     )
     snapshot, sources, programs = request(program, targets=1)
     snapshot = replace(snapshot, inputs=tuple(replace(item, document_type="control-plan") if item.role == "reference" else item for item in snapshot.inputs))
-    assert all(item["status"] == "PASS" for item in run_audit_process(snapshot, sources, programs)["findings"])
+    assert all(item["status"] == "PASS" for item in run_audit(snapshot, sources, programs)["findings"])
 
 
 def test_reference_rule_and_appendix_are_frozen_and_survive_guest_serialization():
@@ -354,8 +354,8 @@ def test_reference_rule_and_appendix_are_frozen_and_survive_guest_serialization(
 
 def test_shared_program_module_is_loaded_once_per_audit():
     program = PROGRAM.replace(b"def check(context):", b"calls = 0\n\ndef check(context):\n    global calls\n    calls += 1").replace(b"str(context.cache['count'])", b"str(calls)")
-    result = run_audit_process(*request(program))
-    assert [item["suggestions"] for item in result["findings"]] == [f"{result['process_id']}:{index}" for index in range(1, 5)]
+    result = run_audit(*request(program))
+    assert [item["suggestions"] for item in result["findings"]] == [f"{os.getpid()}:{index}" for index in range(1, 5)]
 
 
 def test_program_without_resources_cannot_import_another_suite_resource(monkeypatch):

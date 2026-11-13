@@ -614,7 +614,7 @@ def create_app(
         return JSONResponse(version_payload(version))
 
     @app.get("/files/{file_id}/versions/{version_id}/download")
-    def files_download(file_id: str, version_id: str, request: Request):
+    def files_download(file_id: str, version_id: str, request: Request) -> Response:
         version, denied = require_file_version(request, file_id, version_id)
         if denied:
             return denied

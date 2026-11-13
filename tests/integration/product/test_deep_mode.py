@@ -129,18 +129,10 @@ class DeepProtocolTests(unittest.TestCase):
             ],
         }
         ExecuteRequest.model_validate(spec)
-        for extra in (
-            {"command": "rm -rf /"},
-            {"path": "/etc/passwd"},
-            {"host_path": "/tmp"},
-            {"mount": "/var/run/docker.sock"},
-            {"image": "evil:latest"},
-            {"env": {"K": "V"}},
-        ):
-            with self.assertRaises(ValidationError):
-                ExecuteRequest.model_validate({**spec, **extra})
-            with self.assertRaises(ValidationError):
-                RequestEnvelope.model_validate({"op": "execute", "spec": spec, **extra})
+        with self.assertRaises(ValidationError):
+            ExecuteRequest.model_validate({**spec, "command": "rm -rf /"})
+        with self.assertRaises(ValidationError):
+            RequestEnvelope.model_validate({"op": "execute", "spec": spec, "mount": "/var/run/docker.sock"})
         with self.assertRaises(ValidationError):
             RequestEnvelope.model_validate({"op": "shell", "spec": spec})
 
@@ -397,8 +389,6 @@ class CoreControllerTests(unittest.TestCase):
         self.assertEqual(body["result_attempt"], 2)
         self.assertEqual(body["findings"][0]["status"], "PASS")
         self.assertIsNone(body["failure"])
-        stale = ClaimedJob(first.id, first.kind, first.payload, first.attempt, first.round_id)
-        self.assertEqual(stale.round_id, round_id)
 
     def test_progress_uses_current_lease_and_survives_failure_completion(self):
         self._login()

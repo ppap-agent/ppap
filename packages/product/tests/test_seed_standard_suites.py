@@ -176,11 +176,3 @@ def test_directory_discovery_keeps_placeholders_and_states_the_reader_limit():
     }
     legacy = replace(physical["uaes/U08"], source_path="historical/uaes/控制计划（CP）审核规则.docx")
     assert "capability" not in discovery_row(legacy)
-
-
-def test_source_lookup_rejects_a_blank_path_before_opening_a_database():
-    from product.store.suites import SuiteStore
-
-    store = SuiteStore.__new__(SuiteStore)
-    with pytest.raises(ValueError, match="invalid_suite_source_path"):
-        store.official_revision_id_for_source(" uaes/U08")

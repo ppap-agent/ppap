@@ -31,7 +31,7 @@ from .factory import (
 )
 from .image import ImageExtractor
 from .markdown import MarkdownExtractor
-from .pdf import CharacterBox, LineBox, PDFExtractor, PDFStructure, SpanBox, TextBox, WordBox
+from .pdf import CharacterBox, PDFExtractor, PDFStructure, SpanBox, TextBox, WordBox
 from .powerpoint import PowerPointExtractor
 from .word import WordExtractor
 
@@ -51,7 +51,6 @@ __all__ = [
     "CharacterBox",
     "SpanBox",
     "WordBox",
-    "LineBox",
     "PDFStructure",
     # 工厂相关
     "ExtractorFactory",

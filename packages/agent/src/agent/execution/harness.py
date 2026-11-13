@@ -1,4 +1,4 @@
-"""Production semantic runtime. No fixed-checker or placeholder Deep fallback."""
+"""Controller runtime: one container guest per execution, models only through the bound local gateway."""
 
 from __future__ import annotations
 

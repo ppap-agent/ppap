@@ -215,9 +215,9 @@ def workspace_product(auth_store_factory, tmp_path, request, monkeypatch):
 
     class Runtime:
         def core(self, spec):
-            scoped = CoreRuntime(guest.for_identity(spec.model_identity), lambda spec: worker_suites.read_snapshot(spec.round_id, spec.tenant_id), worker_suites.resolve_suite, objects=objects)
-            assert scoped.execution_revision() == spec.executor_revision
-            return scoped
+            scoped = guest.for_identity(spec.model_identity)
+            assert runtime_revision(scoped.engine_revision(), library_revision()) == spec.executor_revision
+            return CoreRuntime(scoped, lambda spec: worker_suites.read_snapshot(spec.round_id, spec.tenant_id), worker_suites.resolve_suite, objects=objects)
 
         def execute(self, spec, files, *, context):
             return self.core(spec).execute(spec, files, context=context)

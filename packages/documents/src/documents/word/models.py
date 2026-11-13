@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
@@ -94,6 +93,3 @@ class WordDocument:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-    def to_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True)

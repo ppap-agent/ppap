@@ -43,25 +43,6 @@ def test_sources_without_summary_column_keep_the_rule_not_the_example():
     assert "文件中包含印章" in preset_rule("理想", "L03").clauses[3].text
 
 
-def test_preset_execution_requires_source_identity_and_explicit_equivalence():
-    from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
-    from audit.presets import preset_rule_body
-
-    nio = preset_rule_body("蔚来", "N04")
-    frozen = freeze_target_rule_execution(nio, "特殊特性清单.xlsx")
-    assert [row["coverage"] for row in frozen["items"]] == ["mapped", "mapped"]
-    assert [row["checker_method"] for row in frozen["items"]] == ["rule_1", "rule_2"]
-    uaes = freeze_target_rule_execution(preset_rule_body("UAES", "U07"), "PFMEA.xlsx")
-    assert all(row["coverage"] == "mapped" for row in uaes["items"])
-    assert [row["checker_method"] for row in uaes["items"]] == ["rule_1", "rule_2", "rule_3", "rule_4"]
-    assert uaes["checker"]["class"] == "audit.checker_lib.uaes.fmea.UaesPfmeaAgent"
-    nio["rules"].reverse()
-    assert [row["checker_method"] for row in freeze_target_rule_execution(nio, "特殊特性清单.xlsx")["items"]] == ["rule_2", "rule_1"]
-    nio["rules"][0]["id"] = "不存在的条款"
-    with pytest.raises(ValueError, match="invalid_preset_clauses"):
-        freeze_target_rule_execution(nio, "特殊特性清单.xlsx")
-
-
 def test_customer_resolver_never_borrows_another_customer_identity():
     from audit.checker_lib.nio.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent
     from audit.engine.routing import resolve_engine_agent_class

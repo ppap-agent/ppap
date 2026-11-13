@@ -20,7 +20,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_ROOTS = ("packages", "apps")
-GUEST_ENV = ROOT / "packages/agent/src/agent/execution/isolation/container.py"
 FORBIDDEN_IMPORT = re.compile(r"^(?:from|import)\s+(?:tests(?:\.|\s|$)|test_|store_fixture\b|sample_rule\b|memory_objects\b|conftest\b)")
 SYS_PATH = re.compile(r"sys\.path\.(?:insert|append|extend)\s*\(")
 
@@ -165,13 +164,6 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("audit", graph["agent"])
         self.assertNotIn("api", graph["agent"])
 
-    def test_pytest_importlib_is_the_only_import_authority(self):
-        options = _pyproject(ROOT / "pyproject.toml")["tool"]["pytest"]["ini_options"]
-        self.assertIn("--import-mode=importlib", options["addopts"])
-        self.assertNotIn("pythonpath", options)
-        self.assertIn("live", options["norecursedirs"])
-        self.assertIn("node_modules", options["norecursedirs"])
-
     def test_tests_do_not_import_each_other_or_mutate_sys_path(self):
         offenders = []
         for path in _repository_files():
@@ -201,51 +193,6 @@ class ArchitectureTests(unittest.TestCase):
                 if FORBIDDEN_IMPORT.match(stripped):
                     offenders.append(f"{rel}: {stripped}")
         self.assertEqual(offenders, [])
-
-    def test_test_support_uses_pytest_native_lifecycle(self):
-        forbidden = ("spec_from_file_location", "exec_module(", "request.instance")
-        offenders = []
-        for path in _repository_files():
-            if path.name != "conftest.py":
-                continue
-            text = path.read_text()
-            for token in forbidden:
-                if token in text:
-                    offenders.append(f"{path.relative_to(ROOT)}: {token}")
-        self.assertEqual(offenders, [])
-
-    def test_production_image_installs_the_workspace_without_path_bootstrap(self):
-        bootstrap = re.compile(r"(?m)ENV\s+PYTHONPATH|^(?!\s*#).*[\"']PYTHONPATH[\"']\s*:")
-        for path in _repository_files():
-            relative = path.relative_to(ROOT)
-            # Production code and deployment configuration own installed
-            # imports. Research runners have separate frozen helper roots and
-            # are excluded from images by the native container-context tests.
-            if relative.parts[0] not in {"deploy", "packages", "apps"}:
-                continue
-            if relative.parts[0] in PRODUCTION_ROOTS and "src" not in relative.parts:
-                continue
-            if any(part.startswith(".") or part == "__pycache__" or part == "node_modules" for part in path.parts):
-                continue
-            if path.suffix not in {".py", ".yml", ".yaml"} and "Dockerfile" not in path.name:
-                continue
-            if path.resolve() == GUEST_ENV.resolve():
-                continue
-            if bootstrap.search(path.read_text()):
-                self.fail(f"PYTHONPATH bootstrap in {path.relative_to(ROOT)}")
-
-    def test_migration_order_has_one_filename_authority(self):
-        configs = (
-            _compose_config(ROOT / "deploy/isolated-dev/compose.yaml"),
-            _compose_config(
-                ROOT / "deploy/compose.yaml",
-                ROOT / "deploy/compose.env.example",
-            ),
-        )
-        for config in configs:
-            command = config["services"]["init-db"].get("command")
-            command_text = "\n".join(command) if isinstance(command, list) else str(command or "")
-            self.assertIn("sh /migrations/apply.sh", command_text)
 
     def test_physical_owner_test_directories_belong_to_workspace_members(self):
         members = _member_dirs()

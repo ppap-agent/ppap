@@ -188,29 +188,28 @@ class AuditArchivePreviewTests(unittest.TestCase):
     def test_history_uses_one_filename_and_opens_clause_basis(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width in (1440,):
-                with self.subTest(width=width):
-                    page = browser.new_page(viewport={"width": width, "height": 960})
-                    page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001")
-                    heading = page.get_by_role("heading", name="控制计划.xlsx", exact=True)
-                    expect(heading).to_be_visible()
-                    # One title; beyond it the name appears only as the 文件名称 field of the file information overview.
-                    main = page.get_by_role("main")
-                    overview = main.get_by_role("region", name="文件信息概览", exact=True)
-                    expect(overview.get_by_text("控制计划.xlsx", exact=True)).to_have_count(1)
-                    expect(main.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_have_count(1)
-                    expect(main.get_by_text("控制计划.xlsx", exact=True)).to_have_count(2)
-                    rail = page.get_by_role("complementary", name="历史版本", exact=True)
-                    expect(rail.get_by_role("button", name="选择第 3 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
-                    details = page.get_by_role("region", name="审核详情", exact=True)
-                    expect(details.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
-                    expect(details.get_by_role("button", name="符合 2", exact=True)).to_be_visible()
-                    action = details.get_by_role("button", name="查看依据 2.1", exact=True)
-                    action.click()
-                    expect(page.get_by_role("dialog", name="第 1 条 · 频次一致性", exact=True)).to_be_visible()
-                    page.keyboard.press("Escape")
-                    expect(action).to_be_focused()
-                    page.close()
+            width = 1440
+            page = browser.new_page(viewport={"width": width, "height": 960})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001")
+            heading = page.get_by_role("heading", name="控制计划.xlsx", exact=True)
+            expect(heading).to_be_visible()
+            # One title; beyond it the name appears only as the 文件名称 field of the file information overview.
+            main = page.get_by_role("main")
+            overview = main.get_by_role("region", name="文件信息概览", exact=True)
+            expect(overview.get_by_text("控制计划.xlsx", exact=True)).to_have_count(1)
+            expect(main.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_have_count(1)
+            expect(main.get_by_text("控制计划.xlsx", exact=True)).to_have_count(2)
+            rail = page.get_by_role("complementary", name="历史版本", exact=True)
+            expect(rail.get_by_role("button", name="选择第 3 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
+            details = page.get_by_role("region", name="审核详情", exact=True)
+            expect(details.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
+            expect(details.get_by_role("button", name="符合 2", exact=True)).to_be_visible()
+            action = details.get_by_role("button", name="查看依据 2.1", exact=True)
+            action.click()
+            expect(page.get_by_role("dialog", name="第 1 条 · 频次一致性", exact=True)).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(action).to_be_focused()
+            page.close()
             browser.close()
 
     def test_history_selector_keeps_exact_old_reference_through_reload_and_report(self):

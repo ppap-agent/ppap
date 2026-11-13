@@ -46,7 +46,6 @@ class CaseEvaluation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     case_id: str
-    feedback_ids: tuple[str, ...] = ()
     ordinal: int = Field(ge=1)
     input_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     split: Literal["training", "holdout"]

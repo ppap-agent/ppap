@@ -139,7 +139,7 @@ PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e -k prev
 
 ## 本地 Deep checker 实验
 
-`scripts/deep_lab.py` 使用已有人工 checker、资源定义及 Fluent API 开发任务程序。用于平台离线开发检查程序；覆盖 Excel 与电子版 PDF，扫描版不纳入。默认使用 Pi 1.5.0，并从本地 `.env` 的完整 `PPAP_MODEL_CODING_*` 配置读取模型与认证；未提供覆盖时沿用 `PPAP_MODEL_TEXT_*`。先运行 `npm ci --ignore-scripts --prefix deploy/deep`，Node.js 必须至少为 22.19。只有显式 `--runner grok` 才使用旧 `.grok/config.toml`。不要提交认证配置或实验日志。
+`scripts/deep_lab.py` 使用已有人工 checker、资源定义及 Fluent API 开发任务程序。用于平台离线开发检查程序；覆盖 Excel 与电子版 PDF，扫描版不纳入。使用 Pi 1.5.0，并从本地 `.env` 的完整 `PPAP_MODEL_CODING_*` 配置读取模型与认证；未提供覆盖时沿用 `PPAP_MODEL_TEXT_*`。先运行 `npm ci --ignore-scripts --prefix deploy/deep`，Node.js 必须至少为 22.19。不要提交认证配置或实验日志。
 
 ```sh
 uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high

@@ -134,7 +134,7 @@ def register_fact_answer_routes(app: FastAPI, store, principal_of) -> None:
         return call(request, lambda principal: store.export_fact_answers(principal, round_id))
 
     @app.get("/audit-rounds/{round_id}/fact-answers/report", responses={200: {"content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}}})
-    def fact_confirmation_report(round_id: str, request: Request):
+    def fact_confirmation_report(round_id: str, request: Request) -> Response:
         from documents.audit_pdf import render_fact_confirmation_pdf
 
         def render(principal):

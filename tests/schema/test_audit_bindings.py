@@ -12,8 +12,6 @@ import pytest
 
 
 class AuditDatabaseCase(unittest.TestCase):
-    previous_schema = False
-
     @pytest.fixture(autouse=True)
     def _schema_support(self, schema_tools, memory_objects_type, sample_rule_body_factory):
         self.schema = schema_tools
@@ -27,9 +25,8 @@ class AuditDatabaseCase(unittest.TestCase):
         self.schema.require_postgres()
         self.database = "ppap_bindings_" + uuid.uuid4().hex[:12]
         # Cloning the migrated database is far cheaper than replaying every migration per test.
-        template = "" if self.previous_schema else " TEMPLATE ppap"
         self.schema.require(
-            self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {self.schema.migrator_user()}{template}"),
+            self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {self.schema.migrator_user()} TEMPLATE ppap"),
             "create isolated audit DB",
         )  # noqa: E501
         self.addCleanup(
@@ -37,11 +34,6 @@ class AuditDatabaseCase(unittest.TestCase):
                 self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {self.database} WITH (FORCE)"), "drop isolated audit DB"
             )
         )  # noqa: E501
-        if self.previous_schema:
-            for migration in self.schema.migration_files():
-                if migration.name >= "0010":
-                    break
-                self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(migration)), "apply prior audit schema")
         self.settings = Settings(
             usage_charge_enabled=False,
             git_sha="a" * 40,
@@ -52,16 +44,15 @@ class AuditDatabaseCase(unittest.TestCase):
             pg_migrator_password=self.schema.migrator_password(),
         )  # noqa: E501
         self.store = build_product_store(self.settings, objects=self.memory_objects_type())
-        if not self.previous_schema:
-            # Other owners may have seeded the template DB with object references.
-            # This test has a fresh object store, so clone schema, not their data.
-            from product.db import connect
-            from psycopg import sql
+        # Other owners may have seeded the template DB with object references.
+        # This test has a fresh object store, so clone schema, not their data.
+        from product.db import connect
+        from psycopg import sql
 
-            with connect(self.settings, "migrator") as conn:
-                tables = conn.execute("SELECT schemaname,tablename FROM pg_tables WHERE schemaname IN ('product','engine')").fetchall()
-                names = [sql.Identifier(schema, table) for schema, table in tables if table not in {"schema_migrations", "trial_cutover_baselines"}]
-                conn.execute(sql.SQL("TRUNCATE TABLE {} CASCADE").format(sql.SQL(", ").join(names)))
+        with connect(self.settings, "migrator") as conn:
+            tables = conn.execute("SELECT schemaname,tablename FROM pg_tables WHERE schemaname IN ('product','engine')").fetchall()
+            names = [sql.Identifier(schema, table) for schema, table in tables if table not in {"schema_migrations", "trial_cutover_baselines"}]
+            conn.execute(sql.SQL("TRUNCATE TABLE {} CASCADE").format(sql.SQL(", ").join(names)))
         self.store.seed_isolated_dev()
         self.alice = self.store.principal_for_fixture("alice")
         publish = self.store.publish_rule
@@ -525,63 +516,6 @@ def check(context):
         with self.store._conn() as conn:
             self.assertEqual(conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT count(*) FROM engine.jobs").fetchone()[0], 0)
-
-
-class AuditBindingUpgradeTests(AuditDatabaseCase):
-    previous_schema = True
-
-    def test_upgrade_copies_frozen_head_not_current_rule_and_preserves_results(self):
-        from audit.audits import request_fingerprint
-        from product.files import sha256_bytes, version_object_key
-        from product.fixtures import RULE_A
-        from psycopg.types.json import Jsonb
-
-        target, reference = str(uuid.uuid4()), str(uuid.uuid4())
-        draft, round_id = str(uuid.uuid4()), str(uuid.uuid4())
-        frozen = {"kind": "presence", "snapshot": "accepted before upgrade"}
-        with self.store._conn() as conn:
-            # Seed the previous schema directly; current upload code requires current columns.
-            for version_id, name in ((target, "target.xlsx"), (reference, "reference.xlsx")):
-                file_id = str(uuid.uuid4())
-                object_key = version_object_key(self.alice.tenant_id, file_id, version_id)
-                self.store.objects.put_exclusive(object_key, b"x", "application/octet-stream")
-                conn.execute("INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'file')", (file_id, self.alice.tenant_id))
-                conn.execute("INSERT INTO product.files (id, tenant_id, created_by, original_filename) VALUES (%s, %s, %s, %s)", (file_id, self.alice.tenant_id, self.alice.user_id, name))
-                conn.execute(
-                    """INSERT INTO product.file_versions (id, file_id, tenant_id, original_filename, content_type, byte_size, sha256, object_key, status, finalized_at)
-                    VALUES (%s, %s, %s, %s, 'application/octet-stream', 1, %s, %s, 'ready', now())""",
-                    (version_id, file_id, self.alice.tenant_id, name, sha256_bytes(b"x"), object_key),
-                )
-                conn.execute("INSERT INTO product.resource_grants VALUES (%s, %s, 'read')", (file_id, self.alice.user_id))
-            for ident, kind in ((draft, "audit_draft"), (round_id, "audit_round")):
-                conn.execute("INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s,%s,%s)", (ident, self.alice.tenant_id, kind))
-                conn.execute("INSERT INTO product.resource_grants VALUES (%s,%s,'read')", (ident, self.alice.user_id))
-            conn.execute("INSERT INTO product.audit_drafts (id,tenant_id,created_by,rule_version_id,status) VALUES (%s,%s,%s,%s,'accepted')", (draft, self.alice.tenant_id, self.alice.user_id, RULE_A))
-            conn.execute(
-                "INSERT INTO product.audit_rounds (id,tenant_id,created_by,source_draft_id,rule_version_id,rule_title,rule_body,idempotency_key,request_fingerprint,execution) VALUES (%s,%s,%s,%s,%s,'Frozen title',%s,'old-key','old-fingerprint','completed')",  # noqa: E501
-                (round_id, self.alice.tenant_id, self.alice.user_id, draft, RULE_A, Jsonb(frozen)),
-            )  # noqa: E501
-            for version_id, role in ((target, "target"), (reference, "reference")):
-                conn.execute("INSERT INTO product.draft_items VALUES (%s,%s,%s)", (draft, version_id, role))
-                conn.execute("INSERT INTO product.round_inputs VALUES (%s,%s,%s)", (round_id, version_id, role))
-            conn.execute("INSERT INTO product.findings (id,round_id,item_key,classification,item,status) VALUES (%s,%s,'check','A','Original result','NG')", (str(uuid.uuid4()), round_id))
-            conn.execute("INSERT INTO product.reviews (round_id,item_key,user_id,judgment,version) VALUES (%s,'check',%s,'保留人工判断',1)", (round_id, self.alice.user_id))
-        for _ in range(2):
-            self.schema.require(
-                self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(self.schema.MIGRATIONS / "0010_input_rule_bindings.sql")),
-                "upgrade input rule snapshots",
-            )  # noqa: E501
-        self.schema.require(self.schema.apply(self.database), "upgrade to current before using current store")
-        loaded = self.store.get_round(round_id)
-        by_id = {row["file_version_id"]: row for row in loaded["inputs"]}
-        self.assertEqual(by_id[target]["rule"], {"id": RULE_A, "title": "Frozen title", "body": frozen})
-        self.assertIsNone(by_id[reference]["rule"])
-        self.assertEqual(loaded["findings"][0]["status"], "NG")
-        self.assertEqual(loaded["findings"][0]["review"]["judgment"], "保留人工判断")
-        self.assertEqual(self.store.accept_draft(self.alice, draft, "old-key")["id"], round_id)
-        with self.store._conn() as conn:
-            fingerprint = conn.execute("SELECT request_fingerprint FROM product.audit_rounds WHERE id=%s", (round_id,)).fetchone()[0]
-        self.assertEqual(fingerprint, request_fingerprint([{"file_version_id": target, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference, "role": "reference"}]))
 
 
 class AuditDisplayDatabaseTests(AuditDatabaseCase):

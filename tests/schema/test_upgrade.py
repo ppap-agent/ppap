@@ -86,6 +86,26 @@ class SchemaUpgradeTests(unittest.TestCase):
             )
             self.schema.require(default, "read customer default after migration replay")
             self.assertEqual(default.stdout.strip(), b"UAES|7")
+            # Least privilege of the runtime roles on official heads, upgrade receipts and provider credentials.
+            privileges = {
+                ("ppap_api", "official_suite_heads"): "SELECT",
+                ("ppap_worker", "official_suite_heads"): "SELECT",
+                ("ppap_api", "suite_upgrade_operations"): "SELECT,INSERT",
+                ("ppap_api", "suite_official_update_views"): "SELECT,INSERT",
+                ("ppap_worker", "suite_upgrade_operations"): "SELECT",
+                ("ppap_worker", "provider_authorizations"): "",
+            }
+            for (role, table), expected in privileges.items():
+                granted = self.schema.psql(
+                    self.schema.migrator_user(),
+                    self.schema.migrator_password(),
+                    empty,
+                    "-Atc",
+                    "SELECT string_agg(p, ',' ORDER BY o) FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE']) WITH ORDINALITY AS t(p, o) "
+                    f"WHERE has_table_privilege('{role}', 'product.{table}', p)",
+                )
+                self.schema.require(granted, f"read {role} privileges on {table}")
+                self.assertEqual(granted.stdout.strip().decode(), expected, (role, table))
 
             for name in versions[:-1]:
                 self.schema.require(

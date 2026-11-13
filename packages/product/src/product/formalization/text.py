@@ -14,7 +14,13 @@ from typing import Any
 
 from audit.formal_digest import TEXT_RENDERER_VERSION, display_digest, formal_digest
 
-from product.formalization.spec import FormalizationError
+
+class FormalizationError(ValueError):
+    def __init__(self, code: str, detail: str = ""):
+        super().__init__(detail or code)
+        self.code = code
+        self.detail = detail or code
+
 
 TEXT_PROFILE = "rule-text-v1"
 REVIEW_PREFIX = "待澄清："

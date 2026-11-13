@@ -975,9 +975,9 @@ def sequence(text: str) -> list[int]:
 
 
 def bind(data: dict[str, Any], config: dict[str, Any], *, budget: EvidenceBudget | None = None) -> dict[str, Any]:
-    """Materialize the same Binding used by AuditTrace, including unknowns.
+    """Materialize one reviewed physical Binding, including unknowns.
 
-    Imports are local because trace/evidence also use this module's cell readers.
+    Imports are local because bindings/evidence also use this module's cell readers.
     No second SQL binding schema or row-selection policy is introduced here.
     """
     from audit.bindings import Binding, binding_scope
@@ -1163,7 +1163,7 @@ def main() -> int:
     view.add_argument("--max-bytes", type=int, default=16000, help="Maximum UTF-8 stdout bytes including page metadata (minimum 4096)")
     binding = commands.add_parser("bind", help="Apply a reviewed per-document table binding")
     binding.add_argument("documents", help="Frozen documents.json, keyed by document_id")
-    binding.add_argument("--binding", required=True, help="One AuditTrace Binding as JSON")
+    binding.add_argument("--binding", required=True, help="One physical Binding as JSON")
     binding.add_argument("--out", required=True)
     query = commands.add_parser("query", help="Execute SELECT queries on bound tables; never assigns PASS")
     query.add_argument("--table", action="append", required=True, help="alias=bound-table.json")

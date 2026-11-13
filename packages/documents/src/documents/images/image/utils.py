@@ -6,7 +6,7 @@ import logging
 import os
 import tempfile
 import zipfile
-from typing import Any, Dict, List
+from typing import Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -216,100 +216,3 @@ def extract_images_from_bytes(file_content: bytes, file_type: str, **kwargs: Any
     except Exception as e:
         logger.error(f"图像提取失败: {str(e)}")
         return []
-
-
-def create_openai_image_message(text: str, image_urls: List[str]) -> Dict[str, Any]:
-    """创建 Responses 图像输入消息
-
-    Args:
-        text: 文本内容
-        image_urls: base64编码的图像URL列表
-
-    Returns:
-        Dict[str, Any]: Responses 输入消息
-    """
-    content: List[Dict[str, Any]] = []
-
-    for image_base64 in image_urls:
-        content.append(
-            {
-                "type": "input_image",
-                "image_url": image_base64,
-                "detail": "high",
-            }
-        )
-    if text:
-        content.append({"type": "input_text", "text": text})
-    return {"role": "user", "content": content}
-
-
-class ImageExtractor:
-    """从调用方提供的文件内容中提取图像。"""
-
-    def __init__(self) -> None:
-        # 支持的图像格式
-        self.image_formats = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff"}
-        # 支持提取图像的文档格式
-        self.document_formats = {".pdf", ".docx", ".pptx"}
-
-    def extract_images_from_content(self, file_content: bytes, file_type: str, **kwargs: Any) -> List[str]:
-        """
-        从文件内容提取所有图像并转换为base64编码的数组
-
-        Args:
-            file_content: 文件的二进制内容
-            file_type: 文件类型（如'.pdf', '.docx'等）
-            **kwargs: 额外参数
-
-        Returns:
-            List[str]: base64编码的图像数组，格式为 "data:image/jpeg;base64,..."
-        """
-        return extract_images_from_bytes(file_content, file_type, **kwargs)
-
-
-class OpenAIImageMessageBuilder:
-    """OpenAI图像消息构建器"""
-
-    @staticmethod
-    def create_message(text: str, image_urls: List[str]) -> Dict[str, Any]:
-        """创建包含图像的OpenAI消息"""
-        return create_openai_image_message(text, image_urls)
-
-    @staticmethod
-    def create_message_from_file_content(text: str, file_content: bytes, file_type: str, **kwargs: Any) -> Dict[str, Any]:
-        """从文件内容创建包含图像的OpenAI消息"""
-        images = extract_images_from_bytes(file_content, file_type, **kwargs)
-        return create_openai_image_message(text, images)
-
-    @staticmethod
-    def create_image_analysis_messages(system_prompt: str, user_text: str, image_base64_list: List[str]) -> List[Dict[str, Any]]:
-        """
-        创建图像分析消息列表
-
-        Args:
-            system_prompt: 系统提示
-            user_text: 用户文本描述
-            image_base64_list: base64编码的图像列表
-
-        Returns:
-            List[Dict[str, Any]]: OpenAI消息列表
-        """
-        messages = []
-
-        # 添加系统消息
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-
-        # 创建用户消息，包含文本和图像
-        user_message = create_openai_image_message(user_text, image_base64_list)
-        messages.append(user_message)
-
-        return messages
-
-
-__all__ = [
-    "extract_images_from_bytes",
-    "create_openai_image_message",
-    "ImageExtractor",
-    "OpenAIImageMessageBuilder",
-]

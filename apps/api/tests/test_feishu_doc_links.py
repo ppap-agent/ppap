@@ -14,7 +14,7 @@ import pytest
 from api import create_app
 from fastapi.testclient import TestClient
 from product.feishu import UserTokens
-from product.feishu_drive import extract_doc_token_from_url, list_doc_links
+from product.feishu_drive import extract_doc_token_from_url
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 
@@ -250,10 +250,6 @@ class FeishuDocLinksTests(unittest.TestCase):
         self.assertNotIn("ignored-empty-url", tokens)
         self.assertTrue(any("/docx/v1/documents/current-doc/blocks" in url for _method, url in self.feishu.calls))
         self.assertTrue(any("page_token=page-2" in url for _method, url in self.feishu.calls))
-
-    def test_helper_matches_route_without_creating_a_ledger(self):
-        links = list_doc_links(self.http, "user-access", "current-doc")
-        self.assertEqual([row["token"] for row in links], ["sheet-token", "docx-token", "file-token", "page-two"])
 
     def test_unauthenticated_and_fixture_session_and_invalid_token(self):
         self.client.cookies.clear()

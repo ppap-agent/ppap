@@ -70,8 +70,6 @@ jobs:
         working-directory: ${{ github.workspace }}/apps/web
         env:
           PPAP_PREVIEW: "1"
-          # Set to "0" to restore the previous serial preview run.
-          PPAP_PREVIEW_WORKERS: "4"
         run: |
           pnpm exec node --input-type=module <<'JS'
           import {spawn} from 'node:child_process'
@@ -90,11 +88,8 @@ jobs:
             if (!address || typeof address === 'string' || address.address !== '127.0.0.1') throw new Error('Preview did not bind to loopback')
             const preview = `http://127.0.0.1:${address.port}`
             console.log(`UI-only preview: ${preview}`)
-            // Fail closed on typos and keep a one-line serial rollback switch.
-            const workers = process.env.PPAP_PREVIEW_WORKERS ?? '0'
-            if (!['0', '4'].includes(workers)) throw new Error('PPAP_PREVIEW_WORKERS must be 0 or 4')
-            const pytestArgs = ['run', '--no-sync', 'pytest', ...(workers === '4' ? ['-n', '4', '--dist=load'] : []), '--durations=25', ...tests]
-            console.log(`Preview pytest workers: ${workers}; test files: ${tests.length}`)
+            const pytestArgs = ['run', '--no-sync', 'pytest', '-n', '4', '--dist=load', '--durations=25', ...tests]
+            console.log(`Preview test files: ${tests.length}`)
             const child = spawn('uv', pytestArgs, {cwd: root, stdio: 'inherit', env: {...process.env, PPAP_PREVIEW_URL: preview}})
             // Browser tests can be silent for minutes. Keep CI runner
             // heartbeat activity without changing test exit semantics.
@@ -169,6 +164,7 @@ jobs:
             exit 1
           fi
           uv run --no-sync mypy --no-incremental
+          uv run --no-sync python -m scripts.compile_v4_presets --check
           (
             cd apps/web
             pnpm api-types
@@ -314,8 +310,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      # 0: serial complete PDF corpus; 2: all PDF items in one xdist pool.
-      PPAP_CORPUS_PDF_WORKERS: "2"
       PPAP_MODEL_TEXT_REASONING_EFFORT: low
       # Verified OpenRouter dedicated OCR deployment; not inherited by text/personal grants.
       PPAP_MODEL_VISION_EXTRA_BODY_JSON: '{"reasoning":{"effort":"none"}}'
@@ -325,10 +319,14 @@ jobs:
         include:
           - name: Excel
             mode: pytest
+            timeout: 1800
             args: tests/corpus/test_cases.py tests/corpus/regressions --ftype excel -q
+          # One xdist pool for all PDF corpus items; per-worker extraction caches are isolated.
           - name: PDF
             mode: pytest
-            args: tests/corpus/test_cases.py tests/corpus/regressions --ftype pdf -q
+            timeout: 2400
+            sync_group: --group e2e
+            args: tests/corpus/test_cases.py tests/corpus/regressions --ftype pdf -q -n 2 --dist=load --max-worker-restart=0
           - name: PSW
             mode: psw
     steps:
@@ -346,15 +344,8 @@ jobs:
       - name: Canonical install
         working-directory: ${{ github.workspace }}
         if: ${{ matrix.mode == 'pytest' }}
-        run: |
-          set -euo pipefail
-          case "$PPAP_CORPUS_PDF_WORKERS" in 0|2) ;; *) echo "PPAP_CORPUS_PDF_WORKERS must be 0 or 2" >&2; exit 2 ;; esac
-          if [[ "${{ matrix.name }}" == "PDF" && "$PPAP_CORPUS_PDF_WORKERS" == "2" ]]; then
-            # xdist is pinned in e2e; browser binaries are not installed here.
-            uv sync --locked --group e2e
-          else
-            uv sync --locked
-          fi
+        # xdist is pinned in e2e; browser binaries are not installed here.
+        run: uv sync --locked ${{ matrix.sync_group }}
       - name: Install shared Excel converter
         if: ${{ matrix.mode == 'pytest' }}
         uses: ./.github/actions/excel-converter
@@ -371,17 +362,8 @@ jobs:
           PPAP_CORPUS_REPORT_DIR: ci-report/rules
           PPAP_CORPUS_REPLAY_OUT: ci-report/replay
         run: |
-          set -euo pipefail
-          if [[ "${{ matrix.name }}" == "PDF" && "$PPAP_CORPUS_PDF_WORKERS" == "2" ]]; then
-            # One real xdist pool for all PDF corpus items, including the slow
-            # table-driven combinations. Per-worker writable extraction caches are isolated.
-            python3 -m scripts.ci_heartbeat --timeout 2400 -- \
-              uv run --no-sync pytest tests/corpus/test_cases.py tests/corpus/regressions --ftype pdf -q -n 2 \
-                --dist=load --max-worker-restart=0 --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
-          else
-            python3 -m scripts.ci_heartbeat --timeout 1800 -- \
-              uv run --no-sync pytest ${{ matrix.args }} --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
-          fi
+          python3 -m scripts.ci_heartbeat --timeout ${{ matrix.timeout }} -- \
+            uv run --no-sync pytest ${{ matrix.args }} --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
       - name: Report oracle coverage and outcomes
         working-directory: ${{ github.workspace }}
         if: ${{ always() && matrix.mode == 'pytest' }}
@@ -687,7 +669,7 @@ jobs:
             fi
           done
           if [ "$failed" -ne 0 ]; then
-            printf 'required results: web=%s repository=%s python_modules=%s distribution_closure=%s schema=%s corpus=%s integration=%s\n' \
-              "$WEB_RESULT" "$REPOSITORY_RESULT" "$PYTHON_MODULES_RESULT" "$DISTRIBUTION_CLOSURE_RESULT" "$SCHEMA_RESULT" "$CORPUS_RESULT" "$INTEGRATION_RESULT"
+            printf 'required results: web=%s repository=%s python_modules=%s distribution_closure=%s schema=%s corpus=%s integration_contracts=%s integration=%s\n' \
+              "$WEB_RESULT" "$REPOSITORY_RESULT" "$PYTHON_MODULES_RESULT" "$DISTRIBUTION_CLOSURE_RESULT" "$SCHEMA_RESULT" "$CORPUS_RESULT" "$INTEGRATION_CONTRACTS_RESULT" "$INTEGRATION_RESULT"
             exit 1
           fi

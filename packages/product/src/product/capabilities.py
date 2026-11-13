@@ -14,7 +14,5 @@ def report(settings: Settings) -> dict[str, dict[str, str]]:
     return {
         "llm": _state(llm_configured(settings)),
         "feishu": _state(bool(settings.feishu_app_id.strip() and settings.feishu_app_secret.strip())),
-        "partner_ai": _state(bool(settings.partner_ai_endpoint.strip())),
-        "legacy_engine": _state(bool(settings.legacy_engine_url.strip())),
         "deep": _state(bool(settings.deep_controller_socket.strip())),
     }

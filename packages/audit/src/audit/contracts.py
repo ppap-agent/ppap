@@ -82,9 +82,6 @@ class GroupContextInput(BaseModel):
             raise UnavailableSourceError("本轮冻结关联资料无法读取，不能完成本项核对。")
         return self.by_doc_type.get(key, [])
 
-    def has_doc_type(self, doc_type: PpapDocumentType | str) -> bool:
-        return bool(self.get_files_by_type(doc_type))
-
 
 class EvidenceDiagnostic(BaseModel):
     """Stable, searchable explanation of an evidence limitation or failure."""

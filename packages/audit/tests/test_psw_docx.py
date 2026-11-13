@@ -99,12 +99,7 @@ def psw_document(*, images=True, checkboxes=True, nested_submission=False, gener
 
 class WordVisualRuntime:
     def __init__(self):
-        self.calls = []
         self.unexpected_calls = []
-
-    def run_image_prompt(self, **kwargs):
-        self.calls.append(kwargs)
-        raise AssertionError("Native PSW must not call LLM vision")
 
     def __getattr__(self, name):
         self.unexpected_calls.append(name)
@@ -122,7 +117,6 @@ def audit(request, monkeypatch, run_checks):
                 RuleInput(rule_id="confirmed-psw-rules", rule_profile=request.param, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),
             )
         assert runtime.unexpected_calls == []
-        assert runtime.calls == []
         return results
 
     return check
@@ -143,7 +137,6 @@ def test_native_word_fields_and_controls_remain_known_while_visuals_stay_unconfi
     assert results[2].evidence.sources == ()
     assert results[4].evidence.used == "structure"
     assert results[4].evidence.diagnostics[0].code == "psw.visual.unconfirmed"
-    assert runtime.calls == []
 
 
 def test_missing_stamp_images_and_required_checkmarks_do_not_invent_passes(tmp_path, audit):
@@ -154,7 +147,6 @@ def test_missing_stamp_images_and_required_checkmarks_do_not_invent_passes(tmp_p
     results = audit(path, runtime)
 
     assert [results[index].status for index in (2, 4, 6, 7)] == ["NG", "NG", "NG", "NG"]
-    assert runtime.calls == []
     assert results[2].evidence.used == "structure"
 
 
@@ -177,7 +169,6 @@ def test_embedded_images_outside_the_main_table_do_not_invent_seal_facts(tmp_pat
 
     assert results[2].status == "UNABLE"
     assert results[4].status == "UNABLE"
-    assert runtime.calls == []
 
 
 def test_a_corrupt_embedded_image_package_is_an_execution_error(tmp_path, audit):
@@ -198,7 +189,6 @@ def test_a_corrupt_embedded_image_package_is_an_execution_error(tmp_path, audit)
     results = audit(path, runtime)
 
     assert [result.status for result in results] == ["ERR"] * 10
-    assert runtime.calls == []
 
 
 def test_merged_disposition_cell_preserves_multiple_selected_options(tmp_path, audit):
@@ -219,7 +209,6 @@ def test_ambiguous_primary_tables_do_not_send_arbitrary_images_to_visual_rules(t
 
     assert results[2].status == "UNABLE"
     assert results[4].status == "UNABLE"
-    assert runtime.calls == []
 
 
 def add_graphic_footnote(document):

@@ -12,12 +12,9 @@ from fastapi.testclient import TestClient
 from product.feishu import (
     AppMismatch,
     AppTicket,
-    Challenge,
-    EncryptedEvent,
     FeishuError,
     UnauthenticatedEvent,
     accept_event,
-    parse_event,
     user_info,
 )
 from product.fixtures import RESOURCE_A, RESOURCE_B, SUBJECTS
@@ -99,11 +96,6 @@ class DecisionTests(unittest.TestCase):
 
 
 class FeishuParseTests(unittest.TestCase):
-    def test_challenge_and_ticket(self):
-        self.assertIsInstance(parse_event({"type": "url_verification", "challenge": "abc"}), Challenge)
-        self.assertIsInstance(parse_event({"header": {"event_type": "app_ticket"}, "event": {"app_ticket": "tik"}}), AppTicket)
-        self.assertIsInstance(parse_event({"encrypt": "blob"}), EncryptedEvent)
-
     def test_accept_event_requires_verification_token_and_app(self):
         with _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", FEISHU_VERIFICATION_TOKEN="verify-test"):
             settings = Settings()
@@ -305,55 +297,6 @@ class HttpAuthTests(unittest.TestCase):
         denied = self.client.get("/resources/not-a-uuid", cookies=cookies)
         self.assertEqual(denied.status_code, 403)
         self.assertEqual(denied.json(), {"error": "access_denied"})
-
-    def test_event_challenge_and_ticket(self):
-        challenge = self.client.post(
-            "/integrations/feishu/events",
-            json={"type": "url_verification", "challenge": "ping", "token": "verify-test"},
-        )
-        self.assertEqual(challenge.json(), {"challenge": "ping"})
-        missing = self.client.get("/capabilities").json()["feishu"]
-        self.assertEqual(missing["app_ticket"], "missing")
-        ticket = self.client.post(
-            "/integrations/feishu/events",
-            json={
-                "schema": "2.0",
-                "header": {"event_type": "app_ticket", "token": "verify-test", "app_id": "cli_test", "create_time": "1700000000000"},
-                "event": {"app_ticket": "tik", "app_id": "cli_test"},
-            },
-        )
-        self.assertEqual(ticket.status_code, 200)
-        self.assertTrue(self.store.has_app_ticket("cli_test"))
-        self.assertEqual(self.client.get("/capabilities").json()["feishu"]["app_ticket"], "received")
-        encrypted = self.client.post("/integrations/feishu/events", json={"encrypt": "blob"})
-        self.assertEqual(encrypted.status_code, 400)
-
-    def test_unverified_event_cannot_mark_ticket_received(self):
-        forged = {
-            "header": {"event_type": "app_ticket", "app_id": "cli_test"},
-            "event": {"app_ticket": "forged", "app_id": "cli_test"},
-        }
-        denied = self.client.post("/integrations/feishu/events", json=forged)
-        self.assertEqual(denied.status_code, 401)
-        self.assertEqual(self.client.get("/capabilities").json()["feishu"]["app_ticket"], "missing")
-        self.assertFalse(self.store.has_app_ticket("cli_test"))
-        wrong = self.client.post(
-            "/integrations/feishu/events",
-            json={
-                "header": {"event_type": "app_ticket", "token": "nope", "app_id": "cli_test"},
-                "event": {"app_ticket": "forged", "app_id": "cli_test"},
-            },
-        )
-        self.assertEqual(wrong.status_code, 401)
-        mismatch = self.client.post(
-            "/integrations/feishu/events",
-            json={
-                "header": {"event_type": "app_ticket", "token": "verify-test", "app_id": "cli_other"},
-                "event": {"app_ticket": "tik", "app_id": "cli_other"},
-            },
-        )
-        self.assertEqual(mismatch.status_code, 403)
-        self.assertEqual(self.client.get("/capabilities").json()["feishu"]["app_ticket"], "missing")
 
     def test_production_hides_isolated_dev_mint(self):
         with _clean_env(

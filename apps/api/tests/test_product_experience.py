@@ -144,7 +144,7 @@ class ProductExperienceTests(unittest.TestCase):
         from fastapi.testclient import TestClient
         from product.settings import Settings
 
-        clean = {k: v for k, v in os.environ.items() if not k.startswith(("PPAP_", "FEISHU_", "LLM_", "OPENAI_"))}
+        clean = {k: v for k, v in os.environ.items() if not k.startswith(("PPAP_", "FEISHU_"))}
         env = patch.dict(os.environ, clean, clear=True)
         env.start()
         self.addCleanup(env.stop)

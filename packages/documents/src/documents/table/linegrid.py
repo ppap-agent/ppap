@@ -681,73 +681,6 @@ class LineGridReconstructor:
                 closest_index = idx
         return closest_index
 
-    def _find_cell_boundaries(
-        self,
-        horizontal_lines: List[Line],
-        vertical_lines: List[Line],
-        rows: List[float],
-        cols: List[float],
-        start_row: int,
-        start_col: int,
-        processed_cells: Set,
-    ) -> Optional[CellRegion]:
-        """增强版边界查找，更准确地处理合并单元格
-
-        Args:
-            horizontal_lines: 水平线列表
-            vertical_lines: 垂直线列表
-            rows: 行坐标列表
-            cols: 列坐标列表
-            start_row: 起始行索引
-            start_col: 起始列索引
-            processed_cells: 已处理的单元格集合
-
-        Returns:
-            Optional[CellRegion]: 单元格区域，如果无效则返回None
-        """
-        # 向右扩展，找到右边界
-        end_col = start_col
-        while end_col + 1 < len(cols) - 1:
-            # 检查是否有垂直线阻挡
-            if self._has_vertical_line_at(vertical_lines, cols[end_col + 1], rows[start_row], rows[start_row + 1]):
-                break
-            # 检查下一个位置是否已被处理
-            if (start_row, end_col + 1) in processed_cells:
-                break
-            end_col += 1
-
-        # 向下扩展，找到下边界
-        end_row = start_row
-        while end_row + 1 < len(rows) - 1:
-            # 检查这一行的所有列是否都可以扩展
-            can_expand = True
-            for col in range(start_col, end_col + 1):
-                # 检查是否有水平线阻挡
-                if self._has_horizontal_line_at(horizontal_lines, rows[end_row + 1], cols[col], cols[col + 1]):
-                    can_expand = False
-                    break
-                # 检查下一个位置是否已被处理
-                if (end_row + 1, col) in processed_cells:
-                    can_expand = False
-                    break
-
-            if not can_expand:
-                break
-            end_row += 1
-
-        return CellRegion(start_row, end_row, start_col, end_col)
-
-    def _has_vertical_line_at(self, vertical_lines: List[Line], x: float, y_start: float, y_end: float) -> bool:
-        """增强版垂直线检查"""
-        for line in vertical_lines:
-            if (
-                abs(line.x0 - x) < self.tolerance  # X坐标匹配
-                and line.y0 <= min(y_start, y_end) + self.tolerance  # Y范围重叠
-                and line.y1 >= max(y_start, y_end) - self.tolerance
-            ):
-                return True
-        return False
-
     def _has_horizontal_line_at(self, horizontal_lines: List[Line], y: float, x_start: float, x_end: float) -> bool:
         assert x_start <= x_end, "x_start should be less than or equal to x_end"
 
@@ -2241,31 +2174,6 @@ class LineGridReconstructor:
             return False
         ch = text[0]
         return "\u4e00" <= ch <= "\u9fff"
-
-    def analyze_table_structure(self, elements: Sequence[LineLike]) -> TableGrid:
-        """分析线条元素，提取表格结构 - 增强版本
-
-        Args:
-            elements: 线条元素列表
-
-        Returns:
-            TableGrid: 表格网格结构
-        """
-        if not elements:
-            return TableGrid([], [], [])
-
-        # 步骤1: 检测并合并线条
-        horizontal_lines, vertical_lines = self.detect_and_merge_lines(elements)
-
-        # 步骤2: 计算交点
-        self.compute_intersections(horizontal_lines, vertical_lines)
-
-        # 步骤3: 分割表格网格
-        table_grid = self.segment_table_grid(horizontal_lines, vertical_lines)
-
-        logger.debug(f"表格分析完成: {len(table_grid.rows) - 1} 行 x {len(table_grid.cols) - 1} 列, {len(table_grid.cells)} 个单元格")
-
-        return table_grid
 
 
 __all__ = [

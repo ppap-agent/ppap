@@ -29,10 +29,6 @@ class QuotaSemanticsTests(unittest.TestCase):
         self.assertTrue(quota_sufficient(True, 10))
         self.assertFalse(quota_sufficient(False, 10))
         self.assertFalse(quota_sufficient(True, 0))
-        self.assertTrue(quota_sufficient(True, 10))
-
-    def test_quota_sufficient_does_not_require_package_purchase(self):
-        self.assertTrue(quota_sufficient(True, 5))
 
     def test_remaining_trial_never_goes_negative(self):
         self.assertEqual(remaining_trial_points(10000, 0), 10000)
@@ -205,11 +201,6 @@ class FeishuUsageTests(unittest.TestCase):
             trace_id=json.get("trace_id"),
         )
         return httpx.Response(201, json=row)
-
-    def test_arbitrary_usage_creation_is_not_exposed(self):
-        self._login_feishu_user("alice")
-        response = self.client.post("/integrations/feishu/usage/events", json={"consumed_points": 0})
-        self.assertEqual(response.status_code, 404)
 
     def test_quota_check_uses_partner_ai_and_local_trial_only(self):
         self._login_feishu_user("alice")

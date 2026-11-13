@@ -1,4 +1,4 @@
-"""Run one Deep recipe in a case workspace. Pi is the default; legacy Grok requires an explicit selection."""
+"""Run one Deep recipe in a case workspace with Pi."""
 
 from __future__ import annotations
 
@@ -23,8 +23,6 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "output"
-LAB_HOME = ROOT / ".grok"
-MODEL = "grok-4.7"
 EFFORT = "xhigh"
 
 
@@ -33,36 +31,6 @@ def _env(name: str) -> str:
     if not value:
         raise SystemExit(f"missing {name}")
     return value
-
-
-def _config_text() -> str:
-    base_url = _env("PPAP_MODEL_TEXT_BASE_URL")
-    key = _env("PPAP_MODEL_TEXT_API_KEY")
-    return (
-        "[models]\n"
-        f"default = {json.dumps(MODEL)}\n"
-        f"default_reasoning_effort = {json.dumps(EFFORT)}\n"
-        f"[model.{json.dumps(MODEL)}]\n"
-        f"model = {json.dumps(MODEL)}\n"
-        f"name = {json.dumps(MODEL)}\n"
-        f"base_url = {json.dumps(base_url)}\n"
-        'api_backend = "responses"\n'
-        f"api_key = {json.dumps(key)}\n"
-        "max_retries = 0\n"
-        "[cli]\nauto_update = false\n"
-        "[memory]\nenabled = false\n"
-    )
-
-
-def ensure_home() -> None:
-    """Create the shared home only when it has no config. Never replace an existing model menu."""
-    LAB_HOME.mkdir(mode=0o700, exist_ok=True)
-    (LAB_HOME / "skills").mkdir(exist_ok=True)
-    config = LAB_HOME / "config.toml"
-    if config.exists():
-        return
-    config.write_text(_config_text())
-    config.chmod(0o600)
 
 
 def _role(seq: str) -> str:
@@ -138,7 +106,6 @@ def prepare(recipe: str, bundle: str, file_name: str, effort: str, *, variant: s
                 "recipe": recipe,
                 "variant": variant,
                 "source_override": str(source.resolve()) if source else None,
-                "model": MODEL,
                 "reasoning_effort": effort,
                 "bundle": bundle,
                 "target": case.file_name,
@@ -153,50 +120,6 @@ def prepare(recipe: str, bundle: str, file_name: str, effort: str, *, variant: s
     )
     expected = {str(index): case.expected[index].status for index in sorted(case.expected)}
     return work, None if source else expected
-
-
-def run_grok(work: Path, effort: str, *, max_turns: int = 16, timeout: float = 900) -> int:
-    grok = shutil.which("grok")
-    if grok is None:
-        raise SystemExit("grok is not on PATH")
-    env = os.environ.copy()
-    env["GROK_HOME"] = str(LAB_HOME)
-    env["GROK_MEMORY"] = "0"
-    env["GROK_DISABLE_AUTOUPDATER"] = "1"
-    venv_bin = ROOT / ".venv" / "bin"
-    if venv_bin.is_dir():
-        env["PATH"] = str(venv_bin) + os.pathsep + env.get("PATH", "")
-    command = [
-        grok,
-        "--agent",
-        "grok-build",
-        "--cwd",
-        str(work),
-        "--prompt-file",
-        str(work / "prompt.txt"),
-        "--model",
-        MODEL,
-        "--reasoning-effort",
-        effort,
-        "--output-format",
-        "streaming-messages-json",
-        "--max-turns",
-        str(max_turns),
-        "--sandbox",
-        "off",
-        "--permission-mode",
-        "bypassPermissions",
-    ]
-    with (work / "stdout.jsonl").open("xb") as stdout, (work / "stderr.log").open("xb") as stderr:
-        process = subprocess.Popen(command, cwd=work, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
-        try:
-            return process.wait(timeout=timeout)
-        finally:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
 
 
 def run_pi(work: Path, effort: str, *, max_turns: int = 16, timeout: float = 900) -> int:
@@ -302,10 +225,7 @@ def _checker_context(bundle: str, work: Path, copied: dict[str, str]):
 class _CheckerRunner:
     """Host model for one development trial; this is not the container runtime."""
 
-    def __init__(self, effort: str, max_turns: int = 128, backend: str = "pi") -> None:
-        if backend not in {"pi", "grok"}:
-            raise ValueError("Unsupported model runner")
-        self.backend = backend
+    def __init__(self, effort: str, max_turns: int = 128) -> None:
         self.effort = effort
         self.max_turns = max_turns
         self.input_tokens = 0
@@ -319,8 +239,7 @@ class _CheckerRunner:
             raise TimeoutError("Model deadline exceeded")
         (work / "prompt.txt").write_text(prompt, encoding="utf-8")
         timeout = max(1.0, min(2400.0, deadline - time.monotonic()))
-        run_model = run_pi if self.backend == "pi" else run_grok
-        code = run_model(work, reasoning_effort, max_turns=self.max_turns, timeout=timeout)
+        code = run_pi(work, reasoning_effort, max_turns=self.max_turns, timeout=timeout)
         terminal = _terminal(work / "stdout.jsonl")
         usage = _usage(work / "stdout.jsonl")
         self.input_tokens += usage[0]
@@ -334,7 +253,7 @@ class _CheckerRunner:
             for message in errors if isinstance(errors, list) else []:
                 if isinstance(message, str) and (match := re.search(r'"http_status"\s*:\s*([45]\d{2})\b|API error \(status ([45]\d{2})\b', message)):
                     raise DeepError(f"deep_model_http_{match.group(1) or match.group(2)}")
-        if self.backend == "pi" and (code != 0 or terminal.get("is_error") is not False):
+        if code != 0 or terminal.get("is_error") is not False:
             raise DeepError("deep_model_failed")
         return read_checker_draft(work, schema, terminal)
 
@@ -376,7 +295,7 @@ def _execution_revision() -> str:
     return "lab-" + hasher.hexdigest()
 
 
-def run_checker(work: Path, bundle: str, file_name: str, effort: str, *, prior_path: Path | None = None, max_turns: int = 128, backend: str = "pi") -> int:
+def run_checker(work: Path, bundle: str, file_name: str, effort: str, *, prior_path: Path | None = None, max_turns: int = 128) -> int:
     from agent.checker_program import adapt, execute
     from agent.checker_spec import CheckerArtifact
     from agent.client import DeepError
@@ -398,7 +317,7 @@ def run_checker(work: Path, bundle: str, file_name: str, effort: str, *, prior_p
             file_sha256=hashlib.sha256(raw).hexdigest(),
             role=_role(json.loads((work / "case.json").read_text(encoding="utf-8"))["seq"]),
             executor_revision=revision,
-            runner=_CheckerRunner(effort, max_turns, backend),
+            runner=_CheckerRunner(effort, max_turns),
             work=work,
             deadline=deadline,
             reasoning_effort=effort,
@@ -552,7 +471,6 @@ def main() -> None:
     parser.add_argument("--expected", type=Path, help="Independent clause/status JSON used only for host scoring")
     parser.add_argument("--variant", choices=["original", "renamed-sheet", "shifted-table"], default="original")
     parser.add_argument("--effort", default=EFFORT, choices=["xhigh", "high", "medium", "low"])
-    parser.add_argument("--runner", choices=["pi", "grok"], default="pi")
     parser.add_argument("--max-turns", type=int, default=128, help="Model turns per checker development stage (1-128)")
     args = parser.parse_args()
     if not 1 <= args.max_turns <= 128:
@@ -560,11 +478,9 @@ def main() -> None:
     if args.replay is not None:
         raise SystemExit(replay_checker(args.replay.resolve()))
     load_dotenv(ROOT / ".env")
-    if args.runner == "grok":
-        ensure_home()
     from product.settings import Settings
 
-    active_model = Settings().deep_model_policy()[1] if args.runner == "pi" else MODEL
+    active_model = Settings().deep_model_policy()[1]
     selected = _selected(args.bundle, args.seq, args.file, args.all)
     if (args.rules or args.expected) and (args.recipe != "checker" or len(selected) != 1):
         raise SystemExit("--rules/--expected require one checker case")
@@ -576,7 +492,7 @@ def main() -> None:
         try:
             work, expected = prepare(args.recipe, case.bundle_id, case.file_name, args.effort, variant=args.variant, source=args.source)
             metadata = json.loads((work / "case.json").read_text()) if (work / "case.json").exists() else {}
-            metadata.update(runner=args.runner, model=active_model)
+            metadata.update(runner="pi", model=active_model)
             (work / "case.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
             if args.rules:
                 from audit.contracts import RuleInput
@@ -587,9 +503,9 @@ def main() -> None:
             if args.expected:
                 expected = json.loads(args.expected.read_text())
             if args.recipe == "checker":
-                code = run_checker(work, case.bundle_id, case.file_name, args.effort, prior_path=args.prior, max_turns=args.max_turns, backend=args.runner)
+                code = run_checker(work, case.bundle_id, case.file_name, args.effort, prior_path=args.prior, max_turns=args.max_turns)
             else:
-                code = (run_pi if args.runner == "pi" else run_grok)(work, args.effort, max_turns=args.max_turns)
+                code = run_pi(work, args.effort, max_turns=args.max_turns)
             report = score(work, expected)
             row = {
                 "bundle": case.bundle_id,
@@ -614,7 +530,7 @@ def main() -> None:
     totals = {
         "recipe": args.recipe,
         "effort": args.effort,
-        "runner": args.runner,
+        "runner": "pi",
         "model": active_model,
         "max_turns": args.max_turns,
         "cases": len(summary),

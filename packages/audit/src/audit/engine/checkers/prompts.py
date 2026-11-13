@@ -4,8 +4,6 @@ import json
 import logging
 from typing import Any, Dict, List
 
-from audit.contracts import RuleItem
-
 logger = logging.getLogger(__name__)
 
 
@@ -159,64 +157,3 @@ Return exact json format with candidateId as the only field, no other text or ex
     def get_system_prompt(prompt_type: str) -> str:
         """获取系统提示"""
         return PromptManager.SYSTEM_PROMPTS.get(prompt_type, "")
-
-    @staticmethod
-    def get_image_audit_prompt(audit_file: Any, rule: Any, specific_rule: RuleItem) -> str:
-        """构建图像审核提示"""
-        return f"""请分析这些图像并根据以下规则进行审核：
-
-审核规则信息：
-- 规则ID: {specific_rule.id}
-- 分类: {specific_rule.category}
-- 优先级: {specific_rule.priority}
-- 检查要求: {specific_rule.rule_to_check}
-
-审核文件信息：
-- 文件ID: {audit_file.audit_id}
-- 客户: {audit_file.customer}
-- 车型: {audit_file.model}
-- 零件: {audit_file.part}
-
-请仔细观察图像中的细节，特别关注：
-1. 是否有相关的标记、印章、签名等视觉元素
-2. 表格或图表的完整性和正确性
-3. 图像质量和清晰度
-4. 任何可能的缺陷或问题
-
-请按照以下JSON格式返回审核结果：
-{{
-    "classification": "分类名称",
-    "item": "具体审核项目",
-    "priority": "优先级(P0/P1/P2)",
-    "status": "状态(PASS/NG/ERR)",
-    "suggestions": "修改建议",
-    "image_analysis": "图像分析详情"
-}}"""
-
-    @staticmethod
-    def get_rule2_check_prompt(audit_file: Any, rule: Any, specific_rule: Any) -> str:
-        return """识别图片中重要度区分是否被标记，是返回PASS，否则返回NG。
-请按照以下JSON格式返回审核结果：
-{
-    "classification": "分类名称",
-    "item": "具体审核项目",
-    "priority": "优先级(P0/P1/P2)",
-    "status": "状态(PASS/NG/ERR)",
-    "suggestions": "修改建议(PASS时可以为空)",
-    "image_analysis": "图像分析详情"
-}
-"""
-
-    @staticmethod
-    def get_rule11_check_prompt(audit_file: Any, rule: Any, specific_rule: Any) -> str:
-        return """请分析图片中是否包含企业印章或签名，有印章或签名的情况下，请返回状态为PASS。如果图像中没有企业印章或签名，请返回状态为NG，并提供修改建议。
-请按照以下JSON格式返回审核结果：
-{
-    "classification": "分类名称",
-    "item": "具体审核项目",
-    "priority": "优先级(P0/P1/P2)",
-    "status": "状态(PASS/NG/ERR)",
-    "suggestions": "修改建议(PASS时可以为空)",
-    "image_analysis": "图像分析详情"
-}
-"""

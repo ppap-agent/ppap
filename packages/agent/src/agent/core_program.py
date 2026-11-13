@@ -199,12 +199,6 @@ class CoreRuntime:
         self.timeout = timeout
         self.objects = objects
 
-    def execution_revision(self) -> str:
-        from audit.checker_core import runtime_revision
-        from audit.standard_suites import library_revision
-
-        return runtime_revision(self.runtime.engine_revision(), library_revision())
-
     def ready(self, operation: str = "audit") -> bool:
         return self.runtime.ready(operation)
 

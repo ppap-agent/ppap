@@ -69,11 +69,10 @@ def test_truncated_cell_reads_remain_visible_but_are_not_a_complete_location(tmp
         rule_body=body,
     )
     response = checker_response(
-        ExecuteRequest(protocol_revision="test", round_id="round-1", files=[frozen], executor="ppap-deep", executor_revision="rev", job_id="job-1"),
+        ExecuteRequest(protocol_revision="test", round_id="round-1", files=[frozen], executor="ppap-checker-core", executor_revision="rev", job_id="job-1"),
         [(frozen, [result])],
     )
 
-    assert response.coverage.verification is None
     assert response.coverage.locator_gap is True
     assert response.findings[0].status == "PASS"
     assert response.findings[0].locator["semantic"]["evidence_incomplete"] is True
@@ -140,16 +139,15 @@ def test_a_finished_scan_with_no_rows_does_not_pass_without_an_explicit_empty_sc
         rule_body=body,
     )
     response = checker_response(
-        ExecuteRequest(protocol_revision="test", round_id="round-1", files=[frozen], executor="ppap-deep", executor_revision="rev", job_id="job-1"),
+        ExecuteRequest(protocol_revision="test", round_id="round-1", files=[frozen], executor="ppap-checker-core", executor_revision="rev", job_id="job-1"),
         [(frozen, [by_id["STATED"]])],
     )
     assert response.findings[0].status == "NA"
     assert response.findings[0].locator["semantic"]["empty_scope_basis"] == "规则写明没有工序时不适用"
     assert response.findings[0].locator["semantic"]["scope"] == {"total": 0, "checked": 0, "unknown": 0}
-    assert response.coverage.verification is None
     counted = by_id["STATED"].model_copy(update={"checks_performed": 4, "scope": None})
     counted_response = checker_response(
-        ExecuteRequest(protocol_revision="test", round_id="round-1", files=[frozen], executor="ppap-deep", executor_revision="rev", job_id="job-1"),
+        ExecuteRequest(protocol_revision="test", round_id="round-1", files=[frozen], executor="ppap-checker-core", executor_revision="rev", job_id="job-1"),
         [(frozen, [counted])],
     )
     assert "scope" not in counted_response.findings[0].locator["semantic"]

@@ -55,7 +55,7 @@ function Avatar({name, index, className}: {name: string; index: number; classNam
   return <span aria-hidden="true" className={cn('flex size-9 shrink-0 items-center justify-center rounded-md text-base font-semibold text-white', avatarTones[index % avatarTones.length], className)}>{name.slice(0, 1)}</span>
 }
 
-export function TemplateLibraryPage({adapter, headerActions}: {adapter: TemplateLibraryAdapter; headerActions?: HTMLElement | null}) {
+export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}) {
   const [library, setLibrary] = useState<TemplateLibrary | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState(''), [reload, setReload] = useState(0)
   const [selected, setSelected] = useState(() => new URL(location.href).searchParams.get(customerParam) || ''), [busy, setBusy] = useState(''), [actionError, setActionError] = useState('')
   const [customerSearch, setCustomerSearch] = useState(''), [page, setPage] = useState(1)

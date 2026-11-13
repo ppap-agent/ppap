@@ -24,7 +24,7 @@ def observation(version, digest, **extra):
 def project(version, digest, **extra):
     target = FrozenFile(file_version_id="target", role="target", filename="target.xlsx", sha256="a" * 64, rule_version_id="rule", rule_body={"rules": [{"id": "R1", "rule_to_check": "Required"}]})
     peer = FrozenFile(file_version_id="peer", role="reference", filename="peer.xlsx", sha256="b" * 64)
-    request = ExecuteRequest(protocol_revision="test", executor="ppap-deep", executor_revision="runtime", round_id="round", job_id="job", files=[target, peer])
+    request = ExecuteRequest(protocol_revision="test", executor="ppap-checker-core", executor_revision="runtime", round_id="round", job_id="job", files=[target, peer])
     return checker_response(request, [(target, [observation(version, digest, **extra)])]).findings[0]
 
 

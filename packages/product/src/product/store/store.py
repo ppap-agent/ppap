@@ -248,14 +248,6 @@ class AuthStore:
             "app_ticket_event_timestamp": str(row[1]) if row and row[1] is not None else "",
         }
 
-    def has_app_ticket(self, app_id: str) -> bool:
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM product.app_tickets WHERE provider = %s AND app_id = %s",
-                (PROVIDER_FEISHU, app_id),
-            ).fetchone()
-        return bool(row)
-
     def app_ticket(self, app_id: str) -> str | None:
         with self._conn() as conn:
             row = conn.execute(
@@ -398,10 +390,6 @@ class AuthStore:
             session_row["refresh_expires_at"],
             str(session_row["provider_authorization_id"]),
         )
-
-    def principal_from_token(self, raw: str) -> Principal | None:
-        session = self.load_session(raw)
-        return session.principal if session else None
 
     def fresh_provider_session(self, session: Session, refresh) -> Session:
         return ProviderAuthStore(self).fresh(session, refresh)
@@ -3495,23 +3483,6 @@ class AuthStore:
             ).fetchall()
             return self._round_histories(conn, [str(row[0]) for row in rows])
 
-    def round_input_version(self, round_id: str, file_id: str, version_id: str) -> FileVersion | None:
-        rid, fid, vid = _as_uuid(round_id), _as_uuid(file_id), _as_uuid(version_id)
-        if not rid or not fid or not vid:
-            return None
-        with self._conn() as conn:
-            row = conn.execute(
-                """
-                SELECT fv.id, fv.file_id, fv.tenant_id, fv.original_filename, fv.content_type,
-                       fv.byte_size, fv.sha256, fv.object_key, fv.status
-                FROM product.round_inputs i
-                JOIN product.file_versions fv ON fv.id = i.file_version_id
-                WHERE i.round_id = %s AND fv.file_id = %s AND fv.id = %s
-                """,
-                (rid, fid, vid),
-            ).fetchone()
-        return self._version_from_row(row) if row else None
-
     def round_bundle(self, round_id: str):
         import tempfile
         from zipfile import ZIP_DEFLATED, ZipFile
@@ -5176,10 +5147,6 @@ class AuthStore:
     def trial_consumed_points(self, tenant_id: str, ai_item_id: str) -> int:
         with self._conn() as conn:
             return self._trial_ledger_consumed(conn, tenant_id, ai_item_id)
-
-    def trial_baseline_points(self, tenant_id: str, ai_item_id: str) -> int:
-        with self._conn() as conn:
-            return self._trial_baseline_consumed(conn, tenant_id, ai_item_id)
 
     def _trial_baseline_consumed(self, conn, tenant_id: str, ai_item_id: str) -> int:
         row = conn.execute(

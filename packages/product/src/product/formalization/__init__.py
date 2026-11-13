@@ -1,1 +1,1 @@
-"""Clause formalization: OWL-first specification, CLIF companions, and one CNL projection."""
+"""Clause formalization: the clause rewritten as check points a person confirms."""

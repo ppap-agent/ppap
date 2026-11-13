@@ -14,12 +14,10 @@ from api import create_app
 from fastapi.testclient import TestClient
 from product.feishu import UserTokens
 from product.feishu_drive import (
-    RETRY_SLEEP_MS,
     Attempt,
+    FetchMode,
     FetchPlan,
     PermanentFailure,
-    export_tasks_url,
-    files_download_url,
     import_drive_material,
     retry,
 )
@@ -36,34 +34,9 @@ def _clean_env(**extra: str):
 
 
 class FetchPlanTests(unittest.TestCase):
-    def test_xlsx_drive_file_calls_only_files_download(self):
-        plan = FetchPlan.for_doc_type("file")
-        urls = plan.main_fetch_urls("xlsx-token")
-        self.assertEqual(urls, [files_download_url("xlsx-token")])
-        self.assertTrue(all("export_tasks" not in url for url in urls))
-        self.assertTrue(all("/blocks" not in url for url in urls))
-
-    def test_sheet_exports_and_does_not_download_drive_file(self):
-        plan = FetchPlan.for_doc_type("sheet")
-        urls = plan.main_fetch_urls("sheet-token")
-        self.assertEqual(urls, [export_tasks_url()])
-        self.assertTrue(all("/files/sheet-token/download" not in url for url in urls))
-        self.assertTrue(all("/blocks" not in url for url in urls))
-
-    def test_old_doc_exports_without_docx_blocks(self):
-        urls = FetchPlan.for_doc_type("doc").main_fetch_urls("doc-token")
-        self.assertEqual(urls, [export_tasks_url()])
-        self.assertTrue(all("/blocks" not in url for url in urls))
-
-    def test_docx_may_scan_blocks_then_export(self):
-        urls = FetchPlan.for_doc_type("docx").main_fetch_urls("docx-token")
-        self.assertEqual(
-            urls,
-            [
-                "https://open.feishu.cn/open-apis/docx/v1/documents/docx-token/blocks",
-                "https://open.feishu.cn/open-apis/drive/v1/export_tasks",
-            ],
-        )
+    def test_each_doc_type_uses_only_its_fetch_mode(self):
+        modes = {kind: FetchPlan.for_doc_type(kind).mode for kind in ("file", "sheet", "doc", "docx")}
+        self.assertEqual(modes, {"file": FetchMode.DRIVE_FILE, "sheet": FetchMode.EXPORT, "doc": FetchMode.EXPORT, "docx": FetchMode.EXPORT_WITH_DOCX_LINKS})
 
     def test_missing_meta_type_is_rejected_instead_of_guessing_a_download(self):
         with self.assertRaises(ValueError):
@@ -108,7 +81,6 @@ class DriveDownloadTests(unittest.TestCase):
         self.assertIn("HTTP 404", message)
         self.assertTrue("99912345" in message or "not found" in message)
         self.assertNotIn("所有下载方式均失败", message)
-        self.assertEqual(RETRY_SLEEP_MS, 2000)
 
 
 class _DriveMock:

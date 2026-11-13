@@ -29,15 +29,12 @@ from .pfmea_shared import (
 )
 from .pfmea_shared import (
     display_values,
-    value_matches,
 )
 
 logger = logging.getLogger(__name__)
 
 _EMPTY = {"", "nan", "none"}
 _PROCESS_CODE_PATTERN = re.compile(r"^\s*([A-Za-z]?\d+(?:[.\-]\d+)*)")
-_CHINESE_TEXT_PATTERN = re.compile(r"[\u4e00-\u9fff]+")
-_ENGLISH_TEXT_PATTERN = re.compile(r"[A-Za-z]+")
 _RULE7_PFD_SPECIAL_MARKS = frozenset({"cc", "sc"})
 _RULE7_PFMEA_SPECIAL_MARKS = frozenset({"cc", "sc", "kpc", "kcc"})
 MULTIPLE_PFD_MESSAGE = "存在多份过程流程图，无法确定主文档"
@@ -128,47 +125,6 @@ class PfmeaAgent(ExcelAgent):
                     return r, c
         return 0, 0
 
-    def _find_worksheets_by_keywords(
-        self,
-        workbook: Any,
-        *,
-        include_keywords: Optional[List[str]] = None,
-        default_include: Optional[List[str]] = None,
-        match_mode: str = "contains",
-        fallback_exclude_keywords: Optional[List[str]] = None,
-        fallback_first_sheet: bool = False,
-    ) -> List[Worksheet]:
-        if not hasattr(workbook, "sheetnames"):
-            return []
-        include = include_keywords or default_include or []
-        include_keys = [normalize_key(v) for v in include if normalize_key(v)]
-
-        matched: List[Worksheet] = []
-        for sheet_name in workbook.sheetnames:
-            name_key = normalize_key(sheet_name)
-            if not include_keys:
-                matched.append(workbook[sheet_name])
-                continue
-            if match_mode == "exact":
-                if any(name_key == kw for kw in include_keys):
-                    matched.append(workbook[sheet_name])
-            elif any(kw in name_key for kw in include_keys):
-                matched.append(workbook[sheet_name])
-        if matched:
-            return matched
-
-        if fallback_exclude_keywords:
-            excludes = [normalize_key(v) for v in fallback_exclude_keywords if normalize_key(v)]
-            for sheet_name in workbook.sheetnames:
-                name_key = normalize_key(sheet_name)
-                if any(ex in name_key for ex in excludes):
-                    continue
-                return [workbook[sheet_name]]
-
-        if fallback_first_sheet and workbook.sheetnames:
-            return [workbook[workbook.sheetnames[0]]]
-        return []
-
     def _get_detailed_merge_info(self, ws: Worksheet, row: int, col: int) -> Any:
         for merged_range in ws.merged_cells.ranges:
             if merged_range.min_row <= row <= merged_range.max_row and merged_range.min_col <= col <= merged_range.max_col:
@@ -221,16 +177,6 @@ class PfmeaAgent(ExcelAgent):
             empty_count += 1
             if empty_count >= max_consecutive_empty:
                 break
-
-    def _find_worksheet_by_include_keywords(self, workbook: Any, include_keywords: Optional[List[str]] = None) -> Any:
-        return self._find_worksheets_by_keywords(
-            workbook,
-            include_keywords=include_keywords,
-            default_include=self.default_sheet_include,
-            match_mode="exact",
-            fallback_exclude_keywords=["变更", "更新"],
-            fallback_first_sheet=True,
-        )
 
     def _read_label_value(self, ws: Worksheet, label_row: int, label_col: int) -> str:
         """Read value to the right of a label cell, handling merge and inline colon patterns."""
@@ -288,9 +234,6 @@ class PfmeaAgent(ExcelAgent):
             return None, f"{doc_type.get_type_name()}存在多份文档，无法判定主文档"
         return files[0], ""
 
-    def _value_matches_any(self, value: str, candidates: set[str]) -> bool:
-        return any(value_matches(value, c) for c in candidates)
-
     @staticmethod
     def _extract_rule_7_special_marks(value: object, valid_marks: frozenset[str]) -> set[str]:
         text = normalize_text(value).lower()
@@ -310,31 +253,6 @@ class PfmeaAgent(ExcelAgent):
         normalized = normalize_text(text)
         match = _PROCESS_CODE_PATTERN.match(normalized)
         return match.group(1).lower() if match else ""
-
-    def _build_process_zh_key(self, raw_text: str) -> str:
-        process_code = self._extract_process_code(raw_text)
-        if not process_code:
-            return ""
-        zh_text = "".join(_CHINESE_TEXT_PATTERN.findall(normalize_text(raw_text)))
-        if not zh_text:
-            return ""
-        return normalize_key(f"{process_code} {zh_text}")
-
-    def _build_process_en_key(self, raw_text: str) -> str:
-        process_code = self._extract_process_code(raw_text)
-        if not process_code:
-            return ""
-        en_text = " ".join(_ENGLISH_TEXT_PATTERN.findall(normalize_text(raw_text)))
-        if not en_text:
-            return ""
-        return normalize_key(f"{process_code} {en_text}")
-
-    def _build_bilingual_reorder_signature(self, raw_text: str) -> Tuple[str, str] | None:
-        zh_key = self._build_process_zh_key(raw_text)
-        en_key = self._build_process_en_key(raw_text)
-        if not zh_key or not en_key:
-            return None
-        return zh_key, en_key
 
     def _normalize_process_code_for_match(self, process_code: str) -> str:
         if not process_code:

@@ -7,9 +7,15 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+from agent.client import DeepUnavailable
 from agent.execution.isolation.container import ContainerRuntime
 from agent.readiness import probe
-from agent.run import Controller, UnconfiguredRuntime, UnixControllerServer
+from agent.run import Controller, UnixControllerServer
+
+
+class UnconfiguredRuntime:
+    def execute(self, spec, files, *, context):
+        raise DeepUnavailable()
 
 
 def forbidden(*_args, **_kwargs):

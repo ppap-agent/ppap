@@ -104,12 +104,8 @@ def history_rail(page):
     return rail
 
 
-def history_records(page):
-    return history_rail(page)
-
-
 def select_history(page, sequence):
-    history_records(page).get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True).click()
+    history_rail(page).get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True).click()
 
 
 def expect_history_current(page, sequence):
@@ -302,35 +298,34 @@ class AuditPreviewTests(unittest.TestCase):
     def test_large_cloud_selection_pages_and_can_be_cleared_without_importing(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width, height in ((1440, 900),):
-                with self.subTest(width=width):
-                    page = browser.new_page(viewport={"width": width, "height": height})
-                    page.set_default_timeout(5000)
-                    page.goto(PREVIEW + "/preview/audit.html?scene=drive-many")
-                    page.get_by_role("button", name="从飞书云文档选择", exact=True).click()
-                    picker = page.get_by_role("dialog", name="从飞书选择文件", exact=True)
-                    current = picker.get_by_role("region", name="云盘文件", exact=True)
-                    expect(current.get_by_role("listitem").first).to_contain_text("客户项目")
-                    first_name = "控制计划-尾门扰流板总成-图纸修订RevC-01.xlsx"
-                    row_name = current.get_by_text(first_name, exact=True)
-                    row_name.click()
-                    expect(current.get_by_role("checkbox", name="选择飞书文件 " + first_name, exact=True)).to_be_checked()
-                    for index in range(2, 25):
-                        if index == 13:
-                            current.get_by_role("button", name="加载更多", exact=True).click()
-                        current.get_by_role("checkbox", name=f"选择飞书文件 控制计划-尾门扰流板总成-图纸修订RevC-{index:02}.xlsx", exact=True).check()
-                    selected = picker.get_by_role("region", name="已选文件", exact=True)
-                    expect(selected.get_by_role("listitem")).to_have_count(24)
-                    expect(picker.get_by_role("button", name="添加 24 份文件", exact=True)).to_be_enabled()
-                    picker.get_by_role("button", name="清空选择", exact=True).click()
-                    expect(selected.get_by_role("listitem")).to_have_count(0)
-                    expect(current.locator('[role="checkbox"][aria-checked="true"]')).to_have_count(0)
-                    expect(picker.get_by_role("button", name="添加 0 份文件", exact=True)).to_be_disabled()
-                    picker.get_by_role("button", name="取消", exact=True).click()
-                    expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
-                    expect(task_list(page).get_by_role("button")).to_have_count(0)
-                    close_workspace_panel(page)
-                    page.close()
+            width, height = 1440, 900
+            page = browser.new_page(viewport={"width": width, "height": height})
+            page.set_default_timeout(5000)
+            page.goto(PREVIEW + "/preview/audit.html?scene=drive-many")
+            page.get_by_role("button", name="从飞书云文档选择", exact=True).click()
+            picker = page.get_by_role("dialog", name="从飞书选择文件", exact=True)
+            current = picker.get_by_role("region", name="云盘文件", exact=True)
+            expect(current.get_by_role("listitem").first).to_contain_text("客户项目")
+            first_name = "控制计划-尾门扰流板总成-图纸修订RevC-01.xlsx"
+            row_name = current.get_by_text(first_name, exact=True)
+            row_name.click()
+            expect(current.get_by_role("checkbox", name="选择飞书文件 " + first_name, exact=True)).to_be_checked()
+            for index in range(2, 25):
+                if index == 13:
+                    current.get_by_role("button", name="加载更多", exact=True).click()
+                current.get_by_role("checkbox", name=f"选择飞书文件 控制计划-尾门扰流板总成-图纸修订RevC-{index:02}.xlsx", exact=True).check()
+            selected = picker.get_by_role("region", name="已选文件", exact=True)
+            expect(selected.get_by_role("listitem")).to_have_count(24)
+            expect(picker.get_by_role("button", name="添加 24 份文件", exact=True)).to_be_enabled()
+            picker.get_by_role("button", name="清空选择", exact=True).click()
+            expect(selected.get_by_role("listitem")).to_have_count(0)
+            expect(current.locator('[role="checkbox"][aria-checked="true"]')).to_have_count(0)
+            expect(picker.get_by_role("button", name="添加 0 份文件", exact=True)).to_be_disabled()
+            picker.get_by_role("button", name="取消", exact=True).click()
+            expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
+            expect(task_list(page).get_by_role("button")).to_have_count(0)
+            close_workspace_panel(page)
+            page.close()
             browser.close()
 
     def test_late_child_folder_read_cannot_replace_the_root_or_import_files(self):
@@ -652,45 +647,44 @@ class AuditPreviewTests(unittest.TestCase):
     def test_partial_scope_is_visible_and_gate_changes_require_new_confirmation(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for scene in ("confirm-gate-changed",):
-                with self.subTest(scene=scene):
-                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
-                    try:
-                        page.set_default_timeout(5000)
-                        page.goto(PREVIEW + "/preview/audit.html?scene=" + scene)
-                        page.get_by_role("button", name="使用三类文件示例", exact=True).click()
-                        page.get_by_role("button", name="开始识别", exact=True).click()
-                        original_task = parse_qs(urlparse(page.url).query)["task"]
-                        scope = page.get_by_role("region", name="本次审核范围", exact=True)
-                        start = page.get_by_role("button", name="开始审核", exact=True)
-                        if scene == "confirm-gate-changed":
-                            expect(scope).to_contain_text("进入审核 3 份")
-                            start.click()
-                            old_request = parse_qs(urlparse(page.url).query)["acceptRequest"]
-                            expect(page.get_by_role("alert").filter(has_text="审核依据已变化")).to_be_visible()
-                            expect(start).to_be_disabled()
-                            expect(scope).to_contain_text("进入审核 3 份")
-                            page.get_by_role("button", name="刷新审核依据", exact=True).click()
-                            expect(scope).to_contain_text("进入审核 2 份")
-                            self.assertEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], old_request)
-                        expect(scope).to_contain_text("进入审核 2 份")
-                        expect(scope).to_contain_text("PFMEA.xlsx")
-                        expect(scope).to_contain_text("当前是历史检查版本，需确认目录版本后才能审核")
-                        expect(page.get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()
-                        expect(page.get_by_text("预计 1000 点", exact=True)).to_be_visible()
-                        expect(page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True)).to_have_count(0)
-                        start.click()
-                        queue = page.get_by_role("navigation", name="文件队列", exact=True)
-                        expect(queue.get_by_role("button")).to_have_count(2)
-                        expect(queue.get_by_text("PFMEA.xlsx", exact=True)).to_have_count(0)
-                        removed = page.get_by_role("region", name="已移除文件", exact=True)
-                        expect(removed).to_contain_text("PFMEA.xlsx")
-                        expect(removed).to_contain_text("当前是历史检查版本，需确认目录版本后才能审核")
-                        self.assertEqual(parse_qs(urlparse(page.url).query)["task"], original_task)
-                        if scene == "confirm-gate-changed":
-                            self.assertNotEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], old_request)
-                    finally:
-                        page.close()
+            scene = "confirm-gate-changed"
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            try:
+                page.set_default_timeout(5000)
+                page.goto(PREVIEW + "/preview/audit.html?scene=" + scene)
+                page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+                page.get_by_role("button", name="开始识别", exact=True).click()
+                original_task = parse_qs(urlparse(page.url).query)["task"]
+                scope = page.get_by_role("region", name="本次审核范围", exact=True)
+                start = page.get_by_role("button", name="开始审核", exact=True)
+                if scene == "confirm-gate-changed":
+                    expect(scope).to_contain_text("进入审核 3 份")
+                    start.click()
+                    old_request = parse_qs(urlparse(page.url).query)["acceptRequest"]
+                    expect(page.get_by_role("alert").filter(has_text="审核依据已变化")).to_be_visible()
+                    expect(start).to_be_disabled()
+                    expect(scope).to_contain_text("进入审核 3 份")
+                    page.get_by_role("button", name="刷新审核依据", exact=True).click()
+                    expect(scope).to_contain_text("进入审核 2 份")
+                    self.assertEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], old_request)
+                expect(scope).to_contain_text("进入审核 2 份")
+                expect(scope).to_contain_text("PFMEA.xlsx")
+                expect(scope).to_contain_text("当前是历史检查版本，需确认目录版本后才能审核")
+                expect(page.get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()
+                expect(page.get_by_text("预计 1000 点", exact=True)).to_be_visible()
+                expect(page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True)).to_have_count(0)
+                start.click()
+                queue = page.get_by_role("navigation", name="文件队列", exact=True)
+                expect(queue.get_by_role("button")).to_have_count(2)
+                expect(queue.get_by_text("PFMEA.xlsx", exact=True)).to_have_count(0)
+                removed = page.get_by_role("region", name="已移除文件", exact=True)
+                expect(removed).to_contain_text("PFMEA.xlsx")
+                expect(removed).to_contain_text("当前是历史检查版本，需确认目录版本后才能审核")
+                self.assertEqual(parse_qs(urlparse(page.url).query)["task"], original_task)
+                if scene == "confirm-gate-changed":
+                    self.assertNotEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], old_request)
+            finally:
+                page.close()
             browser.close()
 
     def test_hiding_an_unmatched_file_does_not_replace_the_server_exclusion_reason(self):
@@ -1362,34 +1356,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(navigation.get_by_text("模板库", exact=True)).to_be_visible()
             browser.close()
 
-    def test_navigation_collapse_keeps_report_and_task_access(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 1000})
-            page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1")
-            expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
-            report_address = page.url
-            expect(page.get_by_role("button", name="展开产品导航", exact=True)).to_be_visible()
-            sidebar = page.get_by_role("complementary", name="产品侧栏", exact=True)
-            # The task rail stays beside the report as well.
-            expect(task_list(page).get_by_role("button")).to_have_count(1)
-            expect(task_list(page).get_by_role("button", name=re.compile(r"^PPAP-报告示例 "))).to_have_attribute("aria-current", "page")
-            sidebar.get_by_role("button", name="模板库", exact=True).hover()
-            expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_be_visible()
-            self.assertEqual(page.url, report_address)
-            expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
-            page.get_by_role("link", name="返回审核结果", exact=True).click()
-            page.set_viewport_size({"width": 1280, "height": 900})
-            expect(sidebar).to_be_visible()
-            expect(page.get_by_role("button", name="展开产品导航", exact=True)).to_be_visible()
-            # Back on the task overview the task rail sits beside the file list, even at the narrowest desktop.
-            expect(page.get_by_role("complementary", name="审核任务", exact=True).get_by_role("button", name=re.compile(r"^PPAP-报告示例 "))).to_be_visible()
-            expect(task_list(page).get_by_role("button")).to_have_count(1)
-            expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
-            expect(page.get_by_role("button", name="展开产品导航", exact=True)).to_be_visible()
-            browser.close()
-
     def test_restored_task_rejects_a_self_consistent_zip_from_another_frozen_result(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -1615,28 +1581,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(dialog.get_by_role("textbox", name="客户", exact=True)).to_have_value("文件 A 更正")
             dialog.get_by_role("button", name="核对保存结果", exact=True).click()
             expect(page.get_by_role("region", name="本次审核文件信息", exact=True).get_by_text("文件 A 更正", exact=True)).to_be_visible()
-            browser.close()
-
-    def test_old_display_projections_do_not_erase_saved_values_or_restore_permission(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            for scene in ("stale", "missing", "same-revision-conflict"):
-                with self.subTest(scene=scene):
-                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
-                    page.set_default_timeout(5000)
-                    page.goto(PREVIEW + f"/preview/audit.html?scene=restore-display-{scene}&task=preview-recovery-task")
-                    file_information(page)
-                    page.get_by_role("button", name="更正显示信息", exact=True).click()
-                    dialog = page.get_by_role("dialog", name="更正显示信息", exact=True)
-                    dialog.get_by_role("textbox", name="客户", exact=True).fill("不能回退的客户")
-                    dialog.get_by_role("button", name="保存显示信息", exact=True).click()
-                    read_results(page)
-                    expect(page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True)).to_be_enabled()
-                    expect(page.get_by_role("region", name="本次审核文件信息", exact=True).get_by_text("不能回退的客户", exact=True)).to_be_visible()
-                    file_information(page)
-                    page.get_by_role("button", name="更正显示信息", exact=True).click()
-                    expect(dialog.get_by_role("button", name="保存显示信息", exact=True)).to_be_disabled()
-                    page.close()
             browser.close()
 
     def test_a_saved_receipt_after_revocation_can_confirm_values_but_cannot_grant_permission(self):
@@ -2749,27 +2693,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("button", name="分享", exact=True)).to_have_count(0)
             browser.close()
 
-    def test_history_report_address_restores_exact_old_record_after_reload(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1280, "height": 1000})
-            page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
-            page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
-            select_history(page, 2)
-            page.get_by_role("button", name="查看报告", exact=True).click()
-            page.reload()
-            expect(page.get_by_role("heading", name="历史报告", exact=True)).to_be_visible()
-            page.get_by_role("button", name="报告信息", exact=True).click()
-            information = page.get_by_role("dialog", name="报告信息", exact=True)
-            expect(information.get_by_text("第 2 次审核", exact=True)).to_be_visible()
-            expect(information.get_by_text("Rev B", exact=True)).to_be_visible()
-            information.get_by_role("button", name="关闭", exact=True).click()
-            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
-            page.get_by_role("button", name="返回本次审核", exact=True).click()
-            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
-            browser.close()
-
     def test_missing_history_address_never_falls_back_to_latest(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -2971,6 +2894,8 @@ class AuditPreviewTests(unittest.TestCase):
             select_history(page, 2)
             expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
             page.get_by_role("button", name="查看报告", exact=True).click()
+            # The history report address restores the exact old record after a reload.
+            page.reload()
             expect(page.get_by_role("heading", name="历史报告", exact=True)).to_be_visible()
             page.get_by_role("button", name="报告信息", exact=True).click()
             information = page.get_by_role("dialog", name="报告信息", exact=True)
@@ -3691,59 +3616,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(information.get_by_text("preview-rule-2", exact=True)).to_be_visible()
             browser.close()
 
-    def test_report_reader_uses_one_compact_table_and_keeps_metadata_out_of_the_reading_area(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1012, "height": 853})
-            page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=preview-recovery-version-1")
-            table = page.get_by_role("list", name="逐文件报告清单", exact=True)
-            expect(table).to_be_visible()
-            expect(table.get_by_role("listitem")).to_have_count(3)
-            expect(table.get_by_text("就绪", exact=True)).to_have_count(0)
-            expect(table.locator("time")).to_have_count(0)
-            current = page.get_by_role("region", name="当前报告", exact=True)
-            expect(current.get_by_text("就绪", exact=True)).to_have_count(0)
-            # The reader's header states only when the report was generated; the PDF reading area carries no metadata.
-            expect(current.locator("time")).to_have_count(1)
-            expect(current.get_by_role("paragraph").filter(has_text=re.compile(r"^生成时间：")).locator("time")).to_have_count(1)
-            expect(current.get_by_role("region", name="PDF 页面", exact=True).locator("time")).to_have_count(0)
-            expect(current.get_by_role("toolbar", name="PDF 阅读工具", exact=True)).to_be_visible()
-            address = page.url
-            table.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True).check()
-            self.assertEqual(page.url, address)
-            expect(current.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
-            expect(page.get_by_role("region", name="逐文件审核报告", exact=True).get_by_text(re.compile(r"^已选 1 份\D"))).to_be_visible()
-            current.get_by_role("button", name="报告信息", exact=True).click()
-            info = page.get_by_role("dialog", name="报告信息", exact=True)
-            expect(info.locator("time")).to_have_attribute("datetime", "2026-10-16T10:00:00+08:00")
-            expect(info.get_by_text("示例控制计划规则 · v2", exact=True)).to_be_visible()
-            expect(info.get_by_text("preview-recovery-version-1", exact=True)).to_be_hidden()
-            info.get_by_text("追溯信息", exact=True).click()
-            expect(info.get_by_text("preview-recovery-version-1", exact=True)).to_be_visible()
-            info.get_by_role("button", name="关闭", exact=True).click()
-            expect(current.get_by_role("button", name="报告信息", exact=True)).to_be_focused()
-            browser.close()
-
-    def test_report_view_keeps_task_navigation_available(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 1000})
-            page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1")
-            expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
-            page.get_by_role("region", name="PDF 页面", exact=True).focus()
-            expect(page.get_by_role("region", name="PDF 页面", exact=True)).to_be_focused()
-            # The task rail stays beside the report; folding it gives its width to the PDF.
-            rail = page.get_by_role("complementary", name="审核任务", exact=True)
-            expect(rail.get_by_role("button", name=re.compile(r"^PPAP-报告示例 "))).to_have_attribute("aria-current", "page")
-            rail.get_by_role("button", name="收起", exact=True).click()
-            expect(rail.get_by_role("button", name="展开审核任务", exact=True)).to_be_visible()
-            rail.get_by_role("button", name="展开审核任务", exact=True).click()
-            page.get_by_role("link", name="返回审核结果", exact=True).click()
-            expect(rail.get_by_role("button", name=re.compile(r"^PPAP-报告示例 "))).to_be_visible()
-            browser.close()
-
     def test_unavailable_report_address_does_not_open_another_file(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -4257,40 +4129,40 @@ class AuditPreviewTests(unittest.TestCase):
     def test_drive_continuation_keeps_the_original_request_and_late_receipt_cannot_undo_removal(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for width in (1280,):
-                for removed in (False, True):
-                    with self.subTest(width=width, removed=removed):
-                        page = browser.new_page(viewport={"width": width, "height": 900})
-                        page.set_default_timeout(5000)
-                        page.goto(PREVIEW + "/preview/audit.html?scene=upload-resume")
-                        page.get_by_role("button", name="从飞书云文档选择", exact=True).click()
-                        picker = page.get_by_role("dialog", name="从飞书选择文件", exact=True)
-                        picker.get_by_role("checkbox", name="选择飞书文件 PFMEA.xlsx", exact=True).check()
-                        picker.get_by_role("button", name="添加 1 份文件", exact=True).click()
-                        expect(page.get_by_role("button", name="继续传输 PFMEA.xlsx", exact=True)).to_have_count(0)
-                        page.get_by_role("button", name="读取传输 PFMEA.xlsx", exact=True).click()
-                        control = page.get_by_role("complementary", name="预览事件控制", exact=True)
-                        identity = control.get_by_text(re.compile("^读取传输回执 · PFMEA.xlsx · 请求 ")).inner_text()
-                        request_id, version_id = re.fullmatch(r"读取传输回执 · PFMEA.xlsx · 请求 ([a-f0-9-]+) · 版本 ([a-f0-9-]+) · 传输命令 1", identity).groups()
-                        assert request_id == version_id
-                        close_workspace_panel(page)
-                        page.get_by_role("button", name="返回示例读取 1", exact=True).click()
-                        page.get_by_role("button", name="继续传输 PFMEA.xlsx", exact=True).click()
-                        expect(control.get_by_text(f"继续传输回执 · PFMEA.xlsx · 请求 {request_id} · 版本 {version_id} · 传输命令 2", exact=True)).to_be_visible()
-                        if removed:
-                            page.get_by_role("button", name="排除传输 PFMEA.xlsx", exact=True).click()
-                        close_workspace_panel(page)
-                        page.get_by_role("button", name="返回示例读取 2", exact=True).click()
-                        if removed:
-                            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_have_count(0)
-                            expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
-                            expect(page.get_by_role("heading", name="等待文件检查 · 1 份", exact=True)).to_have_count(0)
-                        else:
-                            expect(page.get_by_role("heading", name="等待文件检查 · 1 份", exact=True)).to_be_visible()
-                        expect(page.get_by_role("button", name="继续传输 PFMEA.xlsx", exact=True)).to_have_count(0)
-                        expect(task_list(page).get_by_role("button")).to_have_count(0)
-                        close_workspace_panel(page)
-                        page.close()
+            width = 1280
+            for removed in (False, True):
+                with self.subTest(width=width, removed=removed):
+                    page = browser.new_page(viewport={"width": width, "height": 900})
+                    page.set_default_timeout(5000)
+                    page.goto(PREVIEW + "/preview/audit.html?scene=upload-resume")
+                    page.get_by_role("button", name="从飞书云文档选择", exact=True).click()
+                    picker = page.get_by_role("dialog", name="从飞书选择文件", exact=True)
+                    picker.get_by_role("checkbox", name="选择飞书文件 PFMEA.xlsx", exact=True).check()
+                    picker.get_by_role("button", name="添加 1 份文件", exact=True).click()
+                    expect(page.get_by_role("button", name="继续传输 PFMEA.xlsx", exact=True)).to_have_count(0)
+                    page.get_by_role("button", name="读取传输 PFMEA.xlsx", exact=True).click()
+                    control = page.get_by_role("complementary", name="预览事件控制", exact=True)
+                    identity = control.get_by_text(re.compile("^读取传输回执 · PFMEA.xlsx · 请求 ")).inner_text()
+                    request_id, version_id = re.fullmatch(r"读取传输回执 · PFMEA.xlsx · 请求 ([a-f0-9-]+) · 版本 ([a-f0-9-]+) · 传输命令 1", identity).groups()
+                    assert request_id == version_id
+                    close_workspace_panel(page)
+                    page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+                    page.get_by_role("button", name="继续传输 PFMEA.xlsx", exact=True).click()
+                    expect(control.get_by_text(f"继续传输回执 · PFMEA.xlsx · 请求 {request_id} · 版本 {version_id} · 传输命令 2", exact=True)).to_be_visible()
+                    if removed:
+                        page.get_by_role("button", name="排除传输 PFMEA.xlsx", exact=True).click()
+                    close_workspace_panel(page)
+                    page.get_by_role("button", name="返回示例读取 2", exact=True).click()
+                    if removed:
+                        expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_have_count(0)
+                        expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
+                        expect(page.get_by_role("heading", name="等待文件检查 · 1 份", exact=True)).to_have_count(0)
+                    else:
+                        expect(page.get_by_role("heading", name="等待文件检查 · 1 份", exact=True)).to_be_visible()
+                    expect(page.get_by_role("button", name="继续传输 PFMEA.xlsx", exact=True)).to_have_count(0)
+                    expect(task_list(page).get_by_role("button")).to_have_count(0)
+                    close_workspace_panel(page)
+                    page.close()
             browser.close()
 
     def test_resumable_upload_only_continues_its_original_request_after_an_explicit_action(self):

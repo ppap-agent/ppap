@@ -29,11 +29,6 @@ class OriginalImageRuntime:
         content, _ = download_file_sync(file_url, max_file_size=100 * 1024 * 1024)
         return extract_images_from_bytes(content, ".pdf", render_all_pages=render_all_pages)
 
-    def run_image_prompt(self, **kwargs):
-        import documents.ai
-
-        return documents.ai.run_json("image_prompt", **kwargs)
-
 
 @pytest.fixture
 def image_source(tmp_path, monkeypatch):

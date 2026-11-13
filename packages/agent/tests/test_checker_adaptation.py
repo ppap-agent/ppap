@@ -198,19 +198,6 @@ def test_interrupted_identical_candidate_is_not_a_confirmation(tmp_path):
     assert developer.calls == 6
 
 
-def test_visual_capability_gap_is_unable_in_the_original_single_check_finalizer(tmp_path):
-    path = tmp_path / "source.xlsx"
-    workbook(path, "特殊特性清单")
-    target, rules = inputs(path)
-    source = human_program(tmp_path / "starting", target, rules).replace(
-        "return super().rule_1(ctx)",
-        "from audit.engine.runtime import get_runtime\n        return get_runtime().run_image_prompt()",
-    )
-    result = run_program({"checker.py": source.encode()}, tmp_path / "run", target, rules, None)[0]
-    assert result.status == "UNABLE"
-    assert "视觉观察" in result.suggestions
-
-
 def test_older_checker_source_remains_available_with_current_execution_contract(tmp_path):
     target, rules = inputs(tmp_path / "source.xlsx")
     rules.rule_profile = "v2"

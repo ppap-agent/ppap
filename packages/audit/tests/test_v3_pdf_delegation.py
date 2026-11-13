@@ -35,9 +35,6 @@ class ConversionRuntime:
     def render_pdf_images(self, file_url: str, *, render_all_pages: bool = True) -> list[str]:
         return []
 
-    def run_image_prompt(self, **kwargs) -> str:
-        raise AssertionError("These deterministic rules do not require a model response")
-
 
 def rules(count: int) -> RuleInput:
     return RuleInput(

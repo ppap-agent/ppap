@@ -48,6 +48,7 @@ def test_model_files_and_partial_receipt_use_the_product_reader(tmp_path, monkey
                 {
                     "type": "result",
                     "subtype": "success",
+                    "is_error": False,
                     "usage": {"input_tokens": 4, "output_tokens": 2},
                     "result": json.dumps({"completed": True, "artifact": "checker.py", "clauses": ["A"]}),
                 }
@@ -55,8 +56,8 @@ def test_model_files_and_partial_receipt_use_the_product_reader(tmp_path, monkey
         )
         return 0
 
-    monkeypatch.setattr(deep_lab, "run_grok", model)
-    runner = deep_lab._CheckerRunner("high", backend="grok")
+    monkeypatch.setattr(deep_lab, "run_pi", model)
+    runner = deep_lab._CheckerRunner("high")
     draft = runner.run(tmp_path, "task", CheckerDraft, 10**12, reasoning_effort="high")
     assert draft.files == {"checker.py": source}
     assert draft.clauses == ["A"]
@@ -186,8 +187,8 @@ def test_provider_http_failure_stops_before_candidate_confirmation(tmp_path, mon
         (work / "stdout.jsonl").write_text(json.dumps(terminal))
         return 1
 
-    monkeypatch.setattr(deep_lab, "run_grok", model)
-    runner = deep_lab._CheckerRunner("high", backend="grok")
+    monkeypatch.setattr(deep_lab, "run_pi", model)
+    runner = deep_lab._CheckerRunner("high")
     with pytest.raises(DeepError, match=f"^deep_model_http_{status}$"):
         runner.run(tmp_path, "task", CheckerDraft, 10**12, reasoning_effort="high")
     assert runner.input_tokens == 4
@@ -205,17 +206,10 @@ def test_cli_summary_keeps_provider_failure_instead_of_missing_result(tmp_path, 
     monkeypatch.setattr(deep_lab.sys, "argv", ["deep_lab.py", "--recipe", "checker", "--effort", "high"])
     monkeypatch.setattr(deep_lab, "OUTPUT", tmp_path)
     monkeypatch.setattr(deep_lab, "load_dotenv", lambda *args: None)
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Default Pi selection must not configure or invoke Grok")
-
-    monkeypatch.setattr(deep_lab, "ensure_home", forbidden)
-    monkeypatch.setattr(deep_lab, "run_grok", forbidden)
     monkeypatch.setattr(deep_lab, "_selected", lambda *args: [case])
     monkeypatch.setattr(deep_lab, "prepare", lambda *args, **kwargs: (work, {"R1": "NG"}))
 
     def failed_model(*args, **kwargs):
-        assert kwargs["backend"] == "pi"
         (work / "checker-error.txt").write_text("DeepError: deep_model_http_402\ninternal detail")
         return 1
 
@@ -229,7 +223,7 @@ def test_cli_summary_keeps_provider_failure_instead_of_missing_result(tmp_path, 
     assert summary["matched"] == summary["executed"] == 0
 
 
-def test_checker_lab_defaults_to_pi_and_stops_on_provider_failure(tmp_path, monkeypatch):
+def test_checker_lab_stops_on_pi_failure(tmp_path, monkeypatch):
     from agent.client import DeepError
     from agent.execution.checker_guest import CheckerDraft
 
@@ -250,19 +244,9 @@ def test_checker_lab_defaults_to_pi_and_stops_on_provider_failure(tmp_path, monk
         )
         return 1
 
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Pi default must not invoke Grok")
-
     monkeypatch.setattr(deep_lab, "run_pi", model)
-    monkeypatch.setattr(deep_lab, "run_grok", forbidden)
     runner = deep_lab._CheckerRunner("high", max_turns=3)
     with pytest.raises(DeepError, match="^deep_model_failed$"):
         runner.run(tmp_path, "task", CheckerDraft, 10**12, reasoning_effort="low")
     assert calls == [("low", 3)]
     assert (runner.input_tokens, runner.output_tokens) == (13, 5)
-
-
-@pytest.mark.parametrize("backend", ["", "unknown"])
-def test_invalid_checker_backend_does_not_fall_back_to_grok(backend):
-    with pytest.raises(ValueError, match="Unsupported model runner"):
-        deep_lab._CheckerRunner("low", backend=backend)

@@ -18,8 +18,6 @@ POC_SEQ_TO_DOC_TYPE = {
     "11": PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST,
 }
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
-
 
 @dataclass(frozen=True)
 class OracleRuleExpectation:

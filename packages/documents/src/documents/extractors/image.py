@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, Optional, Set, Union
 
 from .base import BaseExtractor, ExtractionError
 
@@ -92,59 +92,3 @@ class ImageExtractor(BaseExtractor):
         except Exception as e:
             logger.error(f"图像元数据提取失败: {str(e)}")
             return {"format": "Image", "file_size": len(file_content), "error": str(e)}
-
-    def extract_images_as_base64(self, file_content: bytes, file_path: Optional[Union[str, Path]] = None) -> List[str]:
-        """将图像转换为base64编码格式
-
-        Args:
-            file_content: 图像文件的二进制内容
-            file_path: 可选的文件路径
-
-        Returns:
-            List[str]: base64编码的图像数组
-        """
-        try:
-            import base64
-            import io
-
-            from PIL import Image
-
-            # 使用PIL处理图像以确保格式正确
-            image = Image.open(io.BytesIO(file_content))
-
-            # 转换为RGB模式（处理RGBA和其他模式）
-            if image.mode in ("RGBA", "LA", "P"):
-                # 创建白色背景
-                background_size: tuple[int, int] = (image.width, image.height)
-                background = Image.new("RGB", background_size, (255, 255, 255))
-                if image.mode == "P":
-                    image = image.convert("RGBA")
-                background.paste(image, mask=image.split()[-1] if image.mode == "RGBA" else None)
-                image = background
-            elif image.mode != "RGB":
-                image = image.convert("RGB")
-
-            # 调整图像大小以控制token使用
-            max_size = 1024
-            if max(image.size) > max_size:
-                ratio = max_size / max(image.size)
-                new_size: tuple[int, int] = (
-                    int(image.size[0] * ratio),
-                    int(image.size[1] * ratio),
-                )
-                image = image.resize(new_size, Image.Resampling.LANCZOS)
-
-            # 转换为JPEG格式以减少文件大小
-            output = io.BytesIO()
-            image.save(output, format="JPEG", quality=85, optimize=True)
-            image_bytes = output.getvalue()
-
-            # 编码为base64
-            base64_string = base64.b64encode(image_bytes).decode("utf-8")
-
-            image.close()
-            return [f"data:image/jpeg;base64,{base64_string}"]
-
-        except Exception as e:
-            logger.error(f"图像base64转换失败: {str(e)}")
-            return []
