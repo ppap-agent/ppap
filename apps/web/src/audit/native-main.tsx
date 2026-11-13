@@ -38,7 +38,8 @@ function NativeAudit() {
     }).catch(cause => {if (active) setError(cause instanceof Error ? cause.message : '无法读取审核规则。')})
     return () => {active = false}
   }, [revision])
-  return <>{error && <Alert variant="destructive"><AlertTitle>客户规则目录未能刷新</AlertTitle><AlertDescription><p>已保存的规则和当前待审文件仍保留。</p><Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取客户目录</Button></AlertDescription></Alert>}<AuditIntake adapter={adapter} templateAdapter={templateAdapter} onRefreshCustomers={() => setRevision(value => value + 1)} rules={(active, headerActions) => <AuditRules headerActions={headerActions} active={active} onPublished={() => setRevision(value => value + 1)}/>} archiveAdapter={nativeArchiveAdapter} usageAdapter={nativeUsageAdapter} displayAdapter={nativeDisplayAdapter} reportAdapter={nativeReportAdapter} sharingAdapter={nativeSharingAdapter} supportAdapter={nativeSupportAdapter} renderOriginal={renderOriginal}/></>
+  // The notice follows the page in reading order, so "跳到主要内容" stays the first stop.
+  return <><AuditIntake adapter={adapter} templateAdapter={templateAdapter} onRefreshCustomers={() => setRevision(value => value + 1)} rules={(active, headerActions) => <AuditRules headerActions={headerActions} active={active} onPublished={() => setRevision(value => value + 1)}/>} archiveAdapter={nativeArchiveAdapter} usageAdapter={nativeUsageAdapter} displayAdapter={nativeDisplayAdapter} reportAdapter={nativeReportAdapter} sharingAdapter={nativeSharingAdapter} supportAdapter={nativeSupportAdapter} renderOriginal={renderOriginal}/>{error && <div className="fixed right-4 bottom-4 z-40 max-w-md"><Alert variant="destructive"><AlertTitle>客户规则目录未能刷新</AlertTitle><AlertDescription><p>已保存的规则和当前待审文件仍保留。</p><Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取客户目录</Button></AlertDescription></Alert></div>}</>
 }
 
 const templateAdapter = createNativeTemplateLibraryAdapter({personalDriveUpload})

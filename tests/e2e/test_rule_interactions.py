@@ -1031,7 +1031,8 @@ class RuleInteractionTests(unittest.TestCase):
             expect(row).to_be_visible()
             # A failed refresh keeps the tasks already read.
             tasks_failed = True
-            with page.expect_response(lambda response: "/api/audit-tasks?" in response.url and "q=PPAP" in response.url):
+            # The failing read is aborted, so it has a request but never a response.
+            with page.expect_request(lambda request: "/api/audit-tasks?" in request.url and "q=PPAP" in request.url):
                 listing.get_by_role("textbox", name="搜索审核任务", exact=True).fill("PPAP")
             expect(alert).to_have_text("任务列表读取失败。当前文件与任务仍保留。")
             expect(row).to_be_visible()

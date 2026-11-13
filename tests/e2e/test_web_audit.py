@@ -101,7 +101,8 @@ class WebAuditLoopTests(unittest.TestCase):
             page.wait_for_selector("text=当前环境不支持 docs-addon 登录")
             expect(page.get_by_test_id("addon-history")).to_be_visible()
             href = page.get_by_test_id("addon-history").get_attribute("href")
-            self.assertTrue(href and href.rstrip("/").endswith("audit-files"))
+            # History opens the file archive page of the audit app.
+            self.assertTrue(href and href.rstrip("/").endswith("/files"))
             self.assertNotIn(".html", href)
             expect(page.get_by_test_id("addon-submit")).to_be_disabled()
             browser.close()

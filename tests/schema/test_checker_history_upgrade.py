@@ -46,7 +46,7 @@ def test_pre_core_rounds_and_human_reviews_survive_full_upgrade_and_replay(schem
 
         def read():
             return {
-                table: json.loads(sql(f"SELECT jsonb_agg(to_jsonb(t) - 'checker_history' - 'review_document_pairs' - 'review_hint_action' - 'analysis_mode') FROM product.{table} t"))
+                table: json.loads(sql(f"SELECT jsonb_agg(to_jsonb(t) - 'checker_history' - 'review_document_pairs' - 'review_hint_action' - 'analysis_mode' - 'deep_mode') FROM product.{table} t"))
                 for table in tables
             }
 
@@ -54,6 +54,8 @@ def test_pre_core_rounds_and_human_reviews_survive_full_upgrade_and_replay(schem
         schema_tools.require(schema_tools.apply(database), "upgrade actual pre-Core history")
         assert read() == original
         assert sql("SELECT review_document_pairs FROM product.audit_rounds") == "[]"
+        # Rounds from before deep mode were standard audits.
+        assert sql("SELECT deep_mode FROM product.audit_rounds") == "f"
         assert sql("SELECT review_hint_action IS NULL FROM product.findings") == "t"
         assert sql("SELECT count(*) FROM product.round_inputs WHERE checker_history IS NOT NULL") == "0"
         assert sql("SELECT count(*) FROM product.checker_execution_snapshots") == "0"

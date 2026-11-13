@@ -288,8 +288,8 @@ def check(context):
         )
         self.settings.deep_controller_socket = "/controlled-test-transport"
 
-        def execute(_, spec, *, cancelled, on_progress):
-            return controller.handle(spec, ExecutionContext(cancelled=cancelled, on_progress=on_progress))
+        def execute(_, spec, *, cancelled, on_progress, on_activity=None):
+            return controller.handle(spec, ExecutionContext(cancelled=cancelled, on_progress=on_progress, on_activity=on_activity or (lambda _step: None)))
 
         with patch("agent.client.DeepClient.execute", execute):
             process_claimed(worker, claimed, "file-isolation-test")
