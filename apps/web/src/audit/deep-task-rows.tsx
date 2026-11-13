@@ -67,16 +67,16 @@ function StageRow({stage, index, open, onToggle, children}: {stage: Stage; index
 }
 
 /**
- * A deep review in stages: the program checks, each file's review with its latest steps,
+ * A deep review in stages: preparing the run, each file's review with its latest steps,
  * then the summary. Steps are a live broadcast, so a page opened mid-run starts with the next one.
  */
-export function DeepTaskRows({targets, items, steps}: {targets: DeepTarget[]; items: number; steps: LiveSteps}) {
+export function DeepTaskRows({targets, steps}: {targets: DeepTarget[]; steps: LiveSteps}) {
   const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({})
   const started = steps.count > 0
   // A step from an unknown file still belongs to the review under way.
   const current = targets.some(target => target.id === steps.current) ? steps.current : started ? targets[0]?.id : undefined
   const stages: Stage[] = [
-    {key: 'program', label: '程序化检查', amount: `${items} 项`, status: started ? 'done' : 'running'},
+    {key: 'prepare', label: '准备环境', status: started ? 'done' : 'running'},
     ...targets.map((target): Stage => ({
       key: target.id,
       label: `深度复核 · ${target.name}`,
