@@ -263,6 +263,9 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
             assert original_response.status == 200
             assert original_response.body() == source_bytes
             page.keyboard.press("Escape")
+            # A sheet closing on Escape still shows the basis until its exit
+            # animation ends; decide only after no dialog is closing.
+            expect(page.locator('[role="dialog"][data-state="closed"]')).to_have_count(0)
             basis = page.get_by_role("article", name="条款判定依据", exact=True)
             if basis.is_visible():
                 page.keyboard.press("Escape")

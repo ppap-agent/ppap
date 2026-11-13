@@ -7,13 +7,12 @@ The production browser suite remains separate and unchanged.
 import json
 import os
 import re
-import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from .conftest import pick_audit_files  # noqa: E402
+from .conftest import pick_audit_files, wait_until  # noqa: E402
 
 try:
     from playwright.sync_api import expect, sync_playwright
@@ -34,7 +33,17 @@ def evidence_sheet(page):
     return page.get_by_role("dialog", include_hidden=True).filter(has=page.get_by_role("tab", name="核对原件", exact=True, include_hidden=True)).and_(page.locator('[data-state="open"]'))
 
 
+def settle(page):
+    """Wait until no dialog or sheet is still playing its exit animation.
+
+    A closing Radix dialog keeps data-state="closed", aria-hidden on the page
+    and its focus return until it unmounts; branch only after that.
+    """
+    expect(page.locator('[role="dialog"][data-state="closed"], [role="alertdialog"][data-state="closed"]')).to_have_count(0)
+
+
 def close_workspace_panel(page):
+    settle(page)
     for panel in (
         evidence_sheet(page),
         page.get_by_role("dialog", name="文件信息", exact=True, include_hidden=True),
@@ -43,9 +52,8 @@ def close_workspace_panel(page):
         panel = panel.and_(page.locator('[data-state="open"]'))
         if not panel.is_visible():
             continue
-        # Decide in one DOM read: a dialog that is still closing above the
-        # panel keeps aria-hidden on it until unmount, and reading the two
-        # facts separately can mistake the panel itself for the foreground.
+        # After settle() only open dialogs remain; one still open above this
+        # panel (e.g. support) keeps it aria-hidden and stays the foreground.
         covered = panel.evaluate(
             "el => el.getAttribute('aria-hidden') === 'true' && [...document.querySelectorAll('[role=dialog][data-state=open]')].some(d => d !== el && d.getAttribute('aria-hidden') !== 'true')"
         )
@@ -53,11 +61,15 @@ def close_workspace_panel(page):
             continue
         expect(panel).not_to_have_attribute("aria-hidden", "true")
         panel.get_by_role("button", name="关闭", exact=True, include_hidden=True).click()
+        expect(panel).to_have_count(0)
+    # Let the exit animation finish so its focus return cannot land after the next step.
+    settle(page)
 
 
 def open_basis(page):
     open_task_file(page)
     panel = evidence_sheet(page)
+    settle(page)
     if not panel.is_visible():
         page.get_by_role("button", name=re.compile("^查看依据 ")).first.click()
     return panel
@@ -73,6 +85,7 @@ def select_clause(page, clause):
 def file_information(page):
     open_task_file(page)
     panel = page.get_by_role("dialog", name="文件信息", exact=True, include_hidden=True).and_(page.locator('[data-state="open"]'))
+    settle(page)
     if not panel.is_visible():
         close_workspace_panel(page)
         page.get_by_role("button", name="文件信息", exact=True).click()
@@ -82,6 +95,7 @@ def file_information(page):
 def open_task_file(page):
     overview = page.get_by_role("region", name="全部文件概览", exact=True, include_hidden=True)
     details = page.get_by_role("region", name="审核详情", exact=True, include_hidden=True)
+    # Both regions are matched with include_hidden, so a closing modal's aria-hidden cannot flip this choice.
     expect(overview.or_(details).first).to_be_visible()
     if overview.is_visible():
         page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
@@ -121,11 +135,14 @@ def task_rail(page):
     """The task rail beside every PPAP Audit page, unfolded and not covered by a panel."""
     rail = page.get_by_role("complementary", name="审核任务", exact=True)
     expand = rail.get_by_role("button", name="展开审核任务", exact=True)
+    listing = rail.get_by_role("navigation", name="审核任务列表", exact=True)
+    settle(page)
+    if not expand.or_(listing).is_visible():
+        # A modal panel hides the rail from the accessibility tree.
+        close_workspace_panel(page)
+    expect(expand.or_(listing)).to_be_visible()
     if expand.is_visible():
         expand.click()
-    listing = rail.get_by_role("navigation", name="审核任务列表", exact=True)
-    if not listing.is_visible():
-        close_workspace_panel(page)
     expect(listing).to_be_visible()
     return listing
 
@@ -136,6 +153,7 @@ def task_list(page):
 
 
 def new_task(page):
+    settle(page)
     if not page.get_by_role("button", name="新建审核任务", exact=True).is_visible():
         task_list(page)
     page.get_by_role("button", name="新建审核任务", exact=True).click()
@@ -143,6 +161,7 @@ def new_task(page):
 
 def notification_control(page):
     panel = page.get_by_role("dialog", name="完成通知设置", exact=True, include_hidden=True).and_(page.locator('[data-state="open"]'))
+    settle(page)
     if not panel.is_visible():
         close_workspace_panel(page)
         page.get_by_role("button", name="完成通知设置", exact=True).click()
@@ -150,6 +169,7 @@ def notification_control(page):
 
 
 def read_results(page):
+    settle(page)
     basis = evidence_sheet(page)
     # The panel title shows "第 N 条 · 名称"; its source id stays in the title attribute.
     clause = basis.get_by_role("heading").first.get_attribute("title") if basis.is_visible() else None
@@ -192,9 +212,19 @@ def package_references(package):
 
 def open_package_record(page):
     record = page.get_by_role("dialog", name="打包记录", exact=True).and_(page.locator('[data-state="open"]'))
+    settle(page)
     if not record.is_visible():
         page.get_by_role("button", name="打包记录", exact=True).click()
     return record
+
+
+def zip_download(page):
+    """The ready ZIP's download: on the page when the current selection is that ZIP, otherwise in its package record."""
+    # A ready ZIP drops the region's status read; decide only once that read has finished.
+    expect(page.get_by_role("region", name="ZIP 工作", exact=True).get_by_role("button", name=re.compile("ZIP 状态"))).to_have_count(0)
+    settle(page)
+    selected = page.get_by_role("button", name="下载 所选 报告 ZIP", exact=True)
+    return selected if selected.is_visible() else open_package_record(page).get_by_role("button", name="下载已就绪 ZIP", exact=True)
 
 
 def expect_zip_ready(page):
@@ -203,9 +233,31 @@ def expect_zip_ready(page):
     record.get_by_role("button", name="关闭", exact=True).click()
 
 
-def zip_download(page):
-    selected = page.get_by_role("button", name="下载 所选 报告 ZIP", exact=True)
-    return selected if selected.is_visible() else open_package_record(page).get_by_role("button", name="下载已就绪 ZIP", exact=True)
+def request_identity(notice):
+    """The request id an alert carries, read once the alert has rendered it."""
+    expect(notice).to_have_attribute("data-request-id", re.compile(r"\S"))
+    return notice.get_attribute("data-request-id")
+
+
+def settled_scroll(page):
+    """window.scrollY once two reads a few frames apart agree."""
+    last = [page.evaluate("window.scrollY")]
+
+    def unchanged():
+        page.wait_for_timeout(50)
+        current = page.evaluate("window.scrollY")
+        same, last[0] = current == last[0], current
+        return same
+
+    wait_until(page, unchanged, "The page did not stop scrolling")
+    return last[0]
+
+
+def copy_from_support(page, support):
+    """Copy from a freshly opened support dialog and read the clipboard once the product confirms the copy."""
+    support.get_by_role("button", name="复制操作信息", exact=True).click()
+    expect(support.get_by_text("已复制。", exact=True)).to_be_visible()
+    return page.evaluate("navigator.clipboard.readText()")
 
 
 def deliver_reply(control):
@@ -1035,12 +1087,12 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="开始识别", exact=True).click()
             notice = page.get_by_role("alert").filter(has_text="识别请求待确认")
             expect(notice).to_be_visible()
-            request_id = notice.get_attribute("data-request-id")
+            request_id = request_identity(notice)
             expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_disabled()
             expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
             page.get_by_role("button", name="读取识别结果", exact=True).click()
             expect(notice).to_be_visible()
-            self.assertEqual(notice.get_attribute("data-request-id"), request_id)
+            expect(notice).to_have_attribute("data-request-id", request_id)
             page.get_by_role("button", name="读取识别结果", exact=True).click()
             expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
             self.assertEqual(parse_qs(urlparse(page.url).query)["task"], [request_id])
@@ -1058,13 +1110,12 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="开始识别", exact=True).click()
             notice = page.get_by_role("alert").filter(has_text="识别请求待确认")
             expect(notice).to_be_visible()
-            request_id = notice.get_attribute("data-request-id")
+            request_id = request_identity(notice)
             trigger = notice.get_by_role("button", name="联系支持", exact=True)
             trigger.click()
             support = page.get_by_role("dialog", name="联系我们", exact=True)
             expect(support.get_by_label("服务请求编号", exact=True)).to_have_value("preview-recognition-service-170")
-            support.get_by_role("button", name="复制操作信息", exact=True).click()
-            copied = page.evaluate("navigator.clipboard.readText()")
+            copied = copy_from_support(page, support)
             self.assertIn(request_id, copied)
             self.assertIn("preview-recognition-service-170", copied)
             self.assertIn("PFMEA.xlsx", copied)
@@ -1094,8 +1145,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_text("结果暂时无法读取", exact=True)).to_be_visible()
             page.get_by_role("button", name="联系支持", exact=True).click()
             expect(support.get_by_label("服务请求编号", exact=True)).to_have_value("preview-task-read-3")
-            support.get_by_role("button", name="复制操作信息", exact=True).click()
-            copied = page.evaluate("navigator.clipboard.readText()")
+            copied = copy_from_support(page, support)
             self.assertIn("preview-recovery-task", copied)
             self.assertIn("preview-task-read-3", copied)
             self.assertNotIn("preview-task-read-1", copied)
@@ -1284,8 +1334,7 @@ class AuditPreviewTests(unittest.TestCase):
                     trigger.click()
                     dialog = page.get_by_role("dialog", name="联系我们", exact=True)
                     expect(dialog.get_by_role("region", name="操作信息", exact=True)).to_contain_text(notice)
-                    dialog.get_by_role("button", name="复制操作信息", exact=True).click()
-                    copied = page.evaluate("navigator.clipboard.readText()")
+                    copied = copy_from_support(page, dialog)
                     for value in (notice, "审核用量提示", "preview-recovery-task", "PPAP-恢复示例", "preview-round-preview-recovery-request"):
                         self.assertIn(value, copied)
                     page.keyboard.press("Escape")
@@ -1706,9 +1755,15 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-display-ready&task=preview-recovery-task")
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").nth(1).click()
             details = audit_details(page)
-            checks_before = details.get_by_role("table").inner_text()
-            rule_before = details.get_by_text("本轮规则：", exact=False).inner_text()
-            evidence_before = open_basis(page).locator("[data-file-version]").first.get_attribute("data-file-version")
+            checks = details.get_by_role("table")
+            rule = details.get_by_text("本轮规则：", exact=False)
+            expect(checks.locator("tbody tr").first).to_be_visible()
+            expect(rule).to_be_visible()
+            checks_before = checks.inner_text()
+            rule_before = rule.inner_text()
+            evidence = open_basis(page).locator("[data-file-version]").first
+            expect(evidence).to_have_attribute("data-file-version", re.compile(r"\S"))
+            evidence_before = evidence.get_attribute("data-file-version")
             close_workspace_panel(page)
             expect(details.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
             file_information(page)
@@ -1736,9 +1791,9 @@ class AuditPreviewTests(unittest.TestCase):
             file_information(page)
             expect(info.get_by_text("更正客户", exact=True)).to_be_visible()
             close_workspace_panel(page)
-            self.assertEqual(details.get_by_role("table").inner_text(), checks_before)
-            self.assertEqual(details.get_by_text("本轮规则：", exact=False).inner_text(), rule_before)
-            self.assertEqual(open_basis(page).locator("[data-file-version]").first.get_attribute("data-file-version"), evidence_before)
+            expect(checks).to_have_text(checks_before, use_inner_text=True)
+            expect(rule).to_have_text(rule_before, use_inner_text=True)
+            expect(open_basis(page).locator("[data-file-version]").first).to_have_attribute("data-file-version", evidence_before)
             close_workspace_panel(page)
             expect(details.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
@@ -2343,7 +2398,9 @@ class AuditPreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1280, "height": 1000})
             page.set_default_timeout(5000)
-            page.clock.install()
+            # Paused: the observation interval must not fire in real time before the page is hidden.
+            page.clock.install(time=datetime(2026, 10, 16, 2, tzinfo=timezone.utc))
+            page.clock.pause_at(datetime(2026, 10, 16, 2, 1, tzinfo=timezone.utc))
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-observe&task=preview-recovery-task")
             open_task_file(page)
             expect(page.get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
@@ -2381,7 +2438,7 @@ class AuditPreviewTests(unittest.TestCase):
             queue.get_by_role("button", name="控制计划.xlsx", exact=True).click()
             select_clause(page, "2.2")
             page.get_by_role("heading", name="第 2 条 · 记录完整性", exact=True).scroll_into_view_if_needed()
-            scroll = page.evaluate("window.scrollY")
+            scroll = settled_scroll(page)
             page.clock.fast_forward(3000)
             expect(page.get_by_text("任务观察 · preview-recovery-task · 读取 1", exact=True)).to_be_visible()
             page.clock.fast_forward(9000)
@@ -2391,7 +2448,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("status", include_hidden=True).filter(has_text="文件已结束 3/3")).to_be_visible()
             expect(queue.get_by_role("button", name="控制计划.xlsx", exact=True, include_hidden=True)).to_have_attribute("aria-pressed", "true")
             expect(page.get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()
-            self.assertAlmostEqual(page.evaluate("window.scrollY"), scroll, delta=100)
+            self.assertAlmostEqual(settled_scroll(page), scroll, delta=100)
             page.clock.fast_forward(30000)
             expect(page.get_by_role("button", name=re.compile("返回示例读取"), include_hidden=True)).to_have_count(0)
             browser.close()
@@ -2674,8 +2731,7 @@ class AuditPreviewTests(unittest.TestCase):
                 expect(dialog.get_by_text(name, exact=True)).to_be_visible()
                 dialog.get_by_role("button", name="联系支持", exact=True).click()
                 support = page.get_by_role("dialog", name="联系我们", exact=True)
-                support.get_by_role("button", name="复制操作信息", exact=True).click()
-                copied = page.evaluate("navigator.clipboard.readText()")
+                copied = copy_from_support(page, support)
                 self.assertIn(name, copied)
                 self.assertIn("报告编号：", copied)
                 self.assertNotIn("PFMEA.xlsx" if document == "A001" else "控制计划.xlsx", copied)
@@ -3414,8 +3470,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(dialog.get_by_role("button", name="新的分享", exact=True)).to_have_count(0)
             dialog.get_by_role("button", name="联系支持", exact=True).click()
             support = page.get_by_role("dialog", name="联系我们", exact=True)
-            support.get_by_role("button", name="复制操作信息", exact=True).click()
-            copied = page.evaluate("navigator.clipboard.readText()")
+            copied = copy_from_support(page, support)
             for value in ("原请求：preview-external-share", "交付方式：链接", "示例李工", "PFMEA.xlsx-审核报告"):
                 self.assertIn(value, copied)
             self.assertNotIn("示例王工", copied)
@@ -3469,8 +3524,7 @@ class AuditPreviewTests(unittest.TestCase):
             support_trigger = dialog.get_by_role("button", name="联系支持", exact=True)
             support_trigger.click()
             support = page.get_by_role("dialog", name="联系我们", exact=True)
-            support.get_by_role("button", name="复制操作信息", exact=True).click()
-            copied = page.evaluate("navigator.clipboard.readText()")
+            copied = copy_from_support(page, support)
             self.assertIn("PFMEA.xlsx-审核报告", copied)
             self.assertNotIn("控制计划.xlsx", copied)
             self.assertIn("结果未知", copied)
@@ -4418,14 +4472,13 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="开始识别", exact=True).click()
             page.get_by_role("button", name="开始审核", exact=True).click()
             expect(page.get_by_text("提交结果待确认", exact=True)).to_be_visible()
-            request = page.get_by_role("alert").get_attribute("data-request-id")
+            request = request_identity(page.get_by_role("alert"))
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
             expect(page.get_by_role("button", name="上一步", exact=True)).to_be_disabled()
             support_trigger = page.get_by_role("button", name="联系支持", exact=True)
             support_trigger.click()
             support = page.get_by_role("dialog", name="联系我们", exact=True)
-            support.get_by_role("button", name="复制操作信息", exact=True).click()
-            copied = page.evaluate("navigator.clipboard.readText()")
+            copied = copy_from_support(page, support)
             self.assertIn("确认审核", copied)
             self.assertIn(request, copied)
             self.assertIn(parse_qs(urlparse(page.url).query)["task"][0], copied)
@@ -4463,7 +4516,7 @@ class AuditPreviewTests(unittest.TestCase):
             preview.get_by_role("button", name="开始审核", exact=True).click()
             notice = preview.get_by_role("alert").filter(has_text="提交结果待确认")
             expect(notice).to_be_visible()
-            request_id = notice.get_attribute("data-request-id")
+            request_id = request_identity(notice)
             preview.get_by_role("button", name="读取提交结果", exact=True).click()
             preview.get_by_role("button", name="联系支持", exact=True).click()
             support = preview.get_by_role("dialog", name="联系我们", exact=True)
@@ -4478,10 +4531,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="返回一次示例读取", exact=True).click()
             page.evaluate("navigator.clipboard.writeText('not-the-operation')")
             support.get_by_role("button", name="复制操作信息", exact=True).click()
-            deadline = time.monotonic() + 5
-            while page.evaluate("navigator.clipboard.readText()") != before and time.monotonic() < deadline:
-                page.wait_for_timeout(20)
-            self.assertEqual(page.evaluate("navigator.clipboard.readText()"), before)
+            wait_until(page, lambda: page.evaluate("navigator.clipboard.readText()") == before, "The repeated copy did not restore the original operation")
             support.get_by_role("button", name="关闭", exact=True).click()
             expect(preview.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
             task_list(preview)

@@ -26,6 +26,11 @@ BODY = {
 }  # noqa: E501
 
 
+def focus_within(page, selector):
+    """The focused element when it is, or sits inside, `selector`; retrying assertions read it until focus settles."""
+    return page.locator(f"{selector}:focus, {selector} :focus")
+
+
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class UiA11yTests(unittest.TestCase):
     def test_keyboard_focus_and_motion(self):
@@ -73,6 +78,7 @@ class UiA11yTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="PPAP Audit", level=1, exact=True)).to_be_visible()
             expect(page.locator("aside").get_by_role("navigation", name="产品导航", exact=True)).to_be_visible()
             page.keyboard.press("Tab")
+            expect(page.locator(":focus")).to_contain_text("跳到主要内容")
             focused = page.evaluate(
                 """() => {
                   const el = document.activeElement
@@ -88,7 +94,7 @@ class UiA11yTests(unittest.TestCase):
             self.assertIn("跳到主要内容", focused["text"] or "")
             self.assertTrue(focused["shadow"] or (focused["outline"] != "none" and focused["width"] >= 1))
             page.keyboard.press("Enter")
-            self.assertTrue(page.evaluate("() => document.activeElement?.tagName === 'MAIN'"))
+            expect(page.locator("main:focus")).to_have_count(1)
             expect(page.get_by_role("heading", level=1)).to_have_count(1)
             directory = []
             page.route("**/api/rule-library", lambda route: directory.append(route))
@@ -298,13 +304,13 @@ class UiA11yTests(unittest.TestCase):
             expect(title).to_be_focused()
             page.keyboard.press("Tab")
             expect(title).not_to_be_focused()
-            self.assertTrue(page.evaluate("() => Boolean(document.activeElement?.closest('main'))"))
+            expect(focus_within(page, "main")).to_have_count(1)
             original = page.get_by_role("button", name="核对出处", exact=True)
             original.focus()
             page.keyboard.press("Enter")
             sheet = page.get_by_role("dialog", name="第 1 条 · 核对出处", exact=True)
             expect(sheet).to_be_visible()
-            self.assertTrue(page.evaluate("() => Boolean(document.activeElement?.closest('[role=dialog]'))"))
+            expect(focus_within(page, "[role=dialog]")).to_have_count(1)
             page.keyboard.press("Escape")
             expect(sheet).to_have_count(0)
             expect(original).to_be_focused()
@@ -315,10 +321,10 @@ class UiA11yTests(unittest.TestCase):
             expect(dialog).to_be_visible()
             for _ in range(8):
                 page.keyboard.press("Tab")
-                self.assertTrue(page.evaluate("() => Boolean(document.activeElement?.closest('[role=dialog]'))"))
+                expect(focus_within(page, "[role=dialog]")).to_have_count(1)
             for _ in range(4):
                 page.keyboard.press("Shift+Tab")
-                self.assertTrue(page.evaluate("() => Boolean(document.activeElement?.closest('[role=dialog]'))"))
+                expect(focus_within(page, "[role=dialog]")).to_have_count(1)
             expect(page.get_by_role("heading", level=1)).to_have_count(0)
             page.keyboard.press("Escape")
             expect(dialog).to_have_count(0)

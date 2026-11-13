@@ -4,7 +4,7 @@ import os
 import re
 import unittest
 
-from .conftest import pick_audit_files  # noqa: E402
+from .conftest import pick_audit_files, wait_until  # noqa: E402
 
 PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
@@ -76,9 +76,11 @@ class SupportPreviewTests(unittest.TestCase):
             dialog = page.get_by_role("dialog", name="联系我们", exact=True)
             expect(dialog.get_by_text("示例电话（不可拨打）", exact=True)).to_be_visible()
             dialog.get_by_role("button", name="复制电话", exact=True).click()
+            expect(dialog.get_by_text("已复制。", exact=True)).to_be_visible()
             self.assertEqual(page.evaluate("navigator.clipboard.readText()"), "示例电话（不可拨打）")
             dialog.get_by_role("button", name="复制邮箱", exact=True).click()
-            self.assertEqual(page.evaluate("navigator.clipboard.readText()"), "support@example.invalid")
+            # The confirmation is already shown from the first copy; wait for the clipboard itself.
+            wait_until(page, lambda: page.evaluate("navigator.clipboard.readText()") == "support@example.invalid", "The email was not copied")
             expect(dialog.get_by_role("link", name="support@example.invalid", exact=True)).to_have_attribute("href", "mailto:support%40example.invalid")
             thumbnail = dialog.get_by_role("img", name="已配置的飞书服务二维码", exact=True)
             expect(thumbnail).to_be_visible()

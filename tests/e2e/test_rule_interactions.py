@@ -6,11 +6,10 @@ and Task navigation use PPAP Audit and its task rail; these are separate contrac
 
 import os
 import re
-import time
 import unittest
 from urllib.parse import urlsplit
 
-from .conftest import pick_audit_files  # noqa: E402
+from .conftest import pick_audit_files, wait_until  # noqa: E402
 
 try:
     from playwright.sync_api import sync_playwright
@@ -51,8 +50,12 @@ def find_rule_template(page, title):
 
 def open_rule(page, title):
     """Open a rule the way a person does: template list, then its file type in that template."""
+    from playwright.sync_api import expect
 
-    if page.get_by_role("navigation", name="位置", exact=True).count():
+    trail = page.get_by_role("navigation", name="位置", exact=True)
+    # Decide only once the page shows either the template list or a rule's trail.
+    expect(page.get_by_role("searchbox", name="搜索客户", exact=True).or_(trail).first).to_be_visible()
+    if trail.count():
         back_to_templates(page)
     find_rule_template(page, title).click()
     page.get_by_role("list", name=re.compile("的文件类型$")).get_by_role("link").filter(has_text=title).first.click()
@@ -88,14 +91,11 @@ class RuleInteractionTests(unittest.TestCase):
                 page.goto(WEB + "/audit")
                 expect(page.get_by_text("正在确认登录状态…", exact=True)).to_be_visible()
                 # The page may render before Playwright runs the route callback; wait for it, bounded.
-                deadline = time.monotonic() + 5
-                while not held:
-                    self.assertLess(time.monotonic(), deadline, "The /me read did not reach its route handler")
-                    page.wait_for_timeout(10)
+                wait_until(page, lambda: held, "The /me read did not reach its route handler")
                 self.assertEqual(len(held), 1)
-                self.assertTrue(page.get_by_role("banner").is_visible())
+                expect(page.get_by_role("banner")).to_be_visible()
                 desktop = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则库", exact=True)
-                self.assertFalse(desktop.is_visible())
+                expect(desktop).to_be_hidden()
 
                 def authorize():
                     # Keep the first readiness probe in the login shell. The next
@@ -1269,10 +1269,7 @@ class RuleInteractionTests(unittest.TestCase):
                 page.get_by_role("button", name="刷新提取进度", exact=True).click()
             # The request event precedes the route callback under concurrent
             # browser load. Wait for the callback before releasing its reply.
-            deadline = time.monotonic() + 5
-            while not delayed:
-                self.assertLess(time.monotonic(), deadline, "The original read did not reach its route handler")
-                page.wait_for_timeout(10)
+            wait_until(page, lambda: delayed, "The original read did not reach its route handler")
             self.assertEqual(len(delayed), 1)
             page.get_by_role("button", name="重新提取条款", exact=True).click()
             confirmation.get_by_role("button", name="确认重新提取", exact=True).click()

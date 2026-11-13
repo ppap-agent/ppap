@@ -1,7 +1,8 @@
 """Controlled login interleavings through the product UI and HTTP boundary."""
 
 import os
-from urllib.parse import parse_qs, urlsplit
+import re
+from urllib.parse import parse_qs, quote, urlsplit
 
 import pytest
 
@@ -34,6 +35,11 @@ def page():
         yield page
         context.close()
         browser.close()
+
+
+def expect_login_returns_to(link, address):
+    """The sign-in link carries the current address, encoded like encodeURIComponent."""
+    expect(link).to_have_attribute("href", re.compile(r"[?&]return_to=" + re.escape(quote(address, safe="!*'()")) + "(&|$)"))
 
 
 def login_config(page, login="feishu"):
@@ -105,7 +111,7 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     page.get_by_role("button", name="查看已选文件", exact=True).click()
     expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
     expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
-    assert page.url == WEB + "/tasks/original-task"
+    expect(page).to_have_url(WEB + "/tasks/original-task")
     assert reads == ["GET", "GET"]
 
     expect(page.get_by_role("button", name="模板库", exact=True)).to_be_visible()
@@ -123,7 +129,7 @@ def test_disabled_login_has_no_dead_authorization_link_and_can_recheck_configura
     expect(link).to_be_visible()
     address = urlsplit(link.get_attribute("href"))
     assert address.path == "/api/login/feishu"
-    assert parse_qs(address.query)["return_to"] == [WEB + "/files?archiveDoc=access-test"]
+    expect_login_returns_to(link, WEB + "/files?archiveDoc=access-test")
 
 
 def test_initial_anonymous_probe_does_not_discard_a_successful_host_login(page):
@@ -192,10 +198,10 @@ def test_authorization_failure_keeps_task_and_requires_an_explicit_new_login(pag
     page.route("**/api/login/feishu/host", lambda route: (host_posts.append(route.request.url), route.fulfill(json=PRINCIPAL)))
     page.goto(WEB + path + "&task=original-task&auth_error=" + reason + "#original-clause")
     expect(page.get_by_role("alert")).to_contain_text(message)
-    assert page.url == WEB + canonical
+    expect(page).to_have_url(WEB + canonical)
     link = page.get_by_role("link", name="使用飞书登录")
     expect(link).to_be_visible()
-    assert parse_qs(urlsplit(link.get_attribute("href")).query)["return_to"] == [page.url]
+    expect_login_returns_to(link, WEB + canonical)
     page.get_by_role("button", name="重试").click()
     expect(page.get_by_role("alert")).to_contain_text(message)
     assert host_posts == []
@@ -227,17 +233,18 @@ def test_native_account_usage_and_logout_keep_the_task_report_address(page):
     account.click()
     page.get_by_role("menuitem", name="用量记录").click()
     expect(page.get_by_role("heading", name="用量记录", exact=True)).to_be_visible()
+    expect(page).to_have_url(re.compile(r"/usage#original-clause$"))
     address = urlsplit(page.url)
     assert address.path == "/usage"
     assert parse_qs(address.query) == {}
     assert address.fragment == "original-clause"
     page.get_by_role("button", name="PPAP Audit", exact=True).click()
-    assert page.url == WEB + "/tasks/original-task?report=frozen-report#original-clause"
+    expect(page).to_have_url(WEB + "/tasks/original-task?report=frozen-report#original-clause")
     account.click()
     page.get_by_role("menuitem", name="退出登录").click()
     expect(page.get_by_role("heading", name="登录 PPAP Audit")).to_be_visible()
     assert logged_out == ["POST"]
     expect(account).to_have_count(0)
     link = page.get_by_role("link", name="使用飞书登录")
-    assert parse_qs(urlsplit(link.get_attribute("href")).query)["return_to"] == [page.url]
-    assert page.url == WEB + "/tasks/original-task?report=frozen-report#original-clause"
+    expect(page).to_have_url(WEB + "/tasks/original-task?report=frozen-report#original-clause")
+    expect_login_returns_to(link, WEB + "/tasks/original-task?report=frozen-report#original-clause")
