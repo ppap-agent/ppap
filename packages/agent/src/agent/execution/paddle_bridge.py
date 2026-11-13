@@ -56,7 +56,7 @@ def _sources(inputs: Path) -> dict[str, bytes]:
 
 @contextmanager
 def paddle_bridge(inputs: Path, deadline: float, cancelled: threading.Event):
-    endpoint = os.environ.get("PADDLE_OCR_URL", "").strip()
+    endpoint = os.environ.get("PPAP_PADDLE_URL", "").strip()
     if not endpoint:
         yield {}
         return
@@ -68,7 +68,7 @@ def paddle_bridge(inputs: Path, deadline: float, cancelled: threading.Event):
 
     # Capture host configuration once. It is never put into a guest environment,
     # returned receipt, diagnostic, generated artifact, or request argument.
-    service = PaddleStructureService(endpoint, token=os.environ.get("PADDLE_TOKEN", ""), timeout=20)
+    service = PaddleStructureService(endpoint, token=os.environ.get("PPAP_PADDLE_TOKEN", ""), timeout=20)
     capability = secrets.token_urlsafe(32)
     lock = threading.Lock()
     closed = threading.Event()

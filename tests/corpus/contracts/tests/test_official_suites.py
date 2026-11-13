@@ -343,8 +343,8 @@ def test_real_generations_of_one_document_type_do_not_block_each_other(selector,
 
 def test_live_validation_gives_paddle_only_through_the_run_local_bridge(tmp_path, monkeypatch):
     context, paths = corpus_fixture(tmp_path, monkeypatch)
-    monkeypatch.setenv("PADDLE_OCR_URL", "http://paddle.invalid/ocr")
-    monkeypatch.setenv("PADDLE_TOKEN", "host-only-paddle-token")
+    monkeypatch.setenv("PPAP_PADDLE_URL", "http://paddle.invalid/ocr")
+    monkeypatch.setenv("PPAP_PADDLE_TOKEN", "host-only-paddle-token")
     plan = official_suites.prepare(context, **paths)
     sample = replace(plan.samples[0], sources={key: b"%PDF-1.7 fixture" for key in plan.samples[0].sources})
     with official_suites._paddle(sample, live=True) as env:

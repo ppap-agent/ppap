@@ -18,7 +18,7 @@ def verify_process_config(expected: dict[str, str], *, process_env: dict[str, st
     # Environment values belong to the running container, not a newly resolved ConfigMap.
     if any(process_env.get(key) != value for key, value in expected.items()):
         raise ValueError("Process-start configuration differs from the release")
-    if process_env.get("PPAP_SERVICE") != "deep" and process_env.get("PPAP_DEEP_LLM_API_KEY"):
+    if process_env.get("PPAP_SERVICE") != "deep" and process_env.get("PPAP_MODEL_CODING_API_KEY"):
         raise ValueError("Deep credential must belong only to the Controller")
     previous = os.environ.copy()
     try:

@@ -19,13 +19,13 @@ MODELS = {"text": "tenant-text", "vision": "tenant-vision", "coding": "tenant-co
 
 @pytest.fixture(autouse=True)
 def platform(monkeypatch):
-    monkeypatch.setenv("LLM_API_KEY", "platform-text-key")
-    monkeypatch.setenv("LLM_BASE_URL", "https://platform.example.test/v1")
-    monkeypatch.setenv("LLM_MODEL", "platform-text")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "platform-vision-key")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://vision.example.test/v1")
-    monkeypatch.setenv("OCR_MODEL_NAME", "platform-vision")
-    for name in ("PPAP_DEEP_LLM_API_KEY", "PPAP_DEEP_LLM_BASE_URL", "PPAP_DEEP_LLM_MODEL"):
+    monkeypatch.setenv("PPAP_MODEL_TEXT_API_KEY", "platform-text-key")
+    monkeypatch.setenv("PPAP_MODEL_TEXT_BASE_URL", "https://platform.example.test/v1")
+    monkeypatch.setenv("PPAP_MODEL_TEXT_MODEL", "platform-text")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "platform-vision-key")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://vision.example.test/v1")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "platform-vision")
+    for name in ("PPAP_MODEL_CODING_API_KEY", "PPAP_MODEL_CODING_BASE_URL", "PPAP_MODEL_CODING_MODEL"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -169,7 +169,7 @@ def test_every_process_agrees_on_the_platform_identity_whatever_keys_it_holds(mo
     from documents.model_access import model_access_scope
 
     controller = platform_selection().identity
-    for name in ("LLM_API_KEY", "OCR_OPENAI_API_KEY"):
+    for name in ("PPAP_MODEL_TEXT_API_KEY", "PPAP_MODEL_VISION_API_KEY"):
         monkeypatch.delenv(name)
     api = platform_selection()
     assert api.identity == controller

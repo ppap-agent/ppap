@@ -117,7 +117,7 @@ class RuleApiTests(unittest.TestCase):
         from fastapi.testclient import TestClient
         from product.settings import Settings
 
-        env = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
+        env = {key: value for key, value in os.environ.items() if not key.startswith(("PPAP_", "FEISHU_"))}
         self.env = patch.dict(os.environ, env, clear=True)
         self.env.start()
         self.settings = Settings(usage_charge_enabled=False, git_sha="a" * 40)

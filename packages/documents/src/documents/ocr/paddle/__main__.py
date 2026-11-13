@@ -17,9 +17,9 @@ def main() -> None:
     args = parser.parse_args()
 
     response = json.loads(args.response_json.read_text(encoding="utf-8")) if args.response_json else None
-    endpoint = os.environ.get("PADDLE_OCR_URL", "").strip() if response is None else None
+    endpoint = os.environ.get("PPAP_PADDLE_URL", "").strip() if response is None else None
     if response is None and not endpoint:
-        parser.error("PADDLE_OCR_URL is required unless --response-json is provided")
+        parser.error("PPAP_PADDLE_URL is required unless --response-json is provided")
     if response is None and args.page is None:
         parser.error("--page is required for a live single-page request")
     stats = evaluate_pdf(
@@ -28,7 +28,7 @@ def main() -> None:
         response=response,
         page_number=args.page,
         endpoint=endpoint,
-        token=os.environ.get("PADDLE_OCR_TOKEN") or os.environ.get("PADDLE_TOKEN", ""),
+        token=os.environ.get("PPAP_PADDLE_TOKEN", ""),
     )
     print(
         f"Paddle OCR: status={stats.status} output_dir={stats.output_dir} "

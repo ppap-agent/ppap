@@ -46,8 +46,8 @@ def upstream(monkeypatch, *, failure=False):
     monkeypatch.delenv("ALL_PROXY", raising=False)
     monkeypatch.delenv("all_proxy", raising=False)
     monkeypatch.setenv("NO_PROXY", "127.0.0.1")
-    monkeypatch.setenv("PADDLE_OCR_URL", f"http://127.0.0.1:{server.server_port}/layout-parsing")
-    monkeypatch.setenv("PADDLE_TOKEN", "host-paddle-secret-never-in-guest")
+    monkeypatch.setenv("PPAP_PADDLE_URL", f"http://127.0.0.1:{server.server_port}/layout-parsing")
+    monkeypatch.setenv("PPAP_PADDLE_TOKEN", "host-paddle-secret-never-in-guest")
     try:
         yield calls
     finally:
@@ -124,7 +124,7 @@ def test_container_adapter_passes_only_run_capability_to_real_child(tmp_path, mo
     script = """import json, os
 from pathlib import Path
 from documents.ocr.paddle.reader import PaddleEvidenceUnavailable, read_pdf_page_evidence
-assert 'PADDLE_TOKEN' not in os.environ and 'PADDLE_OCR_URL' not in os.environ
+assert 'PPAP_PADDLE_TOKEN' not in os.environ and 'PPAP_PADDLE_URL' not in os.environ
 root = Path(os.environ['PPAP_GUEST_RUN'])
 manifest = json.loads((root / 'inputs' / 'manifest.json').read_text())
 source = root / 'work' / 'copy.pdf'

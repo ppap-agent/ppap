@@ -136,7 +136,7 @@ def _paddle_seals(audit, fields, digest, cache, witness):
     runtime = get_runtime()
     hook = getattr(runtime, "read_paddle_page", None)
     if not callable(hook):
-        if runtime is not None or not (os.environ.get("PPAP_PADDLE_BRIDGE_URL", "").strip() or os.environ.get("PADDLE_OCR_URL", "").strip()):
+        if runtime is not None or not (os.environ.get("PPAP_PADDLE_BRIDGE_URL", "").strip() or os.environ.get("PPAP_PADDLE_URL", "").strip()):
             return result
     with fitz.open(audit.file_url) as document:
         # No guessed page role and no full-document Paddle sweep.

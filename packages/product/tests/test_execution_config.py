@@ -7,9 +7,9 @@ def environment(**updates):
         "PPAP_PROFILE": "isolated-dev",
         "PPAP_BUILD_SHA": "a" * 40,
         "PPAP_SERVICE": "api",
-        "PPAP_DEEP_LLM_BASE_URL": "https://deep.example/v1",
-        "PPAP_DEEP_LLM_MODEL": "model",
-        "PPAP_DEEP_REASONING_EFFORT": "high",
+        "PPAP_MODEL_CODING_BASE_URL": "https://deep.example/v1",
+        "PPAP_MODEL_CODING_MODEL": "model",
+        "PPAP_MODEL_CODING_REASONING_EFFORT": "high",
         **updates,
     }
 
@@ -23,9 +23,9 @@ def test_release_reads_the_container_start_configuration_without_credentials():
 
 def test_old_process_configuration_cannot_pass_after_configmap_changes():
     with pytest.raises(ValueError, match="differs"):
-        verify_process_config({"PPAP_DEEP_REASONING_EFFORT": "low"}, process_env=environment())
+        verify_process_config({"PPAP_MODEL_CODING_REASONING_EFFORT": "low"}, process_env=environment())
 
 
 def test_api_cannot_hold_the_deep_provider_credential():
     with pytest.raises(ValueError, match="only to the Controller"):
-        verify_process_config({}, process_env=environment(PPAP_DEEP_LLM_API_KEY="private"))
+        verify_process_config({}, process_env=environment(PPAP_MODEL_CODING_API_KEY="private"))

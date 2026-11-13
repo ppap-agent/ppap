@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw
 
 @pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2PswAgent), ("v3", V3PswAgent)], ids=["v2", "v3"])
 def test_unread_graphic_cannot_prove_both_a_company_seal_and_a_supplier_signature(tmp_path, monkeypatch, profile, agent_type):
-    for key in ("OCR_MODEL_NAME", "OCR_OPENAI_API_KEY", "OCR_OPENAI_BASE_URL"):
+    for key in ("PPAP_MODEL_VISION_MODEL", "PPAP_MODEL_VISION_API_KEY", "PPAP_MODEL_VISION_BASE_URL"):
         monkeypatch.setenv(key, "")
     path = tmp_path / "psw.xlsx"
     workbook = Workbook()

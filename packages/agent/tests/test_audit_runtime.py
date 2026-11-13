@@ -149,8 +149,8 @@ def test_crash_timeout_cancel_never_return_partial_success():
 
 
 def test_provider_credentials_not_inherited(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "host-provider-secret")
-    program = PROGRAM.replace(b"context.cache['count'] =", b"assert 'OPENAI_API_KEY' not in os.environ\n    context.cache['count'] =")
+    monkeypatch.setenv("PPAP_MODEL_TEXT_API_KEY", "host-provider-secret")
+    program = PROGRAM.replace(b"context.cache['count'] =", b"assert 'PPAP_MODEL_TEXT_API_KEY' not in os.environ\n    context.cache['count'] =")
     assert all(row["status"] == "PASS" for row in run_audit_process(*request(program))["findings"])
 
 
@@ -185,9 +185,9 @@ def test_peer_visual_observations_do_not_share_one_cached_answer(monkeypatch):
     from audit.engine.checkers import ocr_visual_facts
     from audit.engine.runtime import bind_runtime
 
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid")
     read = Mock(side_effect=[{"seal": True}, {"seal": False}])
     monkeypatch.setattr(ocr_visual_facts, "request_ocr_visual_facts", read)
     frames = [ocr_visual_facts.OcrImage(b"synthetic", {"scope": "pdf:1", "page": 1, "context": True, "located_region": True}, 100, 100)]
@@ -259,8 +259,8 @@ def test_an_operation_without_model_access_never_uses_environment_key(monkeypatc
     from documents.model_access import model_access_scope
 
     program = PROGRAM.replace(b"context.cache['count'] =", b"from documents.model_access import current_model_access\n    current_model_access()\n    context.cache['count'] =")
-    monkeypatch.setenv("OPENAI_API_KEY", "host-key")
-    monkeypatch.setenv("LLM_API_KEY", "host-key")
+    monkeypatch.setenv("PPAP_MODEL_TEXT_API_KEY", "host-key")
+    monkeypatch.setenv("PPAP_MODEL_TEXT_API_KEY", "host-key")
     with model_access_scope(None):
         result = run_audit(*request(program))
     assert all(row["status"] == "UNABLE" and row["suggestions"] == "model_unavailable" for row in result["findings"])

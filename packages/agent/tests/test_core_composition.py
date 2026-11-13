@@ -163,8 +163,8 @@ def test_manifest_model_permission_controls_visual_runtime_even_with_inherited_p
     from dataclasses import replace
 
     calls = []
-    monkeypatch.setenv("PADDLE_OCR_URL", "http://127.0.0.1:1/forbidden-upstream")
-    monkeypatch.setenv("PADDLE_TOKEN", "inherited-token")
+    monkeypatch.setenv("PPAP_PADDLE_URL", "http://127.0.0.1:1/forbidden-upstream")
+    monkeypatch.setenv("PPAP_PADDLE_TOKEN", "inherited-token")
     monkeypatch.setenv("PPAP_PADDLE_BRIDGE_URL", "http://127.0.0.1:1/paddle-page")
     monkeypatch.setenv("PPAP_PADDLE_BRIDGE_TOKEN", "forged-capability")
 

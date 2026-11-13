@@ -292,7 +292,7 @@ def test_unparsed_graphic_footnote_does_not_prove_an_absent_stamp(tmp_path, monk
     path.write_bytes(content)
     parsed = extract_docx_structure(content)
     assert parsed.valid and not parsed.visual_evidence
-    for name in ("OCR_MODEL_NAME", "OCR_OPENAI_API_KEY", "OCR_OPENAI_BASE_URL"):
+    for name in ("PPAP_MODEL_VISION_MODEL", "PPAP_MODEL_VISION_API_KEY", "PPAP_MODEL_VISION_BASE_URL"):
         monkeypatch.setenv(name, "")
     results = run_audit_engine(
         AuditInput(audit_id="word-with-opaque-footnote", file_url=str(path)),

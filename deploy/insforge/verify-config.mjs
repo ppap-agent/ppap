@@ -135,8 +135,8 @@ const selected = {
   PPAP_S3_SECRET_KEY: 'objects-secret',
   PPAP_WEB_URL: 'https://app.example',
   PPAP_PUBLIC_API_URL: 'https://api.example',
-  LLM_BASE_URL: 'http://insforge:7130/v1',
-  LLM_MODEL: 'gateway-model',
+  PPAP_MODEL_TEXT_BASE_URL: 'http://insforge:7130/v1',
+  PPAP_MODEL_TEXT_MODEL: 'gateway-model',
   FEISHU_APP_ID: 'cli_prod',
   FEISHU_APP_SECRET: 'feishu-secret',
 }
@@ -255,8 +255,8 @@ if (config) {
   assert(!('PPAP_PG_WORKER_PASSWORD' in apiEnv), 'api must not have worker password')
   assert('PPAP_PG_WORKER_PASSWORD' in workerEnv, 'worker has worker password')
   assert(!('PPAP_PG_API_PASSWORD' in workerEnv), 'worker must not have API password')
-  assert(!('PADDLE_TOKEN' in apiEnv), 'api must not have PADDLE_TOKEN')
-  assert('PADDLE_TOKEN' in workerEnv, 'worker has PADDLE_TOKEN')
+  assert(!('PPAP_PADDLE_TOKEN' in apiEnv), 'api must not have PPAP_PADDLE_TOKEN')
+  assert('PPAP_PADDLE_TOKEN' in workerEnv, 'worker has PPAP_PADDLE_TOKEN')
 }
 
 // Defaults come from env.example through `docker compose config`, not from
@@ -292,8 +292,8 @@ assert(!('PPAP_PG_WORKER_PASSWORD' in api.environment), 'api spec has no worker 
 assert('FEISHU_APP_SECRET' in api.environment, 'api spec has Feishu secret')
 assert(!('FEISHU_APP_SECRET' in worker.environment), 'worker spec has no Feishu secret')
 assert(!('PPAP_PG_API_PASSWORD' in worker.environment), 'worker spec has no API password')
-assert('PADDLE_TOKEN' in worker.environment, 'worker spec has PADDLE_TOKEN')
-assert(!('PADDLE_TOKEN' in api.environment), 'api spec has no PADDLE_TOKEN')
+assert('PPAP_PADDLE_TOKEN' in worker.environment, 'worker spec has PPAP_PADDLE_TOKEN')
+assert(!('PPAP_PADDLE_TOKEN' in api.environment), 'api spec has no PPAP_PADDLE_TOKEN')
 for (const spec of [api, worker]) {
   const blob = JSON.stringify(spec)
   assert(!blob.includes('edge-function'), `${spec.name} is not an edge function`)

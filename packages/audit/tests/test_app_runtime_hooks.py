@@ -92,9 +92,9 @@ def test_app_runtime_reads_psw_facts_directly_through_ocr_configuration(tmp_path
 
     monkeypatch.setattr(psw_scope._Objects, "__init__", single_business_object)
     calls = []
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
-    monkeypatch.setenv("OCR_MODEL_NAME", "configured-ocr")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "test-key")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://ocr.invalid/v1")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "configured-ocr")
 
     def convert(*args, **kwargs):
         return ConversionArtifact(success=False)

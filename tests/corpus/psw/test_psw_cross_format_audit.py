@@ -246,9 +246,9 @@ def test_real_doc_and_its_converted_docx_have_equivalent_results_and_release_tem
     executable = shutil.which("soffice") or shutil.which("libreoffice")
     assert executable is not None, "required PSW runtime must provide LibreOffice"
     monkeypatch.setenv("LEGACY_DOC_CONVERTER_EXECUTABLE", executable)
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled-ocr")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled-ocr")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://ocr.invalid/v1")
     monkeypatch.setattr(
         "audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", lambda **request: _controlled_visual_facts(request["response_schema"], len(request["images"]), request["prompt"])
     )
@@ -365,7 +365,7 @@ def test_psw_pdf_visual_rules_match_the_xlsx_product_round(model_replay) -> None
     from product.settings import get_settings
 
     settings = get_settings()
-    if model_replay is None and not (settings.OCR_OPENAI_API_KEY.strip() and settings.OCR_OPENAI_BASE_URL.strip() and settings.OCR_MODEL_NAME.strip()):
+    if model_replay is None and not (settings.PPAP_MODEL_VISION_API_KEY.strip() and settings.PPAP_MODEL_VISION_BASE_URL.strip() and settings.PPAP_MODEL_VISION_MODEL.strip()):
         pytest.fail("setup_failure: dedicated OCR configuration is missing; PDF visual audit did not start")
     pdf_path = _PAIR_ROOT.with_suffix(".pdf")
     xlsx_path = _PAIR_ROOT.with_suffix(".xlsx")

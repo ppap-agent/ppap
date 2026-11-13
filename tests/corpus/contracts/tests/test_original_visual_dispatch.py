@@ -9,10 +9,10 @@ from corpus_contracts.oracle import original
 
 
 def test_real_ole_xls_dispatch_is_not_pdf_only(monkeypatch):
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled-visual")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled-key")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid/v1")
-    monkeypatch.delenv("PADDLE_OCR_URL", raising=False)
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled-visual")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled-key")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid/v1")
+    monkeypatch.delenv("PPAP_PADDLE_URL", raising=False)
     monkeypatch.delenv("PPAP_PADDLE_BRIDGE_URL", raising=False)
     path = original("过程流程图.xls")
     assert path.read_bytes().startswith(bytes.fromhex("d0cf11e0a1b11ae1"))

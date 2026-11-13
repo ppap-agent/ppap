@@ -42,7 +42,7 @@ services:
       PPAP_PROFILE: isolated-dev
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:?set PPAP_BUILD_SHA to the 40-character git SHA}
       PPAP_SERVICE: deep
-      PPAP_DEEP_LLM_API_KEY: ""
+      PPAP_MODEL_CODING_API_KEY: ""
       PPAP_PG_HOST: postgres
       PPAP_PG_PORT: "5432"
       PPAP_PG_DATABASE: ppap

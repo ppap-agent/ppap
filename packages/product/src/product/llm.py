@@ -1,4 +1,4 @@
-"""Responses-compatible URL helpers. No Chat Completions fallback. No OPENAI_* names."""
+"""Responses-compatible URL helpers. No Chat Completions fallback."""
 
 from __future__ import annotations
 
@@ -10,4 +10,4 @@ def responses_url(base_url: str) -> str:
 
 
 def llm_configured(settings: Settings) -> bool:
-    return bool(settings.llm_api_key.strip() and settings.llm_base_url.strip() and settings.llm_model.strip())
+    return bool(settings.model_text_api_key.strip() and settings.model_text_base_url.strip() and settings.model_text_model.strip())

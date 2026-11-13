@@ -101,28 +101,28 @@ def effective_vision_extra_body(raw: str) -> dict[str, Any]:
     try:
         value = json.loads(raw)
     except ValueError:
-        raise ValueError("OCR_OPENAI_EXTRA_BODY_JSON must contain one JSON object") from None
+        raise ValueError("PPAP_MODEL_VISION_EXTRA_BODY_JSON must contain one JSON object") from None
     if not isinstance(value, dict):
-        raise ValueError("OCR_OPENAI_EXTRA_BODY_JSON must contain one JSON object")
+        raise ValueError("PPAP_MODEL_VISION_EXTRA_BODY_JSON must contain one JSON object")
     return {**defaults, **value}
 
 
 def platform_model_access(purpose: ModelPurpose) -> ModelAccess:
     """The platform model for one use, read from this process's deployment configuration."""
     isolated = (_env("PPAP_PROFILE") or "isolated-dev") == "isolated-dev"
-    text_url = _env("LLM_BASE_URL") or (ISOLATED_DEV_LLM_BASE_URL if isolated else "")
-    text_model = _env("LLM_MODEL") or (ISOLATED_DEV_LLM_MODEL if isolated else "")
+    text_url = _env("PPAP_MODEL_TEXT_BASE_URL") or (ISOLATED_DEV_LLM_BASE_URL if isolated else "")
+    text_model = _env("PPAP_MODEL_TEXT_MODEL") or (ISOLATED_DEV_LLM_MODEL if isolated else "")
     if purpose == "text":
-        base_url, model, key, effort, extra = text_url, text_model, _env("LLM_API_KEY"), _env("OPENAI_REASONING_EFFORT"), ""
+        base_url, model, key, effort, extra = text_url, text_model, _env("PPAP_MODEL_TEXT_API_KEY"), _env("PPAP_MODEL_TEXT_REASONING_EFFORT"), ""
     elif purpose == "vision":
-        base_url, model, key, effort = _env("OCR_OPENAI_BASE_URL"), _env("OCR_MODEL_NAME"), _env("OCR_OPENAI_API_KEY"), ""
-        extra = json.dumps(effective_vision_extra_body(_env("OCR_OPENAI_EXTRA_BODY_JSON")), sort_keys=True)
+        base_url, model, key, effort = _env("PPAP_MODEL_VISION_BASE_URL"), _env("PPAP_MODEL_VISION_MODEL"), _env("PPAP_MODEL_VISION_API_KEY"), ""
+        extra = json.dumps(effective_vision_extra_body(_env("PPAP_MODEL_VISION_EXTRA_BODY_JSON")), sort_keys=True)
     elif purpose == "coding":
-        overridden = bool(_env("PPAP_DEEP_LLM_BASE_URL") or _env("PPAP_DEEP_LLM_MODEL"))
-        base_url = _env("PPAP_DEEP_LLM_BASE_URL") if overridden else text_url
-        model = _env("PPAP_DEEP_LLM_MODEL") if overridden else text_model
-        key = _env("PPAP_DEEP_LLM_API_KEY") if overridden else _env("LLM_API_KEY")
-        effort, extra = _env("PPAP_DEEP_REASONING_EFFORT"), ""
+        overridden = bool(_env("PPAP_MODEL_CODING_BASE_URL") or _env("PPAP_MODEL_CODING_MODEL"))
+        base_url = _env("PPAP_MODEL_CODING_BASE_URL") if overridden else text_url
+        model = _env("PPAP_MODEL_CODING_MODEL") if overridden else text_model
+        key = _env("PPAP_MODEL_CODING_API_KEY") if overridden else _env("PPAP_MODEL_TEXT_API_KEY")
+        effort, extra = _env("PPAP_MODEL_CODING_REASONING_EFFORT"), ""
     else:
         raise ModelUnavailable()
     # The identity depends only on non-secret configuration, so every process agrees on it

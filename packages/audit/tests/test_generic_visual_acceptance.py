@@ -32,9 +32,9 @@ def agent(path):
 
 @pytest.fixture
 def configured(text_model, monkeypatch):
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled-ocr-key")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
-    monkeypatch.setenv("OCR_MODEL_NAME", "existing-ocr-model")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled-ocr-key")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://ocr.invalid/v1")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "existing-ocr-model")
     text_calls = []
 
     def compare(**kwargs):

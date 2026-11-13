@@ -20,7 +20,7 @@ from worker import process_claimed
 
 @pytest.fixture
 def system(auth_store_factory, core_system):
-    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_", "OCR_", "PADDLE_"))}
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("PPAP_", "FEISHU_"))}
     with patch.dict(os.environ, keep, clear=True):
         settings = Settings(usage_charge_enabled=False, git_sha="a" * 40)
         store = auth_store_factory(settings)
@@ -71,7 +71,7 @@ def test_standard_policy_survives_replay_completion_and_new_configuration(system
     assert snapshot(worker, original["id"]) == frozen
     assert completed["coverage"]["checker_execution"]["input_digest"] == frozen.input_digest
     assert completed["findings"][0]["status"] == "PASS"
-    settings.deep_reasoning_effort = "high"
+    settings.model_coding_reasoning_effort = "high"
     replay = client.post(f"/drafts/{draft}/accept", json=command)
     assert replay.status_code == 201, replay.text
     assert replay.json()["id"] == original["id"]
@@ -86,7 +86,7 @@ def test_standard_policy_survives_replay_completion_and_new_configuration(system
     assert result["failure"]["code"] == "executor_revision_mismatch"
 
 
-@pytest.mark.parametrize("field,value", [("deep_reasoning_effort", "high"), ("git_sha", "b" * 40), ("deep_sandbox_profile", "ppap")])
+@pytest.mark.parametrize("field,value", [("model_coding_reasoning_effort", "high"), ("git_sha", "b" * 40), ("deep_sandbox_profile", "ppap")])
 def test_standard_configuration_mismatch_is_terminal_without_execution_or_retry(system, field, value):
     client, worker, settings, core = system
     original, draft, command = accept(client, core)
@@ -138,7 +138,7 @@ def test_legacy_label_is_not_backfilled_and_new_policy_cannot_be_silently_lost(s
     assert worker.claim_job("no-retry") is None
 
 
-@pytest.mark.parametrize("field,value", [("MODEL_NAME", "ignored-legacy-model"), ("OCR_MODEL_NAME", "ignored-legacy-ocr")])
+@pytest.mark.parametrize("field,value", [("model_text_model", "ignored-new-model"), ("model_coding_model", "ignored-new-coding-model")])
 def test_legacy_model_environment_does_not_replace_the_frozen_identity(system, field, value):
     client, worker, settings, core = system
     original, _, _ = accept(client, core)

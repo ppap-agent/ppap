@@ -11,9 +11,9 @@ from documents.ocr.observation import current_ocr_observation
 
 @pytest.fixture(autouse=True)
 def configured(monkeypatch):
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "private-key")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://private.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "private-key")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://private.invalid")
 
 
 def frames():

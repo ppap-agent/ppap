@@ -16,23 +16,19 @@ from pydantic import SecretStr
 _SEAMS = {(ocr_visual_facts, "read_visual_facts"): ocr_visual_facts.read_visual_facts, (documents.ai, "run_json_async"): documents.ai.run_json_async}
 
 
-def test_only_a_complete_dedicated_ocr_grant_takes_the_explicit_policy(monkeypatch):
+def test_the_vision_model_takes_the_explicit_policy_or_the_platform_default(monkeypatch):
     for name, value in {
-        "OCR_OPENAI_API_KEY": "controlled",
-        "OCR_OPENAI_BASE_URL": "https://openrouter.ai/api/v1",
-        "OCR_MODEL_NAME": "deepseek/deepseek-v4.1-flash-1017",
-        "OCR_OPENAI_EXTRA_BODY_JSON": '{"reasoning":{"effort":"none"}}',
-        "OPENAI_API_KEY": "other",
-        "OPENAI_BASE_URL": "https://other.invalid/v1",
-        "MODEL_NAME": "another-model",
+        "PPAP_MODEL_VISION_API_KEY": "controlled",
+        "PPAP_MODEL_VISION_BASE_URL": "https://openrouter.ai/api/v1",
+        "PPAP_MODEL_VISION_MODEL": "deepseek/deepseek-v4.1-flash-1017",
+        "PPAP_MODEL_VISION_EXTRA_BODY_JSON": '{"reasoning":{"effort":"low"},"provider":{"sort":"latency"}}',
     }.items():
         monkeypatch.setenv(name, value)
     with model_access_scope(configured_model_access()):
-        assert ocr_extra_body() == {"reasoning": {"effort": "none"}}
-    for name in ("OCR_OPENAI_API_KEY", "OCR_OPENAI_BASE_URL", "OCR_MODEL_NAME"):
-        monkeypatch.delenv(name)
+        assert ocr_extra_body() == {"reasoning": {"effort": "low"}, "provider": {"sort": "latency"}}
+    monkeypatch.delenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON")
     with model_access_scope(configured_model_access()):
-        assert ocr_extra_body() == {}
+        assert ocr_extra_body() == {"reasoning": {"effort": "none"}}
 
 
 def test_replay_separates_actual_ocr_options_from_default_policy(tmp_path, monkeypatch):
@@ -70,7 +66,7 @@ def test_replay_separates_actual_ocr_options_from_default_policy(tmp_path, monke
 
 
 def test_offline_replay_keeps_the_explicit_ocr_policy_without_a_provider_credential(monkeypatch):
-    monkeypatch.setenv("OCR_OPENAI_EXTRA_BODY_JSON", '{"reasoning":{"effort":"none"}}')
+    monkeypatch.setenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON", '{"reasoning":{"effort":"none"}}')
     with model_access_scope(replay_model_access()):
         assert ocr_extra_body() == {"reasoning": {"effort": "none"}}
 

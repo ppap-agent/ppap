@@ -14,9 +14,9 @@ COMPANY = "psw_stamp_ends_with_company"
 
 @pytest.fixture(autouse=True)
 def no_live_provider(monkeypatch):
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled-ocr")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled-noncredential")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled-ocr")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled-noncredential")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://ocr.invalid/v1")
     monkeypatch.setattr("documents.ai.AsyncOpenAI", lambda **kwargs: pytest.fail("This regression must not call a live provider"))
 
 

@@ -38,7 +38,7 @@ def paddle_response(*, table_html=None):
 
 @pytest.fixture
 def selected_paddle(monkeypatch):
-    monkeypatch.setenv("PADDLE_OCR_URL", "https://paddle.example.test/layout-parsing")
+    monkeypatch.setenv("PPAP_PADDLE_URL", "https://paddle.example.test/layout-parsing")
     calls = []
     response = paddle_response()
 
@@ -64,7 +64,7 @@ def test_reader_maps_only_selected_original_page_and_source(tmp_path, selected_p
 
 def test_reader_missing_endpoint_does_not_dispatch(tmp_path, selected_paddle, monkeypatch):
     source = make_pdf(tmp_path / "source.pdf")
-    monkeypatch.delenv("PADDLE_OCR_URL", raising=False)
+    monkeypatch.delenv("PPAP_PADDLE_URL", raising=False)
     with pytest.raises(reader.PaddleEvidenceUnavailable) as error:
         reader.read_pdf_page_evidence(source, 1)
     assert error.value.code == "paddle_evidence_unconfigured"
@@ -116,9 +116,9 @@ def test_task_cache_does_not_cross_source_or_service_identity(tmp_path, selected
                 document[0].insert_text((20, 20), "new version")
                 document.saveIncr()
         elif change == "endpoint":
-            monkeypatch.setenv("PADDLE_OCR_URL", "https://other-paddle.example.test/layout-parsing")
+            monkeypatch.setenv("PPAP_PADDLE_URL", "https://other-paddle.example.test/layout-parsing")
         else:
-            monkeypatch.setenv("PADDLE_TOKEN", "changed-fixture-token")
+            monkeypatch.setenv("PPAP_PADDLE_TOKEN", "changed-fixture-token")
         second = reader.read_pdf_page_evidence(source, 1)
     assert selected_paddle[0] == [(source, 1), (source, 1)]
     if change == "source":

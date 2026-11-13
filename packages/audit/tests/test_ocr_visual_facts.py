@@ -11,9 +11,9 @@ from documents.ocr.observation import current_ocr_observation
 
 @pytest.fixture(autouse=True)
 def configured(monkeypatch):
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled-ocr")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled-noncredential")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled-ocr")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled-noncredential")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://ocr.invalid/v1")
 
 
 def images():
@@ -112,8 +112,8 @@ def test_global_existence_any_true_needs_no_false_override(monkeypatch):
 
 
 def test_missing_dedicated_config_does_not_borrow_text_credentials(monkeypatch):
-    monkeypatch.setenv("OCR_MODEL_NAME", "")
-    monkeypatch.setenv("MODEL_NAME", "text-model")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "")
+    monkeypatch.setenv("PPAP_MODEL_TEXT_MODEL", "text-model")
     calls = install(monkeypatch, {})
     assert observe_ocr_images(images(), {"seal": "实际印章"}, Mock()) == {"seal": None}
     assert calls == []

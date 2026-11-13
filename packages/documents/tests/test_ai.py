@@ -46,7 +46,7 @@ def access(purpose_model="text-model", **kwargs):
 
 def test_text_and_vision_use_the_scoped_key_model_and_options(wire, monkeypatch):
     sent, answers = wire
-    monkeypatch.setenv("LLM_API_KEY", "ambient-key")
+    monkeypatch.setenv("PPAP_MODEL_TEXT_API_KEY", "ambient-key")
     selected = {"text": access("text-model", reasoning_effort="low"), "vision": access("vision-model", extra_body_json='{"reasoning":{"effort":"none"}}')}
     answers += [httpx.Response(200, json=reply('{"capital":"北京"}')), httpx.Response(200, json=reply('{"number":"P-204"}'))]
     schema = {"type": "object", "properties": {"number": {"type": "string"}}, "required": ["number"], "additionalProperties": False, "title": "reading"}

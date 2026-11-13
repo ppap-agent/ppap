@@ -99,7 +99,7 @@ PPAP keeps its S3 abstraction (`PPAP_S3_*`). Phase 1 keeps a dedicated [PGSTY Si
 
 `docker compose -f deploy/insforge/compose.yaml down` stops PPAP services **without `-v`**. The named object volume stays. Verification `deploy/compose.yaml` may still wipe volumes so CI can start clean.
 
-If InsForge Model Gateway speaks the current OpenAI-compatible contract, point `LLM_BASE_URL` at it. OCR and other special providers stay as they are unless that contract actually matches.
+If InsForge Model Gateway speaks the current OpenAI-compatible contract, point `PPAP_MODEL_TEXT_BASE_URL` at it. OCR and other special providers stay as they are unless that contract actually matches.
 
 ## Backup and restore
 

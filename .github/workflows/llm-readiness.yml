@@ -16,22 +16,22 @@ jobs:
     steps:
       - name: Probe Responses API
         env:
-          LLM_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
-          LLM_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
-          LLM_MODEL: ${{ secrets.CI_LLM_MODEL }}
+          PPAP_MODEL_TEXT_API_KEY: ${{ secrets.CI_LLM_API_KEY }}
+          PPAP_MODEL_TEXT_BASE_URL: ${{ secrets.CI_LLM_BASE_URL }}
+          PPAP_MODEL_TEXT_MODEL: ${{ secrets.CI_LLM_MODEL }}
         shell: bash
         run: |
           set -euo pipefail
-          : "${LLM_API_KEY:?missing OPENAI_API_KEY}"
-          : "${LLM_BASE_URL:?missing OPENAI_BASE_URL}"
-          : "${LLM_MODEL:?missing MODEL_NAME}"
-          LLM_BASE_URL="$(printf '%s' "$LLM_BASE_URL" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-          LLM_MODEL="$(printf '%s' "$LLM_MODEL" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          : "${PPAP_MODEL_TEXT_API_KEY:?missing PPAP_MODEL_TEXT_API_KEY}"
+          : "${PPAP_MODEL_TEXT_BASE_URL:?missing PPAP_MODEL_TEXT_BASE_URL}"
+          : "${PPAP_MODEL_TEXT_MODEL:?missing PPAP_MODEL_TEXT_MODEL}"
+          PPAP_MODEL_TEXT_BASE_URL="$(printf '%s' "$PPAP_MODEL_TEXT_BASE_URL" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          PPAP_MODEL_TEXT_MODEL="$(printf '%s' "$PPAP_MODEL_TEXT_MODEL" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           response="$(mktemp)"
           events="$(mktemp)"
           trap 'rm -f "$response" "$events"' EXIT
-          payload="$(jq -nc --arg model "$LLM_MODEL" '{model:$model,store:false,stream:true,input:[{role:"user",content:[{type:"input_text",text:"Reply with exactly PPAP_READY."}]}]}')"
-          http_status="$(curl --silent --show-error --connect-timeout 10 --max-time 60 --output "$response" --write-out '%{http_code}' -H "Authorization: Bearer $LLM_API_KEY" -H "Content-Type: application/json" -H "Accept: text/event-stream" "${LLM_BASE_URL%/}/responses" -d "$payload")"
+          payload="$(jq -nc --arg model "$PPAP_MODEL_TEXT_MODEL" '{model:$model,store:false,stream:true,input:[{role:"user",content:[{type:"input_text",text:"Reply with exactly PPAP_READY."}]}]}')"
+          http_status="$(curl --silent --show-error --connect-timeout 10 --max-time 60 --output "$response" --write-out '%{http_code}' -H "Authorization: Bearer $PPAP_MODEL_TEXT_API_KEY" -H "Content-Type: application/json" -H "Accept: text/event-stream" "${PPAP_MODEL_TEXT_BASE_URL%/}/responses" -d "$payload")"
           [[ "$http_status" =~ ^2[0-9][0-9]$ ]] || { echo "LLM Responses API: HTTP $http_status"; exit 1; }
           sed -n 's/^data: //p' "$response" | jq -Rr 'fromjson? | .type? // empty' > "$events"
           grep -qx 'response.completed' "$events" || { echo "LLM Responses API: completion event missing"; exit 1; }

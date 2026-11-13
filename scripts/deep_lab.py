@@ -36,8 +36,8 @@ def _env(name: str) -> str:
 
 
 def _config_text() -> str:
-    base_url = _env("LLM_BASE_URL")
-    key = _env("LLM_API_KEY")
+    base_url = _env("PPAP_MODEL_TEXT_BASE_URL")
+    key = _env("PPAP_MODEL_TEXT_API_KEY")
     return (
         "[models]\n"
         f"default = {json.dumps(MODEL)}\n"

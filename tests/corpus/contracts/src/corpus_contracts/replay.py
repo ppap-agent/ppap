@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from documents.model_access import ModelAccess, ModelPurpose, effective_vision_extra_body
+from documents.model_access import ModelAccess, ModelPurpose, ModelResolver, effective_vision_extra_body, platform_model_access
 from pydantic import SecretStr
 
 REPLAY_DIR = Path(__file__).resolve().parents[5] / "assets/corpus/replay"
@@ -39,30 +39,20 @@ def offline() -> bool:
 
 
 def _ocr_test_options() -> str:
-    raw = os.environ.get("OCR_OPENAI_EXTRA_BODY_JSON", "").strip()
+    raw = os.environ.get("PPAP_MODEL_VISION_EXTRA_BODY_JSON", "").strip()
     return json.dumps(effective_vision_extra_body(raw), sort_keys=True) if raw else ""
 
 
-def configured_model_access() -> ModelAccess | None:
-    """One explicit test grant, never a production ambient-credential fallback.
+def configured_model_access() -> ModelResolver | None:
+    """Live corpus calls use the platform models exactly as production does, one per use.
 
-    Corpus visual regressions prefer their dedicated OCR provider. All model
-    tools in that test use this same grant. The paired key/endpoint/model must
-    come from one complete test configuration, not unrelated settings defaults.
+    Text reads PPAP_MODEL_TEXT_*, vision PPAP_MODEL_VISION_* (with its default options),
+    coding PPAP_MODEL_CODING_* or the text model. Without a text or vision key there is no
+    live model and recordings answer every call.
     """
-    for names in (
-        ("OCR_OPENAI_API_KEY", "OCR_OPENAI_BASE_URL", "OCR_MODEL_NAME"),
-        ("OPENAI_API_KEY", "OPENAI_BASE_URL", "MODEL_NAME"),
-        ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"),
-    ):
-        values = tuple(os.environ.get(name, "").strip() for name in names)
-        if all(values):
-            key, endpoint, model = values
-            options = _ocr_test_options() if names[0] == "OCR_OPENAI_API_KEY" else ""
-            return ModelAccess(SecretStr(key), provider="corpus-test", base_url=endpoint, model=model, extra_body_json=options)
-        if values[0]:
-            raise ValueError("Incomplete corpus test model configuration: " + ", ".join(names))
-    return None
+    if not (os.environ.get("PPAP_MODEL_TEXT_API_KEY", "").strip() or os.environ.get("PPAP_MODEL_VISION_API_KEY", "").strip()):
+        return None
+    return platform_model_access
 
 
 def replay_model_access() -> ModelAccess:

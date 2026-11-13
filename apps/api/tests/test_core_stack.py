@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def _clean_env(**extra: str):
-    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("PPAP_", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -30,9 +30,9 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.profile, "isolated-dev")
         self.assertEqual(settings.pg_api_password, ISOLATED_DEV_SECRET)
         self.assertEqual(settings.s3_endpoint, "http://127.0.0.1:9000")
-        self.assertEqual(settings.llm_api_key, "")
-        self.assertEqual(settings.llm_base_url, ISOLATED_DEV_LLM_BASE_URL)
-        self.assertEqual(settings.llm_model, ISOLATED_DEV_LLM_MODEL)
+        self.assertEqual(settings.model_text_api_key, "")
+        self.assertEqual(settings.model_text_base_url, ISOLATED_DEV_LLM_BASE_URL)
+        self.assertEqual(settings.model_text_model, ISOLATED_DEV_LLM_MODEL)
         self.assertFalse(llm_configured(settings))
         self.assertIn(".doc", settings.get_allowed_extensions())
 
@@ -49,7 +49,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(values["PPAP_S3_BUCKET"], "ppap-objects")
         self.assertEqual(values["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "10000")
         self.assertEqual(values["LOG_LEVEL"], "INFO")
-        self.assertTrue(values["LLM_API_KEY"] == "", "Development template LLM_API_KEY must be empty")
+        self.assertTrue(values["PPAP_MODEL_TEXT_API_KEY"] == "", "Development template PPAP_MODEL_TEXT_API_KEY must be empty")
         self.assertTrue(values["FEISHU_APP_ID"] == "", "Development template FEISHU_APP_ID must be empty")
 
     def test_env_production_records_safe_defaults_without_isolated_dev_secrets(self):
@@ -68,8 +68,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(values["PPAP_S3_BUCKET"], "ppap-objects")
         self.assertEqual(values["PPAP_WEB_URL"], "")
         self.assertEqual(values["PPAP_PUBLIC_API_URL"], "")
-        self.assertEqual(values["LLM_BASE_URL"], "")
-        self.assertEqual(values["LLM_MODEL"], "")
+        self.assertEqual(values["PPAP_MODEL_TEXT_BASE_URL"], "")
+        self.assertEqual(values["PPAP_MODEL_TEXT_MODEL"], "")
         self.assertEqual(values["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "10000")
         self.assertEqual(values["LOG_LEVEL"], "INFO")
         self.assertTrue(values["FEISHU_APP_ID"] == "", "Production template FEISHU_APP_ID must be empty")
@@ -77,21 +77,21 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(values["PPAP_USAGE_CHARGE_ENABLED"], "false")
 
     def test_isolated_dev_with_only_api_key_uses_repository_defaults(self):
-        with _clean_env(LLM_API_KEY="sk-test"):
+        with _clean_env(PPAP_MODEL_TEXT_API_KEY="sk-test"):
             settings = Settings()
-        self.assertEqual(settings.llm_api_key, "sk-test")
-        self.assertEqual(settings.llm_base_url, ISOLATED_DEV_LLM_BASE_URL)
-        self.assertEqual(settings.llm_model, ISOLATED_DEV_LLM_MODEL)
+        self.assertEqual(settings.model_text_api_key, "sk-test")
+        self.assertEqual(settings.model_text_base_url, ISOLATED_DEV_LLM_BASE_URL)
+        self.assertEqual(settings.model_text_model, ISOLATED_DEV_LLM_MODEL)
         self.assertTrue(llm_configured(settings))
 
     def test_openai_names_are_not_application_authority(self):
         with _clean_env(OPENAI_API_KEY="from-openai", OPENAI_BASE_URL="https://example.invalid/v1", MODEL_NAME="hidden"):
             settings = Settings()
-        self.assertEqual(settings.llm_api_key, "")
-        self.assertEqual(settings.llm_base_url, ISOLATED_DEV_LLM_BASE_URL)
-        self.assertEqual(settings.llm_model, ISOLATED_DEV_LLM_MODEL)
-        self.assertNotEqual(settings.llm_base_url, "https://example.invalid/v1")
-        self.assertNotEqual(settings.llm_model, "hidden")
+        self.assertEqual(settings.model_text_api_key, "")
+        self.assertEqual(settings.model_text_base_url, ISOLATED_DEV_LLM_BASE_URL)
+        self.assertEqual(settings.model_text_model, ISOLATED_DEV_LLM_MODEL)
+        self.assertNotEqual(settings.model_text_base_url, "https://example.invalid/v1")
+        self.assertNotEqual(settings.model_text_model, "hidden")
         self.assertFalse(llm_configured(settings))
 
     def test_production_rejects_isolated_dev_credentials(self):
@@ -109,8 +109,8 @@ class SettingsTests(unittest.TestCase):
             PPAP_S3_ACCESS_KEY="remote-access",
             PPAP_S3_SECRET_KEY="remote-secret",
             PPAP_S3_ENDPOINT="http://remote-storage:9000",
-            LLM_BASE_URL="https://llm.example",
-            LLM_MODEL="x",
+            PPAP_MODEL_TEXT_BASE_URL="https://llm.example",
+            PPAP_MODEL_TEXT_MODEL="x",
             PPAP_WEB_URL="http://127.0.0.1:4173",
         ):
             settings = Settings()
@@ -130,8 +130,8 @@ class SettingsTests(unittest.TestCase):
             PPAP_S3_ACCESS_KEY="prod-access",
             PPAP_S3_SECRET_KEY="prod-secret",
             PPAP_S3_ENDPOINT="https://objects.example.internal",
-            LLM_BASE_URL="https://llm.example",
-            LLM_MODEL="x",
+            PPAP_MODEL_TEXT_BASE_URL="https://llm.example",
+            PPAP_MODEL_TEXT_MODEL="x",
             PPAP_WEB_URL="https://app.example",
         ):
             settings = Settings()
@@ -148,8 +148,8 @@ class SettingsTests(unittest.TestCase):
             PPAP_S3_ACCESS_KEY="prod-access",
             PPAP_S3_SECRET_KEY="prod-secret",
             PPAP_S3_ENDPOINT="https://objects.example.internal",
-            LLM_BASE_URL="https://llm.example",
-            LLM_MODEL="x",
+            PPAP_MODEL_TEXT_BASE_URL="https://llm.example",
+            PPAP_MODEL_TEXT_MODEL="x",
             PPAP_WEB_URL="https://app.example",
         ):
             settings = Settings()
@@ -168,8 +168,8 @@ class SettingsTests(unittest.TestCase):
             PPAP_S3_ACCESS_KEY="prod-access",
             PPAP_S3_SECRET_KEY="prod-secret",
             PPAP_S3_ENDPOINT="https://objects.example.internal",
-            LLM_BASE_URL="",
-            LLM_MODEL="x",
+            PPAP_MODEL_TEXT_BASE_URL="",
+            PPAP_MODEL_TEXT_MODEL="x",
             PPAP_WEB_URL="https://app.example",
         ):
             with self.assertRaises(ValidationError):
@@ -185,8 +185,8 @@ class SettingsTests(unittest.TestCase):
             PPAP_S3_ACCESS_KEY="prod-access",
             PPAP_S3_SECRET_KEY="prod-secret",
             PPAP_S3_ENDPOINT="https://objects.example.internal",
-            LLM_BASE_URL="https://llm.example",
-            LLM_MODEL="x",
+            PPAP_MODEL_TEXT_BASE_URL="https://llm.example",
+            PPAP_MODEL_TEXT_MODEL="x",
         ):
             with self.assertRaises(ValidationError):
                 Settings()
@@ -255,7 +255,7 @@ class ApiSurfaceTests(unittest.TestCase):
 
     def test_configured_capabilities_do_not_claim_readiness_proof(self):
         with _clean_env(
-            LLM_API_KEY="sk-test",
+            PPAP_MODEL_TEXT_API_KEY="sk-test",
             FEISHU_APP_ID="cli_test",
             FEISHU_APP_SECRET="secret",
             PPAP_PARTNER_AI_ENDPOINT="https://example.invalid",

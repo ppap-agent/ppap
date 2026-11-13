@@ -18,7 +18,7 @@ from worker import process_claimed
 
 
 def _clean_env(**extra: str):
-    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("PPAP_", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -378,8 +378,8 @@ class FeishuDocsAddonTests(unittest.TestCase):
             PPAP_S3_ACCESS_KEY="prod-access",
             PPAP_S3_SECRET_KEY="prod-secret",
             PPAP_S3_ENDPOINT="https://objects.example.internal",
-            LLM_BASE_URL="https://llm.example",
-            LLM_MODEL="x",
+            PPAP_MODEL_TEXT_BASE_URL="https://llm.example",
+            PPAP_MODEL_TEXT_MODEL="x",
             PPAP_WEB_URL="https://app.example",
             FEISHU_APP_ID="cli_test",
             FEISHU_APP_SECRET="secret",

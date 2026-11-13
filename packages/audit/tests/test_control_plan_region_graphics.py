@@ -35,7 +35,7 @@ def stage_agent(tmp_path, suffix="xls"):
 def test_excel_region_preserves_identity_and_reuses_success_unknown_and_errors(tmp_path, monkeypatch, suffix, value, expected):
     from documents.excel import visual
 
-    for key, item in {"OCR_OPENAI_API_KEY": "controlled", "OCR_OPENAI_BASE_URL": "https://example.invalid/v1", "OCR_MODEL_NAME": "controlled-ocr"}.items():
+    for key, item in {"PPAP_MODEL_VISION_API_KEY": "controlled", "PPAP_MODEL_VISION_BASE_URL": "https://example.invalid/v1", "PPAP_MODEL_VISION_MODEL": "controlled-ocr"}.items():
         monkeypatch.setenv(key, item)
     image = BytesIO()
     Image.new("RGB", (300, 100), "white").save(image, format="PNG")
@@ -86,7 +86,7 @@ def test_excel_region_preserves_identity_and_reuses_success_unknown_and_errors(t
 def test_legacy_stage_without_ocr_configuration_never_renders_or_passes(tmp_path, monkeypatch):
     from documents.excel import visual
 
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "")
     monkeypatch.setattr(visual, "render_xlsx_field", lambda *args, **kwargs: pytest.fail("unconfigured request must not render"))
     monkeypatch.setattr(visual, "has_region_graphics", lambda *args, **kwargs: True)
     agent, _ = stage_agent(tmp_path)

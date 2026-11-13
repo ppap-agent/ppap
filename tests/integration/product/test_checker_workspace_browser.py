@@ -175,16 +175,15 @@ def workbook(value, index):
 def workspace_product(auth_store_factory, tmp_path, request, monkeypatch):
     # Only a tenant key set by the journey may serve a model.
     for name in (
-        "LLM_API_KEY",
-        "LLM_BASE_URL",
-        "LLM_MODEL",
-        "OPENAI_API_KEY",
-        "OCR_OPENAI_API_KEY",
-        "OCR_OPENAI_BASE_URL",
-        "OCR_MODEL_NAME",
-        "PPAP_DEEP_LLM_API_KEY",
-        "PPAP_DEEP_LLM_BASE_URL",
-        "PPAP_DEEP_LLM_MODEL",
+        "PPAP_MODEL_TEXT_API_KEY",
+        "PPAP_MODEL_TEXT_BASE_URL",
+        "PPAP_MODEL_TEXT_MODEL",
+        "PPAP_MODEL_VISION_API_KEY",
+        "PPAP_MODEL_VISION_BASE_URL",
+        "PPAP_MODEL_VISION_MODEL",
+        "PPAP_MODEL_CODING_API_KEY",
+        "PPAP_MODEL_CODING_BASE_URL",
+        "PPAP_MODEL_CODING_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr("documents.model_access.ISOLATED_DEV_LLM_BASE_URL", "")

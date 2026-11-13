@@ -69,14 +69,14 @@ def read_pdf_page_evidence(file_path: str | Path, page_number: int) -> dict:
     interpretation. An empty response does not establish absent content.
     """
     bridge = os.environ.get("PPAP_PADDLE_BRIDGE_URL", "").strip()
-    endpoint = bridge or os.environ.get("PADDLE_OCR_URL", "").strip()
+    endpoint = bridge or os.environ.get("PPAP_PADDLE_URL", "").strip()
     if not endpoint:
         raise PaddleEvidenceUnavailable("Paddle服务尚未配置，需核对原件。", code="paddle_evidence_unconfigured")
     source, page_count = validate_pdf(file_path)
     if type(page_number) is not int or not 1 <= page_number <= page_count:
         raise ValueError("An existing original PDF page must be explicitly selected")
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    credential = os.environ.get("PPAP_PADDLE_BRIDGE_TOKEN", "") if bridge else os.environ.get("PADDLE_TOKEN", "")
+    credential = os.environ.get("PPAP_PADDLE_BRIDGE_TOKEN", "") if bridge else os.environ.get("PPAP_PADDLE_TOKEN", "")
 
     def read() -> dict:
         if bridge:

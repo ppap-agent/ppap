@@ -10,9 +10,9 @@ from documents.ai import AIError, AIResult
 
 @pytest.mark.parametrize("failure", [None, "missing_usage", "transport"])
 def test_model_usage_survives_async_thread_bridge_and_unknown_usage(monkeypatch, failure):
-    monkeypatch.setenv("OCR_MODEL_NAME", "configured-ocr")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid/v1")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "configured-ocr")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid/v1")
     calls = []
 
     async def run(access, **kwargs):

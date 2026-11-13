@@ -130,7 +130,7 @@ uv run --no-sync python -m scripts.official_suites publish --revision-id <offici
 
 操作人员用 `--revision-id` 选定确切版本。验证只消费仓库当前完整 corpus 中规则含义与该版本相同的全部目标，其他代际（如 v2 与 v3）的标记不沿用也不阻断；没有样本筛选或 proof JSON 导入选项。每个样本保留整个原件组合，只执行所选 Suite。运行正式 Core 的固定程序子进程，默认 `--model disabled` 不提供模型授权；`--model live` 显式允许文本 LLM 和模型 OCR 读取原件。两种模式都不录制或回放模型答案，不更改现有 timeout。它只适用于已审阅的平台程序；本地子进程不是敌对代码沙箱，不能据此声称具备生产隔离。
 
-Live 沿用 corpus 的完整测试配置选择：优先 `OCR_OPENAI_API_KEY` / `OCR_OPENAI_BASE_URL` / `OCR_MODEL_NAME`，其次完整 `OPENAI_*` 或 `LLM_*`。本次文本和视觉工具共享所选模型，所以它必须支持视觉和 Responses；这不是生产分开的模型配置验收。`PPAP_CORPUS_OFFLINE=1` 与 live 冲突，普通 corpus 的 `PPAP_CORPUS_MODEL` 不会悄悄改变官方 runner 的模式。配置 `PADDLE_OCR_URL` / `PADDLE_TOKEN` 时，子进程经与生产相同的 bridge 读取本样本的 PDF。密钥只留在 host，子进程只拿本次 loopback 临时 grant 和 Paddle capability。
+Live 与生产相同，按用途读取平台模型：文本 `PPAP_MODEL_TEXT_*`，视觉 `PPAP_MODEL_VISION_*`（默认关闭推理），编码 `PPAP_MODEL_CODING_*`（未配置时用文本模型）；没有文本或视觉 key 时不调用模型。`PPAP_CORPUS_OFFLINE=1` 与 live 冲突，普通 corpus 的 `PPAP_CORPUS_MODEL` 不会悄悄改变官方 runner 的模式。配置 `PPAP_PADDLE_URL` / `PPAP_PADDLE_TOKEN` 时，子进程经与生产相同的 bridge 读取本样本的 PDF。密钥只留在 host，子进程只拿本次 loopback 临时 grant 和 Paddle capability。
 
 CI 和开发环境的模型与 Paddle 用量属于开发预算，不设限额。每个样本后输出已知用量，结束撤销授权并输出最终回执；用量未知会阻断验证，不自动重试。进程被外部终止可能没有最终回执，先核对既有输出和供应商账单，不能假定没有计费。回执只保留所选模型身份、endpoint 摘要和供应商确认的 token 数，不含密钥、原件、提示词或模型原始回答；返回模型名称和货币费用仍未知。证明绑定本次模型身份，`read` / `publish` 不需要模型密钥，也不调用模型。
 
@@ -150,11 +150,11 @@ CI 和开发环境的模型与 Paddle 用量属于开发预算，不设限额。
 
 ### 模型回答
 
-默认回放：完整请求摘要与录制一致才复用回答，摘要包括图片内容、提示词、Schema、预算、显式选项和独立观察编号；图片尺寸只用于可读展示。不能证明图片内容的旧录制不命中，旧资产保留。缺少匹配录制时，只有显式配置测试模型才真实调用，用例通过后记录回答。用例失败时不记录，下次重新询问；因此通过用例的录制仅作逻辑回归样本，不作为准确率或稳定性统计。测试通过独立的 ModelAccess scope 授权 Core，优先使用完整 OCR_* 配置，其次完整 OPENAI_* 或 LLM_* 配置，同一测试的文本和视觉工具共享该凭据、endpoint 和模型。生产无凭据 scope 不受此测试逻辑影响。
+默认回放：完整请求摘要与录制一致才复用回答，摘要包括图片内容、提示词、Schema、预算、显式选项和独立观察编号；图片尺寸只用于可读展示。不能证明图片内容的旧录制不命中，旧资产保留。缺少匹配录制时，只有显式配置测试模型才真实调用，用例通过后记录回答。用例失败时不记录，下次重新询问；因此通过用例的录制仅作逻辑回归样本，不作为准确率或稳定性统计。测试通过独立的 ModelAccess scope 授权 Core，优先使用完整 PPAP_MODEL_VISION_* 配置，其次完整 PPAP_MODEL_TEXT_* 或 PPAP_MODEL_TEXT_* 配置，同一测试的文本和视觉工具共享该凭据、endpoint 和模型。生产无凭据 scope 不受此测试逻辑影响。
 
 本地无付费验证使用 `PPAP_CORPUS_OFFLINE=1`；即使环境已有 Key，也只回放缓存，任何缺失记录都令测试失败且不会调用提供方。没有测试凭据时同样只读回放。`PPAP_CORPUS_MODEL=live` 必须有完整测试配置，不能与 offline 同时使用。回放验证取证和判定逻辑，不验证新模型或部署的能力；真实视觉验收使用预先固定的样本和运行次数，并保留全部运行结果。
 
-专用 OCR 测试授权选中完整 `OCR_*` 配置时，可显式带入 `OCR_OPENAI_EXTRA_BODY_JSON`；该参数不进入文本请求，不沿用到 `OPENAI_*` / `LLM_*` 替代测试授权或普通文本模型。实际 OCR 参数进入授权身份、OCR 配置摘要和 Replay 请求键；旧参数的回答不能用来验证新参数。当前 CI 专用 OpenRouter `deepseek/deepseek-v4.1-flash-1017` 已用合成图像核验 `reasoning.effort=none`，仍使用 4096 输出上限和零自动重试。更换端点或模型须先核对其支持的参数。
+`PPAP_MODEL_VISION_EXTRA_BODY_JSON` 只用于视觉请求，不进入文本请求。实际 OCR 参数进入授权身份、OCR 配置摘要和 Replay 请求键；旧参数的回答不能用来验证新参数。当前 CI 专用 OpenRouter `deepseek/deepseek-v4.1-flash-1017` 已用合成图像核验 `reasoning.effort=none`，仍使用 4096 输出上限和零自动重试。更换端点或模型须先核对其支持的参数。
 
 CI 把新回答放进任务产物的 `replay/`。下载后提交，之后的运行就不再调用这些请求：
 

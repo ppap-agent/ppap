@@ -11,11 +11,11 @@ from product.settings import Settings
     [
         ("git_sha", "b" * 40),
         ("MAX_FILE_SIZE", "10MB"),
-        ("PADDLE_OCR_URL", "https://paddle.invalid"),
+        ("paddle_url", "https://paddle.invalid"),
     ],
 )
 def test_standard_revision_tracks_effective_configuration(field, value):
-    settings = Settings(git_sha="a" * 40, MODEL_NAME="model-a", OPENAI_BASE_URL="https://provider.invalid/v1", OPENAI_EXTRA_BODY_JSON="")
+    settings = Settings(git_sha="a" * 40)
     original = settings.standard_execution_policy()
     changed = settings.model_copy(update={field: value}).standard_execution_policy()
     assert original.engine_revision().startswith("standard-v1:")
@@ -25,14 +25,14 @@ def test_standard_revision_tracks_effective_configuration(field, value):
 
 
 def test_policy_contains_no_secrets_or_raw_provider_options():
-    settings = Settings(git_sha="a" * 40, OPENAI_BASE_URL="https://private.invalid/v1", OPENAI_EXTRA_BODY_JSON='{"private_option":"private-value"}')
+    settings = Settings(git_sha="a" * 40, model_text_base_url="https://private.invalid/v1")
     original = settings.standard_execution_policy()
-    for key in ("llm_api_key", "OPENAI_API_KEY", "OCR_OPENAI_API_KEY", "PADDLE_TOKEN", "s3_secret_key", "pg_worker_password", "feishu_app_secret"):
+    for key in ("model_text_api_key", "model_coding_api_key", "s3_secret_key", "pg_worker_password", "feishu_app_secret"):
         setattr(settings, key, "rotated-secret")
     assert settings.standard_execution_policy() == original
     serialized = original.model_dump_json()
     assert set(json.loads(serialized)) == {"executor_label", "app_revision", "model", "model_config_revision", "tool_config_revision"}
-    for private in ("private.invalid", "private_option", "private-value", "rotated-secret"):
+    for private in ("private.invalid", "rotated-secret"):
         assert private not in serialized
 
 
@@ -52,28 +52,22 @@ def test_tool_environment_changes_identity_without_disclosing_paths(monkeypatch,
 
 
 def test_paddle_endpoint_changes_revision_without_disclosing_credentials():
-    settings = Settings(PADDLE_OCR_URL="https://private-paddle.invalid", PADDLE_TOKEN="private-token")
+    settings = Settings(PPAP_PADDLE_URL="https://private-paddle.invalid")
     original = settings.standard_execution_policy()
-    changed = settings.model_copy(update={"PADDLE_OCR_URL": "https://another.invalid"}).standard_execution_policy()
+    changed = settings.model_copy(update={"paddle_url": "https://another.invalid"}).standard_execution_policy()
     assert changed != original
-    assert settings.model_copy(update={"PADDLE_TOKEN": "rotated-token"}).standard_execution_policy() == original
-    assert all(private not in original.model_dump_json() for private in ("private-paddle", "private-token"))
+    assert "private-paddle" not in original.model_dump_json()
 
 
 @pytest.mark.parametrize(
     "field",
     [
-        "llm_api_key",
-        "llm_model",
-        "llm_base_url",
-        "OPENAI_API_KEY",
-        "OPENAI_BASE_URL",
-        "MODEL_NAME",
-        "OCR_MODEL_NAME",
-        "OCR_OPENAI_BASE_URL",
-        "OCR_OPENAI_API_KEY",
-        "OPENAI_EXTRA_BODY_JSON",
-        "OCR_OPENAI_EXTRA_BODY_JSON",
+        "model_text_api_key",
+        "model_text_model",
+        "model_text_base_url",
+        "model_coding_api_key",
+        "model_coding_model",
+        "model_coding_base_url",
     ],
 )
 def test_personal_policy_never_inherits_deployment_model_configuration(field):

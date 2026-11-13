@@ -9,9 +9,9 @@ from documents.ocr.observation import current_ocr_observation
 
 @pytest.mark.parametrize("unknown_observation", [1, 2])
 def test_observations_share_fields_and_criteria_without_sharing_answers(monkeypatch, unknown_observation):
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid")
     frames = [OcrImage(b"synthetic", {"scope": "pdf:2", "page": 2, "context": True, "located_region": True}, 100, 100)]
     fields = {"psw_stamp_present": "actual seal", "psw_stamp_ending_text": "seal ending"}
     calls = []
@@ -40,9 +40,9 @@ def test_observations_share_fields_and_criteria_without_sharing_answers(monkeypa
 
 @pytest.mark.parametrize("second", [True, False])
 def test_unknown_observation_is_still_read_twice_and_never_becomes_a_known_fact(monkeypatch, second):
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid")
     frames = [OcrImage(b"synthetic", {"scope": "pdf:2", "page": 2, "context": True, "located_region": True}, 100, 100)]
     read = Mock(side_effect=[{"seal": None}, {"seal": second}])
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
@@ -53,9 +53,9 @@ def test_unknown_observation_is_still_read_twice_and_never_becomes_a_known_fact(
 
 
 def test_peer_model_inputs_are_byte_identical(monkeypatch):
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid")
     frames = [OcrImage(b"synthetic", {"scope": "pdf:2", "page": 2, "context": True, "located_region": True}, 100, 100)]
     read = Mock(return_value={"seal": True})
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
@@ -66,9 +66,9 @@ def test_peer_model_inputs_are_byte_identical(monkeypatch):
 
 @pytest.mark.parametrize("second", [True, False, None])
 def test_both_source_sets_follow_the_same_consensus(monkeypatch, second):
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid")
     frames = [OcrImage(b"synthetic", {"scope": "pdf:2", "page": 2, "context": True}, 100, 100)]
     bounds = [[0.05, 0.1, 0.45, 0.9], [0.55, 0.1, 0.95, 0.9]]
     calls = []
@@ -107,9 +107,9 @@ def test_both_source_sets_follow_the_same_consensus(monkeypatch, second):
 
 @pytest.mark.asyncio
 async def test_observation_identity_reaches_the_threaded_async_transport(monkeypatch):
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid")
     numbers = []
 
     async def read(*args, **kwargs):

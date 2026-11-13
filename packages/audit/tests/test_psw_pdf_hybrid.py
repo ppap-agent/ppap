@@ -383,7 +383,7 @@ def psw_checker(monkeypatch, path, profile):
 def ocr_response_boundary(monkeypatch, response):
     """Controlled OCR Responses boundary; Paddle is not sent before checkboxes."""
     attempts = []
-    for name, value in (("OCR_MODEL_NAME", "controlled-ocr"), ("OCR_OPENAI_API_KEY", "controlled"), ("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")):
+    for name, value in (("PPAP_MODEL_VISION_MODEL", "controlled-ocr"), ("PPAP_MODEL_VISION_API_KEY", "controlled"), ("PPAP_MODEL_VISION_BASE_URL", "https://ocr.invalid/v1")):
         monkeypatch.setenv(name, value)
 
     async def analyze(images, prompt, *, response_schema, **kwargs):

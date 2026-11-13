@@ -283,7 +283,7 @@ def test_incomplete_page_response_rejects_before_publishing(tmp_path):
 def test_cli_replay_requires_no_model_or_network(pdf, tmp_path, monkeypatch, capsys):
     saved = tmp_path / "saved.json"
     saved.write_text(json.dumps(response(), ensure_ascii=False), encoding="utf-8")
-    monkeypatch.delenv("PADDLE_OCR_URL", raising=False)
+    monkeypatch.delenv("PPAP_PADDLE_URL", raising=False)
     monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("network forbidden")))
     root = tmp_path / "replays"
     monkeypatch.setattr("sys.argv", ["paddle", "--pdf", str(pdf), "--out-root", str(root), "--response-json", str(saved)])
@@ -451,7 +451,7 @@ def test_ambiguous_table_geometry_is_not_assigned_by_iteration_order():
 
 
 def test_cli_live_requires_selected_page_before_any_request(pdf, tmp_path, monkeypatch):
-    monkeypatch.setenv("PADDLE_OCR_URL", "https://paddle.example/layout-parsing")
+    monkeypatch.setenv("PPAP_PADDLE_URL", "https://paddle.example/layout-parsing")
     monkeypatch.setattr(httpx.Client, "post", lambda *_a, **_kw: pytest.fail("network must not be attempted"))
     monkeypatch.setattr("sys.argv", ["paddle", "--pdf", str(pdf), "--out-root", str(tmp_path / "no-page")])
     with pytest.raises(SystemExit) as caught:

@@ -61,6 +61,6 @@ def ocr_policy_identity() -> str:
         "protocol": "native_paddle_responses_v5",
         "model": model,
         "timeout": 20,
-        "paddle_endpoint_sha256": hashlib.sha256(_env("PADDLE_OCR_URL").encode()).hexdigest(),
+        "paddle_endpoint_sha256": hashlib.sha256(_env("PPAP_PADDLE_URL").encode()).hexdigest(),
     }
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

@@ -90,7 +90,7 @@ class ArchitectureTests(unittest.TestCase):
                 services = _compose_config(ROOT / "deploy/isolated-dev/compose.yaml", env={"PPAP_USAGE_CHARGE_ENABLED": value})["services"]
                 for service in ("api", "worker"):
                     self.assertEqual(services[service]["environment"].get("PPAP_USAGE_CHARGE_ENABLED"), expected)
-                    self.assertFalse(bool(services[service]["environment"].get("PPAP_DEEP_LLM_API_KEY")), "Deep provider credential belongs only to Controller")
+                    self.assertFalse(bool(services[service]["environment"].get("PPAP_MODEL_CODING_API_KEY")), "Deep provider credential belongs only to Controller")
         production = _compose_config(ROOT / "deploy/compose.yaml", ROOT / "deploy/compose.env.example", env={"PPAP_USAGE_CHARGE_ENABLED": "true"})["services"]
         self.assertEqual(production["api"]["environment"]["PPAP_USAGE_CHARGE_ENABLED"], "true")
 

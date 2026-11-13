@@ -11,9 +11,9 @@ from documents.ocr.observation import current_ocr_observation
 @pytest.mark.parametrize("confirmation,expected", [("专用章", "专用章"), (None, None), ("公司", None)])
 def test_seal_reading_diagnostics_preserve_two_reads_and_the_original_decision(monkeypatch, caplog, confirmation, expected):
     calls = []
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "private-key")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://private.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "private-key")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://private.invalid")
     frames = [OcrImage(b"private-image", {"scope": "private-scope", "page": 2, "source_sha256": "a" * 64, "bbox": [0, 0, 100, 100], "context": True, "located_region": True}, 100, 100)]
 
     def read(**kwargs):
@@ -42,9 +42,9 @@ def test_seal_reading_diagnostics_preserve_two_reads_and_the_original_decision(m
 def test_second_observation_failure_keeps_the_first_summary_and_does_not_retry(monkeypatch, caplog):
     from documents.ai import AIError
 
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid")
     frames = [OcrImage(b"synthetic", {"scope": "pdf:2", "page": 2, "context": True, "located_region": True}, 100, 100)]
     calls = []
 
@@ -68,9 +68,9 @@ def test_second_observation_failure_keeps_the_first_summary_and_does_not_retry(m
 
 
 def test_unknown_observations_are_both_reported_without_inventing_a_known_fact(monkeypatch, caplog):
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid")
     frames = [OcrImage(b"synthetic", {"scope": "pdf:2", "page": 2, "context": True, "located_region": True}, 100, 100)]
     read = Mock(return_value={"psw_stamp_ending_text": None})
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", read)
@@ -114,9 +114,9 @@ def test_shanghai_yada_page5_unknown_cannot_be_replaced_by_page3_absence(monkeyp
     """CI #42510446162: page 3 agrees on absence; page 5's second read is unknown."""
     from audit.engine.checkers.psw_visual_evidence import evaluate_psw_observation
 
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid")
     frames = [OcrImage(str(page).encode(), {"scope": f"pdf:{page}", "page": page, "source_sha256": "a" * 64, "context": True, "located_region": True}, 100, 100) for page in (3, 5)]
     fields = {"psw_stamp_present": "actual seal", "psw_stamp_ending_text": "seal ending"}
     calls = []

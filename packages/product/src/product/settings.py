@@ -1,10 +1,10 @@
-"""Single typed settings owner for API and worker. Application code reads LLM_*, never OPENAI_*."""
+"""Single typed settings owner for API and worker. Models are configured per use as PPAP_MODEL_<TEXT|VISION|CODING>_*."""
 
 from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Literal, Optional, Self
+from typing import Literal, Self
 from urllib.parse import urlsplit
 
 from audit.policy import DeepExecutionPolicy
@@ -37,14 +37,18 @@ class Settings(BaseSettings):
     # it is not a cost settlement and never decides whether an artifact is valid.
     deep_model_max_requests: int = Field(default=200, ge=1, le=1000, alias="PPAP_DEEP_MODEL_MAX_REQUESTS")
 
-    llm_api_key: str = Field(default="", alias="LLM_API_KEY")
-    llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
-    llm_model: str = Field(default="", alias="LLM_MODEL")
+    # Platform models, one group per use (documents.model_access reads the same names per call).
+    model_text_api_key: str = Field(default="", alias="PPAP_MODEL_TEXT_API_KEY")
+    model_text_base_url: str = Field(default="", alias="PPAP_MODEL_TEXT_BASE_URL")
+    model_text_model: str = Field(default="", alias="PPAP_MODEL_TEXT_MODEL")
 
-    deep_llm_api_key: str = Field(default="", alias="PPAP_DEEP_LLM_API_KEY")
-    deep_llm_base_url: str = Field(default="", alias="PPAP_DEEP_LLM_BASE_URL")
-    deep_llm_model: str = Field(default="", alias="PPAP_DEEP_LLM_MODEL")
-    deep_reasoning_effort: Literal["xhigh", "high", "medium", "low"] = Field(default="medium", alias="PPAP_DEEP_REASONING_EFFORT")
+    # Coding (the Deep agent) uses the text model unless its own base URL and model are set.
+    model_coding_api_key: str = Field(default="", alias="PPAP_MODEL_CODING_API_KEY")
+    model_coding_base_url: str = Field(default="", alias="PPAP_MODEL_CODING_BASE_URL")
+    model_coding_model: str = Field(default="", alias="PPAP_MODEL_CODING_MODEL")
+    model_coding_reasoning_effort: Literal["xhigh", "high", "medium", "low"] = Field(default="medium", alias="PPAP_MODEL_CODING_REASONING_EFFORT")
+
+    paddle_url: str = Field(default="", alias="PPAP_PADDLE_URL")
 
     feishu_app_id: str = Field(default="", alias="FEISHU_APP_ID")
     feishu_app_secret: str = Field(default="", alias="FEISHU_APP_SECRET")
@@ -97,7 +101,7 @@ class Settings(BaseSettings):
     # Directory holding `<company>/templates`: the repository `assets` locally, `/app/assets` in the image.
     template_root: str = Field(default="assets", alias="PPAP_TEMPLATE_ROOT")
 
-    # Checker/OCR names kept from the migrated engine. Product code still reads llm_*.
+    # Names kept from the migrated engine.
     APP_NAME: str = "PPAP"
     APP_VERSION: str = "0.1.0"
     APP_GIT_SHA: str = "unknown"
@@ -105,13 +109,6 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "text"
     DEVELOPMENT: bool = False
-    OPENAI_API_KEY: str = ""
-    OPENAI_BASE_URL: str = ""
-    MODEL_NAME: str = ""
-    OPENAI_EXTRA_BODY_JSON: str = ""
-    OPENAI_REASONING_EFFORT: Optional[str] = None
-    OPENAI_TEMPERATURE: Optional[float] = None
-    OPENAI_TOP_P: Optional[float] = None
     AI_RATE_LIMIT_PER_MINUTE: int = 60
     MAX_PARALLEL_WORKERS: int = 7
     LANGFUSE_SECRET_KEY: str = ""
@@ -119,12 +116,6 @@ class Settings(BaseSettings):
     LANGFUSE_HOST: str = ""
     MAX_FILE_SIZE: str = "100MB"
     ALLOWED_EXTENSIONS: str = ".pdf,.doc,.docx,.pptx,.xlsx,.xls,.xlsm,.jpg,.jpeg,.png,.gif,.md"
-    OCR_OPENAI_API_KEY: str = ""
-    OCR_OPENAI_BASE_URL: str = ""
-    OCR_MODEL_NAME: str = ""
-    OCR_OPENAI_EXTRA_BODY_JSON: str = ""
-    PADDLE_OCR_URL: str = ""
-    PADDLE_TOKEN: str = ""
 
     @model_validator(mode="after")
     def production_must_not_inherit_isolated_dev(self) -> Self:
@@ -151,11 +142,10 @@ class Settings(BaseSettings):
                 ):
                     raise ValueError("MCP browser origins must be explicit HTTPS origins, or development loopback origins")
         if self.profile == "isolated-dev":
-            if not self.llm_base_url.strip():
-                self.llm_base_url = ISOLATED_DEV_LLM_BASE_URL
-            if not self.llm_model.strip():
-                self.llm_model = ISOLATED_DEV_LLM_MODEL
-            self._fill_checker_llm_from_product()
+            if not self.model_text_base_url.strip():
+                self.model_text_base_url = ISOLATED_DEV_LLM_BASE_URL
+            if not self.model_text_model.strip():
+                self.model_text_model = ISOLATED_DEV_LLM_MODEL
             return self
         role_passwords = (
             self.pg_api_password,
@@ -172,40 +162,31 @@ class Settings(BaseSettings):
         }
         if ISOLATED_DEV_SECRET in isolated_values or self.s3_endpoint == ISOLATED_DEV_S3_ENDPOINT:
             raise ValueError("production must not inherit isolated-dev credentials or object-storage endpoint")
-        if not self.llm_base_url.strip() or not self.llm_model.strip():
-            raise ValueError("production must set LLM_BASE_URL and LLM_MODEL explicitly")
+        if not self.model_text_base_url.strip() or not self.model_text_model.strip():
+            raise ValueError("production must set PPAP_MODEL_TEXT_BASE_URL and PPAP_MODEL_TEXT_MODEL explicitly")
         if not self.web_url.strip():
             raise ValueError("production must set PPAP_WEB_URL explicitly")
-        self._fill_checker_llm_from_product()
         return self
-
-    def _fill_checker_llm_from_product(self) -> None:
-        if not self.OPENAI_API_KEY.strip():
-            self.OPENAI_API_KEY = self.llm_api_key
-        if not self.OPENAI_BASE_URL.strip():
-            self.OPENAI_BASE_URL = self.llm_base_url
-        if not self.MODEL_NAME.strip():
-            self.MODEL_NAME = self.llm_model
 
     def get_allowed_extensions(self) -> list[str]:
         return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
 
     def deep_model_policy(self) -> tuple[str, str]:
         """Resolve non-secret model identity without requiring provider credentials."""
-        values = (self.deep_llm_base_url.strip(), self.deep_llm_model.strip())
+        values = (self.model_coding_base_url.strip(), self.model_coding_model.strip())
         if any(values):
             if not all(values):
                 raise ValueError("Deep model override requires base URL and model")
             return values
-        return self.llm_base_url.strip(), self.llm_model.strip()
+        return self.model_text_base_url.strip(), self.model_text_model.strip()
 
     def deep_model_config(self) -> tuple[str, str, str]:
         """Only the Controller resolves and validates the matching credential."""
         base_url, model = self.deep_model_policy()
-        overridden = bool(self.deep_llm_base_url.strip() or self.deep_llm_model.strip())
-        if self.deep_llm_api_key.strip() and not overridden:
+        overridden = bool(self.model_coding_base_url.strip() or self.model_coding_model.strip())
+        if self.model_coding_api_key.strip() and not overridden:
             raise ValueError("Deep credential requires an explicit Deep base URL and model")
-        key = self.deep_llm_api_key if overridden else self.llm_api_key
+        key = self.model_coding_api_key if overridden else self.model_text_api_key
         if not key.strip():
             raise ValueError("Deep model credential is unavailable")
         return base_url, model, key
@@ -218,7 +199,7 @@ class Settings(BaseSettings):
             {
                 "app_revision": self.git_sha,
                 "model": model,
-                "reasoning_effort": self.deep_reasoning_effort,
+                "reasoning_effort": self.model_coding_reasoning_effort,
                 "model_revision": config_digest(
                     {
                         "identity": identity,
@@ -249,7 +230,7 @@ class Settings(BaseSettings):
                 {
                     "ocr_model_identity": identity,
                     "vision_protocol": "native_paddle_responses_v5",
-                    "paddle_endpoint": self.PADDLE_OCR_URL.strip(),
+                    "paddle_endpoint": self.paddle_url.strip(),
                     "paddle_http_timeout_seconds": 20,
                     "ocr_http_timeout_seconds": 20,
                     "ocr_max_retries": 0,
@@ -264,24 +245,6 @@ class Settings(BaseSettings):
                 }
             ),
         )
-
-    def get_ocr_openai_api_key(self) -> str:
-        return self.OCR_OPENAI_API_KEY.strip()
-
-    def get_ocr_openai_base_url(self) -> str:
-        return self.OCR_OPENAI_BASE_URL.strip()
-
-    def get_ocr_model_name(self) -> str:
-        model = self.OCR_MODEL_NAME.strip()
-        if not model:
-            raise ValueError("OCR model is not configured: set OCR_MODEL_NAME")
-        return model
-
-    def get_ocr_paddle_url(self) -> str:
-        return self.PADDLE_OCR_URL.strip()
-
-    def get_ocr_paddle_token(self) -> str:
-        return self.PADDLE_TOKEN.strip()
 
     def dsn(self, role: Literal["api", "worker", "migrator", "bootstrap"]) -> str:
         user, password = {

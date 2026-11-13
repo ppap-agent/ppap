@@ -54,7 +54,7 @@ LLM、飞书、Partner AI 和其它可访问远程环境可以直接用于相关
 
 ## 模型凭据
 
-平台模型 Key 只在部署 Secret（`LLM_API_KEY`、`OCR_OPENAI_API_KEY`、`PPAP_DEEP_LLM_API_KEY`）中。企业 Key（企业 BYOK）由运营通过 `python -m product.tenant_models` 从标准输入写入，用 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`（Fernet）加密存入 `tenant_model_credentials`；客户没有读写它的 API。部署密钥只注入 API、Worker 和可信 Controller，不进入 guest、Artifact、日志或接口回执。密文绑定租户、规范化 base URL、三个用途的模型和配置修订，复制到另一租户或只改地址元数据都不能借用或重定向 Key。删除租户会级联清理其 Key。
+平台模型 Key 只在部署 Secret（`PPAP_MODEL_TEXT_API_KEY`、`PPAP_MODEL_VISION_API_KEY`、`PPAP_MODEL_CODING_API_KEY`）中。企业 Key（企业 BYOK）由运营通过 `python -m product.tenant_models` 从标准输入写入，用 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY`（Fernet）加密存入 `tenant_model_credentials`；客户没有读写它的 API。部署密钥只注入 API、Worker 和可信 Controller，不进入 guest、Artifact、日志或接口回执。密文绑定租户、规范化 base URL、三个用途的模型和配置修订，复制到另一租户或只改地址元数据都不能借用或重定向 Key。删除租户会级联清理其 Key。
 
 每次模型调用按当前选择重新解析：有企业 Key 用企业 Key，否则用平台模型。企业 Key 损坏或解密失败时报告不可用，不回退平台模型或其他租户的 Key。受理时冻结非秘密身份；当前选择与之不一致即拒绝调用（`model_configuration_changed`），晚到请求不能借用新配置。已发送的请求无法撤回，未知用量保持未知。
 

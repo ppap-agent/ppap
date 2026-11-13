@@ -187,7 +187,7 @@ def test_same_part_with_explicit_different_change_levels_is_not_the_same_object(
 def test_overlapping_rules_reuse_the_same_located_fact_or_failure(tmp_path, monkeypatch, failed):
     from audit.engine.checkers.excel_field_evidence import observe_excel_region
 
-    for key, value in {"OCR_MODEL_NAME": "controlled", "OCR_OPENAI_API_KEY": "controlled", "OCR_OPENAI_BASE_URL": "https://ocr.invalid/v1"}.items():
+    for key, value in {"PPAP_MODEL_VISION_MODEL": "controlled", "PPAP_MODEL_VISION_API_KEY": "controlled", "PPAP_MODEL_VISION_BASE_URL": "https://ocr.invalid/v1"}.items():
         monkeypatch.setenv(key, value)
     path = tmp_path / "stamp.xlsx"
     book = Workbook()

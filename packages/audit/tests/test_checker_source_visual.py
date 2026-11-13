@@ -16,10 +16,10 @@ from PIL import Image
 
 @pytest.fixture(autouse=True)
 def controlled_ocr(monkeypatch):
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled-visual")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled-key")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid/v1")
-    monkeypatch.delenv("PADDLE_OCR_URL", raising=False)
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled-visual")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled-key")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid/v1")
+    monkeypatch.delenv("PPAP_PADDLE_URL", raising=False)
     monkeypatch.delenv("PPAP_PADDLE_BRIDGE_URL", raising=False)
 
 
@@ -99,10 +99,10 @@ def test_cached_success_still_checks_frozen_original_and_policy(tmp_path, monkey
     read = Mock(return_value={"signature": True})
     with bind_runtime(SimpleNamespace(read_ocr_visual_facts=read)):
         read_original_visual_facts(audit, {"signature": "实际签字"}, Mock(), cache=cache)
-        monkeypatch.setenv("OCR_MODEL_NAME", "changed-model")
+        monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "changed-model")
         with pytest.raises(ValueError, match="configuration changed"):
             read_original_visual_facts(audit, {"signature": "实际签字"}, Mock(), cache=cache)
-        monkeypatch.setenv("OCR_MODEL_NAME", "controlled-visual")
+        monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled-visual")
         path.write_bytes(path.read_bytes() + b"\n")
         with pytest.raises(ValueError, match="Frozen original identity changed"):
             read_original_visual_facts(audit, {"signature": "实际签字"}, Mock(), cache=cache)

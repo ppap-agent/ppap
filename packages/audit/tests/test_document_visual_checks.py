@@ -19,9 +19,9 @@ def original(tmp_path, monkeypatch):
         page.insert_text((40, 60), "检具清单 检具认可报告 所附文件 重要度", fontname="china-s")
         page.draw_rect(fitz.Rect(40, 80, 240, 180))
         document.save(source)
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://ocr.invalid/v1")
-    monkeypatch.setenv("OCR_MODEL_NAME", "configured-ocr")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "test-key")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://ocr.invalid/v1")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "configured-ocr")
     for version in ("v2", "v3"):
         monkeypatch.setattr(f"audit.checker_lib.{'li' if version == 'v2' else 'nio'}.pdf_agent.convert_pdf_to_excel_auto", lambda *args, **kwargs: ConversionArtifact(success=False))
     monkeypatch.setattr("documents.ai.run_json", lambda *args, **kwargs: pytest.fail("Fixed visual predicates must not use the text model"))

@@ -36,9 +36,9 @@ def write_pdf(path, pages):
 def controlled_vision(monkeypatch):
     import io
 
-    monkeypatch.setenv("OCR_MODEL_NAME", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_API_KEY", "controlled")
-    monkeypatch.setenv("OCR_OPENAI_BASE_URL", "https://controlled.invalid")
+    monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
+    monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid")
     calls = []
 
     async def observe(images, prompt, *, response_schema, **kwargs):

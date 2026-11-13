@@ -11,7 +11,7 @@
 配置值按显式 `Settings(...)` 参数、进程环境、显式指定的 dotenv 文件、默认值依次取值。代码字段名和环境变量别名遵循同一优先级；显式 `False`、空字符串、空来源列表不能被较低优先级的值替换。`pydantic-settings` 最低为 2.12.0，以使用其别名合并修复；不在本项目另建配置合并层。
 
 - Secret 只通过本地 gitignored `.env`、GitHub Secrets 或部署 Secret 注入。
-- Deep 可独立设置 `PPAP_DEEP_LLM_BASE_URL`、`PPAP_DEEP_LLM_MODEL`、`PPAP_DEEP_LLM_API_KEY`，base URL 与 model 必须同时提供；专用 API key 只给 Controller。API、Worker 和 Controller 使用相同的非敏感策略；未设置时沿用 `LLM_*`。这些覆盖值不改变 Standard 模型。Pi 通过现有 Responses 网关使用短期执行授权，真实 provider key 不进入 guest。
+- Deep 可独立设置 `PPAP_MODEL_CODING_BASE_URL`、`PPAP_MODEL_CODING_MODEL`、`PPAP_MODEL_CODING_API_KEY`，base URL 与 model 必须同时提供；专用 API key 只给 Controller。API、Worker 和 Controller 使用相同的非敏感策略；未设置时沿用 `PPAP_MODEL_TEXT_*`。这些覆盖值不改变 Standard 模型。Pi 通过现有 Responses 网关使用短期执行授权，真实 provider key 不进入 guest。
 - 已提交的 `.env.dev` 填 isolated-dev Settings 默认值；[`.env.production`](../.env.production) 填生产仍可沿用的默认值，口令、S3 endpoint、公开 URL 和 LLM 留空。生产不能沿用 isolated-dev 口令和 `http://127.0.0.1:9000`。
 - 生产 compose 用 Docker Compose 的 `--env-file` 注入。CI fixture 是 `deploy/compose.env.example`。真实部署把填好密钥的文件交给同一个 `--env-file`。`init-db` 读取 bootstrap/migrator 口令，先用 `psql` 执行 `migrations/bootstrap.sql`，再通过 `sh /migrations/apply.sh` 按 `NNNN_*.sql` 文件名顺序执行 product migrations；`init-bucket` 用 Silo `mcli` 确保对象桶。API/Worker 只插值各自拥有的字段（含选定的 `PPAP_PG_HOST`/`PPAP_PG_PORT`，以及 API 的飞书变量），不含 bootstrap/migrator 或对方角色口令。
 - isolated-dev Compose 默认关闭业务收费，避免无飞书授权的浏览器流程测试调用真实计费；需要验证收费时显式设置 `PPAP_USAGE_CHARGE_ENABLED=true` 并提供额度接口。此默认值不改变生产 Compose 或 Settings 的收费政策。
@@ -51,7 +51,7 @@
 
 - 原生 Excel、PDF 文字和可靠表格优先。非扫描 PDF 的表格审核先走 PDF→Excel，保留原 PDF SHA、页码、单元格和区域映射；没有可靠转换或页面未覆盖时，不能退到 OCR 猜表格并报告通过。Paddle 提供扫描文字、表格、坐标和章区域；坏表不清空其他有效元素，空响应不证明没有内容。
 - 签字、实际勾选、照片及复杂图形事实使用原图和专用 OCR 模型，不先等待 Paddle 失败。PSW、V4、检具、尺寸和通用图像规则复用同一事实入口；专属规则用代码判定，通用规则将可定位观察交给文本语义检查。
-- `LLM_*` / `OPENAI_*` 是文本配置。`OCR_OPENAI_API_KEY`、`OCR_OPENAI_BASE_URL`、`OCR_MODEL_NAME` 是独立 OCR 配置，缺少时不能借用文本配置。OCR 事实提取默认使用 `reasoning.effort=none`（关闭推理）；推理强度与输出上限是能力约束，不保证服务必定成功。可选 `OCR_OPENAI_EXTRA_BODY_JSON` 只给 OCR；显式 `reasoning` 原样优先，实际参数进入配置摘要。Paddle 使用 `PADDLE_OCR_URL`、`PADDLE_TOKEN`。Secret 仅通过现有进程环境注入，不写日志。
+- `PPAP_MODEL_TEXT_*` 是文本配置。`PPAP_MODEL_VISION_API_KEY`、`PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_MODEL` 是独立 OCR 配置，缺少时不能借用文本配置。OCR 事实提取默认使用 `reasoning.effort=none`（关闭推理）；推理强度与输出上限是能力约束，不保证服务必定成功。可选 `PPAP_MODEL_VISION_EXTRA_BODY_JSON` 只给 OCR；显式 `reasoning` 原样优先，实际参数进入配置摘要。Paddle 使用 `PPAP_PADDLE_URL`、`PPAP_PADDLE_TOKEN`。Secret 仅通过现有进程环境注入，不写日志。
 - OCR 复用 `documents.ocr.client` 的 OpenAI Responses 调用，`store=False`、严格 schema、单次 HTTP connect/read/write/pool timeout 20 秒、零自动重试；没有整页或整份文件的总墙钟预算。持续接收数据可能超过 20 秒。视觉事实每次最多 4096 tokens，包含推理与可见 JSON；截断或空白结果为技术失败，不解析残缺证据。
 - 同轮同源页及同组事实复用成功/失败回执。缓存绑定原件、原页、模型/端点与提取配置；原件或配置改变不能覆盖冻结依据。局部未知保留来源，不抹除其余可靠原生内容。
 - 扫描 PDF 优先级低，当前不自动做整份表格转录或多页补格。没有可靠原生表格时明确返回无法检查；仍可由具体条款请求指定页/区域的视觉事实。不要为补齐工作簿触发整份 OCR。
@@ -305,7 +305,7 @@ Web 只支持桌面宽度（最小 1280px）。产品导航可折叠为带文字
 
 ### 本地 Deep checker 实验
 
-`scripts/deep_lab.py` 使用已有人工 checker、资源定义及 Fluent API 开发任务程序。先验证 Excel，再验证电子版 PDF；扫描版暂不纳入本轮。默认使用 Pi 1.5.0，并从本地 `.env` 的完整 `PPAP_DEEP_LLM_*` 配置读取模型与认证；未提供覆盖时沿用 `LLM_*`。先运行 `npm ci --ignore-scripts --prefix deploy/deep`，Node.js 必须至少为 22.19。只有显式 `--runner grok` 才使用旧 `.grok/config.toml`。不要提交认证配置或实验日志。
+`scripts/deep_lab.py` 使用已有人工 checker、资源定义及 Fluent API 开发任务程序。先验证 Excel，再验证电子版 PDF；扫描版暂不纳入本轮。默认使用 Pi 1.5.0，并从本地 `.env` 的完整 `PPAP_MODEL_CODING_*` 配置读取模型与认证；未提供覆盖时沿用 `PPAP_MODEL_TEXT_*`。先运行 `npm ci --ignore-scripts --prefix deploy/deep`，Node.js 必须至少为 22.19。只有显式 `--runner grok` 才使用旧 `.grok/config.toml`。不要提交认证配置或实验日志。
 
 ```sh
 uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high
@@ -364,7 +364,7 @@ UAES 目录叶子的后续验收由 [Issue #295](https://github.com/ppap-agent/p
 
 ## 模型来源：平台默认 + 企业 Key
 
-客户不选模型。没有企业 Key 时，审核、识别与规则解释都使用平台模型：文本 `LLM_*`，视觉 `OCR_*`，Deep 编码 `PPAP_DEEP_LLM_*`（未配置时沿用 `LLM_*`）。企业配置了自己的 Key（企业 BYOK）后，文本、视觉、编码三种用途全部改用该企业的地址、Key 与模型；企业 Key 不可用时报告不可用，不静默换回平台模型。收费按业务结果计，与模型来源无关。
+客户不选模型。没有企业 Key 时，审核、识别与规则解释都使用平台模型：文本 `PPAP_MODEL_TEXT_*`，视觉 `PPAP_MODEL_VISION_*`，Deep 编码 `PPAP_MODEL_CODING_*`（未配置时沿用 `PPAP_MODEL_TEXT_*`）。企业配置了自己的 Key（企业 BYOK）后，文本、视觉、编码三种用途全部改用该企业的地址、Key 与模型；企业 Key 不可用时报告不可用，不静默换回平台模型。收费按业务结果计，与模型来源无关。
 
 企业 Key 只由运营设置，客户没有对应 API 或页面：
 
