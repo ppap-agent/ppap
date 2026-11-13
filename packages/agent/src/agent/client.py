@@ -145,7 +145,7 @@ class DeepClient:
                         step = ActivityEnvelope.model_validate(raw).activity
                         _check_active(deadline, cancelled)
                         if on_activity:
-                            on_activity(step.model_dump())
+                            on_activity(step.model_dump(exclude_none=True))
                         continue
                     if raw.get("op") != "progress":
                         break

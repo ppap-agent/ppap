@@ -591,16 +591,18 @@ class ContainerRuntime:
             outer = None
         stages = []
         for stage in sorted((run / "work").iterdir())[:32]:
-            if not stage.is_dir() or stage.is_symlink() or stage.name in {"result", "grok-home", "pi-home"}:
+            if not stage.is_dir() or stage.is_symlink() or stage.name in {"result", "grok-home", "pi-home", ".pi-logs"}:
                 continue
+            # Pi writes its logs beside the stage (agent.execution.guest_model.pi_logs).
+            logs = run / "work" / ".pi-logs" / stage.name
             facts: dict = {"stage": stage.name}
             tool_names = []
             try:
-                facts["stderr"] = read_regular(stage, ("stderr.log",), 1024 * 1024).decode(errors="replace")[-8192:]
+                facts["stderr"] = read_regular(logs, ("stderr.log",), 1024 * 1024).decode(errors="replace")[-8192:]
             except (OSError, ValueError):
                 pass
             try:
-                for line in read_regular(stage, ("stdout.jsonl",), MAX_OUTPUT).splitlines():
+                for line in read_regular(logs, ("stdout.jsonl",), MAX_OUTPUT).splitlines():
                     event = json.loads(line)
                     if isinstance(event, dict) and event.get("type") == "result":
                         # Keep terminal metadata, never the model's full output.

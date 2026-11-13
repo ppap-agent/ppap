@@ -51,7 +51,7 @@ class ExecutionContext:
 
     def activity(self, step: Activity) -> None:
         """A live step for viewers. It never cancels or fails the execution."""
-        self.on_activity(step.model_dump())
+        self.on_activity(step.model_dump(exclude_none=True))
 
 
 class Runtime(Protocol):

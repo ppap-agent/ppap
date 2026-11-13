@@ -3,10 +3,13 @@ import {apiUrl} from '../api.ts'
 /** A task changed; the reader fetches it through the authorized task API. */
 export type TaskChange = {kinds: string[]; tasks: string[]}
 
-/** One live step of a running deep review. Broadcast only: it is never stored or read back. */
-export type TaskActivity = {kind: 'read' | 'view' | 'run' | 'edit' | 'note'; text: string}
+/** What a running deep review is doing. Broadcast only: it is never stored or read back. */
+export type ActivityAction = 'read_file' | 'parse_sheet' | 'view_image' | 'convert_image' | 'search' | 'read_program' | 'read_guide' | 'run_check' | 'record' | 'note'
 
-const ACTIVITY_KINDS = new Set<TaskActivity['kind']>(['read', 'view', 'run', 'edit', 'note'])
+/** One live step: an action, at most a document file name (or a note's sentence), and the reviewed file. */
+export type TaskActivity = {action: ActivityAction; subject?: string; target?: string}
+
+const ACTIONS = new Set<ActivityAction>(['read_file', 'parse_sheet', 'view_image', 'convert_image', 'search', 'read_program', 'read_guide', 'run_check', 'record', 'note'])
 
 export type TaskStreamHandlers = {
   /** The stream is (re)connected: read once, since a notice may have been missed while it was down. */
@@ -50,8 +53,13 @@ function subscribe(path: string, handlers: TaskStreamHandlers): () => void {
   })
   source.addEventListener('activity', event => {
     try {
-      const body = JSON.parse((event as MessageEvent<string>).data) as Partial<TaskActivity>
-      if (body.kind && ACTIVITY_KINDS.has(body.kind) && typeof body.text === 'string' && body.text) handlers.onActivity?.({kind: body.kind, text: body.text.slice(0, 160)})
+      const body = JSON.parse((event as MessageEvent<string>).data) as Partial<Record<keyof TaskActivity, unknown>>
+      if (typeof body.action !== 'string' || !ACTIONS.has(body.action as ActivityAction)) return
+      handlers.onActivity?.({
+        action: body.action as ActivityAction,
+        ...(typeof body.subject === 'string' && body.subject ? {subject: body.subject.slice(0, 80)} : {}),
+        ...(typeof body.target === 'string' && body.target ? {target: body.target} : {}),
+      })
     } catch {
       // A malformed step is skipped; steps are only a live view.
     }

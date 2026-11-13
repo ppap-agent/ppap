@@ -225,9 +225,16 @@ def install_deep_agent(home: Path) -> None:
             path.chmod(0o400)
 
 
+def pi_logs(work: Path) -> Path:
+    """Pi's own event and error logs, kept beside its working directory so it never reads them."""
+    return work.parent / ".pi-logs" / work.name
+
+
 class PiRunner(ModelRunner):
     # Where live steps go while Pi runs (deep review only); None sends none.
     activity: Path | None = None
+    # The file being reviewed, so each file shows its own steps.
+    activity_target: str | None = None
 
     """Fixed Pi SDK process with the same artifact and execution-grant contract."""
 
@@ -263,7 +270,9 @@ class PiRunner(ModelRunner):
         }
         if pythonpath := os.environ.get("PYTHONPATH"):
             env["PYTHONPATH"] = pythonpath
-        with (work / "stdout.jsonl").open("xb") as stdout, (work / "stderr.log").open("xb") as stderr:
+        logs = pi_logs(work)
+        logs.mkdir(parents=True, mode=0o700)
+        with (logs / "stdout.jsonl").open("xb") as stdout, (logs / "stderr.log").open("xb") as stderr:
             separate_session = os.environ.get("PPAP_GUEST_ISOLATION") != "container-only"
             process = subprocess.Popen(
                 ["/usr/local/bin/ppap-pi", str(request)],
@@ -273,7 +282,7 @@ class PiRunner(ModelRunner):
                 stderr=stderr,
                 start_new_session=separate_session,
             )
-            relay = ActivityRelay(work / "stdout.jsonl", self.activity) if self.activity is not None else None
+            relay = ActivityRelay(logs / "stdout.jsonl", self.activity, self.activity_target) if self.activity is not None else None
             try:
                 while process.poll() is None:
                     if time.monotonic() >= deadline:
@@ -297,7 +306,7 @@ class PiRunner(ModelRunner):
         terminal = None
         last_assistant: dict[str, Any] = {}
         try:
-            output = read_regular(work, ("stdout.jsonl",), 16 * 1024 * 1024)
+            output = read_regular(logs, ("stdout.jsonl",), 16 * 1024 * 1024)
         except ValueError:
             raise ModelProtocolError("Invalid model output stream") from None
         for line in output.split(b"\n"):
@@ -316,7 +325,7 @@ class PiRunner(ModelRunner):
         if terminal is None:
             # A crashed runtime (for example V8 out of memory) leaves no result; its last stderr says why.
             try:
-                tail = read_regular(work, ("stderr.log",), 1024 * 1024).decode("utf-8", "replace").strip()[-200:]
+                tail = read_regular(logs, ("stderr.log",), 1024 * 1024).decode("utf-8", "replace").strip()[-200:]
             except ValueError:
                 tail = ""
             raise ModelProtocolError(f"Missing terminal model result (exit {process.returncode}){': ' + tail if tail else ''}")

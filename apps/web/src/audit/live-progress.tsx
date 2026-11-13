@@ -1,7 +1,4 @@
-import {FileText, Image, MessageSquareText, PencilLine, SquareTerminal} from 'lucide-react'
 import {useEffect, useState} from 'react'
-import type {TaskActivity} from './task-events'
-import type {LiveSteps} from './live-steps'
 
 /* Chevron wavefront over a 3×3 grid: each cell lights up in turn, two fronts in flight. */
 const STEPS = Array.from({length: 9}, (_, index) => (index % 3) + Math.abs(Math.floor(index / 3) - 1))
@@ -48,32 +45,3 @@ export function LiveProgress({label, since, live}: {label: string; since?: strin
   </div>
 }
 
-const STEP_ICONS: Record<TaskActivity['kind'], typeof FileText> = {read: FileText, view: Image, run: SquareTerminal, edit: PencilLine, note: MessageSquareText}
-const STEP_NAMES: Record<TaskActivity['kind'], string> = {read: '读取', view: '查看图片', run: '运行', edit: '整理', note: '说明'}
-
-/**
- * What the deep review is doing right now: the latest steps broadcast while this page is open.
- * Nothing is stored, so a page opened mid-run starts with the next step.
- */
-export function LiveStepList({steps}: {steps?: LiveSteps}) {
-  const items = steps?.items || []
-  const last = items.at(-1)?.id
-  return <div className="space-y-1.5 border-t pt-3">
-    <p className="flex items-center justify-between text-xs text-muted-foreground">
-      <span>深度复核过程</span>
-      {steps && steps.count > 0 && <span className="tabular-nums">已执行 {steps.count} 步</span>}
-    </p>
-    {items.length === 0
-      ? <p className="text-sm text-muted-foreground">等待下一步…</p>
-      : <ol role="log" aria-label="深度复核步骤" className="space-y-1">
-        {items.map(step => {
-          const Icon = STEP_ICONS[step.kind], current = step.id === last
-          return <li key={step.id} className={`flex min-w-0 items-center gap-2 text-sm motion-safe:animate-in motion-safe:fade-in ${current ? '' : 'opacity-60'}`}>
-            <Icon aria-label={STEP_NAMES[step.kind]} className="size-3.5 shrink-0 text-muted-foreground"/>
-            <span className={`min-w-0 truncate ${step.kind === 'note' ? '' : 'font-mono text-xs'}`} title={step.text}>{step.text}</span>
-            {current && <PixelLoader/>}
-          </li>
-        })}
-      </ol>}
-  </div>
-}

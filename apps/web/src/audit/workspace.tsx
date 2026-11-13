@@ -26,7 +26,8 @@ import {FactQuestions} from './fact-questions'
 import {factMachineFindings} from './fact-answers-contract'
 import {conclusionLabel, executionLabel, reportLabel, resultLabel, resultTone, uncoveredLabel, type ResultTone} from './status-labels'
 import {deepModeTitle, deepReviewNotice} from './deep-mode'
-import {LiveProgress, LiveStepList} from './live-progress'
+import {DeepTaskRows} from './deep-task-rows'
+import {LiveProgress} from './live-progress'
 import type {LiveSteps} from './live-steps'
 
 type Task = components['schemas']['AuditTask']
@@ -111,7 +112,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   }
   const running = task.state !== 'completed' && !progressIssue && itemsTotal > 0
   const overview = <section aria-label="全部文件概览" className="min-w-0 space-y-4 p-6">
-    {running && <section aria-label="审核进度" className="space-y-2 rounded-lg border bg-card p-4"><div className="flex flex-wrap items-baseline justify-between gap-2"><LiveProgress label={task.deep_mode ? "正在深度审核" : "正在审核"} since={task.round_started_at} live={live}/><p className="text-sm tabular-nums text-muted-foreground">审核项 {itemsDone}/{itemsTotal} 已结束</p></div><Progress aria-label="审核项完成进度" value={Math.min(100, itemsDone / itemsTotal * 100)}/>{task.deep_mode && live && <LiveStepList steps={steps}/>}</section>}
+    {running && <section aria-label="审核进度" className="space-y-2 rounded-lg border bg-card p-4"><div className="flex flex-wrap items-baseline justify-between gap-2"><LiveProgress label={task.deep_mode ? "正在深度审核" : "正在审核"} since={task.round_started_at} live={live}/><p className="text-sm tabular-nums text-muted-foreground">审核项 {itemsDone}/{itemsTotal} 已结束</p></div><Progress aria-label="审核项完成进度" value={Math.min(100, itemsDone / itemsTotal * 100)}/>{task.deep_mode && live && steps && <DeepTaskRows targets={targets.map(row => ({id: row.file.id, name: row.file.original_filename}))} items={itemsTotal} steps={steps}/>}</section>}
     {issues.length > 0 && <section aria-label="需关注的审核项" className="space-y-3 rounded-lg border bg-card p-4"><h2 className="font-medium">需关注 · {issues.length} 项</h2>
       {/* Grouped by file, worst file first, so each row names only the clause. */}
       {shownIssueGroups.map(group => <section key={group.row.file.id} aria-label={group.row.file.original_filename} className="space-y-1"><h3 className="text-xs font-medium text-muted-foreground">{group.row.file.original_filename} · {group.items.length} 项</h3><ul className="divide-y">{group.items.map(check => <li key={check.rule_item.id}><Button variant="ghost" size="sm" className="h-auto min-h-8 w-full min-w-0 justify-start whitespace-normal" title={check.rule_item.id} onClick={() => openIssue(group.row.file.id, check.rule_item.id)}><span className={`size-2 shrink-0 rounded-full ${check.finding?.status === 'NG' && check.coverage === 'executed' && check.execution === 'completed' ? 'bg-destructive' : 'bg-warning'}`} aria-hidden="true"/><span className="min-w-0 flex-1 text-left text-sm">{`${issueLabel(check)} · ${clauseLabel(group.row.audit?.checks.map(item => item.rule_item) ?? [], check.rule_item.id)}`}</span><ArrowRight aria-hidden="true" className="text-muted-foreground"/></Button></li>)}</ul></section>)}

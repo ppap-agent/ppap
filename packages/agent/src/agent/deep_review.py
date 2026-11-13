@@ -341,6 +341,8 @@ def review_targets(
                 states[target.file_version_id] = {"state": "degraded", "reason": "deep_input_missing"}
                 continue
             started, before = time.monotonic(), (runner.input_tokens, runner.output_tokens)
+            # Live steps name the file they belong to.
+            runner.activity_target = target.file_version_id
             share = started + max(0.0, deadline - started) / (len(snapshot.targets) - index)
             feedback: str | None = None
             state: dict[str, Any] = {"state": "degraded", "reason": "deep_review_failed"}

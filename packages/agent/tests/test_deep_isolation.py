@@ -790,7 +790,10 @@ class ContainerBoundaryTests(unittest.TestCase):
             (root / "work").mkdir()
             stage = root / "work" / "audit"
             stage.mkdir()
-            (stage / "stdout.jsonl").write_text(
+            # Pi's logs live beside the stage, out of its working directory.
+            logs = root / "work" / ".pi-logs" / "audit"
+            logs.mkdir(parents=True)
+            (logs / "stdout.jsonl").write_text(
                 json.dumps(
                     {
                         "type": "result",
