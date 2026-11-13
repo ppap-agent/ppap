@@ -58,7 +58,7 @@ Controller 进程是 `python -m agent`。生产工厂要求显式设置 `PPAP_DE
 
 Deep 的核心目标设计见 [规则约束下的文档理解与反馈](../packages/agent/DESIGN.md)，未来产品架构、UI 与 MCP 见 [Deep 产品设计](../packages/agent/PRODUCT.md)：业务输入只有 `rules + documents`，已确认附录包含在 rules 中。客户审核不再按本次文件现写 checker（深度审核已下线，#322）：审核只执行已验证的 Suite，客户规则的 checker 由平台离线准备，采用后成为 Suite 新版本；产品内不生成、不修复 checker。目标是持续的审核工作区，Web 与原生 MCP 平等调用同一个 Audit Application；界面、确认方式、协议和部署均可重构，业务事实与审核语义保持单一拥有者。原生 snapshot 保持无损。尚不因此宣称任意布局和规则均能被模型正确解释。
 
-深度反馈（规则变更与重新分析）、检查程序优化与产品内生成均已下线；客户规则的检查程序由平台离线准备。migration 0070 删除了 `deep_rule_changes` 与 `checker_round_artifacts`，0072 删除 `checker_feedback` / `checker_optimizations`；0073 删除 `deep_round_programs`：深度模式不再生成程序，逐条复核记录保存在结论的 `locator.semantic.deep_review`。
+深度反馈（规则变更与重新分析）、检查程序优化与产品内生成均已下线；客户规则的检查程序由平台离线准备。migration 0070 删除了 `deep_rule_changes` 与 `checker_round_artifacts`，0072 删除 `checker_feedback` / `checker_optimizations`；0074 删除 `deep_round_programs`：深度模式不再生成程序，逐条复核记录保存在结论的 `locator.semantic.deep_review`。
 
 当前执行入口只开发并执行固定 checker。宿主只能证明程序和范围的重放，不能独立证明规则理解、关联身份或表头映射正确。
 

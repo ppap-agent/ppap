@@ -6,5 +6,5 @@ BEGIN;
 -- round's frozen checker_execution coverage.
 DROP TABLE IF EXISTS product.deep_round_programs;
 
-INSERT INTO product.schema_migrations (version) VALUES ('0073_deep_review.sql') ON CONFLICT DO NOTHING;
+INSERT INTO product.schema_migrations (version) VALUES ('0074_deep_review.sql') ON CONFLICT DO NOTHING;
 COMMIT;
