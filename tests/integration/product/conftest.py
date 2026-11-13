@@ -31,6 +31,18 @@ _CREATED: set[str] = set()
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
 
 
+@pytest.fixture(autouse=True)
+def no_background_rule_readings(monkeypatch):
+    """Saving a rule version queues readings only when the text model is usable, as it is in CI.
+
+    These contracts claim and assert specific jobs, so they take the "no usable model" branch;
+    the batch itself is covered by apps/api/tests/test_formalization_batches.py.
+    """
+    from product.store.formalizations import FormalizationStore
+
+    monkeypatch.setattr(FormalizationStore, "prepare_all", lambda self, principal, rule_version_id: {"batch_id": None, "queued": []})
+
+
 class MemoryObjects:
     """Small in-memory fake for the object-storage boundary only."""
 

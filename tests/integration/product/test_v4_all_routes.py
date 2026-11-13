@@ -115,7 +115,7 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
         assert all(row[0]["mode"] == "checker_core" and row[0]["suite_revision_id"] for row in frozen), frozen
         assert all(row[0]["binding"]["entrypoints"] and row[0]["verification"] == "unverified" for row in frozen), frozen
         errors = [{key: value for key, value in finding.items() if key != "item"} for finding in round["findings"] if finding["status"] == "ERR"]
-        assert not errors, errors
+        assert not errors, [(finding["item_key"], finding.get("suggestions")) for finding in errors]
         if customer == "UAES":
             photo = next(identity for identity, (source, _, _) in originals.items() if source.entry_id == "U13")
             photo_findings = [finding for finding in round["findings"] if finding["locator"]["file_version_id"] == photo]

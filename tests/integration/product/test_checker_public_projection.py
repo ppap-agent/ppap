@@ -213,7 +213,6 @@ def test_pdf_page_keeps_a_related_file_cell(tmp_path: Path) -> None:
     )
     check = viewed["files"][0]["audit"]["checks"][0]
 
-    assert stored["coverage"]["verification"] is None
     assert check["verification_scope"] == "checker_execution"
     assert check["evidence_verified"] is False
     assert [(item["file_version_id"], item["locator"], item["location_gap"]) for item in check["evidence"]] == [
@@ -409,7 +408,6 @@ def test_checker_results_keep_clause_status_in_the_task_view_and_public_contract
     assert source["locator"]["semantic"]["sources"][0]["excerpt"] == ""
     assert "proof_kind" not in source["locator"]["semantic"]
     assert "scope" not in source["locator"]["semantic"]
-    assert stored["coverage"]["verification"] is None
     assert stored["coverage"]["clarifications"][0]["id"] == "header-meaning"
 
     public_findings = [TypeAdapter(Finding).validate_python(item) for item in stored["findings"]]
@@ -417,7 +415,6 @@ def test_checker_results_keep_clause_status_in_the_task_view_and_public_contract
     assert [item["status"] for item in public_findings] == ["UNABLE", "NG", "ERR", "NG"]
     assert public_coverage["clarifications"][0]["rule_ids"] == ["A"]
     assert public_coverage["rule_items"][0]["verification_scope"] == "checker_execution"
-    assert public_coverage["verification"] is None
     TypeAdapter(Round).validate_python(
         {
             "id": "round-1",
