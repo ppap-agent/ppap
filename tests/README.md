@@ -15,6 +15,8 @@
 
 CI consumes these physical owners. It does not maintain a second test manifest.
 
+断言要等到状态成立，不读一次性快照；页面元素按角色和可访问名称定位。
+
 ## Repository and Python modules
 
 Repository contract:

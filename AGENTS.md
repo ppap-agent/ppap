@@ -34,6 +34,8 @@ Issue 是验收合同，不是实施顺序。允许一个 PR 同时推进多个 
 
 KISS 不等于把迁移人为切成最小碎片。如果一个内聚 package、测试集或配置整体迁入更快、更少上下文，就整体迁入，再删除无消费者部分。
 
+删除或替换功能时，同时删除只为它存在的测试、文档和配置。
+
 不要新增 roadmap、CURRENT、Story/proof/evidence registry、manifest 或第二套状态台账。历史信息由 Git history 和已关闭 Issue 保存。
 
 ## 最小开发上下文（每次开发必遵守）
