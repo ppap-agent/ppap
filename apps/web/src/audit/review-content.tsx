@@ -1,6 +1,6 @@
 import {VerificationDisclosure} from './verification-disclosure'
-import {Fragment, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode} from 'react'
-import {ArrowRight, ArrowUpRight, ChevronDown, ChevronUp, FileSearch, FileText, Info, Pencil, Search, TrendingDown, TrendingUp, TriangleAlert} from 'lucide-react'
+import {Fragment, useContext, useEffect, useId, useRef, useState, type ReactNode} from 'react'
+import {ArrowRight, ArrowUpRight, ChevronDown, ChevronUp, FileSearch, FileText, Info, Pencil, Search, TrendingDown, TrendingUp} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {sourceLocation} from '../helpers'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
@@ -20,7 +20,7 @@ import {RecordedReview, frozenOriginal} from './recorded-review'
 import {HistoricalFindings} from './historical-findings'
 import {ReviewEditorContext} from './review-editor'
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '../components/ui/resizable'
-import {filterChecks, needsAttention, nextUnreviewed, reviewable, reviewed} from './review-navigation'
+import {filterChecks, nextUnreviewed, reviewable, reviewed} from './review-navigation'
 import {diffRounds} from './round-diff'
 import {ReviewHintDetails} from './review-hints'
 import {ReviewDocumentPairs} from './review-document-pairs'
@@ -59,14 +59,6 @@ export function useMinWidth(width: number) {
     return () => media.removeEventListener('change', update)
   }, [width])
   return matches
-}
-
-/** A long basis stays readable in the list without burying the items after it; a search shows it whole so hits stay visible. */
-function BasisText({text, query}: {text: string; query: string}) {
-  const [open, setOpen] = useState(false), [long, setLong] = useState(false), body = useRef<HTMLParagraphElement>(null)
-  const whole = open || Boolean(query.trim())
-  useLayoutEffect(() => {if (!whole && body.current) setLong(body.current.scrollHeight > body.current.clientHeight + 1)}, [text, whole])
-  return <div className="space-y-1"><p ref={body} className={`whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground ${whole ? '' : 'line-clamp-6'}`}><HighlightText text={text} query={query}/></p>{long && !query.trim() && <Button variant="link" size="xs" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? '收起依据' : '展开全部依据'}</Button>}</div>
 }
 
 function DisplayInformation({file, onEdit}: {file: File; onEdit?: () => void}) {
@@ -213,10 +205,6 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
   // Every pane docks beside the list on wide screens; originals take a wider column but never cover the list.
   const docked = open
   const viewingOriginal = activePane === 'original' || activePane === 'comparison'
-  // When no finding's evidence is verified, the note above says so once; a mark on every row would say nothing.
-  // A basis column with nothing to say (every item passed) gives its width back to the rule.
-  const basisColumn = false
-  const allUnverified = Boolean(audit?.checks.some(row => row.finding)) && Boolean(audit?.checks.every(row => !row.finding || !row.evidence_verified))
   const attentionCount = filterCount('attention'), ngCount = filterCount('ng')
   // When everything that needs attention is non-conforming, one chip says it; the default filter lands on it.
   const activeFilter = filter === 'attention' && attentionCount === ngCount ? 'ng' : filter
@@ -273,7 +261,6 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
               <TableCell className="align-top"><span className="text-xs tabular-nums text-muted-foreground" title={`来源编号 ${row.rule_item.id}`}>{`第 ${audit.checks.indexOf(row) + 1} 条`}</span></TableCell>
               <TableCell className="whitespace-normal align-top"><p className="break-words font-medium" title={row.rule_item.category}><HighlightText text={row.rule_item.category} query={query}/></p>{query.trim() && row.rule_item.rule_to_check.toLowerCase().includes(query.trim().toLowerCase()) && <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground"><HighlightText text={row.rule_item.rule_to_check} query={query}/></p>}</TableCell>
               <TableCell className="align-top"><div className="flex flex-col items-start gap-1"><Badge shape="square" variant={checkTone(row)}>{checkLabel(row)}</Badge>{diff?.added.includes(row) && <Badge shape="square" variant="outline">新增问题</Badge>}{diff?.resolved.includes(row) && <Badge shape="square" variant="outline">已解决</Badge>}</div></TableCell>
-              {basisColumn && <TableCell className="whitespace-normal align-top">{needsAttention(row) && <div className="flex items-start gap-1.5">{row.finding && !row.evidence_verified && !allUnverified && <TriangleAlert role="img" aria-label="证据未验证" className="mt-0.5 size-3.5 shrink-0 text-warning"/>}<div className="min-w-0"><BasisText text={clauseObservation(row)} query={query}/></div></div>}</TableCell>}
               <TableCell className="text-right align-top"><Button variant="ghost" size="icon-sm" title="查看依据" aria-label={'查看依据 ' + row.rule_item.id} aria-haspopup="dialog" onClick={() => showEvidence(row)}><ArrowRight/></Button></TableCell>
             </TableRow>)}</TableBody>
           </Table>
