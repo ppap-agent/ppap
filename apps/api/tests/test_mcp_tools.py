@@ -7,6 +7,7 @@ import pytest
 from api.mcp_tools import register_tools
 from fastmcp import Client, FastMCP
 from product.mcp import McpError
+from product.settings import Settings
 
 
 @pytest.mark.parametrize("code,retry_after", [("share_directory_permission_missing", None), ("share_directory_user_permission_missing", None), ("share_directory_timeout", 5)])
@@ -24,7 +25,7 @@ def test_directory_permission_does_not_schedule_retries_and_self_remains_availab
 
     async def run():
         server = FastMCP("directory-recovery")
-        register_tools(server, SimpleNamespace(get=get), authority)
+        register_tools(server, SimpleNamespace(get=get, store=SimpleNamespace(settings=Settings())), authority)
         async with Client(server) as client:
             denied = await client.call_tool("list_share_targets", {"kind": "group"})
             assert denied.structured_content["error"] == code
