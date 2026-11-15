@@ -41,6 +41,10 @@ class UiA11yTests(unittest.TestCase):
             context = browser.new_context(viewport={"width": 1440, "height": 900}, reduced_motion="reduce", has_touch=True)
             page = context.new_page()
             page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+            # Every read is controlled here; nothing reaches a server behind the dev proxy, whose 401 would sign the page out.
+            page.route("**/api/**", lambda route: route.fulfill(status=404, json={"error": "unexpected_test_request"}))
+            page.route("**/api/audit-customers/default", lambda route: route.fulfill(json={"customer_preference": None, "revision": 0}))
+            page.route("**/api/audit-customers", lambda route: route.fulfill(json={"customers": []}))
             page.route(
                 "**/api/public-config",
                 lambda route: route.fulfill(

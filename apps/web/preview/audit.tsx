@@ -132,6 +132,8 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
       return {files: scene === 'drive-empty' ? [] : [...driveCatalog.map(row => row.source), {token: 'preview-image', name: '现场照片.jpg', type: 'file'}]}
     },
   },
+  // As in production: added files are checked without a manual read.
+  autoValidate: true,
   samples: () => {
     const files = documents.map((_, index) => sample(index))
     if (scene === 'reports-all-ready') return files.slice(0, 2)

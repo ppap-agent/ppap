@@ -108,9 +108,9 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     with page.expect_response(lambda response: response.url.endswith("/api/audit-customers")):
         customer_picker.click()
     page.get_by_role("option", name="新客户", exact=True).click()
-    page.get_by_role("button", name="查看已选文件", exact=True).click()
+    # The upload page keeps the restored task's files and their selection beside the customer choice.
     expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
-    expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+    expect(customer_picker).to_contain_text("新客户")
     expect(page).to_have_url(WEB + "/tasks/original-task")
     assert reads == ["GET", "GET"]
 
@@ -167,6 +167,8 @@ def test_a_business_401_still_hides_the_authenticated_product_without_restarting
     page.route("**/api/login/feishu/host", lambda route: (host_posts.append(route.request.url), route.fulfill(json=PRINCIPAL)))
     page.goto(WEB + "/tasks/new")
     expect(page.get_by_role("button", name="登录恢复测试，账号菜单")).to_be_visible()
+    # A new audit starts with the task list folded.
+    page.get_by_role("button", name="展开审核任务", exact=True).click()
     more = page.get_by_role("navigation", name="审核任务列表", exact=True).get_by_role("button", name="加载更多任务", exact=True)
     expect(more).to_be_enabled()
     before = page.url

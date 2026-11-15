@@ -142,16 +142,16 @@ def test_choose_folder_cancel_and_resume_keep_original_upload_request(recover_wi
         page.goto(WEB + "/audit")
         expect(page.get_by_role("heading", name="新建审核", exact=True)).to_be_visible()
         files = [{"name": "审核资料.xlsx", "mimeType": "application/octet-stream", "buffer": b"abcde"}]
-        page.locator("input[type=file]").set_input_files(files)
+        page.get_by_label("选择审核文件", exact=True).set_input_files(files)
         dialog = page.get_by_role("dialog", name="保存到飞书", exact=True)
         expect(dialog.get_by_text("审核资料.xlsx", exact=True)).to_be_visible()
         expect(dialog.get_by_role("button", name="上传到此文件夹", exact=True)).to_be_enabled()
         dialog.get_by_role("button", name="取消", exact=True).click()
         assert creates == [] and blobs == [] and finishes == []
-        page.locator("input[type=file]").set_input_files(files)
+        page.get_by_label("选择审核文件", exact=True).set_input_files(files)
         dialog.get_by_role("button", name="打开文件夹 项目资料", exact=True).click()
         dialog.get_by_role("button", name="上传到此文件夹", exact=True).click()
-        expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="待处理传输 · 1 份", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="读取传输 审核资料.xlsx", exact=True)).to_be_enabled()
         assert creates[0]["feishu_folder_token"] == "chosen-folder"
         assert len(creates) == len(blobs) == len(finishes) == 1

@@ -57,9 +57,10 @@ const standardCodes: Record<string, string> = {
 }
 export const typeCode = (type: string) => standardCodes[type] ?? (/^E\d{2}$/.test(type) ? type : '')
 
-const typeLabel = (type: string, title: string, standard: string[]) => standard.includes(type) || !type ? type || title : title.replace(/(?:审核)?规则$/, '').replace(/^[\d-]+\s*规则-?/, '').trim() || type
+export const typeLabel = (type: string, title: string, standard: string[]) => standard.includes(type) || !type ? type || title : title.replace(/(?:审核)?规则$/, '').replace(/^[\d-]+\s*规则-?/, '').trim() || type
 
-function automation(catalog: Catalog | 'failed' | null, suiteKey: string | null | undefined, preset: boolean): Automation {
+/** What a rule's checker can do now, from the checker catalog; `preset` reads the product's installed directory leaves. */
+export function automation(catalog: Catalog | 'failed' | null, suiteKey: string | null | undefined, preset: boolean): Automation {
   if (!suiteKey) return {state: 'manual', note: '审核时由人判断'}
   if (catalog === 'failed') return {state: 'unreadable', suiteKey}
   if (!catalog) return {state: 'unknown', suiteKey}

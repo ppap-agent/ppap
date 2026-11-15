@@ -124,6 +124,8 @@ def test_rail_marks_execution_errors_and_keeps_the_task_through_its_state_filter
         page.set_default_timeout(5000)
         calls, _summary = task_routes(page, partial_error)
         page.goto(WEB + "/tasks/new")
+        # A new audit starts with the task list folded.
+        page.get_by_role("button", name="展开审核任务", exact=True).click()
         listing = rail(page)
         row = listing.get_by_role("button", name="PPAP-状态核对", exact=True)
         expect(row).to_contain_text("审核异常" if partial_error else "已完成")

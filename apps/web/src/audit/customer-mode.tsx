@@ -60,7 +60,7 @@ export function CustomerMode({value, ready, options, adapter, onChange, onInitia
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><Label htmlFor="audit-customer">审核客户</Label>{hint}</div>
     <div className="flex flex-wrap items-center gap-2">
       <Select value={ready ? value : ''} onValueChange={onChange} onOpenChange={open => {if (open) onRefresh?.()}}><SelectTrigger id="audit-customer" className="h-10 w-80 max-w-full"><SelectValue placeholder="请选择本次审核客户"/></SelectTrigger><SelectContent><CustomerListNote count={choices.length}/><CustomerItem value="auto" label="自动识别"/>{choices.map(option => <CustomerItem key={option.value} value={option.value} label={option.label} coverage={coverage?.(option.value)}/>)}</SelectContent></Select>
-      <Button variant="ghost" disabled={!current || saving || !canSave} onClick={() => setConfirming(true)}>设为企业默认</Button>
+      <Button variant="ghost" size="sm" disabled={!current || saving || !canSave} onClick={() => setConfirming(true)}>设为企业默认</Button>
       {/* The saved default is a second fact only when this task is using something else. */}
       {current && (current.customer_preference || 'auto') !== value ? <span className="text-sm text-muted-foreground">企业默认：{presetCustomers.find(option => option.value === current.customer_preference)?.label || '自动识别'}</span> : !current && !message && <ReadSkeleton label="正在读取企业默认…" kind="inline"/>}
     </div>

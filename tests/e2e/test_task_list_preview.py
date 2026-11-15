@@ -48,6 +48,8 @@ def open_list(browser, *, paged=False):
     # The first reply is held, so advancing here cannot complete or repeat the read.
     page.clock.pause_at(datetime(2026, 10, 16, 2, 1, tzinfo=timezone.utc))
     rail = page.get_by_role("complementary", name="审核任务", exact=True)
+    # A new audit starts with the task list folded; the read already runs.
+    rail.get_by_role("button", name="展开审核任务", exact=True).click()
     return page, rail, rail.get_by_role("navigation", name="审核任务列表", exact=True)
 
 
