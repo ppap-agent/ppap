@@ -18,6 +18,11 @@ except ImportError:
 PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 
+def selected_revision(page, revision):
+    """The selected audit in the history rail names its original revision."""
+    return page.get_by_role("complementary", name="历次审核", exact=True).get_by_role("button", pressed=True).filter(has_text=f"原件修订：{revision}")
+
+
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class AuditArchivePreviewTests(unittest.TestCase):
     def test_natural_file_route_restores_list_and_exact_history_on_back_and_forward(self):
@@ -224,10 +229,10 @@ class AuditArchivePreviewTests(unittest.TestCase):
             second = panel.get_by_role("button", name="选择第 2 次审核", exact=True)
             second.click()
             expect(second).to_have_attribute("aria-pressed", "true")
-            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            expect(selected_revision(page, "Rev B")).to_be_visible()
             old_reference = parse_qs(urlparse(page.url).query)["auditRef"]
             page.reload()
-            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            expect(selected_revision(page, "Rev B")).to_be_visible()
             self.assertEqual(parse_qs(urlparse(page.url).query)["auditRef"], old_reference)
             page.get_by_role("button", name="查看报告", exact=True).click()
             report = page.get_by_role("region", name="历史报告", exact=True)

@@ -19,6 +19,6 @@ export function FileName({name, format, colored = false, truncate = false, class
   const extension = truncate ? name.match(/\.[a-z0-9]{1,8}$/i)?.[0] : undefined
   return <span className={cn('flex min-w-0 items-start gap-2', className)}>
     <FileIcon name={name} format={format} colored={colored} className={colored ? '' : 'mt-0.5'}/>
-    {truncate ? <span className="flex min-w-0" title={name}><span className="truncate">{extension ? name.slice(0, -extension.length) : name}</span>{extension && <span className="shrink-0">{extension}</span>}</span> : <span className="min-w-0 [overflow-wrap:anywhere]">{name}</span>}
+    {truncate ? <span className="flex min-w-0" title={name}>{/* The split keeps the extension visible; the name is read once, without a gap. */}<span aria-hidden="true" className="flex min-w-0"><span className="truncate">{extension ? name.slice(0, -extension.length) : name}</span>{extension && <span className="shrink-0">{extension}</span>}</span><span className="sr-only">{name}</span></span> : <span className="min-w-0 [overflow-wrap:anywhere]">{name}</span>}
   </span>
 }

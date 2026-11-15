@@ -118,6 +118,11 @@ def history_rail(page):
     return rail
 
 
+def selected_revision(page, revision):
+    """The selected audit in the history rail names its original revision."""
+    return page.get_by_role("complementary", name="历次审核", exact=True).get_by_role("button", pressed=True).filter(has_text=f"原件修订：{revision}")
+
+
 def select_history(page, sequence):
     history_rail(page).get_by_role("button", name=f"选择第 {sequence} 次审核", exact=True).click()
 
@@ -827,7 +832,7 @@ class AuditPreviewTests(unittest.TestCase):
             open_basis(page)
             expect(record.get_by_role("textbox")).to_have_count(0)
             close_workspace_panel(page)
-            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^1 频次一致性 .*不符合 .*查看依据 1\.1"))).to_be_visible()
+            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^第 1 条 频次一致性 .*不符合 .*查看依据 1\.1"))).to_be_visible()
             expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()
             open_basis(page)
             record.get_by_role("button", name="核对复核原件 控制计划.xlsx", exact=True).click()
@@ -851,7 +856,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(record).to_have_count(0)
             close_workspace_panel(page)
             close_workspace_panel(page)
-            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^1 频次一致性 .*符合 查看依据 2\.1"))).to_be_visible()
+            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^第 1 条 频次一致性 .*符合 查看依据 2\.1"))).to_be_visible()
             browser.close()
 
     def test_legacy_human_judgment_is_preserved_without_assuming_a_known_label(self):
@@ -865,7 +870,7 @@ class AuditPreviewTests(unittest.TestCase):
             open_basis(page)
             expect(record.get_by_text("toString", exact=True)).to_be_visible()
             close_workspace_panel(page)
-            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^1 频次一致性 .*不符合 .*查看依据 1\.1"))).to_be_visible()
+            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^第 1 条 频次一致性 .*不符合 .*查看依据 1\.1"))).to_be_visible()
             browser.close()
 
     def test_saved_human_citation_cannot_open_a_file_outside_the_frozen_round(self):
@@ -2167,7 +2172,7 @@ class AuditPreviewTests(unittest.TestCase):
                     page.goto(PREVIEW + "/preview/audit.html?scene=" + scene + "&task=preview-recovery-task")
                     expect(page.get_by_role("region", name="任务时间估计", exact=True).get_by_text(message, exact=True)).to_be_visible()
                     open_task_file(page)
-                    expect(page.get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
+                    expect(page.get_by_role("region", name="审核详情", exact=True).get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
                     expect(page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True)).to_be_visible()
                     expect(page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True)).to_have_accessible_description("1")
                     open_basis(page)
@@ -2213,7 +2218,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_text("收到较早或不完整的审核进度，已保留当前结果。请稍后重新读取。", exact=False)).to_be_visible()
             expect(page.get_by_role("status").filter(has_text="文件已结束 0/3")).to_be_visible()
             open_task_file(page)
-            expect(page.get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="审核详情", exact=True).get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
             page.clock.fast_forward(6000)
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 2", exact=True).click()
@@ -2328,7 +2333,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.clock.install()
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-observe&task=preview-recovery-task")
             open_task_file(page)
-            expect(page.get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="审核详情", exact=True).get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
             page.clock.fast_forward(3000)
             expect(page.get_by_text("任务观察 · preview-recovery-task · 读取 1", exact=True)).to_be_visible()
             new_task(page)
@@ -2356,7 +2361,7 @@ class AuditPreviewTests(unittest.TestCase):
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
             expect(page.get_by_text("收到较早或不完整的审核进度，已保留当前结果。请稍后重新读取。", exact=False)).to_be_visible()
-            expect(page.get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="审核详情", exact=True).get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
             expect(page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True)).to_be_visible()
             expect(page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True)).to_have_accessible_description("1")
             select_clause(page, "1.2")
@@ -2407,7 +2412,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.clock.pause_at(datetime(2026, 10, 16, 2, 1, tzinfo=timezone.utc))
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-observe&task=preview-recovery-task")
             open_task_file(page)
-            expect(page.get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="审核详情", exact=True).get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
             page.evaluate("Object.defineProperty(document, 'hidden', {configurable: true, value: true}); document.dispatchEvent(new Event('visibilitychange'))")
             page.clock.fast_forward(12000)
             expect(page.get_by_role("button", name=re.compile("返回示例读取"))).to_have_count(0)
@@ -2418,7 +2423,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("button", name=re.compile("返回示例读取"))).to_have_count(1)
             page.get_by_role("button", name="令示例读取 1 失败", exact=True).click()
             expect(page.get_by_text("结果暂时无法读取", exact=True)).to_be_visible()
-            expect(page.get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="审核详情", exact=True).get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
             page.evaluate("window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('online'))")
             page.clock.fast_forward(3000)
             expect(page.get_by_role("button", name=re.compile("返回示例读取"))).to_have_count(0)
@@ -2770,7 +2775,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001&auditRef=%5B%22missing%22%2C%22round%22%2C%22version%22%2C1%5D&archiveReport=1")
             expect(page.get_by_role("alert")).to_contain_text("未打开其他文档")
             expect(page.get_by_role("heading", name="历史报告", exact=True)).to_have_count(0)
-            expect(page.get_by_text("原件修订：Rev C", exact=True)).to_have_count(0)
+            expect(selected_revision(page, "Rev C")).to_have_count(0)
             browser.close()
 
     def test_incomplete_history_links_show_a_recoverable_error_instead_of_the_archive_list(self):
@@ -2861,7 +2866,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("row", name=re.compile("P0418901")).get_by_role("button").first.click()
             expect(page.get_by_role("alert")).to_contain_text("历史审核清单暂不可用，未打开其他文档。")
             page.get_by_role("button", name="重新读取这次审核", exact=True).click()
-            expect(page.get_by_text("原件修订：Rev C", exact=True)).to_be_visible()
+            expect(selected_revision(page, "Rev C")).to_be_visible()
             browser.close()
 
     def test_historical_report_regeneration_keeps_round_and_attempt(self):
@@ -2924,7 +2929,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-original-denied&view=archive")
             page.get_by_role("table", name="审核文件列表", exact=True).get_by_role("row", name=re.compile("P0418901")).get_by_role("button").first.click()
             select_history(page, 2)
-            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            expect(selected_revision(page, "Rev B")).to_be_visible()
             # Without access the notice explains it; no dead button is shown.
             expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_have_count(0)
             page.get_by_role("button", name="查看原件", exact=True).click()
@@ -2950,7 +2955,7 @@ class AuditPreviewTests(unittest.TestCase):
                 expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_have_count(0)
                 expect(page.get_by_role("button", name="分享", exact=True)).to_be_disabled()
                 page.get_by_role("button", name="返回本次审核", exact=True).click()
-                expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+                expect(selected_revision(page, "Rev B")).to_be_visible()
                 browser.close()
 
     def test_historical_report_download_and_return_keep_the_selected_audit(self):
@@ -2961,7 +2966,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
             page.get_by_role("table", name="审核文件列表", exact=True).get_by_role("row", name=re.compile("P0418901")).get_by_role("button").first.click()
             select_history(page, 2)
-            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            expect(selected_revision(page, "Rev B")).to_be_visible()
             page.get_by_role("button", name="查看报告", exact=True).click()
             # The history report address restores the exact old record after a reload.
             page.reload()
@@ -2975,7 +2980,7 @@ class AuditPreviewTests(unittest.TestCase):
                 page.get_by_role("button", name="下载当前报告", exact=True).click()
             self.assertEqual(download.value.suggested_filename, "控制计划.xlsx-审核报告.pdf")
             page.get_by_role("button", name="返回本次审核", exact=True).click()
-            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            expect(selected_revision(page, "Rev B")).to_be_visible()
             expect_history_selected(page, 2)
             browser.close()
 
@@ -2987,7 +2992,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-history-race&view=archive")
             row = page.get_by_role("table", name="审核文件列表", exact=True).get_by_role("row", name=re.compile("P0418901"))
             row.get_by_role("button").first.click()
-            expect(page.get_by_text("原件修订：Rev C", exact=True)).to_be_visible()
+            expect(selected_revision(page, "Rev C")).to_be_visible()
             select_history(page, 2)
             expect(page.get_by_role("status", name="正在读取这次审核…", exact=True)).to_be_visible()
             expect(page.get_by_role("region", name="原件预览", exact=True)).to_have_count(0)
@@ -2995,7 +3000,7 @@ class AuditPreviewTests(unittest.TestCase):
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
             expect_history_current(page, 1)
-            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_have_count(0)
+            expect(selected_revision(page, "Rev B")).to_have_count(0)
             browser.close()
 
     def test_allowed_history_source_task_returns_to_the_same_selected_history(self):
@@ -3007,7 +3012,7 @@ class AuditPreviewTests(unittest.TestCase):
             row = page.get_by_role("table", name="审核文件列表", exact=True).get_by_role("row", name=re.compile("P0418901"))
             row.get_by_role("button").first.click()
             select_history(page, 2)
-            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            expect(selected_revision(page, "Rev B")).to_be_visible()
             history_url = page.url
             expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_be_enabled()
             page.get_by_role("button", name="打开来源任务", exact=True).click()
@@ -3034,7 +3039,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page).to_have_url(history_url)
             expect(page.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
             expect_history_selected(page, 2)
-            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            expect(selected_revision(page, "Rev B")).to_be_visible()
             open_basis(page)
             page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).first.click()
             expect(original).to_have_attribute("data-file-version", "preview-archive-task-A001-2-version-1")
@@ -3050,10 +3055,10 @@ class AuditPreviewTests(unittest.TestCase):
             row = page.get_by_role("table", name="审核文件列表", exact=True).get_by_role("row", name=re.compile("P0418901"))
             row.get_by_role("button").first.click()
             expect(page.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
-            expect(page.get_by_text("原件修订：Rev C", exact=True)).to_be_visible()
+            expect(selected_revision(page, "Rev C")).to_be_visible()
             expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_have_count(0)
             select_history(page, 2)
-            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            expect(selected_revision(page, "Rev B")).to_be_visible()
             open_basis(page)
             page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).first.click()
             original = page.get_by_role("region", name="原件预览", exact=True)

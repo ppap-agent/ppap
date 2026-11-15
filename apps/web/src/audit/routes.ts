@@ -7,6 +7,8 @@ const paths: Record<ProductSurface, string> = {
 export const taskAddress = (id: string | null) => id ? `/tasks/${encodeURIComponent(id)}` : paths.audit
 export const surfaceAddress = (surface: ProductSurface) => paths[surface]
 export const auditAddressChanged = 'ppap-audit-address-changed'
+/** The rules page moved between its list and a rule's page; only the page header follows it. */
+export const ruleAddressChanged = 'ppap-rule-address-changed'
 /** The local preview serves fixture pages under /preview/; their addresses keep the task in the query. */
 export const isPreview = (url: {pathname: string} = location) => url.pathname.startsWith('/preview/')
 /** The rules page's own address keys; they never follow the person to another page. */
