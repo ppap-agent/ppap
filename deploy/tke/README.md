@@ -84,7 +84,7 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 | 配置项 | 存放位置 | 容器引用 |
 |---|---|---|
 | `PPAP_MODEL_TEXT_MODEL`、`PPAP_MODEL_TEXT_BASE_URL` | ConfigMap `ppap-current` | API、Worker；Deep 沿用其需要的公共配置 |
-| `PPAP_MODEL_TEXT_API_KEY` | Secret `ppap-current-text-model-v1` | API、Worker、Deep Controller（Checker 试跑的文本调用经本地网关）|
+| `PPAP_MODEL_TEXT_API_KEY` | Secret `ppap-current-text-model-v1` | API、Worker、Deep Controller（Suite 程序的文本调用经本地网关）|
 | `PPAP_MODEL_CODING_*` | 当前未设置：Coding 使用文本模型 | 需要 Deep 专用端点时，新建 Secret 存放 `PPAP_MODEL_CODING_API_KEY` 并只在 Deep Controller 显式引用 |
 | `PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_EXTRA_BODY_JSON` | Secret `ppap-current` | API、Worker、Deep 的配置身份 |
 | `PPAP_MODEL_VISION_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller；不向 Deep guest 注入 |
@@ -174,7 +174,7 @@ python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 
 构建使用固定 Codeup 分支 `codex/ppap-current-release`；完整 SHA 通过单次运行参数传入，作业检出该 commit 后再构建。分支后续移动不改变本次源码，流水线允许并发，不按提交创建分支。`yunxiao.yaml` 变更时同步云效定义一次；普通构建只启动和读取自己的运行，不修改共享流水线。构建复用 `docker-bake.hcl` 的四目标图和缓存，核对构建回执与镜像源码身份、digest 后写入 `current.yaml`；若清单在构建期间被改动则保留新内容，不覆盖其他操作的选择。提交这些 pin 后，使用上面的原生部署命令。
 
-构建保持四组件统一源码 SHA，一次 Bake 共享步骤并按依赖调度；不增加按文件选择组件的发布分支。固定系统工具放在应用源码之前，Deep 的 npm 安装及签名检查只依赖锁文件，runner 测试在源码层执行。依赖校验和打包后的 import 检查继续保留。
+构建保持四组件统一源码 SHA，一次 Bake 共享步骤并按依赖调度；不增加按文件选择组件的发布分支。固定系统工具放在应用源码之前，Deep 的 npm 安装只依赖锁文件，runner 测试在源码层执行。依赖校验和打包后的 import 检查继续保留。
 
 云效公共 Runner 使用原生 Docker 驱动和 inline 缓存，导出到现有各组件的 `:build-cache` 镜像；缓存 tag 不能作为部署 pin。该节点实际拒绝 `docker-container` BuildKit 启动（`flow not support`），因此不启用依赖该驱动的 registry `mode=max` 中间阶段缓存，也不为缓存新增构建服务。固定依赖分层继续减少源码变更时的重装。临时 Runner 的本地 uv cache mount 不保证跨运行持久化；实际缓存收益由构建步骤耗时确认。
 
