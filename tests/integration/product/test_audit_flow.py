@@ -46,7 +46,7 @@ class AuditFlowTests(unittest.TestCase):
     def setUp(self):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
-        self.settings = Settings(usage_charge_enabled=False)
+        self.settings = Settings(usage_charge_enabled=False, rule_upload_enabled=True)
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.core.adopt_presence(self.store)

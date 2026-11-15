@@ -120,7 +120,7 @@ class RuleApiTests(unittest.TestCase):
         env = {key: value for key, value in os.environ.items() if not key.startswith(("PPAP_", "FEISHU_"))}
         self.env = patch.dict(os.environ, env, clear=True)
         self.env.start()
-        self.settings = Settings(usage_charge_enabled=False, git_sha="a" * 40)
+        self.settings = Settings(usage_charge_enabled=False, rule_upload_enabled=True, git_sha="a" * 40)
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.ai = FakeRuleAI()
