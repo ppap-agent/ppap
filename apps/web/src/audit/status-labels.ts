@@ -18,5 +18,5 @@ export const reportLabel = {not_eligible: '无正式报告', pending: '报告待
 export const reportShortLabel = {not_eligible: '无正式报告', pending: '待生成', generating: '生成中', ready: '就绪', failed: '生成失败'}
 
 // UAES source-owned document identities are stored as codes; people should only ever read their names.
-const sourceDocumentNames: Record<string, string> = {E01: '初始样品检验报告', E02: '测量比较报告', E03: '包装方案', E04: '实验室资质证书', E05: '材料规范', E06: '样品阶段履历', E07: '生产件样品照片', E08: '订货规范', E09: '试装单', E10: '零件追溯说明', E11: '顾客工程批准', E12: '采购件质量计划'}
+export const sourceDocumentNames: Record<string, string> = {E01: '初始样品检验报告', E02: '测量比较报告', E03: '包装方案', E04: '实验室资质证书', E05: '材料规范', E06: '样品阶段履历', E07: '生产件样品照片', E08: '订货规范', E09: '试装单', E10: '零件追溯说明', E11: '顾客工程批准', E12: '采购件质量计划'}
 export const documentTypeLabel = (type: string) => sourceDocumentNames[type] ?? type

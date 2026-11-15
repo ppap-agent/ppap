@@ -260,10 +260,10 @@ def test_begin_recognition_promotes_and_reopens_the_same_draft_without_resubmiss
         saved_url = page.url
         draft_id = http.draft["id"]
         page.get_by_role("button", name="开始识别", exact=True).click()
-        if lose_task_reply:
-            page.get_by_role("button", name="读取识别结果", exact=True).click()
+        # A lost reply is read once from the same request by the upload page itself; it is never sent again.
         expect(page).to_have_url(re.compile(rf"/tasks/{draft_id}(?:\?|$)"))
-        expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
+        # Recognition runs on the upload page; reopening the address shows the same task.
+        expect(page.get_by_role("status").filter(has_text="正在识别，完成后可修改。")).to_be_visible()
         assert len(http.task_commands) == 1 and http.task_commands[0]["request_id"] != draft_id
         page.goto(saved_url)
         expect(page).to_have_url(re.compile(rf"/tasks/{draft_id}(?:\?|$)"))
@@ -288,7 +288,7 @@ def test_failed_preparation_read_after_back_does_not_leave_the_previous_task_act
         page.goto(saved_url)
         expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
         page.get_by_role("button", name="开始识别", exact=True).click()
-        expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("status").filter(has_text="正在识别，完成后可修改。")).to_be_visible()
         http.fail_draft_read = True
         # Recognition first replaces the prepared address with its readback URL.
         # The earlier prepared history entry reproduces restoration from a Task.
@@ -298,6 +298,7 @@ def test_failed_preparation_read_after_back_does_not_leave_the_previous_task_act
         expect(page).to_have_url(saved_url)
         expect(page.get_by_role("button", name="读取准备记录", exact=True)).to_be_visible()
         expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_have_count(0)
+        expect(page.get_by_role("status").filter(has_text="正在识别，完成后可修改。")).to_have_count(0)
         http.fail_draft_read = False
         page.get_by_role("button", name="读取准备记录", exact=True).click()
         expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
@@ -433,7 +434,7 @@ def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task(
         pick_audit_files(page, {"name": "已接收.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
         expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
         page.get_by_role("button", name="开始识别", exact=True).click()
-        expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("status").filter(has_text="正在识别，完成后可修改。")).to_be_visible()
         original_id = http.task["id"]
         metadata = {"customer": None, "model": None, "part": None, "part_number": None}
         http.task.update(state="pending_confirm")
@@ -569,7 +570,7 @@ def test_v4_reference_choice_reaches_preparation_and_recognition():
         reference.click()
         expect(role).to_contain_text("比对资料")
         page.get_by_role("button", name="开始识别", exact=True).click()
-        expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("status").filter(has_text="正在识别，完成后可修改。")).to_be_visible()
         assert server.task_commands[0]["files"][0]["reference_only"] is True
         assert server.draft["upload_preparation"]["files"][0]["reference_only"] is True
         browser.close()
@@ -627,11 +628,9 @@ def test_photo_purpose_is_explicit_and_lost_reply_reads_same_scope():
         expect(page.get_by_role("checkbox", name="选择 样品.png", exact=True)).to_be_checked()
         expect(page.get_by_text("本轮用途：生产件样品照片；内容仍需人工确认", exact=True)).to_be_visible()
         assert len(http.photo_commands) == 1 and http.photo_reads == [http.photo_commands[0]["request_id"]]
-        page.get_by_role("button", name="上一步", exact=True).click()
         page.get_by_role("combobox", name="审核客户", exact=True).click()
         page.get_by_role("option", name="理想", exact=True).click()
         expect(page.get_by_label("选择审核文件", exact=True)).not_to_have_attribute("accept", re.compile(r"\.png"))
-        page.get_by_role("button", name="查看已选文件", exact=True).click()
         expect(page.get_by_text("普通审核类型不支持图片。", exact=True)).to_be_visible()
         expect(page.get_by_role("checkbox", name="选择 样品.png", exact=True)).to_have_count(0)
         expect(page.get_by_role("button", name="作为生产件样品照片检查", exact=True)).to_have_count(0)

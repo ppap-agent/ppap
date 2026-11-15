@@ -27,17 +27,19 @@ export function TaskRail({currentId, tasks, labels, query, onQuery, filter, onFi
   onNew: () => void
   onCollapse: () => void
 }) {
-  return <nav aria-label="审核任务列表" className="grid content-start gap-3 p-3">
+  return <nav aria-label="审核任务列表" className="flex min-h-0 flex-1 flex-col gap-3 p-3">
     <div className="flex items-center justify-between gap-2 px-1"><h2 className="text-base font-semibold">审核任务</h2><div className="flex items-center gap-1">
       <Select value={filter} onValueChange={onFilter}><SelectTrigger size="sm" aria-label="任务状态"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部任务</SelectItem>{Object.entries(labels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
       <Button variant="quiet" size="xs" onClick={onCollapse}><PanelLeftClose aria-hidden="true"/>收起</Button>
     </div></div>
     <label className="flex items-center gap-2"><span className="sr-only">搜索审核任务</span><Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/><Input placeholder="搜索任务编号 / 车型 / 文件名" value={query} onChange={event => onQuery(event.target.value)}/></label>
     <Button variant="soft" size="lg" onClick={onNew}><Plus aria-hidden="true"/>新建审核任务</Button>
-    <ul className="grid">{tasks.map(task => <TaskRailItem key={task.id} task={task} current={task.id === currentId} labels={labels} onOpen={onOpen}/>)}</ul>
-    {busy && <ReadSkeleton label="正在读取任务…" kind={tasks.length ? 'inline' : 'list'}/>}
-    {!tasks.length && ready && !busy && !error && <div className="grid justify-items-start gap-2 px-1"><p className="text-sm text-muted-foreground">{hasTasks ? '没有符合条件的任务。' : '开始识别后，任务显示在这里。'}</p>{(query || filter !== 'all') && <Button variant="outline" size="sm" onClick={() => {onQuery(''); onFilter('all')}}>清空条件</Button>}</div>}
-    {(hasMore || error) && <div className="grid gap-2 border-t pt-3">{error && <p role="alert" className="text-xs text-destructive">{error}</p>}<Button variant="outline" size="sm" disabled={busy} onClick={onMore}>{busy ? '正在读取任务…' : error ? '重新读取任务列表' : '加载更多任务'}</Button></div>}
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <ul className="grid">{tasks.map(task => <TaskRailItem key={task.id} task={task} current={task.id === currentId} labels={labels} onOpen={onOpen}/>)}</ul>
+      {busy && <ReadSkeleton label="正在读取任务…" kind={tasks.length ? 'inline' : 'list'}/>}
+      {!tasks.length && ready && !busy && !error && <div className="grid justify-items-start gap-2 px-1"><p className="text-sm text-muted-foreground">{hasTasks ? '没有符合条件的任务。' : '开始识别后，任务显示在这里。'}</p>{(query || filter !== 'all') && <Button variant="outline" size="sm" onClick={() => {onQuery(''); onFilter('all')}}>清空条件</Button>}</div>}
+      {(hasMore || error) && <div className="grid gap-2 border-t pt-3">{error && <p role="alert" className="text-xs text-destructive">{error}</p>}<Button variant="outline" size="sm" disabled={busy} onClick={onMore}>{busy ? '正在读取任务…' : error ? '重新读取任务列表' : '加载更多任务'}</Button></div>}
+    </div>
   </nav>
 }
 

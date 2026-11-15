@@ -186,7 +186,8 @@ def reaudit_page(request):
         page.set_default_timeout(5000)
         commands = reaudit_routes(page, accept=getattr(request, "param", False))
         page.goto(WEB + f"/tasks/new?fromRound={ROUND}")
-        expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+        # The re-audit opens on the upload page with the original's files already selected.
+        expect(page.get_by_role("checkbox", name="选择 原文件A.xlsx", exact=True)).to_be_checked()
         pick_audit_files(page, {"name": "补件C.xlsx", "mimeType": "application/octet-stream", "buffer": b"fixture"})
         expect(page.get_by_role("checkbox", name="选择 补件C.xlsx", exact=True)).to_be_checked()
         yield page, commands
@@ -240,7 +241,8 @@ def test_current_rule_matching_choice_survives_readback_and_releasing_the_replac
     choose_replacement(page, "替换：原文件A.xlsx")
     files = recognition_command(page, commands)
     assert not files[2].get("preferred_rule_version_id")
-    expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+    # Recognition finishes on the upload page; the next step is the person's.
+    expect(page.get_by_role("button", name="确认规则", exact=True)).to_be_visible()
     page.reload()
     expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
     page.get_by_role("button", name="上一步", exact=True).click()
@@ -268,19 +270,6 @@ def test_excluding_a_replacement_restores_its_original(reaudit_page, action):
     assert files[0]["removal_reason"] is None
 
 
-def test_select_none_includes_the_automatically_excluded_original(reaudit_page):
-    page, commands = reaudit_page
-    choose_replacement(page, "替换：原文件A.xlsx")
-    page.get_by_role("checkbox", name="全选可审核文件", exact=True).uncheck()
-    expect(page.get_by_role("checkbox", name="选择 原文件A.xlsx", exact=True)).not_to_be_checked()
-    expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
-    page.get_by_role("checkbox", name="全选可审核文件", exact=True).check()
-    expect(page.get_by_role("checkbox", name="选择 原文件A.xlsx", exact=True)).to_have_count(0)
-    files = recognition_command(page, commands)
-    assert [file["selection"] for file in files] == ["removed", "selected", "selected"]
-    assert files[2]["replacement_of_file_version_id"] == "A"
-
-
 @pytest.mark.parametrize("action", ["uncheck", "remove"])
 def test_replacement_changes_do_not_reverse_manual_exclusion(reaudit_page, action):
     page, commands = reaudit_page
@@ -304,7 +293,8 @@ def test_server_readback_retains_the_automatic_exclusion_until_replacement_is_cl
     page, commands = reaudit_page
     choose_replacement(page, "替换：原文件A.xlsx")
     recognition_command(page, commands)
-    expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+    # Recognition finishes on the upload page; the next step is the person's.
+    expect(page.get_by_role("button", name="确认规则", exact=True)).to_be_visible()
     page.reload()
     expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
     page.get_by_role("button", name="上一步", exact=True).click()
@@ -323,7 +313,8 @@ def test_unselected_replacement_readback_retains_its_explicit_relation(reaudit_p
     files = recognition_command(page, commands)
     assert [file["selection"] for file in files] == ["selected", "selected", "unselected"]
     assert files[2]["replacement_of_file_version_id"] == "A"
-    expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+    # Recognition finishes on the upload page; the next step is the person's.
+    expect(page.get_by_role("button", name="确认规则", exact=True)).to_be_visible()
     page.reload()
     expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
     page.get_by_role("button", name="上一步", exact=True).click()

@@ -276,9 +276,14 @@ export function createNativeAuditAdapter(options: {customers: string[]; personal
     },
     customerDefaults: nativeCustomerDefaultAdapter,
     customers: options.customers.map(name => ({value: name, label: name})),
-    // Rule coverage per customer, read from the same lists as the rules page; a failed read only hides the numbers.
+    // Rule coverage per customer, read from the same lists as the rules page. Each read fails on its own, as there:
+    // without the checker catalog the numbers are hidden; the file types still come from the rules that were read.
     coverage: async signal => {
-      const [rules, types, catalog] = await Promise.all([request<components['schemas']['RulesList']>('/rules', 'GET', undefined, signal), request<components['schemas']['RuleTypes']>('/rule-types', 'GET', undefined, signal), request<components['schemas']['SuiteCatalog']>('/suites', 'GET', undefined, signal)])
+      const [rules, types, catalog] = await Promise.all([
+        request<components['schemas']['RulesList']>('/rules', 'GET', undefined, signal).catch(() => ({rules: []})),
+        request<components['schemas']['RuleTypes']>('/rule-types', 'GET', undefined, signal).catch(() => ({types: []})),
+        request<components['schemas']['SuiteCatalog']>('/suites', 'GET', undefined, signal).catch(() => null),
+      ])
       return {rules: rules.rules, types: types.types, catalog}
     },
     drive: {...options.personalDriveUpload ? {rootFolder: () => request<components['schemas']['DriveFile']>('/integrations/feishu/root-folder')} : {}, async list({folderToken, pageToken} = {}) {

@@ -935,7 +935,7 @@ class RuleInteractionTests(unittest.TestCase):
             back_to_templates(page)
             page.get_by_role("searchbox", name="搜索客户", exact=True).fill("待核对")
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
-            expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="新建审核", exact=True)).to_be_visible()
             expect(selected).not_to_be_checked()
             self.assertEqual(page.evaluate("history.state.auditUploadDraft"), upload_identity)
             self.assertEqual(state["parses"], [])
