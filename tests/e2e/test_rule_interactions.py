@@ -479,7 +479,7 @@ class RuleInteractionTests(unittest.TestCase):
                         self.assertIn("reqVersion=" + rule["id"], page.url)
                         back_to_templates(page)
                     else:
-                        expect(page.get_by_role("heading", name="审核规则库" if destination == "list" else "PPAP Audit", exact=True, level=1)).to_be_visible()
+                        expect(page.get_by_role("heading", name="审核规则库" if destination == "list" else "新建审核", exact=True, level=1)).to_be_visible()
                         self.assertEqual(page.url, address)
                     if destination == "audit":
                         open_customer_requirements(page)

@@ -45,7 +45,7 @@ import {reconcileTaskDisplay, unconfirmedDisplayAccess, type DisplayInfo, type D
 import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
 import {ReviewEditorContext} from './review-editor'
 import {reconcileTaskSummary, subjectLabel, summarizeTask, taskIsBehindSummary, type TaskSummary} from './task-summary'
-import {auditAddressChanged, isPreview, readAuditRoute, rulesAddressKeys, surfaceAddress, taskAddress as taskHref, writeAuditAddress} from './routes'
+import {auditAddressChanged, isPreview, readAuditRoute, ruleAddressChanged, rulesAddressKeys, surfaceAddress, taskAddress as taskHref, writeAuditAddress} from './routes'
 import {templateName} from './rule-templates'
 import type {ReadRound} from './workspace'
 import {TaskRecovery, type TaskRecoveryState} from './task-recovery'
@@ -598,8 +598,9 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   useEffect(() => {
     const changed = () => {addressCurrent.current(); setRuleDetailOpen(ruleDetail())}
     const remember = () => {setRuleDetailOpen(ruleDetail()); if (readAuditRoute(new URL(location.href)).surface === 'audit') retainAuditAddress()}
-    changed(); window.addEventListener('popstate', changed); window.addEventListener(auditAddressChanged, remember)
-    return () => {restoreEpoch.current += 1; window.removeEventListener('popstate', changed); window.removeEventListener(auditAddressChanged, remember)}
+    const followRule = () => setRuleDetailOpen(ruleDetail())
+    changed(); window.addEventListener('popstate', changed); window.addEventListener(auditAddressChanged, remember); window.addEventListener(ruleAddressChanged, followRule)
+    return () => {restoreEpoch.current += 1; window.removeEventListener('popstate', changed); window.removeEventListener(auditAddressChanged, remember); window.removeEventListener(ruleAddressChanged, followRule)}
   }, [])
   function receive(picked: File[]) {
     if (!picked.length || !customerReady || confirmationLocked || inputLocked || workbench) return

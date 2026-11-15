@@ -26,7 +26,7 @@ import {canonical, publishBasis, sourceFileLabel} from './product'
 import {message as errorMessage} from './remote'
 import {requirementDirectory, type ReadRequirementVersions, type RequirementDirectoryCollection, type RequirementDirectoryVersion} from './requirement-directory'
 import {displayTime} from '../helpers'
-import {auditAddressChanged, isPreview} from '../audit/routes'
+import {auditAddressChanged, isPreview, ruleAddressChanged} from '../audit/routes'
 import {ProgramStatus} from '../audit/program-status'
 
 const routeSelection = () => ({id: new URLSearchParams(location.search).get('requirement') ?? '', version: new URLSearchParams(location.search).get('reqVersion') ?? ''})
@@ -122,6 +122,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   function select(id: string, version = '', replace = false) {
     setSelection({id, version}); setAttempted(false); setFeedback(null); setEditing(null); setSourceClause(null)
     history[replace ? 'replaceState' : 'pushState'](history.state, '', requirementHref(id, version))
+    window.dispatchEvent(new Event(ruleAddressChanged))
     setContent(routeContent())
     window.scrollTo({top: 0})
   }
