@@ -8,7 +8,7 @@
 
 `pnpm preview:workbench` 在 `http://127.0.0.1:4185/__preview` 启动本地预览台：固定 fixture 场景只用于开发时快速查看，不作为界面验收依据，业务 API 请求被拒绝，不进入生产构建，不连接数据库、对象存储、飞书或 OnlyOffice。真实上传、审核、复核和原件排版使用 isolated-dev 或 remote-dev。
 
-`pnpm typecheck`、`pnpm test`、`pnpm lint` 与 `pnpm build` 是前端合并门槛。页面直接使用 `src/components/ui` 中的 shadcn/ui 源码组件和 Tailwind v4 主题；`src/components/*.tsx` 只放 PPAP 共用的组合（加载提示、折叠、分页等）。ESLint 禁止 `@insforge/*` 与 PostgREST 客户端。跨栈浏览器路径由仓库根目录的 Python Playwright（`tests/e2e`）执行。
+`pnpm typecheck`、`pnpm test`、`pnpm lint` 与 `pnpm build` 是前端合并门槛。页面直接使用 `src/components/ui` 中的 shadcn/ui 源码组件和 Tailwind v4 主题；`src/components/*.tsx` 只放 PPAP 共用的组合（加载提示、折叠、分页等）。跨栈浏览器路径由仓库根目录的 Python Playwright（`tests/e2e`）执行。
 
 ## 原件预览
 
@@ -27,4 +27,4 @@ DocumentServer 仅绑定本机 8082；生产需使用受信任的 DocumentServer
 
 ## Boundary
 
-Web 只调用 Product API。它不能调用 Worker、直接访问 PostgreSQL/PostgREST 或 InsForge Database/Storage SDK、持有对象存储管理凭据、建立第二套业务台账，或嵌入服务端 Feishu / Partner AI Secret。
+Web 只调用 Product API。它不能调用 Worker、直接访问数据库、持有对象存储管理凭据、建立第二套业务台账，或嵌入服务端 Feishu / Partner AI Secret。

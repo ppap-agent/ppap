@@ -77,15 +77,6 @@ def test_partial_official_directory_cannot_be_forced_into_the_active_head():
     assert adoption_block(tenant, verified=False, force_unverified=True) is None
     assert adoption_block(tenant, verified=False, force_unverified=False) == "suite_confirmation_required"
 
-    carrier = {
-        "checker.py": b"from audit.standard_library import check_clause\nRESOURCES = {'carriers': {}, 'methods': {}}\ndef check(context):\n    return check_clause(context, RESOURCES)\n",
-        "rules.json": b'{"rules": [{"id": "U08:1"}], "checker_binding": {"U08:1": "checker:check"}}',
-    }
-    legacy_suite = _resolved(carrier, tenant_id=None, related=("UAES:U07", "UAES:U16"))
-    assert partial_official_directory_slice(legacy_suite) is False
-    assert adoption_block(legacy_suite, verified=True, force_unverified=True) == "suite_version_confirmation_required"
-    assert adoption_block(legacy_suite, verified=False, force_unverified=True) == "suite_version_confirmation_required"
-
     rules = json.loads(files["rules.json"])
     rules["checker_binding"] = {row["id"]: "checker:create_audit" for row in rules["rules"]}
     marked = _resolved({**files, "rules.json": json.dumps(rules).encode()}, tenant_id=None, related=directory.related_suite_keys)

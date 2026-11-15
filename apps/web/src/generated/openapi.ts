@@ -295,23 +295,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/audit-rounds/{round_id}/fact-answers/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Export Fact Answers */
-        get: operations["export_fact_answers_audit_rounds__round_id__fact_answers_export_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/audit-rounds/{round_id}/fact-answers/report": {
         parameters: {
             query?: never;
@@ -727,23 +710,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/drafts/{draft_id}/round": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Drafts Round */
-        get: operations["drafts_round_drafts__draft_id__round_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/enter-current": {
         parameters: {
             query?: never;
@@ -770,40 +736,6 @@ export interface paths {
         };
         /** Enter Legacy */
         get: operations["enter_legacy_enter_legacy_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/file-analyses": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Files Analyze */
-        post: operations["files_analyze_file_analyses_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/file-analyses/{analysis_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Files Analysis Get */
-        get: operations["files_analysis_get_file_analyses__analysis_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -940,23 +872,6 @@ export interface paths {
         };
         /** Files Version Get */
         get: operations["files_version_get_files__file_id__versions__version_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/files/{file_id}/versions/{version_id}/analysis": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Files Latest Analysis */
-        get: operations["files_latest_analysis_files__file_id__versions__version_id__analysis_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1232,23 +1147,6 @@ export interface paths {
         put?: never;
         /** Feishu Round Writeback */
         post: operations["feishu_round_writeback_integrations_feishu_rounds__round_id__writeback_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/integrations/feishu/usage/events/{event_id}/report": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Feishu Usage Report */
-        post: operations["feishu_usage_report_integrations_feishu_usage_events__event_id__report_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1578,23 +1476,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/rounds/{round_id}/resubmit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Rounds Resubmit */
-        post: operations["rounds_resubmit_rounds__round_id__resubmit_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/rounds/{round_id}/review-document-pairs": {
         parameters: {
             query?: never;
@@ -1639,23 +1520,6 @@ export interface paths {
         get?: never;
         /** Rounds Review */
         put: operations["rounds_review_rounds__round_id__reviews_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rule-formalization-generations/{operation_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Generation */
-        get: operations["read_generation_rule_formalization_generations__operation_id__get"];
-        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1732,145 +1596,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/rules/{rule_version_id}/formalization-carry-overs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Carry Over Formalizations */
-        post: operations["carry_over_formalizations_rules__rule_version_id__formalization_carry_overs_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rules/{rule_version_id}/formalization-suite-candidates": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Materialize Formalization */
-        post: operations["materialize_formalization_rules__rule_version_id__formalization_suite_candidates_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rules/{rule_version_id}/formalizations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Formalizations */
-        get: operations["list_formalizations_rules__rule_version_id__formalizations_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rules/{rule_version_id}/formalizations/{clause_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Formalization */
-        get: operations["read_formalization_rules__rule_version_id__formalizations__clause_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rules/{rule_version_id}/formalizations/{clause_id}/confirmations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Confirm Formalization */
-        post: operations["confirm_formalization_rules__rule_version_id__formalizations__clause_id__confirmations_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rules/{rule_version_id}/formalizations/{clause_id}/confirmations/{confirmation_id}/revocation": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Revoke Formalization */
-        post: operations["revoke_formalization_rules__rule_version_id__formalizations__clause_id__confirmations__confirmation_id__revocation_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rules/{rule_version_id}/formalizations/{clause_id}/generations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Start Generation */
-        post: operations["start_generation_rules__rule_version_id__formalizations__clause_id__generations_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rules/{rule_version_id}/formalizations/{clause_id}/rejections": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reject Formalization
-         * @description No model call: the rejection is a new reading the person then confirms.
-         */
-        post: operations["reject_formalization_rules__rule_version_id__formalizations__clause_id__rejections_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/rules/parse": {
         parameters: {
             query?: never;
@@ -1922,40 +1647,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/suite-revisions/{revision_id}/candidates": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Suite Candidate */
-        post: operations["suite_candidate_suite_revisions__revision_id__candidates_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/suite-revisions/{revision_id}/candidates/{operation_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Suite Candidate Receipt */
-        get: operations["suite_candidate_receipt_suite_revisions__revision_id__candidates__operation_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/suites": {
         parameters: {
             query?: never;
@@ -1985,74 +1676,6 @@ export interface paths {
         /** Suites Publish */
         put: operations["suites_publish_suites__suite_key__active_put"];
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/suites/{suite_key}/official-update/seen": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Suite Official Update Seen */
-        post: operations["suite_official_update_seen_suites__suite_key__official_update_seen_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/suites/{suite_key}/upgrades": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Suite Official Upgrade */
-        post: operations["suite_official_upgrade_suites__suite_key__upgrades_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/suites/{suite_key}/upgrades/{operation_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Suite Official Upgrade Receipt */
-        get: operations["suite_official_upgrade_receipt_suites__suite_key__upgrades__operation_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/suites/{suite_key}/variants": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Suite Variant */
-        post: operations["suite_variant_suites__suite_key__variants_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2216,27 +1839,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** Analysis */
-        Analysis: {
-            /** Document Type */
-            document_type: string | null;
-            /** Matched Rule Id */
-            matched_rule_id: string | null;
-            /** Matching Status */
-            matching_status: string;
-            metadata: components["schemas"]["Metadata"];
-            /** Notices */
-            notices: string[];
-        };
-        /** AnalysisJob */
-        AnalysisJob: {
-            /** Id */
-            id: string;
-            /** Result */
-            result?: components["schemas"]["Analysis"] | components["schemas"]["JobError"] | null;
-            /** Status */
-            status: string;
-        };
         /** AuditAcceptance */
         AuditAcceptance: {
             /** Reason */
@@ -3504,18 +3106,6 @@ export interface components {
             /** Title */
             title: string;
         };
-        /** CarryOverCreate */
-        CarryOverCreate: {
-            /** Operation Id */
-            operation_id: string;
-        };
-        /** CarryOverReceipt */
-        CarryOverReceipt: {
-            /** Carried */
-            carried: string[];
-            /** Rule Version Id */
-            rule_version_id: string;
-        };
         /** CaseContext */
         CaseContext: {
             /**
@@ -3541,52 +3131,6 @@ export interface components {
              * @enum {string}
              */
             kind: "added" | "removed" | "changed" | "unchanged";
-        };
-        /** ClauseFormalizationView */
-        ClauseFormalizationView: {
-            /** Candidates */
-            candidates: components["schemas"]["FormalizationCandidate"][];
-            /** Clause Id */
-            clause_id: string;
-            /** Clause Text */
-            clause_text: string;
-            /** Confirmations */
-            confirmations: components["schemas"]["FormalizationConfirmation"][];
-            operation?: components["schemas"]["OperationReceipt"] | null;
-            /** Rule Version Id */
-            rule_version_id: string;
-            /** Source Rule Digest */
-            source_rule_digest: string;
-            /** State */
-            state: string;
-        };
-        /** ConfirmationCreate */
-        ConfirmationCreate: {
-            /** Candidate Id */
-            candidate_id: string;
-            /** Expected Candidate Revision */
-            expected_candidate_revision: number;
-            /** Expected Current Confirmation Id */
-            expected_current_confirmation_id?: string | null;
-            /** Expected Display Digest */
-            expected_display_digest: string;
-            /** Expected Source Digest */
-            expected_source_digest: string;
-            /** Operation Id */
-            operation_id: string;
-        };
-        /** ConfirmationReceipt */
-        ConfirmationReceipt: {
-            /** Candidate Id */
-            candidate_id: string;
-            /** Current */
-            current: boolean;
-            /** Id */
-            id: string;
-            /** Operation Id */
-            operation_id: string;
-        } & {
-            [key: string]: unknown;
         };
         /** Coverage */
         Coverage: {
@@ -3765,20 +3309,6 @@ export interface components {
             /** Type */
             type: string;
         };
-        /** Evidence */
-        Evidence: {
-            /** Sources */
-            sources?: components["schemas"]["EvidenceSource"][];
-        };
-        /** EvidenceSource */
-        EvidenceSource: {
-            /** Excerpt */
-            excerpt?: string;
-            /** Kind */
-            kind: string;
-            /** Locator */
-            locator: string;
-        };
         /** FactAnswer */
         FactAnswer: {
             /**
@@ -3841,36 +3371,6 @@ export interface components {
             /** Value */
             value: boolean | string | null;
         };
-        /** FactAnswersExport */
-        FactAnswersExport: {
-            /** Answers */
-            answers: components["schemas"]["FactAnswer"][];
-            /** Machine Findings */
-            machine_findings: components["schemas"]["FactMachineFinding"][];
-            /**
-             * Model Calls
-             * @constant
-             */
-            model_calls: 0;
-            /** Questions */
-            questions: components["schemas"]["FactQuestionView"][];
-            /** Results */
-            results: components["schemas"]["FactConfirmedResult"][];
-            /** Revision */
-            revision: number;
-            /** Round Id */
-            round_id: string;
-            /**
-             * Schema
-             * @constant
-             */
-            schema: "original-fact-confirmations-v1";
-            /**
-             * Training Eligible
-             * @constant
-             */
-            training_eligible: false;
-        };
         /** FactAnswerSource */
         FactAnswerSource: {
             /** Answered At */
@@ -3918,22 +3418,6 @@ export interface components {
             item_key: string;
             /** Sources */
             sources: components["schemas"]["FactAnswerSource"][];
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "PASS" | "NG" | "NA" | "UNABLE" | "ERR";
-            /** Suggestions */
-            suggestions: string;
-        };
-        /** FactMachineFinding */
-        FactMachineFinding: {
-            /** Item Key */
-            item_key: string;
-            /** Locator */
-            locator: {
-                [key: string]: unknown;
-            } | null;
             /**
              * Status
              * @enum {string}
@@ -4038,7 +3522,6 @@ export interface components {
         FindingLocator: {
             /** Checker Digest */
             checker_digest?: string;
-            evidence?: components["schemas"]["Evidence"] | null;
             /** File Id */
             file_id?: string;
             /** File Version Id */
@@ -4047,8 +3530,6 @@ export interface components {
             filename?: string;
             /** Kind */
             kind?: string;
-            /** Locator */
-            locator?: string;
             /** Rule Item Id */
             rule_item_id?: string;
             semantic?: components["schemas"]["SemanticEvidence"];
@@ -4059,149 +3540,6 @@ export interface components {
              * @enum {string}
              */
             verification_status?: "unverified" | "verified";
-        };
-        /** FormalizationCandidate */
-        FormalizationCandidate: {
-            /** Assumptions */
-            assumptions: unknown[];
-            /** Clif Content */
-            clif_content?: string | null;
-            /** Cnl Renderer Version */
-            cnl_renderer_version: string;
-            /** Cnl Text */
-            cnl_text: string;
-            /**
-             * Completeness
-             * @enum {string}
-             */
-            completeness: "complete" | "partial";
-            /** Created At */
-            created_at: string;
-            /** Display Digest */
-            display_digest: string;
-            /** Formal Digest */
-            formal_digest: string;
-            /** Formal Profile */
-            formal_profile: string;
-            /** Formalization Revision */
-            formalization_revision: number;
-            /** Id */
-            id: string;
-            /** Obligations */
-            obligations: unknown[];
-            /** Owl Content */
-            owl_content: string;
-            /** Parent Candidate Id */
-            parent_candidate_id?: string | null;
-            /**
-             * Rejections
-             * @default []
-             */
-            rejections: components["schemas"]["FormalizationRejection"][];
-            /** Source Rule Digest */
-            source_rule_digest: string;
-            /** Unresolved */
-            unresolved: components["schemas"]["FormalizationQuestion"][];
-            /** Vocabulary */
-            vocabulary: {
-                [key: string]: unknown;
-            };
-        };
-        /** FormalizationChoice */
-        FormalizationChoice: {
-            /** Counterexample */
-            counterexample: string;
-            /** Id */
-            id: string;
-            /** Summary */
-            summary: string;
-        };
-        /** FormalizationConfirmation */
-        FormalizationConfirmation: {
-            /** Candidate Id */
-            candidate_id: string;
-            /** Confirmed At */
-            confirmed_at: string;
-            /** Confirmed By */
-            confirmed_by: string;
-            /** Current */
-            current: boolean;
-            /** Display Digest */
-            display_digest: string;
-            /** Formalization Revision */
-            formalization_revision: number;
-            /** Id */
-            id: string;
-            /** Operation Id */
-            operation_id: string;
-            /** Source Rule Digest */
-            source_rule_digest: string;
-        };
-        /** FormalizationList */
-        FormalizationList: {
-            /**
-             * Carryable
-             * @default []
-             */
-            carryable: string[];
-            /** Clauses */
-            clauses: {
-                [key: string]: unknown;
-            }[];
-            /** Rule Version Id */
-            rule_version_id: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /** FormalizationProblem */
-        FormalizationProblem: {
-            /** Error */
-            error: string;
-        };
-        /** FormalizationQuestion */
-        FormalizationQuestion: {
-            /** Choices */
-            choices?: components["schemas"]["FormalizationChoice"][] | null;
-            /** Id */
-            id: string;
-            /** Reason */
-            reason: string;
-        };
-        /** FormalizationRejection */
-        FormalizationRejection: {
-            /** Id */
-            id: string;
-            /** Parts */
-            parts: string[];
-            /** Reason */
-            reason: string;
-            /**
-             * Scope
-             * @enum {string}
-             */
-            scope: "clause" | "part";
-        };
-        /** GenerationCreate */
-        GenerationCreate: {
-            /** Based On Candidate Id */
-            based_on_candidate_id?: string | null;
-            /** Clarification Answer */
-            clarification_answer?: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Consume Model
-             * @default false
-             */
-            consume_model: boolean;
-            /** Expected Model Revision */
-            expected_model_revision?: string | null;
-            /** Expected Source Digest */
-            expected_source_digest: string;
-            /** Operation Id */
-            operation_id: string;
-            /** User Instruction */
-            user_instruction?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -4223,10 +3561,6 @@ export interface components {
         JobError: {
             /** Error */
             error: string;
-        };
-        /** LatestAnalysis */
-        LatestAnalysis: {
-            analysis: components["schemas"]["AnalysisJob"] | null;
         };
         /** LatestFileValidation */
         LatestFileValidation: {
@@ -4269,28 +3603,6 @@ export interface components {
             id: string;
             /** Title */
             title: string;
-        };
-        /** MaterializeCreate */
-        MaterializeCreate: {
-            /** Operation Id */
-            operation_id: string;
-            /** Suite Revision Id */
-            suite_revision_id: string;
-        };
-        /** MaterializeReceipt */
-        MaterializeReceipt: {
-            /** Files */
-            files: {
-                [key: string]: string;
-            };
-            /** Id */
-            id: string;
-            /** Rule Impact */
-            rule_impact: {
-                [key: string]: unknown;
-            };
-        } & {
-            [key: string]: unknown;
         };
         /** MaterialWire */
         MaterialWire: {
@@ -4341,31 +3653,6 @@ export interface components {
             notice?: string;
             /** Script Url */
             script_url?: string;
-        };
-        /** OperationReceipt */
-        OperationReceipt: {
-            /** Candidate Id */
-            candidate_id?: string | null;
-            /** Clause Id */
-            clause_id: string;
-            /** Created At */
-            created_at?: string | null;
-            /** Failure */
-            failure?: string | null;
-            /** Model Identity */
-            model_identity?: {
-                [key: string]: unknown;
-            } | null;
-            /** Operation Id */
-            operation_id: string;
-            /** Rule Version Id */
-            rule_version_id: string;
-            /** State */
-            state: string;
-            /** Usage */
-            usage?: {
-                [key: string]: unknown;
-            } | null;
         };
         /** PdfBlockLocator */
         PdfBlockLocator: {
@@ -4600,31 +3887,6 @@ export interface components {
             usage_charge_enabled?: boolean;
             /** User Quota */
             user_quota?: number;
-        };
-        /**
-         * RejectionCreate
-         * @description A person's decision that the clause, or parts of it, gives no criterion a program can check.
-         */
-        RejectionCreate: {
-            /** Based On Candidate Id */
-            based_on_candidate_id?: string | null;
-            /** Expected Source Digest */
-            expected_source_digest: string;
-            /** Obligation Ids */
-            obligation_ids?: string[];
-            /** Operation Id */
-            operation_id: string;
-            /** Parts */
-            parts?: string[];
-            /** Reason */
-            reason: string;
-            /**
-             * Scope
-             * @enum {string}
-             */
-            scope: "clause" | "part";
-            /** Unresolved Ids */
-            unresolved_ids?: string[];
         };
         /** RelatedAuditTask */
         RelatedAuditTask: {
@@ -5222,8 +4484,6 @@ export interface components {
             official_rule_impact?: components["schemas"]["RuleImpact"] | null;
             /** Official Update Available */
             official_update_available: boolean;
-            /** Official Update Notice */
-            official_update_notice: boolean;
             /**
              * Origin
              * @enum {string}
@@ -5368,7 +4628,6 @@ export interface components {
             title: string;
             /** Unadopted Related Suite Keys */
             unadopted_related_suite_keys?: string[];
-            upgrade?: components["schemas"]["SuiteUpgradeReceipt"];
             validation: components["schemas"]["SuiteValidation"];
             /** Version */
             version: number;
@@ -5423,17 +4682,6 @@ export interface components {
             error: "suite_unavailable";
             /** Suite Key */
             suite_key: string;
-        };
-        /** SuiteUpgradeReceipt */
-        SuiteUpgradeReceipt: {
-            /** Expected Revision */
-            expected_revision: number;
-            /** Operation Id */
-            operation_id: string;
-            /** Source Revision Id */
-            source_revision_id: string;
-            /** Target Revision Id */
-            target_revision_id: string;
         };
         /** SuiteValidation */
         SuiteValidation: {
@@ -6329,37 +5577,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FactAnswerReceipt"] | null;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    export_fact_answers_audit_rounds__round_id__fact_answers_export_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                round_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FactAnswersExport"];
                 };
             };
             /** @description Validation Error */
@@ -7628,37 +6845,6 @@ export interface operations {
             };
         };
     };
-    drafts_round_drafts__draft_id__round_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                draft_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Round"] | null;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     enter_current_enter_current_get: {
         parameters: {
             query?: {
@@ -7706,79 +6892,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-        };
-    };
-    files_analyze_file_analyses_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** Request Id */
-                    request_id: string;
-                    /** Source File Id */
-                    source_file_id: string;
-                    /** Source File Version Id */
-                    source_file_version_id: string;
-                } & {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AnalysisJob"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    files_analysis_get_file_analyses__analysis_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                analysis_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AnalysisJob"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8078,38 +7191,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FileVersion"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    files_latest_analysis_files__file_id__versions__version_id__analysis_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                file_id: string;
-                version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LatestAnalysis"];
                 };
             };
             /** @description Validation Error */
@@ -8656,37 +7737,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WritebackResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    feishu_usage_report_integrations_feishu_usage_events__event_id__report_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                event_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -9269,58 +8319,6 @@ export interface operations {
             };
         };
     };
-    rounds_resubmit_rounds__round_id__resubmit_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                round_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** Idempotency Key */
-                    idempotency_key?: string;
-                    /** Items */
-                    items?: {
-                        /** File Version Id */
-                        file_version_id: string;
-                        /**
-                         * Role
-                         * @enum {string}
-                         */
-                        role: "target" | "reference";
-                        /** Rule Version Id */
-                        rule_version_id: string | null;
-                    }[];
-                } & {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Round"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     review_document_pair_rounds__round_id__review_document_pairs_put: {
         parameters: {
             query?: never;
@@ -9501,64 +8499,6 @@ export interface operations {
             };
         };
     };
-    read_generation_rule_formalization_generations__operation_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                operation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OperationReceipt"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-        };
-    };
     read_rule_library_rule_library_get: {
         parameters: {
             query?: never;
@@ -9703,550 +8643,6 @@ export interface operations {
             };
         };
     };
-    carry_over_formalizations_rules__rule_version_id__formalization_carry_overs_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rule_version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CarryOverCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CarryOverReceipt"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-        };
-    };
-    materialize_formalization_rules__rule_version_id__formalization_suite_candidates_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rule_version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["MaterializeCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MaterializeReceipt"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-        };
-    };
-    list_formalizations_rules__rule_version_id__formalizations_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rule_version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationList"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-        };
-    };
-    read_formalization_rules__rule_version_id__formalizations__clause_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                clause_id: string;
-                rule_version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClauseFormalizationView"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-        };
-    };
-    confirm_formalization_rules__rule_version_id__formalizations__clause_id__confirmations_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                clause_id: string;
-                rule_version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ConfirmationCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConfirmationReceipt"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-        };
-    };
-    revoke_formalization_rules__rule_version_id__formalizations__clause_id__confirmations__confirmation_id__revocation_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                clause_id: string;
-                confirmation_id: string;
-                rule_version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConfirmationReceipt"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-        };
-    };
-    start_generation_rules__rule_version_id__formalizations__clause_id__generations_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                clause_id: string;
-                rule_version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GenerationCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OperationReceipt"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-        };
-    };
-    reject_formalization_rules__rule_version_id__formalizations__clause_id__rejections_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                clause_id: string;
-                rule_version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RejectionCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationCandidate"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FormalizationProblem"];
-                };
-            };
-        };
-    };
     rules_parse_rules_parse_post: {
         parameters: {
             query?: never;
@@ -10325,80 +8721,6 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                revision_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuiteRevisionDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    suite_candidate_suite_revisions__revision_id__candidates_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                revision_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** Files */
-                    files: {
-                        [key: string]: string;
-                    };
-                    /** Operation Id */
-                    operation_id?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuiteRevisionDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    suite_candidate_receipt_suite_revisions__revision_id__candidates__operation_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                operation_id: string;
                 revision_id: string;
             };
             cookie?: never;
@@ -10507,164 +8829,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SuitePublication"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    suite_official_update_seen_suites__suite_key__official_update_seen_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                suite_key: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** Official Revision Id */
-                    official_revision_id: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuiteActive"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    suite_official_upgrade_suites__suite_key__upgrades_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                suite_key: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** Expected Revision */
-                    expected_revision: number;
-                    /** Operation Id */
-                    operation_id: string;
-                    /** Source Revision Id */
-                    source_revision_id: string;
-                    /** Target Revision Id */
-                    target_revision_id: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuiteRevisionDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    suite_official_upgrade_receipt_suites__suite_key__upgrades__operation_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                operation_id: string;
-                suite_key: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuiteRevisionDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    suite_variant_suites__suite_key__variants_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                suite_key: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** Base Revision Id */
-                    base_revision_id: string;
-                    /** Files */
-                    files: {
-                        [key: string]: string;
-                    };
-                    /** Operation Id */
-                    operation_id?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuiteRevisionDetail"];
                 };
             };
             /** @description Validation Error */

@@ -1,7 +1,6 @@
 """Deterministic browser/API interleavings; no live backend or model calls.
 
-The retained Draft upload/receipt consumer is exercised at /dev. Customer home
-and Task navigation use PPAP Audit and its task rail; these are separate contracts.
+Customer home and Task navigation use PPAP Audit and its task rail; these are separate contracts.
 """
 
 import os
@@ -190,7 +189,7 @@ class RuleInteractionTests(unittest.TestCase):
                 "const realFetch = window.fetch.bind(window);window.fetch = (url, init) => realFetch(url, /\\/(rules|files)\\//.test(String(url)) ? {...init, signal: undefined} : init)"
             )
             page.route("**/api/rules/rule-b1", lambda route: held.append(route))
-            page.goto(WEB + "/requirements?rulesArea=requirements")
+            page.goto(WEB + "/requirements")
             find_rule_template(page, "规则 B")
             self.assertEqual(reads.count("/rule-library"), 1)
             self.assertFalse(any(path.startswith(("/rules/", "/files/")) for path in reads))
@@ -379,7 +378,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.native_rule_routes(page, state)
             held = []
             page.route("**/api/files/*/versions/*/blob", lambda route: held.append(route))
-            page.goto(WEB + "/requirements?rulesArea=requirements")
+            page.goto(WEB + "/requirements")
             with page.expect_request(lambda request: request.method == "PUT" and request.url.endswith("/blob")):
                 page.get_by_label("上传共用规则文件").set_input_files({"name": "迟到规则.json", "mimeType": "application/json", "buffer": b"{}"})
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
@@ -616,7 +615,7 @@ class RuleInteractionTests(unittest.TestCase):
                     page = browser.new_page()
                     state = self.requirement_routes(page)
                     self.native_rule_routes(page, state)
-                    page.goto(WEB + "/requirements?rulesArea=requirements")
+                    page.goto(WEB + "/requirements")
                     expect(page.get_by_role("heading", name="审核规则库", exact=True, level=1)).to_be_visible()
                     page.get_by_role("button", name="alice，账号菜单", exact=True).click()
                     page.get_by_role("menuitem", name="本机草稿", exact=True).click()
@@ -740,7 +739,7 @@ class RuleInteractionTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             state = self.requirement_routes(page)
             self.native_rule_routes(page, state)
-            page.goto(WEB + "/requirements?rulesArea=requirements")
+            page.goto(WEB + "/requirements")
             expect(page.get_by_role("heading", name="审核规则库", exact=True, level=1)).to_be_visible()
             page.get_by_label("上传共用规则文件").set_input_files({"name": "草稿规则.json", "mimeType": "application/json", "buffer": b"{}"})
             page.get_by_label("规则名称", exact=True).fill("未发布的规则草稿")
@@ -1238,7 +1237,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/files/*/versions/*/blob", receive_blob)
             page.route("**/api/rules/parse", parse)
             page.route("**/api/rules/parse/*", read)
-            page.goto(WEB + "/requirements?rulesArea=requirements")
+            page.goto(WEB + "/requirements")
             page.get_by_label("上传共用规则文件").set_input_files({"name": "待核对要求.json", "mimeType": "application/json", "buffer": b"{}"})
             page.get_by_label("适用资料类型").click()
             page.get_by_role("option", name="控制计划", exact=True).click()
@@ -1483,7 +1482,7 @@ class RuleInteractionTests(unittest.TestCase):
         return state
 
     def open_requirement(self, page, *, document_type="控制计划"):
-        page.goto(WEB + "/requirements?rulesArea=requirements")
+        page.goto(WEB + "/requirements")
         page.get_by_label("上传共用规则文件").set_input_files({"name": "A.json", "mimeType": "application/json", "buffer": b"{}"})
         page.get_by_label("适用资料类型").click()
         page.get_by_role("option", name=document_type, exact=True).click()

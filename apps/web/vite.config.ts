@@ -62,9 +62,6 @@ export default defineConfig({
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
           const url = new URL(req.url || '/', 'http://127.0.0.1')
-          if (!preview && (/^\/(workbench|files|requirements|templates|usage)\/?$/.test(url.pathname) || /^\/tasks\/[^/]+\/?$/.test(url.pathname) || ['/audit', '/audit/', '/__audit-native'].includes(url.pathname))) {
-            req.url = '/audit.html' + url.search
-          }
           if (url.pathname !== '/runtime-config.json') {
             next()
             return
@@ -82,7 +79,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         app: path.resolve(__dirname, 'index.html'),
-        audit: path.resolve(__dirname, 'audit.html'),
         addon: path.resolve(__dirname, 'addon.html'),
       },
     },

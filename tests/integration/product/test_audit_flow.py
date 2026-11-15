@@ -405,7 +405,7 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(updated.json()["findings"][0]["status"], machine)
         self.assertEqual(updated.json()["findings"][0]["review"]["judgment"], "通过")
 
-    def test_resubmit_keeps_old_round(self):
+    def test_reaudit_keeps_old_round(self):
         self._login("alice")
         first = self._upload("report.xlsx", b"version-one")
         draft = self.client.post("/drafts").json()["id"]
@@ -426,14 +426,13 @@ class AuditFlowTests(unittest.TestCase):
             },
         )
         second = self._upload("report.xlsx", b"version-two", file_id=first["file_id"])
-        created = self.client.post(
-            f"/rounds/{old_id}/resubmit",
-            json={
-                "idempotency_key": "new",
-                "items": [{"file_version_id": second["id"], "role": "target", "rule_version_id": RULE_A}],
-            },
+        successor = self.client.post("/drafts", json={"predecessor_id": old_id}).json()["id"]
+        self.client.put(
+            f"/drafts/{successor}",
+            json={"items": [{"file_version_id": second["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
-        self.assertEqual(created.status_code, 201)
+        created = self.client.post(f"/drafts/{successor}/accept", json={"idempotency_key": "new"})
+        self.assertEqual(created.status_code, 201, created.text)
         new_id = created.json()["id"]
         self.assertNotEqual(new_id, old_id)
         self._finish_worker()

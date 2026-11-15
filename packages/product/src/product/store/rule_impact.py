@@ -14,12 +14,8 @@ def suite_rule_body(suite):
 
 
 def semantic_rule_packet(body: dict | None) -> dict:
-    """Clause text plus confirmed formalizations. Text-only history stays the old packet."""
-    source = body or {}
-    payload = {"rules": source.get("rules")}
-    if source.get("formalizations"):
-        payload["formalizations"] = source["formalizations"]
-    return payload
+    """The clause text that decides a rule's meaning."""
+    return {"rules": (body or {}).get("rules")}
 
 
 def rule_impact(before, after) -> dict:

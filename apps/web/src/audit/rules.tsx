@@ -80,13 +80,6 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
     return owner && {label: owner.label, open: () => writeAuditAddress(owner.target.kind === 'system' ? rulesAddress({systemRule: owner.target.id}) : rulesAddress({requirement: owner.target.id}), 'push')}
   }
   const program = active && suite ? <ProgramStatus key={suite.suite_key} suiteKey={suite.suite_key} related={related} onChanged={() => setRevision(value => value + 1)}/> : undefined
-  // Links from elsewhere (an audit's repair) name a program; its rule page is where it is adopted.
-  useEffect(() => {
-    const key = new URL(location.href).searchParams.get('ruleSuite')
-    if (!key || read.loading) return
-    const owner = templates.flatMap(item => item.rows).find(row => row.automation.suiteKey === key)
-    writeAuditAddress(owner ? owner.target.kind === 'system' ? rulesAddress({systemRule: owner.target.id}) : rulesAddress({requirement: owner.target.id}) : rulesAddress({}), 'replace')
-  })
   const listView = route.systemRule
     ? <SystemRuleDetail ruleId={route.systemRule} template={systemTemplate} row={systemRow} program={program}/>
     : <TemplateBrowser templates={templates} selectedKey={route.template} loading={read.loading} failed={Boolean(read.error)}/>

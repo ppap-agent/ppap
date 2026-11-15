@@ -184,8 +184,7 @@ def _preview_asset_path(url, origin):
 class _PreviewAssetTimings:
     """Bounded same-origin asset progress; never capture request data or queries."""
 
-    def __init__(self, clock=monotonic):
-        self.clock = clock
+    def __init__(self):
         self.pending = {}
         self.slow = deque(maxlen=12)
         self.started = 0
@@ -194,19 +193,19 @@ class _PreviewAssetTimings:
     def start(self, request, path):
         self.started += 1
         if len(self.pending) < 128:
-            self.pending[request] = (path, self.clock())
+            self.pending[request] = (path, monotonic())
 
     def finish(self, request):
         self.finished += 1
         entry = self.pending.pop(request, None)
         if entry is not None:
             path, started = entry
-            elapsed = round((self.clock() - started) * 1000)
+            elapsed = round((monotonic() - started) * 1000)
             if elapsed >= 1000:
                 self.slow.append({"asset": path, "elapsed_ms": elapsed})
 
     def snapshot(self):
-        now = self.clock()
+        now = monotonic()
         return {
             "started": self.started,
             "finished": self.finished,
@@ -216,59 +215,56 @@ class _PreviewAssetTimings:
         }
 
 
-@pytest.fixture
-def preview_asset_timing_factory():
-    return _PreviewAssetTimings
-
-
-@pytest.fixture
-def preview_asset_path():
-    return _preview_asset_path
-
-
 def _browser_error_type(error):
     name = getattr(error, "name", None)
     allowed = ("Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError", "AggregateError", "InternalError")
     return name if type(name) is str and name in allowed else "unknown"
 
 
+def _observe_page(page, origin):
+    """Observe real browser loads without changing requests or assertion budgets.
+
+    Only same-origin asset paths, status codes, Chromium error codes and
+    JavaScript error class names are kept; URLs, queries and messages are not.
+    """
+    events, first_failure, timings = deque(maxlen=12), {}, _PreviewAssetTimings()
+
+    def asset_path(url):
+        return _preview_asset_path(url, origin)
+
+    def record(entry):
+        if not first_failure:
+            first_failure.update(entry)
+        events.append(entry)
+
+    def failed(event):
+        if path := asset_path(event.url):
+            timings.finish(event)
+            # Chromium failure messages can contain URLs; keep only the error code.
+            code = re.match(r"net::ERR_[A-Z0-9_]+\b", event.failure or "")
+            record({"failed_asset": path, "error_code": code.group() if code else "unknown"})
+
+    def response(event):
+        if event.status >= 400 and (path := asset_path(event.url)):
+            record({"asset": path, "status": event.status})
+
+    def page_error(error):
+        stack = (getattr(error, "stack", "") or "").split("\n", 1)[-1]
+        scripts = [path for url in re.findall(r"https?://[^\s)]+", stack) if (path := asset_path(url))][:3]
+        events.append({"error_type": _browser_error_type(error), "scripts": scripts})
+
+    page.on("request", lambda event: timings.start(event, path) if (path := asset_path(event.url)) else None)
+    page.on("requestfinished", lambda event: timings.finish(event) if asset_path(event.url) else None)
+    page.on("requestfailed", failed)
+    page.on("response", response)
+    page.on("pageerror", page_error)
+    page.on("console", lambda event: events.append({"console_error": True}) if event.type == "error" else None)
+    return lambda: {"first_asset_failure": dict(first_failure), "events": list(events), "assets": timings.snapshot()}
+
+
 @pytest.fixture
 def observe_browser_assets():
-    """Observe real browser loads without changing requests or assertion budgets."""
-
-    def observe(page, web):
-        origin = urlsplit(web)
-        events, timings = deque(maxlen=12), _PreviewAssetTimings()
-        first_failure = {}
-
-        def asset_path(url):
-            return _preview_asset_path(url, origin)
-
-        def failed(event):
-            if path := asset_path(event.url):
-                code = re.match(r"net::ERR_[A-Z0-9_]+\b", event.failure or "")
-                record = {"failed_asset": path, "error_code": code.group() if code else "unknown"}
-                if not first_failure:
-                    first_failure.update(record)
-                events.append(record)
-
-        def response(event):
-            if event.status >= 400 and (path := asset_path(event.url)):
-                record = {"asset": path, "status": event.status}
-                if not first_failure:
-                    first_failure.update(record)
-                events.append(record)
-
-        page.on("request", lambda event: timings.start(event, path) if (path := asset_path(event.url)) else None)
-        page.on("requestfinished", lambda event: timings.finish(event) if asset_path(event.url) else None)
-        page.on("requestfailed", lambda event: timings.finish(event) if asset_path(event.url) else None)
-        page.on("requestfailed", failed)
-        page.on("response", response)
-        page.on("pageerror", lambda error: events.append({"error_type": _browser_error_type(error)}))
-        page.on("console", lambda event: events.append({"console_error": True}) if event.type == "error" else None)
-        return lambda: {"first_asset_failure": dict(first_failure), "events": list(events), "assets": timings.snapshot()}
-
-    return observe
+    return lambda page, web: _observe_page(page, urlsplit(web))
 
 
 @pytest.fixture(autouse=True)
@@ -282,49 +278,10 @@ def preview_failure_diagnostics(request, monkeypatch):
     origin = urlsplit(preview)
     pages = deque(maxlen=3)
 
-    def asset_path(url):
-        return _preview_asset_path(url, origin)
-
     def observe(create):
         def new_page(*args, **kwargs):
             page = create(*args, **kwargs)
-            events = deque(maxlen=12)
-            first_asset_failure = {}
-            timings = _PreviewAssetTimings()
-
-            def failed_asset(event):
-                if path := asset_path(event.url):
-                    # Chromium failure messages can contain URLs. Keep only its
-                    # error code and the already-filtered same-origin path.
-                    code = re.match(r"net::ERR_[A-Z0-9_]+\b", event.failure or "")
-                    failure = {"request_failed": path, "error_code": code.group() if code else "unknown"}
-                    if not first_asset_failure:
-                        first_asset_failure.update(failure)
-                    events.append(failure)
-
-            def failed_response(event):
-                if event.status >= 400 and (path := asset_path(event.url)):
-                    failure = {"status": event.status, "asset": path}
-                    if not first_asset_failure:
-                        first_asset_failure.update(failure)
-                    events.append(failure)
-
-            page.on(
-                "pageerror",
-                lambda error: events.append(
-                    {
-                        "error_type": _browser_error_type(error),
-                        "scripts": [path for url in re.findall(r"https?://[^\s)]+", (getattr(error, "stack", "") or "").split("\n", 1)[-1]) if (path := asset_path(url))][:3],
-                    }
-                ),
-            )
-            page.on("console", lambda event: events.append({"console_error": True}) if event.type == "error" else None)
-            page.on("request", lambda event: timings.start(event, path) if (path := asset_path(event.url)) else None)
-            page.on("requestfinished", lambda event: timings.finish(event) if asset_path(event.url) else None)
-            page.on("requestfailed", lambda event: timings.finish(event) if asset_path(event.url) else None)
-            page.on("requestfailed", failed_asset)
-            page.on("response", failed_response)
-            pages.append((page, events, first_asset_failure, timings))
+            pages.append((page, _observe_page(page, origin)))
             return page
 
         return new_page
@@ -335,8 +292,8 @@ def preview_failure_diagnostics(request, monkeypatch):
             try:
                 yield playwright
             except BaseException:
-                for page, events, first_asset_failure, timings in pages:
-                    result = {"first_asset_failure": first_asset_failure, "events": list(events), "assets": timings.snapshot(), "closed": page.is_closed()}
+                for page, snapshot in pages:
+                    result = {**snapshot(), "closed": page.is_closed()}
                     if not page.is_closed():
                         try:
                             result["document"] = page.locator("body").evaluate(
@@ -347,8 +304,6 @@ def preview_failure_diagnostics(request, monkeypatch):
                                     bodyTextLength: document.body?.innerText.length,
                                     headings: document.querySelectorAll('h1,h2').length,
                                     alerts: document.querySelectorAll('[role=alert]').length,
-                                    sampleButtonPresent: [...document.querySelectorAll('button')].some(node => node.textContent.trim() === '使用三类文件示例'),
-                                    overviewPresent: Boolean(document.querySelector('[role=region][aria-label="全部文件概览"]')),
                                     bodyAriaHidden: document.body?.getAttribute('aria-hidden')
                                 })""",
                                 timeout=1000,

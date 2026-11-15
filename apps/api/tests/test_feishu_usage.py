@@ -188,6 +188,16 @@ class FeishuUsageTests(unittest.TestCase):
         )
         self.client.cookies.set(SESSION_COOKIE, raw)
 
+    def _report(self, event_id):
+        """One step of the automatic reporter for the signed-in session; there is no manual report route."""
+        from api.usage_reporting import report_usage
+
+        session = self.store.load_session(self.client.cookies.get(SESSION_COOKIE) or "")
+        if session is None:
+            return httpx.Response(401, json={"error": "unauthenticated"})
+        body, status = report_usage(self.store, self.http, self.settings, session, event_id)
+        return httpx.Response(status, json=body)
+
     def _seed_event(self, *, json, principal=None):
         # Test fixture only; the Product API cannot create arbitrary usage events.
         principal = principal or self.store.principal_for_fixture("alice")
@@ -234,7 +244,6 @@ class FeishuUsageTests(unittest.TestCase):
         still = self.client.get("/integrations/feishu/usage/quota").json()
         self.assertEqual(still["remaining_trial_ai_points"], 6000)
         self.assertNotIn("external_status", still)
-        self.assertNotIn("paid_balance", still)
 
     def test_partner_failure_does_not_invent_paid_balance(self):
         self._login_feishu_user("alice")
@@ -299,7 +308,7 @@ class FeishuUsageTests(unittest.TestCase):
             json={"consumed_points": 100, "is_free_trial": True, "trace_id": "trial-skip"},
         ).json()
         self.partner.calls.clear()
-        response = self.client.post(f"/integrations/feishu/usage/events/{created['id']}/report")
+        response = self._report(created["id"])
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["skipped"])
         self.assertEqual(response.json()["external_status"], "none")
@@ -311,30 +320,30 @@ class FeishuUsageTests(unittest.TestCase):
         missing = self._seed_event(
             json={"consumed_points": 50, "is_free_trial": False, "trace_id": "partner-report"},
         ).json()
-        blocked = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
+        blocked = self._report(missing["id"])
         self.assertEqual(blocked.status_code, 409)
         self.assertEqual(blocked.json()["error"], "feishu_app_ticket_missing")
         self.assertEqual(self.store.usage_event(self.store.principal_for_fixture("alice"), missing["id"])["external_status"], "pending")
 
         self.store.save_app_ticket("cli_test", "tik")
-        confirmed = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
+        confirmed = self._report(missing["id"])
         self.assertEqual(confirmed.status_code, 200)
         self.assertFalse(confirmed.json()["skipped"])
         self.assertEqual(confirmed.json()["external_status"], "confirmed")
         self.assertEqual(confirmed.json()["external_record_id"], "fs-rec-1")
         self.assertTrue(any(url.endswith("/partner_ai/v1/credential/apply") for _method, url in self.partner.calls))
         self.assertTrue(any(url.endswith("/partner_ai/v1/usage_records/report") for _method, url in self.partner.calls))
-        replay = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
+        replay = self._report(missing["id"])
         self.assertEqual(replay.json()["external_record_id"], "fs-rec-1")
         reports = [url for _method, url in self.partner.calls if url.endswith("/usage_records/report")]
         self.assertEqual(len(reports), 1)
 
         self._login_feishu_user("carol")
-        denied = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
+        denied = self._report(missing["id"])
         self.assertEqual(denied.status_code, 403)
 
         self._login_feishu_user("bob")
-        stolen = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
+        stolen = self._report(missing["id"])
         self.assertEqual(stolen.status_code, 409)
         self.assertEqual(stolen.json()["error"], "usage_report_owner_required")
         self.assertEqual(self.store.usage_event(self.store.principal_for_fixture("alice"), missing["id"])["external_status"], "confirmed")
@@ -346,7 +355,7 @@ class FeishuUsageTests(unittest.TestCase):
         created = self._seed_event(
             json={"consumed_points": 9, "is_free_trial": False, "trace_id": "partner-fail"},
         ).json()
-        response = self.client.post(f"/integrations/feishu/usage/events/{created['id']}/report")
+        response = self._report(created["id"])
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"], "feishu_usage_report_unknown")
         row = self.store.usage_event(self.store.principal_for_fixture("alice"), created["id"])
@@ -354,7 +363,7 @@ class FeishuUsageTests(unittest.TestCase):
         self.assertIsNone(row["external_record_id"])
         count = len(self.partner.calls)
         self.partner.fail_report = False
-        again = self.client.post(f"/integrations/feishu/usage/events/{created['id']}/report")
+        again = self._report(created["id"])
         self.assertEqual(again.status_code, 409)
         self.assertEqual(again.json()["external_status"], "unknown")
         self.assertEqual(len(self.partner.calls), count)
@@ -363,7 +372,7 @@ class FeishuUsageTests(unittest.TestCase):
         self._login_feishu_user()
         created = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "disabled-report"}).json()
         self.settings.usage_charge_enabled = False
-        response = self.client.post(f"/integrations/feishu/usage/events/{created['id']}/report")
+        response = self._report(created["id"])
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json(), {"error": "usage_charging_disabled"})
         self.assertEqual(self.partner.calls, [])

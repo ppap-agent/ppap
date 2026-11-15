@@ -6,9 +6,16 @@ from typing import Dict, Iterable, List
 from uuid import NAMESPACE_DNS, uuid5
 
 from audit.contracts import AuditInput, GroupContextInput
-from audit.kinds import PpapDocumentType, cross_file_doc_type_name
+from audit.kinds import PpapDocumentType
 
 from corpus_contracts.oracle import load_oracle
+
+
+def _cross_file_doc_type_name(filename: str, content: str) -> str | None:
+    """Standard cross-file type inferred from the file's signals; None when they do not decide one."""
+    inferred = PpapDocumentType.infer_from_signals(filename=filename, content=content, minimum_score=8, min_margin=4)
+    return None if inferred is PpapDocumentType.UNKNOWN else inferred.get_type_name()
+
 
 POC_SEQ_TO_DOC_TYPE = {
     "1": PpapDocumentType.DIMENSION_MEASUREMENT_REPORT,
@@ -67,7 +74,7 @@ def build_group_context_for_bundle(bundle_cases: List[PocCase]) -> GroupContextI
             project_id="default",
         )
         by_audit_id[audit_file.audit_id] = audit_file
-        type_name = cross_file_doc_type_name(filename=case.file_name, content=audit_file.content or "")
+        type_name = _cross_file_doc_type_name(case.file_name, audit_file.content or "")
         if type_name is None:
             continue
         by_doc_type.setdefault(type_name, []).append(audit_file)

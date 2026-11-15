@@ -342,7 +342,8 @@ class TaskRoundViewTests(unittest.TestCase):
                 self.assertEqual(audit["counts"]["pass_count" if status == "PASS" else "ng_count"], 1)
                 self.assertEqual(audit["counts"]["unknown_count"], 0)
                 self.assertFalse(audit["checks"][0]["evidence_verified"])
-                self.assertFalse(audit["checks"][0]["evidence_verified"])
+                self.assertEqual(audit["checks"][0]["evidence"], [])
+                self.assertIn("结果缺少可核对的证据记录", audit["checks"][0]["scope_notice"])
                 self.assertTrue(report_eligible(audit["checks"], False, audit["unmapped_findings"]))
                 self.assertEqual(round, before)
 
@@ -604,7 +605,7 @@ class TaskRoundViewTests(unittest.TestCase):
         self.assertFalse(audit["checks"][0]["evidence_verified"])
         self.assertEqual(audit["report"]["state"], "not_eligible")
 
-    def test_findings_keep_per_file_identity_and_human_review_without_treating_legacy_locator_as_verified_evidence(self):
+    def test_findings_keep_per_file_identity_and_human_review_without_semantic_evidence(self):
         task, round = task_input(), frozen_round()
         second = deepcopy(round["inputs"][0])
         second.update(file_version_id="version-b", rule={**second["rule"], "id": "rule-b"})
@@ -614,7 +615,7 @@ class TaskRoundViewTests(unittest.TestCase):
         round["coverage"]["rule_items"] = [{"file_version_id": "version-b", "id": "clause-a", "coverage": "mapped", "item_key": "original-b"}]
         round["findings"] = [
             {"item_key": "original-b", "status": "NG", "locator": None, "review": None},
-            {"item_key": "original-a", "status": "PASS", "locator": {"file_version_id": "version-a", "rule_item_id": "clause-a", "locator": "Sheet1!A2"}, "review": saved_review},
+            {"item_key": "original-a", "status": "PASS", "locator": {"file_version_id": "version-a", "rule_item_id": "clause-a"}, "review": saved_review},
         ]
         before = deepcopy(round)
         result = task_round_view(task, round)
@@ -626,9 +627,8 @@ class TaskRoundViewTests(unittest.TestCase):
         self.assertEqual((first["conclusion"], second["conclusion"]), ("PASS", "NG"))
         self.assertEqual((first["counts"]["pass_count"], first["counts"]["unknown_count"]), (1, 0))
         self.assertEqual((second["counts"]["ng_count"], second["counts"]["unknown_count"]), (1, 0))
-        self.assertEqual(first["checks"][0]["evidence"][0]["excerpt"], "")
-        self.assertIn("Sheet1!A2", first["checks"][0]["evidence"][0]["location_gap"])
-        self.assertFalse(first["checks"][0]["evidence_verified"])
+        self.assertEqual((first["checks"][0]["evidence"], second["checks"][0]["evidence"]), ([], []))
+        self.assertIn("结果缺少可核对的证据记录", first["checks"][0]["scope_notice"])
         self.assertFalse(first["checks"][0]["evidence_verified"])
         self.assertEqual(round, before)
 
@@ -714,37 +714,3 @@ class TaskRoundViewTests(unittest.TestCase):
         self.assertEqual((view["state"], view["completion_reason"], view["progress"]), ("reviewing", None, {"completed": 1, "total": 2}))
         self.assertEqual(view["files"][2]["removal_reason"], "未匹配")
         self.assertIsNone(view["files"][1].get("audit"))
-
-
-class V4CheckerEvidenceTests(unittest.TestCase):
-    def test_v4_preserves_both_originals_and_locations_without_claiming_trace_verification(self):
-        import json
-
-        round = verified_round()
-        round["inputs"][0]["rule"]["body"]["rule_profile"] = "v4"
-        round["inputs"].append({"role": "reference", "file_version_id": "version-b", "rule": None})
-        outer = round["findings"][0]["locator"]
-        outer.pop("semantic")
-        outer["evidence"] = {
-            "schema_version": "1",
-            "required": "structure",
-            "used": "structure",
-            "source_format": "xlsx",
-            "prepared_format": "xlsx",
-            "sources": [
-                {"kind": "structure", "locator": json.dumps({"file_version_id": version, "kind": "xlsx_cell", "sheet": "参数", "cell": cell}), "excerpt": excerpt}
-                for version, cell, excerpt in [("version-a", "B2", "检验"), ("version-b", "C3", "包装")]
-            ],
-        }
-        from product.store.task_view import file_round_audit
-
-        check = file_round_audit(round, round["inputs"][0])["checks"][0]
-        assert {item["file_version_id"] for item in check["evidence"]} == {"version-a", "version-b"}
-        assert all(item["locator"]["kind"] == "xlsx_cell" for item in check["evidence"])
-        assert check["evidence_verified"] is False
-        outer["evidence"]["sources"].append(
-            {"kind": "structure", "locator": json.dumps({"file_version_id": "foreign", "kind": "xlsx_cell", "sheet": "secret", "cell": "A1"}), "excerpt": "must not be exposed"}
-        )
-        check = file_round_audit(round, round["inputs"][0])["checks"][0]
-        assert "must not be exposed" not in json.dumps(check["evidence"])
-        assert "不在本轮冻结" in check["scope_notice"]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 
 
@@ -41,81 +40,18 @@ def _clause_result(round: dict, version_id: str, clause_id: str) -> tuple[dict |
     return coverage[0] if coverage else None, findings[0] if findings else None, None
 
 
-def _legacy_evidence(finding: dict | None, version_id: str) -> list[dict]:
-    if not finding:
-        return []
-    locator = finding.get("locator") or {}
-    location = locator.get("locator")
-    return [
-        {
-            "file_version_id": version_id,
-            "locator": None,
-            "excerpt": "",
-            "location_gap": f"原定位：{location}。需核对原件中的位置与内容。" if location else "未提供可验证的原件定位与摘录。",
-            "rendition": "original",
-            "derived_file_version_id": None,
-        }
-    ]
-
-
 def _typed_locator(locator: object) -> dict | None:
     from audit.models import public_locator
 
     return public_locator(locator)
 
 
-def _checker_evidence(round: dict, finding: dict | None, version_id: str, rule_id: str, clause_id: str):
-    """Expose actual V4 Checker reads without claiming a verified semantic trace."""
-    from audit.contracts import AuditEvidence
-    from pydantic import ValidationError
-
-    outer = (finding or {}).get("locator") or {}
-    if outer.get("file_version_id") != version_id or str(outer.get("rule_item_id")) != clause_id:
-        return [], None, "检查器证据与本条冻结文件或条款不一致。"
-    frozen = next((item for item in round["inputs"] if item["file_version_id"] == version_id and (item.get("rule") or {}).get("id") == rule_id), None)
-    if not frozen or frozen["rule"]["body"].get("rule_profile") != "v4":
-        return _legacy_evidence(finding, version_id), None, None
-    raw = outer.get("evidence")
-    if not isinstance(raw, dict):
-        return _legacy_evidence(finding, version_id), None, None
-    try:
-        observed = AuditEvidence.model_validate(raw)
-    except ValidationError:
-        return [], None, "检查器原件证据格式无效，需核对原始记录。"
-    allowed = {item["file_version_id"] for item in round["inputs"]}
-    evidence, notice = [], None
-    for source in observed.sources:
-        try:
-            location = json.loads(source.locator)
-        except (TypeError, ValueError):
-            notice = "有检查器证据无法解析，未作为可定位原件证据。"
-            continue
-        if not isinstance(location, dict):
-            notice = "有检查器证据无法解析，未作为可定位原件证据。"
-            continue
-        version = location.pop("file_version_id", version_id)
-        if not isinstance(version, str) or version not in allowed:
-            notice = "有来源不在本轮冻结文件中，未作为本条证据。"
-            continue
-        typed = _typed_locator(location)
-        derived = observed.source_format == "pdf" and isinstance(typed, dict) and str(typed.get("kind", "")).startswith("xlsx_")
-        evidence.append(
-            {
-                "file_version_id": version,
-                "locator": None if derived else typed,
-                "excerpt": source.excerpt,
-                "location_gap": "派生表格位置不能替代原PDF页定位。" if derived else None if typed else "未提供可验证的具体位置，可核对本轮原件。",
-                "rendition": "derived" if derived else "original",
-                "derived_file_version_id": None,
-            }
-        )
-    return evidence, None, notice
-
-
 def _evidence(round: dict, finding: dict | None, version_id: str, rule_id: str, clause_id: str) -> tuple[list[dict], dict | None, str | None]:
-    semantic = ((finding or {}).get("locator") or {}).get("semantic")
+    if not finding:
+        return [], None, None
+    semantic = (finding.get("locator") or {}).get("semantic")
     if not isinstance(semantic, dict):
-        return _checker_evidence(round, finding, version_id, rule_id, clause_id)
+        return [], None, "结果缺少可核对的证据记录，需核对原始审核记录。"
     if semantic.get("rule_version_id") != rule_id or str(semantic.get("clause_id")) != clause_id:
         return [], None, "来源证据与本条冻结规则不一致，请核对原始审核记录。"
     scope = semantic.get("scope")

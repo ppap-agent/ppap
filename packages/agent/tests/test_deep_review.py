@@ -199,30 +199,6 @@ def test_a_correction_whose_evidence_does_not_check_out_keeps_the_program_verdic
     assert kept.locator["semantic"]["deep_review"] == {"decision": "rejected", "program_status": "UNABLE", "reason": "看起来满足", "proposed_status": status, "rejection": rejection}
 
 
-def test_a_clause_the_user_rejected_is_never_corrected(tmp_path, monkeypatch):
-    snapshot, sources, spec, suite = build()
-    rejected = {"A": {"clause_id": "A", "rejections": [{"scope": "clause", "reason": "无可判定标准"}]}}
-    targets = tuple(type(target)(**{**target.__dict__, "rules": {**target.rules, "formalizations": rejected}}) for target in snapshot.targets)
-    snapshot = type(snapshot)(**{**snapshot.__dict__, "targets": targets})
-    spec = spec.model_copy(update={"checker_snapshot_digest": snapshot.input_digest})
-
-    def write(target, rows, stage):
-        reviews = confirm(target, rows, stage)
-        reviews[0] = {
-            "clause_id": "A",
-            "decision": "corrected",
-            "status": "PASS",
-            "reason": "满足",
-            "evidence": [{"file_version_id": "file-a", "locator": {"kind": "xlsx_cell", "sheet": "CP", "cell": "B2"}, "excerpt": "★"}],
-        }
-        return reviews
-
-    controlled_pi(monkeypatch, write)
-    found = by_clause(run(tmp_path, snapshot, sources, spec, suite))
-    assert found[("file-a", "A")].status == "UNABLE"
-    assert found[("file-a", "A")].locator["semantic"]["deep_review"]["rejection"] == "clause_rejected_by_user"
-
-
 def test_a_target_whose_review_fails_or_differs_keeps_its_program_result_and_says_so(tmp_path, monkeypatch):
     snapshot, sources, spec, suite = build()
     calls: list[str] = []

@@ -93,14 +93,7 @@ def reaudit_routes(page, *, accept=False):
                 preparation.update(upload_preparation=deepcopy(body["upload_preparation"]), preparation_revision=body["expected_revision"] + 1)
             route.fulfill(json=deepcopy(preparation))
         elif task and path == "/audit-tasks/" + task["id"] and request.method == "GET":
-            current = deepcopy(task)
-            if accept == "legacy":
-                # A pre-fix persisted task cannot tell whether A was selected
-                # before its automatic exclusion. Do not invent that lost fact.
-                for row in current["files"]:
-                    if row["file"]["id"] == "A":
-                        row["removal_reason"] = "本次使用补件替换"
-            route.fulfill(json=current)
+            route.fulfill(json=deepcopy(task))
         elif path == "/files" and request.method == "POST":
             body = request.post_data_json
             assert preparation is not None
@@ -338,19 +331,4 @@ def test_unselected_replacement_readback_retains_its_explicit_relation(reaudit_p
     expect(page.get_by_role("checkbox", name="选择 原文件A.xlsx", exact=True)).to_have_count(0)
     expect(page.get_by_role("combobox", name="补件C.xlsx 的补件关系", exact=True)).to_have_text("替换：原文件A.xlsx")
     expect(page.get_by_role("combobox", name="补件C.xlsx 的识别方式", exact=True)).to_have_text("沿用上次的规则")
-    assert len(commands) == 1
-
-
-@pytest.mark.parametrize("reaudit_page", ["legacy"], indirect=True)
-@pytest.mark.parametrize("replacement", ["新增文件 · 重新匹配", "替换：原文件B.xlsx"])
-def test_legacy_exclusion_without_a_known_prior_choice_returns_unselected(reaudit_page, replacement):
-    page, commands = reaudit_page
-    choose_replacement(page, "替换：原文件A.xlsx")
-    recognition_command(page, commands)
-    expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
-    page.reload()
-    expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
-    page.get_by_role("button", name="上一步", exact=True).click()
-    choose_replacement(page, replacement)
-    expect(page.get_by_role("checkbox", name="选择 原文件A.xlsx", exact=True)).not_to_be_checked()
     assert len(commands) == 1

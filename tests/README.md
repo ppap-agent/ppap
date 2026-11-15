@@ -11,7 +11,7 @@
 - `corpus`: assembled engine regression and regression fixtures
 - `integration/product`: cross-owner production-store contracts
 - `integration/runtime`: production runtime and backup/restore
-- `e2e`: Python Playwright full-product black-box paths
+- `e2e`: Python Playwright browser paths — preview contracts (`test_*_preview.py`, stubbed API) and real-stack journeys (everything else)
 
 CI consumes these physical owners. It does not maintain a second test manifest.
 
@@ -24,22 +24,22 @@ Repository contract:
 ```sh
 uv sync --locked
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
-uv run --no-sync python -m compileall -q packages apps/api apps/worker apps/mcp-client tests
+uv run --no-sync python -m compileall -q packages apps/api apps/worker apps/mcp-client tests scripts
 uv run --no-sync ruff check packages apps/api apps/worker apps/mcp-client tests scripts
 uv run --no-sync ruff format --check packages apps/api apps/worker apps/mcp-client tests scripts
 uv run --no-sync mypy --no-incremental
-node deploy/insforge/verify-config.mjs
 docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
 docker buildx bake --print >/dev/null
 docker buildx bake --check
-uv run --no-sync pytest tests/repository
+python3 -m scripts.ci_shards plan
+uv run --no-sync python -m pytest tests/repository
 ```
 
 Distribution closure:
 
 ```sh
-python3 scripts/validate_distribution.py --discover
+python3 -m scripts.ci_shards plan
 python3 scripts/validate_distribution.py --member audit
 ```
 
@@ -48,7 +48,6 @@ Python module groups:
 ```sh
 # One pytest process per physical owner. CI discovers every packages/*/tests and apps/api/tests, apps/worker/tests, and apps/mcp-client/tests.
 uv run --no-sync pytest packages/product/tests
-uv run --no-sync pytest packages/product/tests/test_settings_priority.py packages/audit/tests/test_token_tracker.py
 uv run --no-sync pytest tests/corpus/contracts/tests
 uv run --no-sync pytest packages/agent/tests
 uv run --no-sync pytest packages/audit/tests
@@ -214,45 +213,29 @@ bash scripts/run-compose-tests.sh tests/integration/runtime -f deploy/compose.ya
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
 ```
 
-Browser E2E uses the same canonical baked API/Worker/Web images in isolated-dev and runs:
+Browser E2E has two kinds of tests in `tests/e2e`, both needing `uv sync --locked --group e2e` and `uv run --no-sync python -m playwright install chromium`:
 
-```sh
-uv sync --locked --group e2e
-uv run --no-sync python -m playwright install chromium
-uv run --no-sync pytest tests/e2e
-```
+- Preview contracts (`test_*_preview.py`) run against the UI-only Vite preview with a stubbed fixture API; they prove interaction only, not persistence or authorization. CI runs them in the Web job. Locally, start `pnpm preview:workbench` in `apps/web`, then:
 
-### Original fact confirmation
+  ```sh
+  PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e -k preview -q
+  ```
 
-`tests/integration/product/test_fact_answers.py` checks actual PostgreSQL persistence and API-role permissions for the positive source-answer path, including idempotent readback, repeatable migration, unchanged machine findings and no new Round, job or usage event. `test_fact_answers_http.py` runs the same path through the production HTTP API and downloads the separate confirmation PDF. The controlled visual boundary returns null; the source checker creates the actual question and frozen predicate.
+- Real-stack journeys (the other files) drive the baked API/Worker/Web/Controller images in isolated-dev through public HTTP. CI runs them in Product integration; preview contracts skip without `PPAP_PREVIEW_URL`:
 
-`tests/e2e/test_fact_questions_preview.py` exercises the four-question display and an explicit unreadable answer in the preview.
+  ```sh
+  export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
+  docker buildx bake release
+  bash scripts/run-compose-tests.sh tests/e2e -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml
+  docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml down -v --remove-orphans
+  ```
 
-### Checker workspace browser journey
-
-`tests/integration/product/test_checker_workspace_browser.py` uses the production Web,
-HTTP API, PostgreSQL migrations and roles, Controller authorization and Core guest
-entrypoint. A fresh UAES tenant adopts the platform programs on their rule pages, in
-dependency order, and its first accepted Round freezes those exact revisions.
-
-Run with the Product integration prerequisites above, including the `e2e` dependency
-group and installed Chromium:
-
-```sh
-uv run --no-sync pytest tests/integration/product/test_checker_workspace_browser.py -q
-```
-
-Default storage uses the existing real Silo fixture and Controller calls use its Unix
-socket protocol. The guest runs in a fresh local subprocess, **not a container security
-boundary**. For a restricted local executor only, explicitly set
-`PPAP_CHECKER_BROWSER_LOCAL_OBJECTS=1` to use persistent local objects and
-`PPAP_CHECKER_BROWSER_LOCAL_TRANSPORT=1` to replace the socket transport with serialized
-calls to the same Controller. The tests reject either override when `CI` is set.
+Fact-answer and checker-workspace journeys under `tests/integration/product/` document their own scope and local-only overrides in their module docstrings; they run with the Product integration prerequisites above.
 
 ## Outside the CI Gate
 
-The separate InsForge native lifecycle remains path-filtered / manual / scheduled. It is not part of the default `CI Gate`. LLM readiness and Feishu readiness keep `workflow_dispatch` and add a weekly schedule; they probe real credentials and endpoints and stay outside the default `CI Gate`.
+LLM readiness and Feishu readiness keep `workflow_dispatch` and add a weekly schedule; they probe real credentials and endpoints and stay outside the default `CI Gate`.
 
 ## CI Gate
 
-The default merge contract is the required groups: Web, Repository contract, Python modules, Distribution closure, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Repository-side merge-contract semantics are therefore stable even when internal matrix groups evolve; whether the hosting plan can enforce `CI Gate` through branch protection/rulesets is a separate platform capability.
+The default merge contract is the required groups: Web, Repository contract, Python modules, Distribution closure, Schema, Corpus, Product contracts, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Repository-side merge-contract semantics are therefore stable even when internal matrix groups evolve; whether the hosting plan can enforce `CI Gate` through branch protection/rulesets is a separate platform capability.

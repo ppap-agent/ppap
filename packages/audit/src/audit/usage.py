@@ -183,11 +183,6 @@ class TokenTracker:
             if summary is not None:
                 summary.unreported_calls_count += 1
 
-    def get_request_summary(self, request_id: str) -> Optional[RequestTokenSummary]:
-        """获取请求的token使用汇总"""
-        with self._lock:
-            return self._request_summaries.get(request_id)
-
     def cleanup_request(self, request_id: str) -> None:
         """清理请求的跟踪数据"""
         with self._lock:

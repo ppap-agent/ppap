@@ -209,32 +209,13 @@ def assert_wheel_install(target: str) -> None:
             )
 
 
-def discover() -> None:
-    rows = [
-        {
-            "id": name.replace("_", "-"),
-            "name": name,
-            "postgres": member.postgres,
-        }
-        for name, member in sorted(production_members().items())
-    ]
-    if not rows:
-        raise RuntimeError("no production distributions discovered")
-    print(json.dumps(rows, separators=(",", ":")))
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--discover", action="store_true")
-    group.add_argument("--member")
+    parser.add_argument("--member", required=True)
     args = parser.parse_args()
-    if args.discover:
-        discover()
-    else:
-        if args.member not in production_members():
-            raise SystemExit(f"not a production member: {args.member}")
-        assert_wheel_install(args.member)
+    if args.member not in production_members():
+        raise SystemExit(f"not a production member: {args.member}")
+    assert_wheel_install(args.member)
 
 
 if __name__ == "__main__":

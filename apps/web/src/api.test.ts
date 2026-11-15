@@ -23,18 +23,18 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
-test('formalization conflicts explain the next step instead of a raw error code', async () => {
+test('model failures explain the next step instead of a raw error code', async () => {
   const messages = new Set<string>()
-  for (const [code, status] of [['operation_conflict', 409], ['source_changed', 409], ['conflicting_confirmation', 409], ['not_confirmable', 409], ['source_unchecked', 409], ['model_unavailable', 503], ['model_consumption_refused', 422]] as const) {
+  for (const [code, status] of [['model_unavailable', 503], ['model_consumption_refused', 422]] as const) {
     installFetch(() => jsonResponse({error: code}, status))
-    await assert.rejects(request('/rules/rule-1/formalizations/c1/generations', 'POST', {}), error => {
+    await assert.rejects(request('/audit-tasks', 'POST', {}), error => {
       assert.ok(error instanceof Error)
       assert.equal(error.message.includes(code), false)
       messages.add(error.message)
       return true
     })
   }
-  assert.equal(messages.size, 7)
+  assert.equal(messages.size, 2)
 })
 
 test('rule source rejection explains the required correction without claiming publication', async () => {

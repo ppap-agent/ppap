@@ -21,7 +21,7 @@ def test_shards_cover_every_discovered_target_exactly_once(discover):
     assert len(shards) == 3
     assert all(shards)
     assert sorted(target.name for group in shards for target in group) == sorted(target.name for target in targets)
-    api = [target for target in targets if target.name in {"api", "ppap-api"}]
+    api = [target for target in targets if target.name == "api"]
     assert len(api) == 1
     assert shards[0] == api
 

@@ -99,8 +99,8 @@ class OpenAPIContractTests(unittest.TestCase):
 
     def test_finding_locator_accepts_file_version_and_bare_version_rows(self):
         for locator in (
-            {"kind": "file_version", "file_id": "file-a", "file_version_id": "version-a", "filename": "控制计划.xlsx", "rule_item_id": "1", "evidence": None},
-            {"file_version_id": "legacy-a"},
+            {"kind": "file_version", "file_id": "file-a", "file_version_id": "version-a", "filename": "控制计划.xlsx", "rule_item_id": "1"},
+            {"file_version_id": "version-b"},
         ):
             with self.subTest(locator=locator):
                 finding = {"item_key": "1", "status": "NG", "item": "必须填写零件号", "classification": "身份", "suggestions": "请核对零件号", "priority": "P1", "locator": locator, "review": None}

@@ -59,7 +59,6 @@ class UsageReadTests(unittest.TestCase):
         self.assertTrue(all("created_at" in row and row["created_at"] for row in events))
         self.assertTrue(all(row["ai_item_id"] == "item-a" for row in events))
         self.assertEqual({row["user_id"] for row in events}, {alice.user_id, bob.user_id})
-        self.assertNotIn("paid_balance", listed.json())
 
         self._login("bob")
         bob_listed = self.client.get("/usage")

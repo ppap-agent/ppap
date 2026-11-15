@@ -1,4 +1,4 @@
-"""Representative browser audit loop against isolated-dev stack."""
+"""The docs add-on entry page against the isolated-dev stack."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
-class WebAuditLoopTests(unittest.TestCase):
+class DocsAddonEntryTests(unittest.TestCase):
     def test_docs_addon_entry_reports_missing_host(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

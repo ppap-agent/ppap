@@ -90,7 +90,7 @@ def test_layout_variant_moves_table_and_merges_without_changing_source_values(tm
     monkeypatch.setattr(deep_lab, "load_poc_cases", lambda: [case])
     monkeypatch.setattr(deep_lab, "build_bundle_map", lambda cases: {"bundle": cases})
     monkeypatch.setattr(deep_lab, "build_group_context_for_bundle", lambda cases: SimpleNamespace(by_doc_type={"target": [], "reference": []}))
-    work, expected = deep_lab.prepare("checker", "bundle", path.name, "high", variant="shifted-table")
+    work, expected = deep_lab.prepare("bundle", path.name, "high", variant="shifted-table")
     assert expected == {"1": "PASS"}
     altered = load_workbook(work / "files" / path.name)
     try:
@@ -203,7 +203,7 @@ def test_cli_summary_keeps_provider_failure_instead_of_missing_result(tmp_path, 
     case = SimpleNamespace(bundle_id="bundle", file_name="source.xlsx")
     work = tmp_path / "case"
     work.mkdir()
-    monkeypatch.setattr(deep_lab.sys, "argv", ["deep_lab.py", "--recipe", "checker", "--effort", "high"])
+    monkeypatch.setattr(deep_lab.sys, "argv", ["deep_lab.py", "--effort", "high"])
     monkeypatch.setattr(deep_lab, "OUTPUT", tmp_path)
     monkeypatch.setattr(deep_lab, "load_dotenv", lambda *args: None)
     monkeypatch.setattr(deep_lab, "_selected", lambda *args: [case])

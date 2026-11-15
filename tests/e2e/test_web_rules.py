@@ -37,13 +37,13 @@ class RulePreparationTests(unittest.TestCase):
 
         rule_root = Path(__file__).resolve().parents[2] / "assets" / "nio" / "history" / "poc规则"
         sources = [
-            ("8规则-过程流程图.docx", "过程流程图", 9),
-            ("9规则-潜在过程失效模式及后果分析（PFMEA）.docx", "潜在过程失效模式及后果分析", 7),
-            ("10规则-控制计划.docx", "控制计划", 11),
+            ("8规则-过程流程图.docx", "过程流程图"),
+            ("9规则-潜在过程失效模式及后果分析（PFMEA）.docx", "潜在过程失效模式及后果分析"),
+            ("10规则-控制计划.docx", "控制计划"),
         ]
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for filename, document_type, count in sources:
+            for filename, document_type in sources:
                 with self.subTest(document_type=document_type):
                     original = rule_root / filename
                     content = original.read_bytes()
@@ -53,7 +53,7 @@ class RulePreparationTests(unittest.TestCase):
                     publication_requests = []
                     page.on("request", lambda request, observed=publication_requests: observed.append(True) if request.method == "POST" and urlsplit(request.url).path.endswith("/rules") else None)
                     api = isolated_dev_login(page, WEB)
-                    page.goto(WEB + "/requirements?rulesArea=requirements")
+                    page.goto(WEB + "/requirements")
                     page.get_by_label("上传共用规则文件").set_input_files(original)
                     page.get_by_label("适用资料类型").click()
                     page.get_by_role("option", name=document_type, exact=True).click()
@@ -62,11 +62,15 @@ class RulePreparationTests(unittest.TestCase):
                     self.assertEqual(parsing.value.status, 202)
                     source = parsing.value.request.post_data_json
                     clauses = page.get_by_role("region", name="规则条款", exact=True)
-                    expect(clauses.get_by_role("article")).to_have_count(count, timeout=30000)
+                    expect(clauses.get_by_role("article").first).to_be_visible(timeout=30000)
                     parsed = page.request.get(f"{api}/rules/parse/{parsing.value.json()['id']}")
                     self.assertEqual(parsed.status, 200)
                     self.assertEqual(parsed.json()["status"], "succeeded")
                     candidate = parsed.json()["result"]["body"]
+                    # The page shows every clause the API parsed, no more and no fewer.
+                    count = len(candidate["rules"])
+                    self.assertGreater(count, 0)
+                    expect(clauses.get_by_role("article")).to_have_count(count)
                     self.assertEqual(candidate["rule_profile"], "v3")
                     self.assertEqual(candidate["type"], document_type)
                     self.assertEqual([rule["id"] for rule in candidate["rules"]], [str(index) for index in range(1, count + 1)])
@@ -196,7 +200,7 @@ class RulePreparationTests(unittest.TestCase):
             expect(page.get_by_role("main")).to_contain_text("测试客户")
             expect(page.get_by_role("combobox", name="规则版本", exact=True)).to_contain_text("v1")
             page.get_by_role("button", name="阅读 控制计划规则.json", exact=True).click()
-            reader = page.get_by_role("dialog", name="原件与证据", exact=True)
+            reader = page.get_by_role("dialog", name="规则原件", exact=True)
             expect(reader).to_be_visible()
             downloaded = page.request.get(urljoin(page.url, reader.get_by_role("link", name="下载原件", exact=True).get_attribute("href")))
             self.assertEqual(downloaded.status, 200)

@@ -1,4 +1,4 @@
-"""The template library manifest names exactly the checked-in originals, and the API image carries them."""
+"""The template library manifest names exactly the checked-in originals."""
 
 from pathlib import Path
 
@@ -16,14 +16,3 @@ def test_manifest_covers_every_template_original_once():
         assert len({template.document_type for template in customer.templates}) == len(customer.templates), customer.id
         assert len({template.filename for template in customer.templates}) == len(customer.templates), customer.id
         assert all(template.extension in library.CONTENT_TYPES for template in customer.templates), customer.id
-
-
-def test_api_image_includes_only_the_template_directories_of_assets():
-    dockerfile = (ROOT / "deploy/app/Dockerfile").read_text()
-    ignore = (ROOT / ".dockerignore").read_text().splitlines()
-    assert "assets" in ignore
-    assert "ENV PPAP_TEMPLATE_ROOT=/app/assets" in dockerfile
-    for customer in library.CUSTOMERS:
-        assert f"!assets/{customer.id}/templates" in ignore
-        assert f"COPY assets/{customer.id}/templates /app/assets/{customer.id}/templates" in dockerfile
-    assert [line for line in ignore if line.startswith("!assets")] == [f"!assets/{customer.id}/templates" for customer in library.CUSTOMERS]

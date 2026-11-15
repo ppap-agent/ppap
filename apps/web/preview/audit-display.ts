@@ -26,7 +26,6 @@ export function fixtureDisplay(tasks: Map<string, AuditTask>, scene: string): Au
       }
       receipts.set(request.request_id, structuredClone(receipt))
       if (scene === 'restore-display-unknown') throw new Error('preview_display_response_lost')
-      if (scene === 'restore-display-invalid') return {...receipt, request: {...request, reference: {...request.reference, file_version_id: 'different-version'}}}
       return receipt
     },
     read: async (request: DisplayRequest) => structuredClone(receipts.get(request.request_id) || {request, state: 'unknown', info: null, reason: '保存结果待确认。'}),
@@ -37,8 +36,6 @@ export function displayReadFixture(task: AuditTask, scene: string): AuditTask {
   const next = structuredClone(task)
   next.files = next.files.map(file => {
     if (!file.display_info?.revision) return file
-    if (scene === 'restore-display-missing') {delete file.display_info; return file}
-    if (scene === 'restore-display-same-revision-conflict') return {...file, display_info: {...file.display_info, values: {...file.display_info.values, customer: '同版本错误值'}}}
     if (scene === 'restore-display-stale' || scene === 'restore-display-denied') return {...file, display_info: {revision: 0, values: Object.fromEntries(displayFields.map(([field]) => [field, file.match?.metadata[field] ?? null])) as ReturnType<typeof fileDisplayValues>}, display_edit_access: scene === 'restore-display-denied' ? {state: 'denied' as const, reason: '编辑许可已撤销。'} : file.display_edit_access}
     return file
   })

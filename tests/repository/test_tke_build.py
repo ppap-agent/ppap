@@ -68,18 +68,18 @@ def test_unknown_dispatch_is_recorded_once_and_never_retried(tmp_path):
     assert (tmp_path / "dispatch-intent.json").exists()
 
 
-@pytest.mark.parametrize("fault", [None, "source", "platform", "manifest", "config"])
-@pytest.mark.parametrize("legacy", [False, True])
-def test_registry_proves_bytes_platform_and_source_before_pinning(fault, legacy):
+@pytest.mark.parametrize("fault", [None, "source", "labels", "platform", "manifest", "config"])
+@pytest.mark.parametrize("tagged", [False, True])
+def test_registry_proves_bytes_platform_and_source_before_pinning(fault, tagged):
     operation = BUILD["registry_images"]
     image = {"architecture": "arm64" if fault == "platform" else "amd64", "os": "linux", "config": {"Env": ["PPAP_BUILD_SHA=" + ("0" * 40 if fault == "source" else SHA)]}}
-    if not legacy:
+    if fault != "labels":
         image["config"]["Labels"] = {"org.opencontainers.image.revision": SHA, "org.opencontainers.image.source": "https://github.com/ppap-agent/ppap"}
     config = json.dumps(image).encode()
     config_digest = BUILD["digest"](config)
     raw = json.dumps({"config": {"digest": config_digest, "size": len(config)}}).encode()
     manifest_digest = BUILD["digest"](raw)
-    images = {c: "unregistry.xixifusi.online/ppap-" + c + (":" + SHA if legacy else "@" + manifest_digest) for c in COMPONENTS}
+    images = {c: "unregistry.xixifusi.online/ppap-" + c + (":" + SHA if tagged else "@" + manifest_digest) for c in COMPONENTS}
 
     def get(url, headers):
         if "/blobs/" in url:

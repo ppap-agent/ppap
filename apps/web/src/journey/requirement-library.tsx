@@ -23,11 +23,10 @@ import {requirementFileAccept, useLocalUploads} from './local-files'
 import {RequirementOriginal} from './requirements'
 import {receiveRequirement, RuleExtraction} from './rule-extraction'
 import {canonical, publishBasis, sourceFileLabel} from './product'
-import {isPreview} from './access'
 import {message as errorMessage} from './remote'
 import {requirementDirectory, type ReadRequirementVersions, type RequirementDirectoryCollection, type RequirementDirectoryVersion} from './requirement-directory'
 import {displayTime} from '../helpers'
-import {auditAddressChanged} from '../audit/routes'
+import {auditAddressChanged, isPreview} from '../audit/routes'
 import {ProgramStatus} from '../audit/program-status'
 
 const routeSelection = () => ({id: new URLSearchParams(location.search).get('requirement') ?? '', version: new URLSearchParams(location.search).get('reqVersion') ?? ''})

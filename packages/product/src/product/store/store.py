@@ -34,7 +34,7 @@ from psycopg.types.json import Jsonb
 from product.checker_verification import frozen_checker_verification
 from product.db import connect
 from product.feishu import CardAction, UserTokens
-from product.feishu_notifications import formalization_notification_card, task_notification_card
+from product.feishu_notifications import task_notification_card
 from product.feishu_personal_upload import PersonalDriveClient, UploadRejected, UploadUnknown
 from product.feishu_usage import (
     DEEP_SURCHARGE_PER_FILE,
@@ -85,10 +85,7 @@ from product.identity import (
     token_hash,
 )
 from product.rules import (
-    BACKGROUND_JOB_KINDS,
-    BACKGROUND_JOBS_PER_TENANT,
     FILE_PREPARATION_KINDS,
-    PARALLEL_FORMALIZATIONS,
     customer_scope,
     document_type_aliases,
     latest_rule_versions,
@@ -1096,9 +1093,6 @@ class AuthStore:
     def accept_rule_parse(self, principal, request_id, source_file_id, source_file_version_id, document_type="") -> dict:
         return self._accept_file_job(principal, request_id, source_file_id, source_file_version_id, "rule_parse", document_type)
 
-    def accept_file_analysis(self, principal, request_id, source_file_id, source_file_version_id) -> dict:
-        return self._accept_file_job(principal, request_id, source_file_id, source_file_version_id, "file_analysis")
-
     def accept_file_validation(self, principal, request_id, source_file_id, source_file_version_id, scope=None) -> dict:
         return self._accept_file_job(principal, request_id, source_file_id, source_file_version_id, "file_validation", validation_scope=scope)
 
@@ -1138,14 +1132,8 @@ class AuthStore:
     def get_rule_parse(self, principal, job_id: str) -> dict:
         return self._get_file_job(principal, job_id, "rule_parse")
 
-    def get_file_analysis(self, principal, job_id: str) -> dict:
-        return self._get_file_job(principal, job_id, "file_analysis")
-
     def get_file_validation(self, principal, job_id: str) -> dict:
         return self._get_file_job(principal, job_id, "file_validation")
-
-    def latest_file_analysis(self, principal, file_id: str, version_id: str) -> dict | None:
-        return self._latest_file_job(principal, file_id, version_id, "file_analysis")
 
     def latest_file_validation(self, principal, file_id: str, version_id: str) -> dict | None:
         return self._latest_file_job(principal, file_id, version_id, "file_validation")
@@ -1676,19 +1664,14 @@ class AuthStore:
             )[0]
             conn.execute("INSERT INTO engine.attempts (id, job_id, attempt, worker_id) VALUES (gen_random_uuid(), %s, %s, %s)", (row[0], attempt, worker_ident))
             claimed = ClaimedJob(str(row[0]), "feishu_notification", row[3], attempt, str(row[2]) if row[2] else None, str(row[1]))
-            if row[3].get("stage") == "formalization_ready":
-                from product.store.formalizations import FormalizationStore
-
-                identities = FormalizationStore(self).notification_recipients(conn, row[1], _as_uuid(str(row[3].get("operation_id") or "")), self.settings.feishu_app_id)
-            else:
-                identities = conn.execute(
-                    """SELECT i.user_id, i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
-                    FROM product.audit_drafts d JOIN product.tenants t ON t.id = d.tenant_id
-                    JOIN product.memberships m ON m.tenant_id = t.id AND m.user_id = d.created_by
-                    JOIN product.identities i ON i.user_id = d.created_by AND i.provider = t.provider AND i.tenant_key = t.external_key
-                    WHERE d.id = %s AND d.tenant_id = %s AND i.app_id = %s""",
-                    (row[3].get("task_id"), row[1], self.settings.feishu_app_id),
-                ).fetchall()
+            identities = conn.execute(
+                """SELECT i.user_id, i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
+                FROM product.audit_drafts d JOIN product.tenants t ON t.id = d.tenant_id
+                JOIN product.memberships m ON m.tenant_id = t.id AND m.user_id = d.created_by
+                JOIN product.identities i ON i.user_id = d.created_by AND i.provider = t.provider AND i.tenant_key = t.external_key
+                WHERE d.id = %s AND d.tenant_id = %s AND i.app_id = %s""",
+                (row[3].get("task_id"), row[1], self.settings.feishu_app_id),
+            ).fetchall()
             if len(identities) != 1:
                 self._finish_task_notification(conn, claimed, worker_ident, {"state": "suppressed", "reason": "recipient_unavailable", "message_id": None}, before_dispatch=True)
                 return None
@@ -1737,11 +1720,9 @@ class AuthStore:
     def start_task_notification(self, claimed: ClaimedJob, worker_ident: str, principal: Principal) -> dict | None:
         task_id, stage = _as_uuid(str(claimed.payload.get("task_id") or "")), claimed.payload.get("stage")
         package_id = _as_uuid(str(claimed.payload.get("package_id") or "")) if stage == "zip_ready" else None
-        operation_scoped = stage == "formalization_ready"
-        operation_id = _as_uuid(str(claimed.payload.get("operation_id") or "")) if operation_scoped else None
-        if stage not in {"confirmation", "started", "completed", "zip_ready", "formalization_ready"}:
+        if stage not in {"confirmation", "started", "completed", "zip_ready"}:
             raise ValueError("invalid_notification_scope")
-        if operation_scoped and not operation_id or not operation_scoped and not task_id or stage == "zip_ready" and not package_id:
+        if not task_id or stage == "zip_ready" and not package_id:
             raise ValueError("invalid_notification_scope")
         with self._conn() as conn, conn.transaction():
             if stage == "confirmation":
@@ -1760,43 +1741,36 @@ class AuthStore:
                 ).fetchone()
                 if not identity or not self.settings.tenant_allowed(principal.tenant_key):
                     raise KeyError("recipient_unavailable")
-                if stage == "formalization_ready":
-                    from product.store.formalizations import FormalizationStore
-
-                    card = formalization_notification_card(FormalizationStore(self).notification_context(conn, principal, operation_id), self.settings.canonical_web_url())
-                else:
-                    assert task_id is not None
-                    draft = self._recognition_owner(conn, principal, task_id, lock=True)
-                    task = self._recognition_public(conn, principal, task_id)
-                    if stage == "confirmation" and task["state"] == "matching":
-                        self._defer_task_notification(conn, claimed, worker_ident)
-                        return None
-                    if stage == "confirmation" and task["state"] != "pending_confirm" or stage == "started" and task["round_id"] != claimed.round_id:
-                        reason = "task_advanced"
-                    if stage == "completed" and not draft["notification_enabled"]:
-                        reason = "completion_disabled"
-                    if stage == "completed" and task["state"] != "completed":
-                        raise ValueError("notification_task_not_completed")
-                    if stage == "zip_ready":
-                        request = conn.execute(
-                            """SELECT id, payload FROM engine.jobs WHERE tenant_id = %s AND kind = 'report_zip_request'
-                            AND payload->>'task_id' = %s AND payload->>'package_id' = %s AND payload->>'created_by' = %s
-                            ORDER BY created_at, id LIMIT 1""",
-                            (principal.tenant_id, task_id, package_id, principal.user_id),
-                        ).fetchone()
-                        if not request:
-                            raise KeyError("missing")
-                        report_package = self._report_package_public(conn, principal, task, str(request[0]), request[1])
-                        artifact = report_package.get("artifact") or {}
-                        if report_package["state"] != "ready" or not artifact.get("artifact_id") or artifact.get("content_type") != "application/zip" or not artifact.get("byte_size", 0) > 0:
-                            reason = "zip_not_ready"
+                draft = self._recognition_owner(conn, principal, task_id, lock=True)
+                task = self._recognition_public(conn, principal, task_id)
+                if stage == "confirmation" and task["state"] == "matching":
+                    self._defer_task_notification(conn, claimed, worker_ident)
+                    return None
+                if stage == "confirmation" and task["state"] != "pending_confirm" or stage == "started" and task["round_id"] != claimed.round_id:
+                    reason = "task_advanced"
+                if stage == "completed" and not draft["notification_enabled"]:
+                    reason = "completion_disabled"
+                if stage == "completed" and task["state"] != "completed":
+                    raise ValueError("notification_task_not_completed")
+                if stage == "zip_ready":
+                    request = conn.execute(
+                        """SELECT id, payload FROM engine.jobs WHERE tenant_id = %s AND kind = 'report_zip_request'
+                        AND payload->>'task_id' = %s AND payload->>'package_id' = %s AND payload->>'created_by' = %s
+                        ORDER BY created_at, id LIMIT 1""",
+                        (principal.tenant_id, task_id, package_id, principal.user_id),
+                    ).fetchone()
+                    if not request:
+                        raise KeyError("missing")
+                    report_package = self._report_package_public(conn, principal, task, str(request[0]), request[1])
+                    artifact = report_package.get("artifact") or {}
+                    if report_package["state"] != "ready" or not artifact.get("artifact_id") or artifact.get("content_type") != "application/zip" or not artifact.get("byte_size", 0) > 0:
+                        reason = "zip_not_ready"
             except KeyError:
                 reason = "notification_access_revoked"
             if reason:
                 self._finish_task_notification(conn, claimed, worker_ident, {"state": "suppressed", "reason": reason, "message_id": None}, before_dispatch=True)
                 return None
-            if not operation_scoped:
-                card = task_notification_card(task, stage, self.settings.canonical_web_url(), report_package, confirmation_id=claimed.id if self.settings.feishu_verification_token.strip() else None)
+            card = task_notification_card(task, stage, self.settings.canonical_web_url(), report_package, confirmation_id=claimed.id if self.settings.feishu_verification_token.strip() else None)
             dispatch = {"receive_id": principal.subject, "card": card}
             saved = {"dispatch": dispatch}
             if any(
@@ -1815,8 +1789,8 @@ class AuthStore:
                 WHERE id = %s AND kind = 'feishu_notification' AND attempt = %s AND lease_owner = %s
                 AND status = 'leased' AND result->>'state' = 'preparing' AND lease_until > now()
                 AND tenant_id = %s AND COALESCE(payload->>'task_id', '') = %s AND payload->>'stage' = %s
-                AND COALESCE(payload->>'package_id', '') = %s AND COALESCE(payload->>'operation_id', '') = %s RETURNING id""",
-                (Jsonb(saved), claimed.id, claimed.attempt, worker_ident, principal.tenant_id, task_id or "", stage, package_id or "", operation_id or ""),
+                AND COALESCE(payload->>'package_id', '') = %s RETURNING id""",
+                (Jsonb(saved), claimed.id, claimed.attempt, worker_ident, principal.tenant_id, task_id or "", stage, package_id or ""),
             ).fetchone()
             return dispatch if row else None
 
@@ -2718,17 +2692,7 @@ class AuthStore:
             prepared = [{"role": "target", "file_version_id": file["file"]["id"], "rule_body": match["rule"]["body"]}]
             try:
                 targets.extend(freeze_selected_targets(self, conn, principal.tenant_id, prepared, preparation=True))
-            except ValueError as exc:
-                if str(exc) == "suite_version_confirmation_required":
-                    # Keep the matched rule so the task names the carrier head. Clearing
-                    # the rule hides that refusal as a missing suite and lets no other
-                    # revision be chosen.
-                    gaps = [gap for gap in match.get("gaps", []) if gap != "suite_version_confirmation_required"]
-                    match["gaps"] = [*gaps, "suite_version_confirmation_required"]
-                else:
-                    match.update(state="failed", rule=None, gaps=[*match.get("gaps", []), "checker_suite_unavailable"])
-                    task["estimated_points"] = None
-            except KeyError:
+            except (ValueError, KeyError):
                 match.update(state="failed", rule=None, gaps=[*match.get("gaps", []), "checker_suite_unavailable"])
                 task["estimated_points"] = None
             else:
@@ -2742,15 +2706,9 @@ class AuthStore:
             # is the server's exact prospective Round, including explicit reasons
             # for sources that will be removed atomically during admission.
             exclusions = [{"file_version_id": row["file"]["id"], "reason": row["removal_reason"]} for row in files if row["selection"] == "removed"]
-            version_confirmation = {row["file"]["id"] for row in selected if "suite_version_confirmation_required" in ((row.get("match") or {}).get("gaps") or [])}
-            exclusions.extend({"file_version_id": file_id, "reason": "当前是历史检查版本，需确认目录版本后才能审核"} for file_id in sorted(version_confirmation))
-            exclusions.extend(
-                {"file_version_id": row["file"]["id"], "reason": "未匹配到生效规则，未纳入审核"}
-                for row in selected
-                if row["file"]["id"] not in version_confirmation and row["match"]["state"] == "unmatched"
-            )
+            exclusions.extend({"file_version_id": row["file"]["id"], "reason": "未匹配到生效规则，未纳入审核"} for row in selected if row["match"]["state"] == "unmatched")
             task["confirmation_scope"] = {
-                "target_file_version_ids": sorted(row["file"]["id"] for row in selected if row["match"]["state"] == "matched" and row["file"]["id"] not in version_confirmation),
+                "target_file_version_ids": sorted(row["file"]["id"] for row in selected if row["match"]["state"] == "matched"),
                 "reference_file_version_ids": sorted(row["file"]["id"] for row in selected if row["match"]["state"] == "reference"),
                 "excluded_files": sorted(exclusions, key=lambda row: row["file_version_id"]),
             }
@@ -3248,17 +3206,6 @@ class AuthStore:
                 self._require_preparation_owner(conn, principal, parsed)
             return draft
 
-    def draft_round_id(self, draft_id: str) -> str | None:
-        parsed = _as_uuid(draft_id)
-        if not parsed:
-            return None
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT id FROM product.audit_rounds WHERE source_draft_id = %s ORDER BY created_at DESC, id DESC LIMIT 1",
-                (parsed,),
-            ).fetchone()
-        return str(row[0]) if row else None
-
     def save_draft(
         self,
         principal: Principal,
@@ -3355,47 +3302,6 @@ class AuthStore:
             with conn.transaction():
                 return self._accept_locked(
                     conn, principal, key, source_draft_id=parsed, predecessor_id=predecessor_id, items=None, usage_policy=usage_policy, expected_model_revision=expected_model_revision
-                )
-
-    def resubmit_round(
-        self,
-        principal: Principal,
-        round_id: str,
-        idempotency_key: str,
-        items: list[dict] | None,
-        *,
-        usage_policy=None,
-    ) -> dict:
-        key = normalize_idempotency_key(idempotency_key)
-        parsed = _as_uuid(round_id)
-        if not parsed:
-            raise KeyError("missing")
-        with self._conn() as conn:
-            with conn.transaction():
-                current = conn.execute(
-                    """
-                    SELECT id, tenant_id FROM product.audit_rounds
-                    WHERE id = %s
-                    """,
-                    (parsed,),
-                ).fetchone()
-                if not current or str(current[1]) != principal.tenant_id:
-                    raise KeyError("missing")
-                self._reject_task_predecessor(conn, parsed)
-                if items is None:
-                    rows = conn.execute(
-                        "SELECT file_version_id, role, rule_version_id FROM product.round_inputs WHERE round_id = %s",
-                        (parsed,),
-                    ).fetchall()
-                    items = [{"file_version_id": str(row[0]), "role": row[1], "rule_version_id": str(row[2]) if row[2] else None} for row in rows]
-                return self._accept_locked(
-                    conn,
-                    principal,
-                    key,
-                    source_draft_id=None,
-                    predecessor_id=parsed,
-                    items=items,
-                    usage_policy=usage_policy,
                 )
 
     def read_fact_answers(self, principal: Principal, round_id: str) -> dict:
@@ -3671,44 +3577,23 @@ class AuthStore:
             "deep" if head[4] else "standard",
         )
 
-    def claim_job(self, worker_ident: str, *, formalizations: str = "any") -> ClaimedJob | None:
-        """The oldest claimable job, audits and other foreground work first.
-
-        `formalizations` is how many more readings the caller can run: "any", "manual" (none from a
-        saved version's batch) or "none". A person's own reading goes before a batch's.
-        """
-        if formalizations not in {"any", "manual", "none"}:
-            raise ValueError("invalid_formalization_room")
+    def claim_job(self, worker_ident: str) -> ClaimedJob | None:
+        """The oldest claimable job."""
         with self._conn() as conn:
             with conn.transaction():
                 row = conn.execute(
                     """
                     SELECT id, kind, payload, tenant_id FROM engine.jobs j
                     WHERE kind <> ALL(%s)
-                    AND NOT (kind = 'rule_formalization' AND (%s = 'none' OR (%s = 'manual' AND payload ? 'batch')))
                     AND (
                         (status = 'queued' AND (lease_until IS NULL OR lease_until < now()))
                         OR (status = 'leased' AND kind <> ALL(%s) AND lease_until IS NOT NULL AND lease_until < now())
-                    ) AND NOT (
-                        kind = ANY(%s) AND (
-                            SELECT count(*) FROM engine.jobs busy
-                            WHERE busy.tenant_id = j.tenant_id AND busy.kind = j.kind AND busy.status = 'leased' AND busy.lease_until > now()
-                        ) >= CASE j.kind WHEN 'rule_formalization' THEN %s ELSE %s END
                     )
-                    ORDER BY kind = ANY(%s), kind = 'rule_formalization' AND payload ? 'batch', created_at
+                    ORDER BY created_at
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                     """,
-                    (
-                        ["feishu_notification", "task_confirmation"],
-                        formalizations,
-                        formalizations,
-                        [*FILE_PREPARATION_KINDS, "rule_formalization"],
-                        list(BACKGROUND_JOB_KINDS),
-                        PARALLEL_FORMALIZATIONS,
-                        BACKGROUND_JOBS_PER_TENANT,
-                        list(BACKGROUND_JOB_KINDS),
-                    ),
+                    (["feishu_notification", "task_confirmation"], list(FILE_PREPARATION_KINDS)),
                 ).fetchone()
                 if not row:
                     return None
@@ -3761,8 +3646,7 @@ class AuthStore:
             row = conn.execute(
                 """UPDATE engine.jobs SET lease_until = now() + interval '30 seconds', updated_at = now()
                 WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
-                  AND (kind <> 'audit' OR lease_until > clock_timestamp())
-                  AND (kind <> 'rule_formalization' OR lease_until > now()) RETURNING id""",
+                  AND (kind <> 'audit' OR lease_until > clock_timestamp()) RETURNING id""",
                 (claimed.id, claimed.attempt, worker_ident),
             ).fetchone()
             return row is not None
@@ -3813,7 +3697,6 @@ class AuthStore:
                         result = CASE WHEN kind = ANY(%s) THEN %s ELSE result END
                     WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
                       AND (kind <> 'audit' OR lease_until > clock_timestamp())
-                      AND (kind <> 'rule_formalization' OR lease_until > now())
                     RETURNING id
                     """,
                     (
@@ -4614,10 +4497,6 @@ class AuthStore:
                 selected = [row for row in task["files"] if row["selection"] == "selected"]
                 recognized_metadata = {row["file"]["id"]: dict((row.get("match") or {}).get("metadata") or {}) for row in selected}
                 recognized_types = {row["file"]["id"]: (row.get("match") or {}).get("document_type") for row in selected}
-                # A matched carrier has no frozen target and therefore no basis digest.
-                # Refuse that head before an empty digest or an unready task can hide it.
-                if not existing and any("suite_version_confirmation_required" in ((row.get("match") or {}).get("gaps") or []) for row in selected):
-                    raise ValueError("suite_version_confirmation_required")
                 basis = expected_confirmation_basis_digest
                 basis_ready = isinstance(basis, str) and re.fullmatch(r"[a-f0-9]{64}", basis)
                 if not existing and require_confirmation_basis and not basis_ready:

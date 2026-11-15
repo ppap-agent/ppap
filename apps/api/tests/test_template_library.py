@@ -64,10 +64,12 @@ def test_catalog_lists_clean_names_and_only_present_files(tmp_path):
 
 def test_coverage_counts_against_each_customers_own_rule_types(tmp_path):
     from audit.presets import customer_presets
+    from audit.standard_suites import CUSTOMER_DIRECTORIES
 
     body = client_for(template_root(tmp_path), signed_in()).get("/template-library").json()
     rows = {row["id"]: row for row in body["customers"]}
-    for template_customer, preset_customer in library.PRESET_CUSTOMERS.items():
+    assert set(rows) == set(CUSTOMER_DIRECTORIES)
+    for template_customer, preset_customer in CUSTOMER_DIRECTORIES.items():
         assert rows[template_customer]["standard_type_codes"] == sorted({preset.source_type for preset in customer_presets() if preset.customer == preset_customer})
 
 

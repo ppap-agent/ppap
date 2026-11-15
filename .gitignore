@@ -18,12 +18,10 @@ apps/web/runtime-config.json
 .artifacts/
 .pytest_cache/
 *.egg-info/
-playwright/.auth/
-test-results/
-.insforge/
 .cache/
 
 output/
+ci-report/
 
 /deploy/tke/.build.lock
 .grok/

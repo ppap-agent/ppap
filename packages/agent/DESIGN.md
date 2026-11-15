@@ -4,7 +4,7 @@
 
 本文定义 checker 路径的合同；具体行为以源码和测试为准。**Deep 根据本次 rules 和文件，开发、试跑并交付一组可独立执行的 checker。** 原 checker、资源类型和 Fluent API 是直接使用的实现基础。允许重构职责和接口，已有算法与有效行为继续保留。
 
-本文拥有任务 checker 的接口、资源语义与开发流程；[DATA_MODEL](../../docs/DATA_MODEL.md) 拥有输入、确认与轮次的数据不变量，部署与授权沿用 [ARCHITECTURE 的执行边界](../../docs/ARCHITECTURE.md#执行)。当前实现是固定 checker，不是 RulePlan / AuditTrace。条款形式化的数据合同见 DATA_MODEL。实验命令见 [DEVELOPMENT](../../docs/DEVELOPMENT.md#本地-deep-checker-实验)；实现状态以源码和测试为准。
+本文拥有任务 checker 的接口、资源语义与开发流程；[DATA_MODEL](../../docs/DATA_MODEL.md) 拥有输入、确认与轮次的数据不变量，部署与授权沿用 [ARCHITECTURE 的执行边界](../../docs/ARCHITECTURE.md#执行)。当前实现是固定 checker，不是 RulePlan / AuditTrace。实验命令见 [DEVELOPMENT](../../docs/DEVELOPMENT.md#本地-deep-checker-实验)；实现状态以源码和测试为准。
 
 ## 1. 任务接口
 
@@ -194,10 +194,7 @@ def create_audit(
 
 ### 规则形式化与回译
 
-条款形式化的数据合同见 [DATA_MODEL](../../docs/DATA_MODEL.md)。它不是 Checker 执行器。
-
-已确认且完整的快照可以在用户明确交接时写入指定 Suite candidate 的 `rules.json` 顶层 `formalizations`。Optimizer 提示只读这份冻结快照。没有这份快照时，原规则路径不变。快照中的 `rejections` 是用户拒绝、没有可程序化判定标准的部分：提示要求不为它们写检查逻辑、不调用模型；`audit_runtime` 对整条拒绝不运行程序并给出 UNABLE，对部分拒绝把 PASS 改为 UNABLE，均附拒绝原因。
-
+条款形式化是开发人员交付规则前的离线工具（`python -m product.formalization`，见 [DEVELOPMENT](../../docs/DEVELOPMENT.md)），用于发现规则表达问题。线上规则总是修正后的表达；审核与 Checker 开发不读取任何形式化快照。
 
 对用户规则尝试严格表达，保留原文及来源；形式表达是可核对的解释，不能冒充原文。每个条款至少明确以下内容：
 

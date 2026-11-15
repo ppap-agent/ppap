@@ -20,7 +20,7 @@ import {fixtureSupport} from './audit-support'
 import {displayReadFixture, fixtureDisplay} from './audit-display'
 import {fileDisplayValues} from '../src/audit/display-info-contract'
 import {usageNotices} from '../src/audit/usage-contract'
-import {auditReportFilename, reportReference} from '../src/audit/result-projection'
+import {reportReference} from '../src/audit/result-projection'
 import {fixtureRound, fixtureReviewRound} from './audit-rounds'
 import {AuditReviewProvider, type AuditReviewAdapter} from '../src/audit/review-editor'
 import {FactAnswersContext} from '../src/audit/fact-answers-context'
@@ -58,7 +58,7 @@ let drivePageReads = 0
 const accepted = new Map<string, ReturnType<typeof fixtureAcceptance>>()
 const confirmationInputs = new Map<string, AuditTask>()
 const taskStore = new Map<string, AuditTask>()
-const templateFixture = fixtureTemplates(scene)
+const templateFixture = fixtureTemplates()
 installRuleFixtures()
 const displayAdapter = fixtureDisplay(taskStore, scene)
 const reportAdapter = fixtureReports(taskStore, scene)
@@ -89,12 +89,10 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
       const files = (taskStore.get(id)?.files ?? []).filter(row => row.selection === 'selected')
       const first = files.find(row => row.match?.state === 'matched')
       const warnings = first ? [{number: 'W-01', code: 'W02', title: '字段为空或未识别', level: 'warn' as const, file_version_id: first.file.id, filename: first.file.original_filename, location: first.file.original_filename, evidence: '(空)', problem: '文件中未识别到零件号。', action: '在文件表头填写零件号，与图纸和其他 PPAP 文件保持一致。', responsibility: '材料侧', scope: 'file' as const}] : []
-      const second = scene === 'precheck-block' ? files.filter(row => row.match?.state === 'matched')[1] : undefined
-      const blocks = second ? [{number: 'B-01', code: 'B04', title: '核心结构缺失', level: 'block' as const, file_version_id: second.file.id, filename: second.file.original_filename, location: 'Sheet1', evidence: '未找到工序行', problem: '文件类型已识别，但缺少工序行，相关条款无法逐行核对。', action: '补齐工序行后重新上传。', responsibility: '材料侧', scope: 'content' as const}] : []
-      const level = (row: AuditTaskFile) => row.match?.state === 'reference' ? 'reference' as const : row.match?.state === 'unmatched' ? 'unmatched' as const : row.file.id === second?.file.id ? 'block' as const : row.file.id === first?.file.id ? 'warn' as const : 'ok' as const
+      const level = (row: AuditTaskFile) => row.match?.state === 'reference' ? 'reference' as const : row.match?.state === 'unmatched' ? 'unmatched' as const : row.file.id === first?.file.id ? 'warn' as const : 'ok' as const
       const rows = files.map(row => ({file_version_id: row.file.id, filename: row.file.original_filename, level: level(row), document_type: row.match?.document_type ?? null, customer: row.match?.metadata.customer ?? null}))
       const count = (value: string) => rows.filter(row => row.level === value).length
-      return {outline_version: 'PPAP-00 v0.14', conclusion: blocks.length ? 'fail' : 'pass', files: rows, blocks, warnings, statuses: [], counts: {ok: count('ok'), warn: count('warn'), block: count('block'), unmatched: count('unmatched'), reference: count('reference'), pending: 0}}
+      return {outline_version: 'PPAP-00 v0.14', conclusion: 'pass', files: rows, blocks: [], warnings, statuses: [], counts: {ok: count('ok'), warn: count('warn'), block: count('block'), unmatched: count('unmatched'), reference: count('reference'), pending: 0}}
     },
     report: async () => new Blob(['%PDF-1.4 preview'], {type: 'application/pdf'}),
   },
@@ -350,7 +348,7 @@ function fixtureGate(task: AuditTask): AuditTask {
   const next = structuredClone(task), blocked = next.files[0].file.id
   const scope = next.confirmation_scope!
   scope.target_file_version_ids = scope.target_file_version_ids.filter(id => id !== blocked)
-  scope.excluded_files = [...scope.excluded_files, {file_version_id: blocked, reason: '当前是历史检查版本，需确认目录版本后才能审核'}].sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))
+  scope.excluded_files = [...scope.excluded_files, {file_version_id: blocked, reason: '未匹配到生效规则，未纳入审核'}].sort((a, b) => a.file_version_id.localeCompare(b.file_version_id))
   return {...next, confirmation_basis_digest: 'b'.repeat(64), estimated_points: scope.target_file_version_ids.length * 500}
 }
 
@@ -362,12 +360,6 @@ const archiveAdapter = fixtureArchive(taskStore, scene, (id, sequence, failed, p
   const accepted = fixtureAcceptance(seed, `${id}-accept`)
   if (scene === 'archive-display') accepted.files = accepted.files.map(file => ({...file, display_info: {revision: 1, values: {...fileDisplayValues(file), customer: `第 ${sequence} 次显示客户`}}}))
   const result = pending ? accepted : fixtureResults(accepted, failed ? 'reports-none' : 'reports-ready')
-  if (scene === 'archive-long-filename') {
-    // Vary the synthetic display name, retaining the known control-plan PDF bytes and audit facts.
-    const file = result.files[1], name = '控制计划-尾门扰流板总成-客户联合评审批准版本-图纸修订RevC-量产阶段检查记录.xlsx'
-    file.file = {...file.file, original_filename: name}
-    if (file.audit?.report.artifact) file.audit.report.artifact = {...file.audit.report.artifact, filename: auditReportFilename(name)}
-  }
   return result
 }, sharingAdapter.forReport)
 const usageAdapter = fixtureUsage(archiveAdapter, scene)
@@ -483,7 +475,7 @@ function Preview() {
     }},
     match: async (...args) => {
       const result = await adapter.match(...args)
-      if (['recognition-loading', 'recognition-late', 'recognition-late-unmatched'].includes(scene)) return defer(`识别请求回执 · ${result.number}`, result)
+      if (['recognition-late', 'recognition-late-unmatched'].includes(scene)) return defer(`识别请求回执 · ${result.number}`, result)
       if (scene === 'recognition-rematch-late-accepted' && args[2]) {
         taskStore.set(result.id, fixtureAcceptance(result, 'preview-other-confirmation'))
         return defer(`旧识别请求回执 · ${result.number}`, result)

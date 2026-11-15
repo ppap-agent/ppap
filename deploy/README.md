@@ -56,7 +56,7 @@ docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down
 
 上述基础生产 Compose 和 runtime/backup 测试只覆盖应用生命周期与备份，不启动 Checker Core Controller，也不证明审核能够执行。实际 Standard 和 Deep 审核都要求另行部署受限 Controller，并为 API/Worker 配置可达的 `PPAP_DEEP_CONTROLLER_SOCKET` 与一致的执行配置。构建该镜像用 `docker buildx bake release`；部署和生产切流仍需明确批准，此处不会自动启用。
 
-真实部署把填好密钥的文件交给 `--env-file`（生产字段目录是仓库根 [`.env.production`](../.env.production)；`deploy/compose.env.example` 只是 verify fixture）。接到 self-hosted InsForge 时用 `-f deploy/insforge/compose.yaml`：不启动 PostgreSQL，加入已有 `insforge-network`，API/Worker 作为该网络上的常驻容器；对象数据在 named volume `ppap-silo-data` 上。该 overlay 停服务时用 `docker compose down`，不要带 `-v`，不会删掉对象卷。验证用的默认 `deploy/compose.yaml` 仍可用 `down -v` 做 CI 清理。Custom Compute 规格见 [insforge/README.md](insforge/README.md)。
+真实部署把填好密钥的文件交给 `--env-file`（生产字段目录是仓库根 [`.env.production`](../.env.production)；`deploy/compose.env.example` 只是 verify fixture）。真实部署停服务用 `docker compose down`，不要带 `-v`，否则会删掉数据库与对象卷；`down -v` 只用于 CI 验证栈清理。
 
 `init-db` 是唯一读取 bootstrap/migrator 口令的组件：先用 `psql` 执行 `migrations/bootstrap.sql`（角色与库），再通过 `migrations/apply.sh` 按 numbered SQL filenames 的 lexical order 执行 schema migrations。`init-bucket` 用 Silo `mcli` 确保对象桶。API 与 Worker 只持有各自数据库角色口令加共享的对象存储/LLM/Web 配置，以及各自拥有的 capability。然后 API `GET /health`、`GET /version`、`GET /ready` 必须成功且 `git_sha` 与镜像一致。
 
@@ -64,7 +64,7 @@ docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down
 
 不要用 PPAP 代码充当 backup engine。完整 recovery 需要同一时刻的数据库转储和对象存储归档。
 
-bundled overlay（有 compose `postgres` 服务）：
+生产 Compose：
 
 ```sh
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
@@ -78,14 +78,7 @@ docker compose -f deploy/compose.yaml --env-file "$ENV" up -d --no-deps --wait a
 
 Silo classic 基于 ubi-micro，容器里没有 `tar`；把 `silo-data` 挂到 `init-db`（postgres 镜像）里打包。Restore 在停应用后 `DROP`/`CREATE DATABASE`、`psql` 灌入 dump、清空并解开对象归档，然后 `docker compose restart silo` 并拉起 API/Worker/Web。`tests/integration/runtime/test_backup.py` 按这条路径检查。
 
-InsForge overlay 没有 compose `postgres` 服务，对 `PPAP_PG_HOST` 用 `init-db` 镜像做 `pg_dump` / `psql`：
-
-```sh
-docker compose -f deploy/insforge/compose.yaml --env-file "$ENV" run --rm --no-deps \
-  --entrypoint pg_dump init-db -h "$PPAP_PG_HOST" -U "$PPAP_PG_BOOTSTRAP_USER" --no-owner --format=plain "$PPAP_PG_DATABASE"
-```
-
-InsForge 集群自身的 backup 不覆盖 PPAP 对象存储。这是当前可执行的生产数据回退路径，不是异地备份策略。
+这是当前可执行的生产数据回退路径，不是异地备份策略。
 
 API 与 Worker 在 production 下向 stderr 写 JSON 行，字段包括 `request_id` / `tenant_id` / `round_id` / `job_id` / `attempt` 以及 HTTP method/path/status 或 job outcome。不记录 token 或客户内容。`GET /health` `/ready` `/version` `/public-config` 不打 INFO。响应带头 `X-Request-ID`。
 

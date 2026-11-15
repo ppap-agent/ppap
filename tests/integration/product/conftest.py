@@ -31,18 +31,6 @@ _CREATED: set[str] = set()
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
 
 
-@pytest.fixture(autouse=True)
-def no_background_rule_readings(monkeypatch):
-    """Saving a rule version queues readings only when the text model is usable, as it is in CI.
-
-    These contracts claim and assert specific jobs, so they take the "no usable model" branch;
-    the batch itself is covered by apps/api/tests/test_formalization_batches.py.
-    """
-    from product.store.formalizations import FormalizationStore
-
-    monkeypatch.setattr(FormalizationStore, "prepare_all", lambda self, principal, rule_version_id: {"batch_id": None, "queued": []})
-
-
 class MemoryObjects:
     """Small in-memory fake for the object-storage boundary only."""
 
@@ -216,7 +204,8 @@ def seed_usage_event_factory():
 @pytest.fixture(scope="session")
 def v4_objects():
     """Use suite-owned Silo without changing host networking while browsers run."""
-    from product.storage import S3Objects, ensure_bucket
+    from botocore.exceptions import ClientError
+    from product.storage import S3Objects, s3_client
 
     endpoint = os.environ.get("PPAP_TEST_S3_ENDPOINT")
     if not endpoint:
@@ -224,7 +213,11 @@ def v4_objects():
     # Each worker keeps its own object namespace, just as it owns its database.
     # UUID also isolates repeated direct pytest sessions against an existing Silo.
     settings = Settings(s3_endpoint=endpoint, s3_bucket=f"ppap-v4-{_XDIST_WORKER or 'local'}-{uuid.uuid4().hex[:12]}")
-    ensure_bucket(settings)
+    client = s3_client(settings)
+    try:
+        client.head_bucket(Bucket=settings.s3_bucket)
+    except ClientError:
+        client.create_bucket(Bucket=settings.s3_bucket)
     return S3Objects(settings)
 
 

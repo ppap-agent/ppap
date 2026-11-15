@@ -21,7 +21,7 @@ def pytest_addoption(parser: Any) -> None:
         action="store",
         default=None,
         choices=["excel", "pdf"],
-        help="Filter V2 cases by file type",
+        help="Filter corpus cases and regressions by file type",
     )
     parser.addoption("--dataset", action="store", default=None, choices=DATASETS, help="One oracle dataset; defaults to all")
 

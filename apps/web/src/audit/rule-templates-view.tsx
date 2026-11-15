@@ -11,14 +11,14 @@ import {pageWindow} from '../components/pager'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {cn} from '../lib/utils'
 import {message} from '../journey/remote'
-import {writeAuditAddress} from './routes'
+import {rulesAddressKeys, writeAuditAddress} from './routes'
 import {CustomerAvatar} from './customer-avatar'
 import {automationLabel, coverage, effective, pendingRows, typeCode, typeGroups, type Automation, type RuleTemplate, type TemplateRow} from './rule-templates'
 
-/** Rules-page addresses: a template, a preset rule or an uploaded rule. Every other rules key is dropped, including retired ones. */
+/** Rules-page addresses: a template, a preset rule or an uploaded rule. Every other rules key is dropped. */
 export function rulesAddress(params: Record<string, string>): string {
   const url = new URL(location.href)
-  for (const key of ['template', 'systemRule', 'requirement', 'reqVersion', 'reqTab', 'reqQuery', 'ruleSuite', 'rulesArea', 'checkerSuite', 'checkerPath']) url.searchParams.delete(key)
+  for (const key of rulesAddressKeys) url.searchParams.delete(key)
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
   return `${url.pathname}${url.search}${url.hash}`
 }

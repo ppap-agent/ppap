@@ -7,6 +7,10 @@ const paths: Record<ProductSurface, string> = {
 export const taskAddress = (id: string | null) => id ? `/tasks/${encodeURIComponent(id)}` : paths.audit
 export const surfaceAddress = (surface: ProductSurface) => paths[surface]
 export const auditAddressChanged = 'ppap-audit-address-changed'
+/** The local preview serves fixture pages under /preview/; their addresses keep the task in the query. */
+export const isPreview = (url: {pathname: string} = location) => url.pathname.startsWith('/preview/')
+/** The rules page's own address keys; they never follow the person to another page. */
+export const rulesAddressKeys = ['template', 'systemRule', 'requirement', 'reqVersion', 'reqTab', 'reqQuery']
 
 /** Observe local address edits without treating them as browser back/forward or rereading a task. */
 export function writeAuditAddress(url: URL | string, mode: 'push' | 'replace' = 'replace', state: unknown = history.state) {
@@ -18,7 +22,7 @@ export function writeAuditAddress(url: URL | string, mode: 'push' | 'replace' = 
 /** A refresh must read the original command receipt, never create another command. */
 export function requestAddress(url: URL, taskId: string, kind: 'recognitionRequest' | 'acceptRequest', requestId: string): string {
   const next = new URL(url)
-  if (next.pathname.startsWith('/preview/') || next.pathname === '/__preview') next.searchParams.set('task', taskId)
+  if (isPreview(next)) next.searchParams.set('task', taskId)
   else {next.pathname = taskAddress(taskId); next.searchParams.delete('task')}
   next.searchParams.delete('view'); next.searchParams.set(kind, requestId)
   return next.pathname + next.search + next.hash
@@ -41,17 +45,11 @@ export function readAuditRoute(url: URL): {surface: ProductSurface; taskId: stri
   return {surface, taskId: url.searchParams.get('task')}
 }
 
-/** Preserve old identities; a Round is not a Task and a share is not a task grant. */
+/** A share is not a task grant; a Round link (Feishu write-back) opens the task that Round belongs to. */
 export function canonicalAddress(url: URL): string {
   const next = new URL(url)
   if (next.searchParams.has('share')) return next.pathname + next.search + next.hash
-  // First-generation addresses (drafts, cases) are no longer read; they land on PPAP Audit.
-  // A Round link (Feishu write-back, review hints) opens the task that Round belongs to.
-  const retired = ['case', 'draft'].some(key => next.searchParams.has(key))
-  for (const key of ['case', 'draft', 'stage', 'resume']) next.searchParams.delete(key)
-  if (next.searchParams.has('round')) next.searchParams.delete('task')
-  if (next.pathname === '/rules') next.pathname = surfaceAddress('requirements')
-  else if (next.pathname === '/dev' || retired || next.searchParams.has('round')) next.pathname = surfaceAddress('audit')
+  if (next.searchParams.has('round')) {next.searchParams.delete('task'); next.pathname = surfaceAddress('audit')}
   const {surface, taskId} = readAuditRoute(next)
   next.pathname = surface === 'audit' ? taskAddress(taskId) : surfaceAddress(surface)
   next.searchParams.delete('view')

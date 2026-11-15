@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from cryptography.fernet import Fernet
 from documents.model_access import ModelUnavailable, current_model_access
-from product.model_access import RETIRED_IDENTITY, tenant_model_scope
+from product.model_access import tenant_model_scope
 from product.settings import Settings
 from product.store.model_credentials import ModelCredentialError, TenantModelStore, decrypt_credential, encrypt_credential, platform_selection
 from pydantic import SecretStr
@@ -139,9 +139,6 @@ def test_operation_scope_uses_only_the_frozen_selection():
         current[0] = SimpleNamespace(identity={**frozen, "revision": "changed"}, access=lambda purpose: pytest.fail("must not use a changed selection"))
         with pytest.raises(ModelUnavailable, match="model_configuration_changed"):
             current_model_access("text")
-    legacy = {key: frozen[key] for key in ("provider", "model", "revision", "deployment")}
-    with tenant_model_scope(store, tenant_id="t", expected_identity=legacy), pytest.raises(ModelUnavailable, match=RETIRED_IDENTITY):
-        current_model_access("text")
 
 
 def test_a_key_is_stored_only_after_text_structured_and_vision_succeed(monkeypatch):

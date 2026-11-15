@@ -1,4 +1,4 @@
-"""UI-only V3.1 preview checks. Run with PPAP_PREVIEW_URL against preview Vite.
+"""UI-only preview checks. Run with PPAP_PREVIEW_URL against preview Vite.
 
 These checks do not prove real upload, matching, audit, billing or persistence.
 The production browser suite remains separate and unchanged.
@@ -721,7 +721,7 @@ class AuditPreviewTests(unittest.TestCase):
                     self.assertEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], old_request)
                 expect(scope).to_contain_text("进入审核 2 份")
                 expect(scope).to_contain_text("PFMEA.xlsx")
-                expect(scope).to_contain_text("当前是历史检查版本，需确认目录版本后才能审核")
+                expect(scope).to_contain_text("未匹配到生效规则，未纳入审核")
                 expect(page.get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()
                 expect(page.get_by_text("预计 1000 点", exact=True)).to_be_visible()
                 expect(page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True)).to_have_count(0)
@@ -731,7 +731,7 @@ class AuditPreviewTests(unittest.TestCase):
                 expect(queue.get_by_text("PFMEA.xlsx", exact=True)).to_have_count(0)
                 removed = page.get_by_role("region", name="已移除文件", exact=True)
                 expect(removed).to_contain_text("PFMEA.xlsx")
-                expect(removed).to_contain_text("当前是历史检查版本，需确认目录版本后才能审核")
+                expect(removed).to_contain_text("未匹配到生效规则，未纳入审核")
                 self.assertEqual(parse_qs(urlparse(page.url).query)["task"], original_task)
                 if scene == "confirm-gate-changed":
                     self.assertNotEqual(parse_qs(urlparse(page.url).query)["acceptRequest"], old_request)

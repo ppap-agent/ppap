@@ -6,7 +6,6 @@ import {sourceLocation} from '../helpers'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 import {ProductAccess} from '../journey/access'
-import {isRequirementLibrary} from '../journey/requirement-library-state'
 import {RemoteSourcePane} from '../journey/remote-source'
 import {AuditIntake, type AuditIntakeAdapter} from './intake'
 import {createNativeTemplateLibraryAdapter} from './template-library-adapter'
@@ -43,8 +42,6 @@ function NativeAudit() {
 
 const templateAdapter = createNativeTemplateLibraryAdapter({personalDriveUpload})
 const readRound: ReadRound = (id, signal) => request(`/rounds/${encodeURIComponent(id)}?read_view=true`, 'GET', undefined, signal)
-// Old Deep entry links (retired with Deep audits, #322) open a new ordinary task.
-if (['prepareDeep', 'deepDraft', 'deepAccept'].some(key => new URL(location.href).searchParams.has(key))) location.replace('/tasks/new')
 const shareId = new URL(location.href).searchParams.get('share')
 history.replaceState(history.state, '', canonicalAddress(new URL(location.href)))
-createRoot(document.getElementById('app')!).render(<ProductAccess recordValidators={{'requirement-library': isRequirementLibrary}} recordsReturnTo="/requirements"><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : <NativeAudit/>}<Toaster/></AuditReviewProvider></ProductAccess>)
+createRoot(document.getElementById('app')!).render(<ProductAccess><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : <NativeAudit/>}<Toaster/></AuditReviewProvider></ProductAccess>)

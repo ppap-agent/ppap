@@ -69,7 +69,7 @@ def partition(targets: list[Target], shard_count: int) -> list[list[Target]]:
     if shard_count == 1:
         shards[0].extend(targets)
     else:
-        dedicated = [target for target in targets if target.name in {"api", "ppap-api"}]
+        dedicated = [target for target in targets if target.name == "api"]
         remaining = [target for target in targets if target not in dedicated]
         shards[0].extend(dedicated)
         for index, target in enumerate(remaining):
@@ -114,8 +114,8 @@ def with_postgres(command: list[str], project: str, *, silo: bool = False) -> No
                 print(f"::warning::PostgreSQL diagnostics failed for {project}: {error}", flush=True)
         raise
     finally:
-        # As in the old per-member job, diagnostics and teardown must not
-        # hide the original test failure. A failed teardown is still logged.
+        # Diagnostics and teardown must not hide the original test failure.
+        # A failed teardown is still logged.
         try:
             cleanup = subprocess.run([*compose, "down", "-v", "--remove-orphans"], cwd=ROOT, env=env, check=False)
             if cleanup.returncode != 0:

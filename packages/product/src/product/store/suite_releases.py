@@ -59,7 +59,7 @@ def _lock(conn, tenant_id: str) -> None:
 
 def _revision(conn, revision_id: str, tenant_id: str | None) -> dict:
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("SELECT * FROM product.suite_revisions WHERE id = %s AND NOT history_only AND (tenant_id = %s OR tenant_id IS NULL)", (_id(revision_id), tenant_id))
+        cur.execute("SELECT * FROM product.suite_revisions WHERE id = %s AND (tenant_id = %s OR tenant_id IS NULL)", (_id(revision_id), tenant_id))
         row = cur.fetchone()
     if row is None:
         raise KeyError("suite_access_denied")
@@ -189,10 +189,6 @@ def _official_base(conn, revision: dict, tenant_id: str) -> dict | None:
     raise ValueError("suite_cycle_or_depth")
 
 
-def _upgrade_provenance(row) -> dict:
-    return {"operation_id": str(row[0]), "source_revision_id": str(row[1]), "target_revision_id": str(row[2]), "expected_revision": row[3]}
-
-
 def _display_name(conn, user_id, tenant_id: str) -> str:
     if user_id is None:
         return "已删除成员"
@@ -244,7 +240,7 @@ class SuiteReleaseStore:
             _member(conn, principal)
             _read_lock(conn, tenant)
             cur.execute(
-                "SELECT * FROM product.suite_revisions WHERE NOT history_only AND (tenant_id IS NULL OR tenant_id = %s) ORDER BY suite_key, tenant_id NULLS LAST, revision_number DESC",
+                "SELECT * FROM product.suite_revisions WHERE (tenant_id IS NULL OR tenant_id = %s) ORDER BY suite_key, tenant_id NULLS LAST, revision_number DESC",
                 (tenant,),
             )
             revisions = {str(row["id"]): row for row in cur.fetchall()}
@@ -418,7 +414,7 @@ class SuiteReleaseStore:
                 # Do not turn a missing dependency or denied/corrupt selected Suite
                 # into an empty state that invites another publication.
                 candidate = conn.execute(
-                    """SELECT id FROM product.suite_revisions WHERE suite_key = %s AND NOT history_only AND (tenant_id IS NULL OR tenant_id = %s)
+                    """SELECT id FROM product.suite_revisions WHERE suite_key = %s AND (tenant_id IS NULL OR tenant_id = %s)
                        ORDER BY tenant_id NULLS LAST, revision_number DESC LIMIT 1""",
                     (suite_key, principal.tenant_id),
                 ).fetchone()
@@ -439,7 +435,6 @@ class SuiteReleaseStore:
                     "latest_official_version": None,
                     "official_base_revision_id": None,
                     "official_update_available": False,
-                    "official_update_notice": False,
                     "verification_status": "unverified",
                     "force_unverified": False,
                     "validation": empty_validation(),
@@ -463,14 +458,6 @@ class SuiteReleaseStore:
             base = _official_base(conn, _revision(conn, selection["revision_id"], principal.tenant_id), principal.tenant_id)
             update = bool(official and base and base["id"] != official["current_revision_id"] and selection["selection_mode"] == "pinned")
             needs_rule_validation = bool(rule_update or update and official_rule_impact and official_rule_impact["changed"])
-            seen = (
-                not update
-                or conn.execute(
-                    "SELECT 1 FROM product.suite_official_update_views WHERE tenant_id=%s AND user_id=%s AND official_revision_id=%s",
-                    (principal.tenant_id, principal.user_id, official["current_revision_id"]),
-                ).fetchone()
-                is not None
-            )
         return {
             "title": rules.get("title") or rules.get("type") or "文件检查",
             "version": selection["version"],
@@ -485,7 +472,6 @@ class SuiteReleaseStore:
             "rule_update": rule_update,
             "official_rule_impact": official_rule_impact if update else None,
             "official_update_available": update,
-            "official_update_notice": not seen,
             "verification_status": "stale" if needs_rule_validation else selection["verification_status"],
             "force_unverified": selection["force_unverified"],
             "validation": (
@@ -495,104 +481,6 @@ class SuiteReleaseStore:
             ),
             "history": history,
         }
-
-    def acknowledge_official_update(self, principal, suite_key: str, official_revision_id: str) -> dict:
-        suite_key, official_revision_id = _key(suite_key), _id(official_revision_id)
-        with self._conn() as conn, conn.transaction():
-            _member(conn, principal)
-            _read_lock(conn, principal.tenant_id)
-            official = conn.execute("SELECT current_revision_id FROM product.official_suite_heads WHERE suite_key=%s", (suite_key,)).fetchone()
-            if official is None or str(official[0]) != official_revision_id:
-                raise ValueError("suite_official_head_conflict")
-            conn.execute(
-                """INSERT INTO product.suite_official_update_views(tenant_id,user_id,suite_key,official_revision_id)
-                   VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
-                (principal.tenant_id, principal.user_id, suite_key, official_revision_id),
-            )
-        return self.active(principal, suite_key)
-
-    def upgrade_official(self, principal, suite_key: str, source_revision_id: str, target_revision_id: str, expected_revision: int, operation_id: str) -> dict:
-        """Save a candidate only. Validation and explicit publication own the next steps."""
-        from product.suite_upgrades import carry_enterprise_changes
-
-        suite_key, source_revision_id, target_revision_id, operation_id = _key(suite_key), _id(source_revision_id), _id(target_revision_id), _id(operation_id)
-        if type(expected_revision) is not int or expected_revision < 0:
-            raise ValueError("invalid_suite_upgrade")
-        fingerprint = content_digest(
-            canonical_json(
-                {
-                    "suite_key": suite_key,
-                    "source_revision_id": source_revision_id,
-                    "target_revision_id": target_revision_id,
-                    "expected_revision": expected_revision,
-                    "created_by": principal.user_id,
-                }
-            )
-        )
-        with self._conn() as conn, conn.transaction():
-            _member(conn, principal)
-            _lock(conn, principal.tenant_id)
-            prior = conn.execute(
-                "SELECT revision_id,request_fingerprint FROM product.suite_upgrade_operations WHERE tenant_id=%s AND operation_id=%s",
-                (principal.tenant_id, operation_id),
-            ).fetchone()
-            if prior:
-                if prior[1] != fingerprint:
-                    raise ValueError("suite_operation_conflict")
-                candidate_id = str(prior[0])
-            else:
-                source = _revision(conn, source_revision_id, principal.tenant_id)
-                if source["suite_key"] != suite_key:
-                    raise ValueError("suite_key_mismatch")
-                selected = _selected(conn, principal.tenant_id, suite_key)
-                if (selected["head"]["revision"] if selected["head"] else 0) != expected_revision:
-                    raise ValueError("suite_head_conflict")
-                official = conn.execute("SELECT current_revision_id FROM product.official_suite_heads WHERE suite_key=%s", (suite_key,)).fetchone()
-                if official is None or str(official[0]) != target_revision_id:
-                    raise ValueError("suite_official_head_conflict")
-                base = _official_base(conn, source, principal.tenant_id)
-                if base is None or str(base["id"]) == target_revision_id:
-                    raise ValueError("suite_upgrade_not_available")
-                changes = carry_enterprise_changes(
-                    self.suites.resolve_suite(source_revision_id, principal.tenant_id, conn=conn),
-                    self.suites.resolve_suite(str(base["id"]), principal.tenant_id, conn=conn),
-                    self.suites.resolve_suite(target_revision_id, principal.tenant_id, conn=conn),
-                )
-                candidate = self.suites.create_revision(
-                    tenant_id=principal.tenant_id,
-                    suite_key=suite_key,
-                    files=changes.files,
-                    deleted_paths=changes.deleted_paths,
-                    created_by=principal.user_id,
-                    base_revision_id=target_revision_id,
-                    related_suite_keys=changes.related_suite_keys,
-                    conn=conn,
-                )
-                candidate_id = candidate.id
-                conn.execute(
-                    """INSERT INTO product.suite_upgrade_operations
-                       (tenant_id,operation_id,suite_key,source_revision_id,target_revision_id,revision_id,expected_revision,request_fingerprint,created_by)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (principal.tenant_id, operation_id, suite_key, source_revision_id, target_revision_id, candidate_id, expected_revision, fingerprint, principal.user_id),
-                )
-                conn.execute(
-                    """INSERT INTO product.suite_official_update_views(tenant_id,user_id,suite_key,official_revision_id)
-                       VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
-                    (principal.tenant_id, principal.user_id, suite_key, target_revision_id),
-                )
-        return self.detail(principal, candidate_id)
-
-    def read_upgrade(self, principal, suite_key: str, operation_id: str) -> dict:
-        suite_key, operation_id = _key(suite_key), _id(operation_id)
-        with self._conn() as conn:
-            _member(conn, principal)
-            row = conn.execute(
-                "SELECT revision_id FROM product.suite_upgrade_operations WHERE tenant_id=%s AND suite_key=%s AND operation_id=%s",
-                (principal.tenant_id, suite_key, operation_id),
-            ).fetchone()
-        if row is None:
-            raise ValueError("suite_candidate_not_found")
-        return self.detail(principal, str(row[0]))
 
     def publish(self, principal, suite_key: str, revision_id: str, expected_revision: int, operation_id: str, force_unverified: bool = False, *, conn=None) -> dict:
         suite_key, revision_id, operation_id = _key(suite_key), _id(revision_id), _id(operation_id)
@@ -622,11 +510,6 @@ class SuiteReleaseStore:
                 raise ValueError(blocked)
             if any(_selected_or_none(conn, principal.tenant_id, key) is None for key in revision["related_suite_keys"]):
                 raise ValueError("suite_dependencies_not_adopted")
-            from product.legacy_head_cutover import refuse_related_carrier
-
-            # A directory head cannot adopt while a related head is still a carrier.
-            # Do not replace that related head with another revision of the same key.
-            refuse_related_carrier(self, conn, principal.tenant_id, revision["related_suite_keys"])
             previous = str(head["current_revision_id"]) if head else None
             if previous is None:
                 try:
@@ -737,20 +620,6 @@ class SuiteReleaseStore:
             return self.detail(principal, revision_id)
         return {"id": _persist(conn)}
 
-    def read_candidate(self, principal, base_revision_id: str, operation_id: str) -> dict:
-        """Read an uncertain save by its original operation, without repeating it."""
-        base_revision_id, operation_id = _id(base_revision_id), _id(operation_id)
-        with self._conn() as conn:
-            _member(conn, principal)
-            _revision(conn, base_revision_id, principal.tenant_id)
-            row = conn.execute(
-                "SELECT revision_id FROM product.suite_candidate_operations WHERE tenant_id=%s AND operation_id=%s AND base_revision_id=%s",
-                (principal.tenant_id, operation_id, base_revision_id),
-            ).fetchone()
-        if row is None:
-            raise ValueError("suite_candidate_not_found")
-        return self.detail(principal, str(row[0]))
-
     def detail(self, principal, revision_id: str) -> dict:
         with self._conn() as conn, conn.transaction():
             _member(conn, principal)
@@ -771,12 +640,7 @@ class SuiteReleaseStore:
             rules = json.loads(resolved.files["rules.json"])
             title = rules.get("title") or rules.get("type") or "文件检查"
             creator_name = _display_name(conn, row["created_by"], principal.tenant_id) if row["tenant_id"] else "PPAP"
-            upgrade = conn.execute(
-                "SELECT operation_id,source_revision_id,target_revision_id,expected_revision FROM product.suite_upgrade_operations WHERE tenant_id=%s AND revision_id=%s",
-                (principal.tenant_id, revision_id),
-            ).fetchone()
         return {
-            **({"upgrade": _upgrade_provenance(upgrade)} if upgrade else {}),
             "rule_impact": impact,
             "title": title,
             "version": row["revision_number"],
@@ -919,9 +783,6 @@ class SuiteReleaseStore:
             blocked = adoption_block(resolved, verified=True, force_unverified=False)
             if blocked:
                 raise ValueError(blocked)
-            from product.legacy_head_cutover import refuse_related_carrier
-
-            refuse_related_carrier(self, conn, None, revision["related_suite_keys"])
             if head:
                 cur.execute(
                     """UPDATE product.official_suite_heads SET current_revision_id = %s, revision = revision + 1,

@@ -1,4 +1,4 @@
-"""U08 admission and execution use frozen bytes even when an older Suite exists.
+"""U08 admission and execution use the selected frozen bytes.
 
 Real API, PostgreSQL, Silo, Worker, Controller and guest process. The existing
 core_system fixture substitutes only RPC transport; no model grant is issued.
@@ -19,6 +19,7 @@ from product import build_product_store
 from product.identity import SESSION_COOKIE
 from product.seed_standard_suites import install_official_sources
 from product.settings import Settings
+from product.store.suite_releases import SuiteReleaseStore
 from product.store.suites import SuiteStore
 from psycopg.types.json import Jsonb
 from worker import process_claimed
@@ -45,18 +46,6 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
     include("UAES:U08")
     installed = install_official_sources(suites, [available[key] for key in order])
     revisions = {row["suite_key"]: row["revision_id"] for row in installed}
-    # A stored historical carrier: its program dispatches through the removed class loader.
-    legacy = suites.create_revision(
-        tenant_id=None,
-        suite_key="UAES:U08",
-        files={
-            "checker.py": b"from audit.standard_library import check_clause\nRESOURCES = {'carriers': {}, 'methods': {}}\ndef check(context):\n    return check_clause(context, RESOURCES)\n",
-            "rules.json": json.dumps({"rules": [{"id": "U08:1"}], "checker_binding": {"U08:1": "checker:check"}}).encode(),
-        },
-        related_suite_keys=("UAES:U07", "UAES:U16"),
-        created_by=None,
-    )
-    assert b"check_clause" in suites.resolve_suite(legacy.id, principal.tenant_id).files["checker.py"]
     core_system.install(admin, guest_process=True)
     worker = build_product_store(settings, objects=v4_objects, role="worker")
     captured = []
@@ -87,9 +76,7 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
             resource["methods"].pop("U08:6")
             changes["resources.py"] = "RESOURCE = " + repr(resource) + "\n"
         if changes:
-            saved = client.post(f"/suite-revisions/{selected}/candidates", json={"operation_id": str(uuid4()), "files": changes})
-            assert saved.status_code == 201, saved.text
-            selected = saved.json()["id"]
+            selected = SuiteReleaseStore(settings, v4_objects).save_candidate(principal, selected, changes)["id"]
             adopted = client.put("/suites/UAES:U08/active", json={"revision_id": selected, "expected_revision": 1, "operation_id": str(uuid4()), "force_unverified": True})
             assert adopted.status_code == 200, adopted.text
         resolved = suites.resolve_suite(selected, principal.tenant_id)
@@ -126,7 +113,7 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
         round_id = accepted.json()["id"]
         frozen = suites.read_snapshot(round_id, principal.tenant_id)
         target = frozen.targets[0]
-        assert target.suite_revision_id == selected != legacy.id
+        assert target.suite_revision_id == selected
         assert target.suite_digest == resolved.revision.resolved_digest
         assert target.binding.checker_digest == checker_digest(program)
         job = worker.claim_job("u08-boundary")

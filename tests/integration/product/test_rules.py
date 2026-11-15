@@ -371,48 +371,5 @@ class RuleApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/rules/parse/" + completed["id"]).status_code, 403)
 
 
-class FileAnalysisAI:
-    def __init__(self, fail=False):
-        self.fail = fail
-        self.requests = []
-
-    def __call__(self, operation, **request):
-        from documents.ai import AIResult
-
-        self.requests.append({"operation": operation, **request})
-        if self.fail:
-            raise RuntimeError("private provider detail")
-        return AIResult({"customer": "测试客户", "model": "M1", "part": ["零件A"]})
-
-
-class FileAnalysisApiTests(RuleApiTests):
-    def test_analysis_job_uses_existing_file_authorization_and_result_storage(self):
-        from worker import process_claimed
-
-        source = self.upload()
-        published = self.client.post("/rules", json={"title": "控制计划规则", "body": rule_body(), "source_file_version_id": source["id"]})
-        self.assertEqual(published.status_code, 201)
-        body = {"request_id": str(uuid.uuid4()), "source_file_id": source["file_id"], "source_file_version_id": source["id"]}
-        accepted = self.client.post("/file-analyses", json=body)
-        self.assertEqual(accepted.status_code, 202)
-        self.assertEqual(self.client.post("/file-analyses", json=body).json()["id"], body["request_id"])
-        job = self.store.claim_job("analysis-worker")
-        process_claimed(self.store, job, "analysis-worker", rule_ai=FileAnalysisAI())
-        result = self.client.get("/file-analyses/" + job.id).json()
-        self.assertEqual(result["status"], "succeeded")
-        self.assertEqual(result["result"]["matched_rule_id"], published.json()["id"])
-        latest_path = f"/files/{source['file_id']}/versions/{source['id']}/analysis"
-        self.assertEqual(self.client.get(latest_path).json()["analysis"]["id"], job.id)
-        # A colleague reads the analysis of the original a published rule shares; another tenant cannot.
-        self.login("bob")
-        self.assertEqual(self.client.get("/file-analyses/" + job.id).status_code, 200)
-        self.assertEqual(self.client.get(latest_path).status_code, 200)
-        self.assertEqual(self.client.post("/file-analyses", json=body).status_code, 400)
-        self.login("carol")
-        self.assertEqual(self.client.get("/file-analyses/" + job.id).status_code, 403)
-        self.assertEqual(self.client.get(latest_path).status_code, 403)
-        self.assertEqual(self.client.post("/file-analyses", json=body).status_code, 403)
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -39,15 +39,14 @@ const library: TemplateLibrary = {customers: [
     tpl('uaes-traceability', '零件追溯检查单', '零件追溯说明', 'E10')]}
 ]}
 
-/** Fixture transport for the template library. Scenes: `templates-error` fails the first read; `templates-no-feishu` hides saving. */
-export function fixtureTemplates(scene: string): TemplateLibraryAdapter {
-  let reads = 0
+/** Fixture transport for the template library. */
+export function fixtureTemplates(): TemplateLibraryAdapter {
   const pause = () => new Promise(resolve => setTimeout(resolve, 300))
   return {
-    read: async () => {await pause(); if (scene === 'templates-error' && ++reads === 1) throw new Error('preview_templates_unavailable'); return structuredClone(library)},
+    read: async () => {await pause(); return structuredClone(library)},
     download: async (_customer, templateId) => {await pause(); return new Blob([`preview ${templateId}`], {type: 'application/octet-stream'})},
     downloadAll: async customer => {await pause(); return new Blob([`preview ${customer}`], {type: 'application/zip'})},
-    ...scene === 'templates-no-feishu' ? {} : {feishu: {
+    feishu: {
       drive: {
         rootFolder: async () => ({token: 'preview-root', name: '我的文件夹', type: 'folder'}),
         list: async ({folderToken} = {}) => ({files: folderToken === 'preview-root' ? [{token: 'preview-ppap', name: 'PPAP 模板', type: 'folder'}] : []}),
@@ -57,7 +56,7 @@ export function fixtureTemplates(scene: string): TemplateLibraryAdapter {
         const templates = library.customers.find(row => row.id === customerId)!.templates
         return {customer_id: customerId, folder_token: folderToken, results: templates.map((template, index) => ({template_id: template.id, filename: template.filename, state: index === 0 ? 'exists' as const : 'saved' as const, file_token: index === 0 ? null : `preview-${template.id}`, reason: index === 0 ? '目录中已有同名文件，未覆盖，也未重复保存。' : null}))}
       },
-    }},
+    },
     submit: async ({requestId, files}) => {await pause(); return {request_id: requestId, state: 'received', file_count: files.length, created_at: new Date().toISOString()}},
   }
 }

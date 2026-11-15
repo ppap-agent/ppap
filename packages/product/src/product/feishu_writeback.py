@@ -112,10 +112,11 @@ def _semantic(finding: dict) -> dict:
 def _scope(finding: dict) -> tuple[int, int, int] | None:
     semantic = _semantic(finding)
     scope = semantic.get("scope")
-    values = scope if isinstance(scope, dict) else semantic
-    total = values.get("total")
-    checked = values.get("checked")
-    unknown = values.get("unknown")
+    if not isinstance(scope, dict):
+        return None
+    total = scope.get("total")
+    checked = scope.get("checked")
+    unknown = scope.get("unknown")
     if type(total) is int and total >= 0 and type(checked) is int and checked >= 0 and type(unknown) is int and unknown >= 0 and checked + unknown <= total:
         return total, checked, unknown
     return None
@@ -433,15 +434,7 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
                 else:
                     blocks.append(_text("依据：未提供可定位的资料来源。"))
             else:
-                locator = row.get("locator") or {}
-                if row.get("item") and not _published_clause(published_clauses, locator.get("rule_item_id"), row["item"]):
-                    blocks.append(_text("检查项正文：" + str(row["item"])))
-                positions = [str(locator["locator"])] if locator.get("locator") else []
-                for evidence_source in (locator.get("evidence") or {}).get("sources") or []:
-                    position = str(evidence_source.get("locator") or "")
-                    if position and position not in positions:
-                        positions.append(position)
-                blocks.append(_text("依据：" + "；".join(positions) if positions else "未提供精确位置，请核对原件。"))
+                blocks.append(_text("依据：结果缺少可核对的证据记录，需核对原始审核记录。"))
             review = row.get("review") or {}
             if review.get("judgment"):
                 blocks.append(_text("人工复核：" + str(review["judgment"])))

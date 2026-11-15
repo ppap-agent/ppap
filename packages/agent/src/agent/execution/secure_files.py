@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import stat
@@ -75,13 +74,3 @@ def reject_constant(value: str) -> None:
 
 def read_json(root: Path, parts: tuple[str, ...], limit: int) -> Any:
     return json.loads(read_regular(root, parts, limit).decode("utf-8"), object_pairs_hook=unique_object, parse_constant=reject_constant)
-
-
-def stage_source(root: Path, project_key: str, sha256: str, file_format: str, target: Path, limit: int) -> int:
-    data = read_regular(root, (project_key, "sources", sha256 + file_format), limit)
-    if hashlib.sha256(data).hexdigest() != sha256:
-        raise ValueError("Source hash mismatch")
-    with target.open("xb") as output:
-        output.write(data)
-    target.chmod(0o444)
-    return len(data)

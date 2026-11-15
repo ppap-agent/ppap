@@ -24,9 +24,8 @@ class WebAliasTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
             html = Path(tmp)
             html.chmod(0o755)
-            (html / "index.html").write_text("workbench")
+            (html / "index.html").write_text("native-audit")
             (html / "addon.html").write_text("addon-page")
-            (html / "audit.html").write_text("native-audit")
             (html / "pdf.worker.mjs").write_text("export const worker = true;")
             started = _run(
                 [
@@ -46,25 +45,22 @@ class WebAliasTests(unittest.TestCase):
             try:
                 syntax = _run(["docker", "exec", name, "nginx", "-t"])
                 self.assertEqual(syntax.returncode, 0, syntax.stderr)
-                self.assertEqual(_fetch(name, "/audit-files"), (200, "workbench"))
-                self.assertEqual(_fetch(name, "/rules"), (200, "workbench"))
-                self.assertEqual(_fetch(name, "/dev"), (200, "workbench"))
                 self.assertEqual(_fetch(name, "/addon"), (200, "addon-page"))
-                for path in ("/audit?task=frozen-task&report=frozen-file", "/audit.html", "/__audit-native?view=usage"):
+                for path in ("/", "/?round=frozen-round", "/audit?task=frozen-task&report=frozen-file", "/audit?view=archive&packageRequest=p"):
                     self.assertEqual(_fetch(name, path), (200, "native-audit"))
+                # Retired aliases have no current generator.
+                for path in ("/audit-files", "/rules", "/dev", "/__audit-native", "/audit.html", "/workbench"):
+                    self.assertEqual(_fetch(name, path)[0], 404)
                 for path in ("/files", "/requirements", "/templates", "/usage", "/tasks/new", "/tasks/frozen-task?file=frozen-file&clause=c1"):
                     self.assertEqual(_fetch(name, path), (200, "native-audit"))
                     address, _, query = path.partition("?")
                     self.assertEqual(_fetch(name, address + "/" + ("?" + query if query else "")), (200, "native-audit"))
-                self.assertEqual(_fetch(name, "/"), (200, "workbench"))
                 status, body, headers = _request(name, "/pdf.worker.mjs")
                 self.assertEqual((status, body), (200, "export const worker = true;"))
                 self.assertEqual(headers.get("content-type"), "application/javascript")
                 self.assertEqual(_fetch(name, "/missing-worker.mjs")[0], 404)
                 self.assertEqual(_redirect(name, "/audit/?task=frozen-task"), "/audit?task=frozen-task")
-                self.assertEqual(_redirect(name, "/audit-files/"), "/audit-files")
                 self.assertEqual(_redirect(name, "/addon/"), "/addon")
-                self.assertEqual(_redirect(name, "/rules/"), "/rules")
                 self.assertEqual(_fetch(name, "/missing-customer-path")[0], 404)
             finally:
                 _run(["docker", "rm", "-f", name])

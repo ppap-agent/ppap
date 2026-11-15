@@ -192,7 +192,7 @@ def tcr_pull_secret() -> str:
 
 
 def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
-    """Resolve legacy tags and verify all four manifests/configs before any rollout."""
+    """Resolve tags and verify all four manifests/configs before any rollout."""
     configs, pins = {}, {}
     auth = None
     if next(iter(images.values())).startswith(PREFIXES["yunxiao"]):
@@ -235,12 +235,10 @@ def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], d
         image = json.loads(raw)
         require(image["architecture"] == "amd64" and image["os"] == "linux", "release platform differs from linux/amd64")
         cfg = image["config"]
-        labels = cfg.get("Labels", {})
-        legacy = ref == PREFIXES["unregistry"] + component + ":" + sha
+        labels = cfg.get("Labels") or {}
         require("PPAP_BUILD_SHA=" + sha in cfg.get("Env", []), "image does not contain the selected baked source identity")
         require(
-            labels.get("org.opencontainers.image.revision", sha if legacy else None) == sha
-            and labels.get("org.opencontainers.image.source", "https://github.com/ppap-agent/ppap" if legacy else None) == "https://github.com/ppap-agent/ppap",
+            labels.get("org.opencontainers.image.revision") == sha and labels.get("org.opencontainers.image.source") == "https://github.com/ppap-agent/ppap",
             "image source labels differ from the selected source",
         )
         return component, repository + "@" + manifest_digest, config["digest"]

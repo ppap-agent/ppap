@@ -1,4 +1,4 @@
-"""Run one Deep recipe in a case workspace with Pi."""
+"""Develop one Deep checker in a case workspace with Pi."""
 
 from __future__ import annotations
 
@@ -38,10 +38,7 @@ def _role(seq: str) -> str:
     return kind.value[1] if kind is not None else seq
 
 
-def prepare(recipe: str, bundle: str, file_name: str, effort: str, *, variant: str = "original", source: Path | None = None) -> tuple[Path, dict[str, str] | None]:
-    template = ROOT / "recipes" / recipe / "prompt.md"
-    if recipe != "checker" and not template.is_file():
-        raise SystemExit(f"missing recipe {template}")
+def prepare(bundle: str, file_name: str, effort: str, *, variant: str = "original", source: Path | None = None) -> tuple[Path, dict[str, str] | None]:
     grouped = build_bundle_map(load_poc_cases())
     cases = grouped[bundle]
     context = build_group_context_for_bundle(cases)
@@ -52,7 +49,7 @@ def prepare(recipe: str, bundle: str, file_name: str, effort: str, *, variant: s
         raise SystemExit(f"{file_name} matched {len(selected)} files in {bundle}")
     case = selected[0]
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    work = OUTPUT / recipe / effort / bundle / f"{case.file_seq}-{Path(case.file_name).stem}" / stamp
+    work = OUTPUT / "checker" / effort / bundle / f"{case.file_seq}-{Path(case.file_name).stem}" / stamp
     files = work / "files"
     files.mkdir(parents=True)
     copied: dict[str, str] = {}
@@ -94,16 +91,9 @@ def prepare(recipe: str, bundle: str, file_name: str, effort: str, *, variant: s
                 sheet.merge_cells(str(merged))
         workbook.save(target_path)
         workbook.close()
-    if recipe != "checker":
-        target = copied[case.file_name]
-        related = "\n".join(f"- {_role(item.file_seq)}: {copied[item.file_name]}" for item in cases if item.file_name != case.file_name)
-        rules = "\n".join(f"{index}. {case.expected[index].rule_desc}" for index in sorted(case.expected))
-        prompt = template.read_text(encoding="utf-8").format(target=target, related=related or "无", rules=rules)
-        (work / "prompt.txt").write_text(prompt, encoding="utf-8")
     (work / "case.json").write_text(
         json.dumps(
             {
-                "recipe": recipe,
                 "variant": variant,
                 "source_override": str(source.resolve()) if source else None,
                 "reasoning_effort": effort,
@@ -459,7 +449,6 @@ def _selected(bundle: str, seq: str, file_name: str, run_all: bool):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--recipe", default="basic")
     parser.add_argument("--replay", type=Path, help="Replay a saved checker run without a model")
     parser.add_argument("--bundle", default="Blanc Spoiler-有特殊特性清单")
     parser.add_argument("--seq", default="11")
@@ -482,15 +471,15 @@ def main() -> None:
 
     active_model = Settings().deep_model_policy()[1]
     selected = _selected(args.bundle, args.seq, args.file, args.all)
-    if (args.rules or args.expected) and (args.recipe != "checker" or len(selected) != 1):
+    if (args.rules or args.expected) and len(selected) != 1:
         raise SystemExit("--rules/--expected require one checker case")
-    if (args.prior or args.source or args.variant != "original") and (args.recipe != "checker" or len(selected) != 1):
+    if (args.prior or args.source or args.variant != "original") and len(selected) != 1:
         raise SystemExit("--prior/--source/--variant require one checker case")
     summary = []
     for index, case in enumerate(selected, start=1):
         print(f"[{index}/{len(selected)}] {case.bundle_id} {case.file_name}", flush=True)
         try:
-            work, expected = prepare(args.recipe, case.bundle_id, case.file_name, args.effort, variant=args.variant, source=args.source)
+            work, expected = prepare(case.bundle_id, case.file_name, args.effort, variant=args.variant, source=args.source)
             metadata = json.loads((work / "case.json").read_text()) if (work / "case.json").exists() else {}
             metadata.update(runner="pi", model=active_model)
             (work / "case.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
@@ -502,10 +491,7 @@ def main() -> None:
                 expected = None
             if args.expected:
                 expected = json.loads(args.expected.read_text())
-            if args.recipe == "checker":
-                code = run_checker(work, case.bundle_id, case.file_name, args.effort, prior_path=args.prior, max_turns=args.max_turns)
-            else:
-                code = run_pi(work, args.effort, max_turns=args.max_turns)
+            code = run_checker(work, case.bundle_id, case.file_name, args.effort, prior_path=args.prior, max_turns=args.max_turns)
             report = score(work, expected)
             row = {
                 "bundle": case.bundle_id,
@@ -528,7 +514,6 @@ def main() -> None:
     matched = sum(1 for row in summary if row["match"])
     succeeded = all(row.get("executed") and row["match"] is not False for row in summary)
     totals = {
-        "recipe": args.recipe,
         "effort": args.effort,
         "runner": "pi",
         "model": active_model,
@@ -538,7 +523,7 @@ def main() -> None:
         "executed": sum(bool(row.get("executed")) for row in summary),
         "results": summary,
     }
-    destination = OUTPUT / args.recipe / args.effort / "summary.json"
+    destination = OUTPUT / "checker" / args.effort / "summary.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(totals, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"cases": len(summary), "matched": matched, "summary": str(destination)}, ensure_ascii=False), flush=True)

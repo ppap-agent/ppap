@@ -4,22 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 
-DEFAULT_MAX_FILE_SIZE = "100MB"
-DEFAULT_ALLOWED_EXTENSIONS = ".pdf,.doc,.docx,.pptx,.xlsx,.xls,.xlsm,.jpg,.jpeg,.png,.gif,.md"
-
-
-def _env(name: str) -> str:
-    return os.environ.get(name, "").strip()
-
-
-def max_file_size() -> str:
-    return _env("MAX_FILE_SIZE") or DEFAULT_MAX_FILE_SIZE
-
-
-def allowed_extensions() -> str:
-    return _env("ALLOWED_EXTENSIONS") or DEFAULT_ALLOWED_EXTENSIONS
+MAX_FILE_SIZE = "100MB"
 
 
 def _vision():

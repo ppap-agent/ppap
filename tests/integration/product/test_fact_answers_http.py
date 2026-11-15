@@ -12,7 +12,7 @@ from product.identity import SESSION_COOKIE
 from .test_fact_answers import answer_request, prepare_fact_round
 
 
-def test_http_fact_answer_export_and_report_keep_the_original(auth_store_factory, tmp_path, monkeypatch):
+def test_http_fact_answer_and_report_keep_the_original(auth_store_factory, tmp_path, monkeypatch):
     store, api, alice, round_id, version, observed = prepare_fact_round(auth_store_factory, tmp_path, monkeypatch)
     original = api.get_round(round_id)
     with TestClient(create_app(store.settings, auth_store=api)) as client:
@@ -41,11 +41,6 @@ def test_http_fact_answer_export_and_report_keep_the_original(auth_store_factory
         assert client.get(path + "/" + request["operation_id"]).json() == receipt
         assert client.post(path, json=request).json() == receipt
         assert len(client.get(path).json()["answers"]) == 1
-        exported = client.get(path + "/export")
-        assert exported.status_code == 200
-        assert exported.json()["machine_findings"][0]["status"] == "UNABLE"
-        assert exported.json()["results"] == receipt["results"]
-        assert exported.json()["training_eligible"] is False
         report = client.get(path + "/report")
         assert report.status_code == 200
         assert report.headers["content-type"] == "application/pdf"
@@ -86,7 +81,7 @@ def test_fact_answers_recheck_current_review_and_original_authorization(auth_sto
     with TestClient(create_app(store.settings, auth_store=api)) as client:
         client.cookies.set(SESSION_COOKIE, store.create_session(person))
         path = f"/audit-rounds/{rid}/fact-answers"
-        for suffix in ("", "/" + request["operation_id"], "/export", "/report"):
+        for suffix in ("", "/" + request["operation_id"], "/report"):
             assert client.get(path + suffix).status_code in {401, 403}
         assert client.post(path, json={**request, "operation_id": str(uuid4()), "expected_revision": 1}).status_code in {401, 403}
     with pytest.raises(KeyError):
@@ -96,13 +91,12 @@ def test_fact_answers_recheck_current_review_and_original_authorization(auth_sto
     assert observed == ["model observation"]
 
 
-@pytest.mark.parametrize("change,error", [("fingerprint", "fact_question_changed"), ("version", "fact_question_expired"), ("revision", "fact_revision_conflict")])
-def test_http_stale_fact_answer_is_conflict_without_writing(auth_store_factory, tmp_path, monkeypatch, change, error):
+def test_http_stale_fact_answer_is_conflict_without_writing(auth_store_factory, tmp_path, monkeypatch):
+    """The store owns every stale case; HTTP adds only the 409 mapping."""
     store, api, alice, rid, version, observed = prepare_fact_round(auth_store_factory, tmp_path, monkeypatch)
     request = answer_request(api, alice, rid)
-    key, value = {"fingerprint": ("expected_question_fingerprint", "a" * 64), "version": ("file_version_id", str(uuid4())), "revision": ("expected_revision", 1)}[change]
     with TestClient(create_app(store.settings, auth_store=api)) as client:
         client.cookies.set(SESSION_COOKIE, store.create_session(alice))
-        response = client.post(f"/audit-rounds/{rid}/fact-answers", json={**request, key: value})
-        assert response.status_code == 409 and response.json() == {"error": error}
+        response = client.post(f"/audit-rounds/{rid}/fact-answers", json={**request, "expected_question_fingerprint": "a" * 64})
+        assert response.status_code == 409 and response.json() == {"error": "fact_question_changed"}
     assert api.read_fact_answers(alice, rid)["answers"] == []

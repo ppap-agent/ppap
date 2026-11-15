@@ -56,7 +56,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "task_revision_conflict",
                 "task_confirmation_changed",
                 "suite_validation_required",
-                "suite_version_confirmation_required",
                 "suite_artifact_missing",
                 "task_file_provenance_required",
                 "file_validation_required",
@@ -395,17 +394,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         rows = store.list_drafts(principal, limit + 1, offset, q)
         return JSONResponse({"drafts": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
-    @app.post("/file-analyses", response_model=wc.AnalysisJob, status_code=202, openapi_extra=wc.openapi_body(wc.FileAnalysisRequest))
-    def files_analyze(body: dict, request: Request) -> JSONResponse:
-        principal, denied = require_principal(request)
-        if denied:
-            return denied
-        try:
-            result = store.accept_file_analysis(principal, body.get("request_id"), body.get("source_file_id"), body.get("source_file_version_id"))
-        except (KeyError, ValueError) as exc:
-            return fail(exc)
-        return JSONResponse(result, status_code=202)
-
     @app.post("/file-validations", response_model=wc.FileValidationJob, status_code=202, openapi_extra=wc.openapi_body(wc.FileValidationRequest))
     def files_validate(body: dict, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)
@@ -434,26 +422,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
             return denied
         try:
             return JSONResponse({"validation": store.latest_file_validation(principal, file_id, version_id)})
-        except (KeyError, ValueError) as exc:
-            return fail(exc)
-
-    @app.get("/file-analyses/{analysis_id}", response_model=wc.AnalysisJob)
-    def files_analysis_get(analysis_id: str, request: Request) -> JSONResponse:
-        principal, denied = require_principal(request)
-        if denied:
-            return denied
-        try:
-            return JSONResponse(store.get_file_analysis(principal, analysis_id))
-        except (KeyError, ValueError) as exc:
-            return fail(exc)
-
-    @app.get("/files/{file_id}/versions/{version_id}/analysis", response_model=wc.LatestAnalysis)
-    def files_latest_analysis(file_id: str, version_id: str, request: Request):
-        principal, denied = require_principal(request)
-        if denied:
-            return denied
-        try:
-            return JSONResponse({"analysis": store.latest_file_analysis(principal, file_id, version_id)})
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
@@ -492,19 +460,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         except (KeyError, ValueError) as exc:
             return fail(exc)
         return JSONResponse(draft)
-
-    @app.get("/drafts/{draft_id}/round", response_model=wc.Round | None)
-    def drafts_round(draft_id: str, request: Request):
-        _principal, denied = require_object(request, draft_id)
-        if denied:
-            return denied
-        round_id = store.draft_round_id(draft_id)
-        if round_id is None:
-            return None
-        _principal, denied = require_object(request, round_id)
-        if denied:
-            return denied
-        return store.get_round(round_id)
 
     @app.post("/drafts/{draft_id}/accept", response_model=wc.Round, status_code=201, openapi_extra=wc.openapi_body(wc.DraftAcceptRequest))
     def drafts_accept(draft_id: str, body: dict, request: Request) -> JSONResponse:
@@ -695,26 +650,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
             return JSONResponse(document_preview(store.version_bytes(version), version.original_filename, sheet, start_row))
         except Exception:
             return JSONResponse({"available": False, "notice": "无法预览，请下载原件。"})
-
-    @app.post("/rounds/{round_id}/resubmit", response_model=wc.Round, status_code=201, openapi_extra=wc.openapi_body(wc.ResubmitRequest))
-    def rounds_resubmit(round_id: str, body: dict, request: Request) -> JSONResponse:
-        principal, denied = require_object(request, round_id)
-        if denied:
-            return denied
-        items = body.get("items") if "items" in body else None
-        if "rule_version_id" in body:
-            return JSONResponse({"error": "per_target_rules_required"}, status_code=400)
-        try:
-            created = store.resubmit_round(
-                principal,
-                round_id,
-                cast(str, body.get("idempotency_key")),
-                items,
-                usage_policy=lambda actor: quota_for(request, actor),
-            )
-        except (KeyError, ValueError) as exc:
-            return fail(exc)
-        return JSONResponse(created, status_code=201)
 
     @app.put("/rounds/{round_id}/reviews", response_model=wc.Round, openapi_extra=wc.openapi_body(wc.ReviewRequest))
     def rounds_review(round_id: str, body: dict, request: Request) -> JSONResponse:

@@ -96,15 +96,13 @@ CUSTOMERS: tuple[Customer, ...] = (
     ),
 )
 
-# Which customer's built-in rules a template customer is counted against.
-PRESET_CUSTOMERS = {"li": "理想", "nio": "蔚来", "uaes": "UAES"}
-
 
 def customer_type_codes(customer: Customer) -> list[str]:
     """The document types this customer's built-in rules cover (UAES adds its own E types); coverage counts against these."""
     from audit.presets import customer_presets
+    from audit.standard_suites import customer_name
 
-    return sorted({preset.source_type for preset in customer_presets() if preset.customer == PRESET_CUSTOMERS.get(customer.id)})
+    return sorted({preset.source_type for preset in customer_presets() if preset.customer == customer_name(customer.id)})
 
 
 CONTENT_TYPES = {

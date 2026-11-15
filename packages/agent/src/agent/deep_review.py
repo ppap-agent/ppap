@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
-from audit.checker_core import ExecutionSnapshot, FrozenTarget, clause_rejections, rejected_whole
+from audit.checker_core import ExecutionSnapshot, FrozenTarget
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -238,8 +238,6 @@ def check_review(
         sources: list[dict[str, Any]] = []
         if item.status is None:
             problem = "status_missing"
-        elif rejected_whole(clause_rejections(target.rules, clause)):
-            problem = "clause_rejected_by_user"
         elif not item.evidence:
             problem = "evidence_missing"
         for cited in item.evidence:
@@ -401,7 +399,7 @@ def _host_record(raw: object, finding: Mapping[str, Any], target: FrozenTarget, 
         return {**base, "decision": "rejected", "proposed_status": raw["proposed_status"], "rejection": str(raw["rejection"])[:100]}
     if decision != "corrected" or set(raw) != {"clause_id", "decision", "program_status", "reason", "status", "evidence"}:
         raise ValueError("record")
-    if raw["status"] not in {"PASS", "NG", "NA", "UNABLE"} or raw["status"] == finding["status"] or rejected_whole(clause_rejections(target.rules, raw["clause_id"])):
+    if raw["status"] not in {"PASS", "NG", "NA", "UNABLE"} or raw["status"] == finding["status"]:
         raise ValueError("record")
     evidence = raw["evidence"]
     if not isinstance(evidence, list) or not 1 <= len(evidence) <= MAX_EVIDENCE:

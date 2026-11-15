@@ -95,10 +95,14 @@ class AuditDatabaseCase(unittest.TestCase):
         self.store.put_blob(version, b"x")
         return self.store.finalize_version(version)
 
-    def draft(self, items):
-        draft = self.store.create_draft(self.alice)
+    def draft(self, items, predecessor_id=None):
+        draft = self.store.create_draft(self.alice, predecessor_id)
         self.store.save_draft(self.alice, draft["id"], items)
         return draft["id"]
+
+    def reaudit(self, predecessor_id, key, items):
+        """An explicit re-audit is a new draft naming its predecessor."""
+        return self.store.accept_draft(self.alice, self.draft(items, predecessor_id), key)
 
 
 class NativeEntryDatabaseTests(AuditDatabaseCase):
@@ -409,7 +413,7 @@ def check(context):
         self.assertEqual(accepted["predecessor_id"], first["id"])
         self.assertEqual(self.store.list_drafts(self.alice), [])
 
-    def test_each_target_keeps_its_rule_snapshot_through_replay_and_explicit_resubmit(self):
+    def test_each_target_keeps_its_rule_snapshot_through_replay_and_explicit_reaudit(self):
         from product.fixtures import RULE_A
 
         first, second, reference = [self.upload(name) for name in ("a.xlsx", "b.xlsx", "context.pdf")]
@@ -432,7 +436,7 @@ def check(context):
         changed["rules"][0]["rule_to_check"] = "新版检查要求"
         newer = self.store.publish_rule(self.alice, "新版客户规则", changed, reference.id, rule["id"])
         next_items = [{**item, "rule_version_id": newer["id"]} if item["file_version_id"] == second.id else item for item in items]
-        next_round = self.store.resubmit_round(self.alice, accepted["id"], "explicit-resubmit", next_items)
+        next_round = self.reaudit(accepted["id"], "explicit-resubmit", next_items)
         self.assertNotEqual(next_round["id"], accepted["id"])
         self.assertEqual(next_round["predecessor_id"], accepted["id"])
         self.assertEqual(self.store.get_round(accepted["id"])["inputs"], accepted["inputs"])
@@ -443,7 +447,7 @@ def check(context):
         releases = SuiteReleaseStore(self.store.settings, self.store.objects, role="api")
         active = releases.active(self.alice, rule["body"]["suite_key"])
         releases.publish(self.alice, rule["body"]["suite_key"], newer["body"]["suite_revision_id"], active["revision"], str(uuid.uuid4()), force_unverified=True)
-        adopted_round = self.store.resubmit_round(self.alice, next_round["id"], "explicit-adopted-resubmit", next_items)
+        adopted_round = self.reaudit(next_round["id"], "explicit-adopted-resubmit", next_items)
         expected_new = {**changed, "title": "新版客户规则", "suite_key": rule["body"]["suite_key"], "checker_binding": {}, "appendix": []}
         self.assertEqual(next(item for item in adopted_round["inputs"] if item["file_version_id"] == second.id)["rule"]["body"], expected_new)
         self.assertEqual(self.store.get_round(accepted["id"])["inputs"], accepted["inputs"])
@@ -3222,10 +3226,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         from datetime import datetime, timedelta, timezone
 
         import httpx
-        from api import create_app
-        from fastapi.testclient import TestClient
         from product.feishu import UserTokens
-        from product.identity import SESSION_COOKIE
 
         self.settings.feishu_free_trial_quota_points = 0
         draft = self.prepared()
@@ -3245,13 +3246,12 @@ class UsageAcceptanceTests(AuditDatabaseCase):
 
         now = datetime.now(timezone.utc)
         session = self.store.create_session(self.alice, UserTokens("test-access", "test-refresh", now + timedelta(hours=1), now + timedelta(days=1)))
+        from api.usage_reporting import report_usage
+
         with httpx.Client(transport=httpx.MockTransport(no_external_request)) as http:
-            app = create_app(self.settings, lambda _: {"state": "ok"}, lambda _: {"state": "ok"}, self.store, http)
-            with TestClient(app) as client:
-                client.cookies.set(SESSION_COOKIE, session)
-                response = client.post(f"/integrations/feishu/usage/events/{event['id']}/report")
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["external_status"], "unknown")
+            body, status = report_usage(self.store, http, self.settings, self.store.load_session(session), event["id"])
+        self.assertEqual(status, 409)
+        self.assertEqual(body["external_status"], "unknown")
 
     def test_concurrent_rounds_share_trial_and_replay_does_not_charge(self):
         drafts = [self.prepared(), self.prepared()]

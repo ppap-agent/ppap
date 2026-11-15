@@ -7,7 +7,6 @@ type JsonBody<Name extends keyof operations> = operations[Name] extends {request
 
 export type Rule = Schema<'Rule'>
 export type BoundRule = Schema<'BoundRule'>
-export type Analysis = Schema<'Analysis'>
 export type RuleCoverageItem = Schema<'RuleCoverageItem'>
 export type Finding = Schema<'Finding'>
 export type SemanticSource = Schema<'SemanticSource'>
@@ -16,8 +15,6 @@ export type WritebackTarget = Schema<'WritebackTarget'>
 export type QuotaEstimate = Schema<'QuotaEstimate'>
 export type Round = Schema<'Round'>
 export type Draft = Schema<'Draft'>
-export type AnalysisJob = Schema<'AnalysisJob'>
-export type LatestAnalysis = Schema<'LatestAnalysis'>
 export type RuleParseJob = Schema<'RuleParseJob'>
 export type PublicConfig = Schema<'PublicConfig'>
 export type PrincipalPublic = Schema<'PrincipalPublic'>
@@ -56,10 +53,6 @@ type MaterialWire = Schema<'MaterialWire'>
 export type Material = Omit<MaterialWire, 'rule' | 'status'> & {
   rule?: BoundRule | null
   status?: string
-  analysis?: Analysis
-  analysisId?: string
-  analysisStatus?: string
-  analysisReadFailed?: boolean
 }
 
 export class UploadResultUnknown extends Error {
@@ -101,22 +94,9 @@ const messages: Record<string,string> = {
   share_directory_user_permission_missing: '当前飞书登录尚未授予 PPAP 所需的目录访问权限。请检查飞书登录授权；如无法授权，请联系组织管理员。你也可以切回“人员”，清空搜索后向自己发送。',
   share_directory_timeout: '读取组织目录超时，请重新读取目标。',
   upload_request_conflict: '此传输请求已固定其他文件内容，不能替换。请核对原文件。',
-  suite_version_confirmation_required: '当前是历史检查版本，不能用于新审核。请改用目录版本后再采用。',
-  source_changed: '原文或范围已变化。请重新读取当前候选。',
-  candidate_stale: '这条检查要点已经变化。请重新读取。',
-  display_changed: '你看到的检查要点已经变化。请重新读取。',
-  conflicting_confirmation: '这条检查要点已被其他人确认。请重新读取。',
-  operation_conflict: '原操作的内容不同。请读取原操作。',
-  not_confirmable: '这条检查要点还不完整，不能确认。',
-  source_unchecked: '这条的出处还没核对。先在规则页核对出处。',
-  source_unreadable: '规则原件已不可用，暂时不能整理或确认这条规则。',
   suite_key_mismatch: '这条规则不能写入所选检查版本。',
-  invalid_formalization: '这条没整理出来。',
-  invalid_rejection: '拒绝要写明原因，并说明拒绝的是整条还是哪些部分；要点都拒绝时请整条拒绝。',
-  clause_not_found: '没有这条条款。',
   model_unavailable: '服务暂时不可用，请稍后重试；如持续出现，请联系管理员。',
   model_consumption_refused: '暂时无法处理，请稍后重试。',
-  meaning_changed: '整理时漏了原文内容，没有采用。再试一次。',
   checker_not_generated: '这条规则还没有检查程序，不能用于审核。检查程序由平台离线准备，如需准备请联系我们。',
 }
 const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined

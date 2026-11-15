@@ -11,6 +11,7 @@ from product import build_product_store
 from product.files import ObjectExists, ObjectMissing
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
+from product.store.suite_releases import SuiteReleaseStore
 from product.store.suites import SuiteStore
 
 FACTORY = b"def create_audit(audit_file, rule, group_context=None):\n    return None\n"
@@ -57,6 +58,10 @@ def system(auth_store_factory):
     return SimpleNamespace(store=store, worker=worker, principal=principal, client=client, selected=factory_revision(store))
 
 
+def save(f, base_revision_id, files, **options):
+    return SuiteReleaseStore(f.store.settings, f.store.objects).save_candidate(f.principal, base_revision_id, files, **options)
+
+
 @pytest.mark.parametrize(
     "changes",
     [
@@ -71,12 +76,8 @@ def system(auth_store_factory):
 )
 def test_manual_factory_candidate_rejects_old_imports_without_saving(auth_store_factory, changes):
     f = system(auth_store_factory)
-    path = f"/suite-revisions/{f.selected.id}/candidates"
-    operation = str(uuid4())
-    response = f.client.post(path, json={"operation_id": operation, "files": changes})
-    assert response.status_code == 400, response.text
-    assert response.json() == {"error": "checker_cross_version_import"}
-    assert f.client.get(path + "/" + operation).status_code == 404
+    with pytest.raises(ValueError, match="checker_cross_version_import"):
+        save(f, f.selected.id, changes, operation_id=str(uuid4()))
     assert f.client.get(f"/suite-revisions/{f.selected.id}").status_code == 200
     with f.store._conn() as conn:
         assert conn.execute("SELECT count(*) FROM product.suite_revisions WHERE tenant_id IS NOT NULL").fetchone()[0] == 0
@@ -87,9 +88,8 @@ def test_manual_factory_candidate_rejects_old_imports_without_saving(auth_store_
 def test_manual_factory_change_checks_the_inherited_resource(auth_store_factory):
     f = system(auth_store_factory)
     selected = factory_revision(f.store, **{"resources.py": OLD_IMPORT})
-    response = f.client.post(f"/suite-revisions/{selected.id}/candidates", json={"files": {"checker.py": FACTORY.decode() + "# changed\n"}})
-    assert response.status_code == 400, response.text
-    assert response.json() == {"error": "checker_cross_version_import"}
+    with pytest.raises(ValueError, match="checker_cross_version_import"):
+        save(f, selected.id, {"checker.py": FACTORY.decode() + "# changed\n"})
 
 
 @pytest.mark.parametrize(
@@ -104,9 +104,8 @@ def test_manual_factory_change_checks_the_inherited_resource(auth_store_factory)
 def test_new_factory_format_is_checked_when_the_base_is_a_native_carrier(auth_store_factory, source):
     f = system(auth_store_factory)
     selected = factory_revision(f.store, **{"checker.py": b"def check(context): return []\n", "rules.json": b'{"rules":[{"id":"R1","rule_to_check":"Required"}]}'})
-    response = f.client.post(f"/suite-revisions/{selected.id}/candidates", json={"files": {"checker.py": source.decode()}})
-    assert response.status_code == 400, response.text
-    assert response.json() == {"error": "checker_cross_version_import"}
+    with pytest.raises(ValueError, match="checker_cross_version_import"):
+        save(f, selected.id, {"checker.py": source.decode()})
 
 
 @pytest.mark.parametrize("same_program", [False, True])
@@ -116,8 +115,7 @@ def test_unchanged_historical_program_can_be_read_and_have_rules_edited(auth_sto
     changes = {"rules.json": json.dumps({**RULES, "title": "Updated title"})}
     if same_program:
         changes["checker.py"] = (OLD_IMPORT + FACTORY).decode()
-    response = f.client.post(f"/suite-revisions/{selected.id}/candidates", json={"files": changes})
-    assert response.status_code == 201, response.text
-    resolved = SuiteStore(f.store.settings, f.store.objects).resolve_suite(response.json()["id"], f.principal.tenant_id)
+    candidate = save(f, selected.id, changes)
+    resolved = SuiteStore(f.store.settings, f.store.objects).resolve_suite(candidate["id"], f.principal.tenant_id)
     assert resolved.files["checker.py"] == OLD_IMPORT + FACTORY
     assert f.client.get(f"/suite-revisions/{selected.id}").status_code == 200

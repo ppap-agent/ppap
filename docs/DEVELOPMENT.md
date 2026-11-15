@@ -15,7 +15,6 @@
 - 已提交的 `.env.dev` 填 isolated-dev Settings 默认值；[`.env.production`](../.env.production) 填生产仍可沿用的默认值，口令、S3 endpoint、公开 URL 和 LLM 留空。生产不能沿用 isolated-dev 口令和 `http://127.0.0.1:9000`。
 - 生产 compose 用 Docker Compose 的 `--env-file` 注入。CI fixture 是 `deploy/compose.env.example`。真实部署把填好密钥的文件交给同一个 `--env-file`。`init-db` 读取 bootstrap/migrator 口令，先用 `psql` 执行 `migrations/bootstrap.sql`，再通过 `sh /migrations/apply.sh` 按 `NNNN_*.sql` 文件名顺序执行 product migrations；`init-bucket` 用 Silo `mcli` 确保对象桶。API/Worker 只插值各自拥有的字段（含选定的 `PPAP_PG_HOST`/`PPAP_PG_PORT`，以及 API 的飞书变量），不含 bootstrap/migrator 或对方角色口令。
 - isolated-dev Compose 默认关闭业务收费，避免无飞书授权的浏览器流程测试调用真实计费；需要验证收费时显式设置 `PPAP_USAGE_CHARGE_ENABLED=true` 并提供额度接口。此默认值不改变生产 Compose 或 Settings 的收费政策。
-- 把 API/Worker 接到已有的 self-hosted InsForge PostgreSQL 时，用 `docker compose -f deploy/insforge/compose.yaml --env-file deploy/insforge/env.example up -d`。该 overlay 不启动 postgres，加入外部 `insforge-network`。Custom Compute 规格在 `deploy/insforge/compute/`。
 - `.doc` 转换是默认行为，没有开关变量。
 - 可选 capability 缺配置只影响该 capability，不阻止无关开发。Deep 由 `PPAP_DEEP_CONTROLLER_SOCKET` 表示是否配置；未配置时 Core 仍可启动，但审核执行明确失败，不回退。Live Deep 用 `deploy/isolated-dev/deep-live.yaml` 挂 UDS。Controller 工厂要求显式选择 `PPAP_DEEP_RUNTIME=container-only`，并将 `PPAP_DEEP_SANDBOX_PROFILE` 设为 `off` 或 `ppap`；这些运行配置不进入 Worker RPC，guest 命令和路径由可信 Controller 管理。客户规则的检查程序由平台离线准备，产品内不生成、不修复检查程序。开关、sidecar 启动和 UDS 可用均不证明客户审核质量或强隔离，具体限制见 [Deep 部署说明](../deploy/deep/README.md)。
 - 飞书任务通知由 API 进程发送，`PPAP_FEISHU_NOTIFICATIONS_ENABLED` 默认 `false`；开启还需配置该应用的 ID、Secret 和有效授权。`GET/PUT /audit-tasks/{id}/notification` 读取、保存创建人的完成通知设置，修改必须带 `expected_revision`；该设置只控制完成通知，不控制待确认或开始审核通知。通知未进入发送边界前可修改，进入后只读回状态。发送结果未知不自动重发；这些接口不证明飞书已送达或已读取。
@@ -41,7 +40,7 @@
 
 当前可确定性重算的是 UAES 单页 PDF `visual_result` 已冻结的全满足布尔检查。原生 `field()` 能唯一定位到未读值单元格时也会产生文字问题，但没有完整复算依据时只保存回答，结果仍为 UNABLE；多页和其它 Checker 尚不借此推定通过。未知答案保留 UNABLE；其它依赖已确定的条款不再追问。已经记录的回答不可原地改写。
 
-界面在当前结果和历史中并列显示机器结果与人工确认。`fact-answers/report` 下载单独的人工确认 PDF，包含回答人、时间和原件位置；既有机器 PDF 保持不变。`fact-answers/export` 提供同一记录的 JSON，明确标为不可自动用作训练样本。
+界面在当前结果和历史中并列显示机器结果与人工确认。`fact-answers/report` 下载单独的人工确认 PDF，包含回答人、时间和原件位置；既有机器 PDF 保持不变。
 
 ## 按规则读取审核证据
 
@@ -68,7 +67,7 @@ UAES 目录叶子的条款在各自叶子中实现，只从 `checker_lib` 复用
 
 提交前在本仓库执行一次 `uv run --no-sync pre-commit install`。之后每次提交对暂存的 Python 文件运行与 CI 相同的 `ruff check --fix` 和 `ruff format`。`mypy` 仍只在 CI 的 Repository contract 中运行。
 
-数据库 migration ordering authority 只有 numbered filenames。Compose / InsForge / TKE / Schema CI 共用 `migrations/apply.sh`；仓库不存在 `apply.sql` 或第二份顺序清单。
+数据库 migration ordering authority 只有 numbered filenames。Compose / TKE / Schema CI 共用 `migrations/apply.sh`；仓库不存在 `apply.sql` 或第二份顺序清单。
 
 TKE 的 Kubernetes authority 是 `deploy/tke/kustomization.yaml`。部署入口是[原生部署命令](../deploy/tke/README.md#authoritative-release-procedure)，直接使用 `kubectl` 更新并重启；默认先执行更新，遇到错误再诊断，不运行 Python 部署编排或自动预加载。构建由 `build-current.py` 独立负责。CI 通过 `render-current.sh` 使用固定版本 Kustomize 生成清单并执行 kubeconform。edition proxy 的 nginx 内容只存在于 `deploy/tke/edition-proxy.conf`，ConfigMap 由 Kustomize `configMapGenerator` 生成。
 
@@ -89,12 +88,12 @@ pandoc '../10规则-控制计划.docx' --wrap=none -t gfm -o '10规则-控制计
 
 ## 工程工具链
 
-当前实现是 Python 3.12、uv workspace（每个 production owner 一份 `pyproject.toml` + 统一 `src-layout`）、已提交的 `uv.lock`，以及 `apps/web` 的 pnpm/TypeScript。质量检查是 `git show --check` 与 `compileall`；Python 测试统一由 pytest collect/execute；现有 `unittest.TestCase` 仅作为测试类写法保留；前端白盒/契约测试是 `pnpm test`；跨栈浏览器 E2E 是 Python Playwright；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle（`@insforge/cli@0.2.8`）。
+当前实现是 Python 3.12、uv workspace（每个 production owner 一份 `pyproject.toml` + 统一 `src-layout`）、已提交的 `uv.lock`，以及 `apps/web` 的 pnpm/TypeScript。质量检查是 `git show --check` 与 `compileall`；Python 测试统一由 pytest collect/execute；现有 `unittest.TestCase` 仅作为测试类写法保留；前端白盒/契约测试是 `pnpm test`；跨栈浏览器 E2E 是 Python Playwright；镜像是 Docker Bake；运行时是 Docker Compose（开发与验证）和 TKE（生产预览）。
 
 CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装语义：
 
 - Python 依赖：`uv.lock`。`dev` 是默认 dependency group，Repository contract / Python modules / schema / corpus 使用 `uv sync --locked`。Product integration / Playwright E2E 另加 `--group e2e`。安装之后用 `uv run --no-sync` 执行命令，避免 `uv run` 再 sync 一次。 Distribution closure 不复用这个完整 workspace environment：它构建目标 distribution 的 workspace wheel closure，并在 clean venv 中显式安装；registry dependency 版本仍由 `uv.lock` 生成的 constraints 固定。
-- Container build graph：`docker-bake.hcl` 是 API / Worker / Web Dockerfile、context、build args 与 output tag 的唯一 authority。isolated-dev、production、InsForge、remote-dev Compose 只消费 image；本地、remote runner 与 CI 都先运行 `docker buildx bake`，再用 `docker compose ... up --no-build`。`scripts/verify-container-graph.mjs` 只读取 `docker buildx bake --print` 与 `docker compose config --format json` 的 native output 做 PPAP image-identity policy。
+- Container build graph：`docker-bake.hcl` 是 API / Worker / Web Dockerfile、context、build args 与 output tag 的唯一 authority。isolated-dev、production、remote-dev Compose 只消费 image；本地、remote runner 与 CI 都先运行 `docker buildx bake`，再用 `docker compose ... up --no-build`。`scripts/verify-container-graph.mjs` 只读取 `docker buildx bake --print` 与 `docker compose config --format json` 的 native output 做 PPAP image-identity policy。
 - Python 解释器：`.python-version`（3.12）。`pyproject.toml` 的 `requires-python = ">=3.12"` 是兼容范围。
 - Node：`.node-version`（22）。workflow 通过 `actions/setup-node` 的 `node-version-file` 读取。
 - pnpm：`apps/web/package.json` 的 `packageManager`。`corepack enable` 后 Corepack 只从当前目录向上读取该字段，不看 `pnpm --dir`。因此 workflow、Web Dockerfile 和 isolated-dev Vite overlay 都在 `apps/web` 里启动 pnpm，不再重复 `pnpm@…` 字面量。安装仍是 `pnpm install --frozen-lockfile`。CI 的 pnpm 消费 job 在 Node setup 前通过 `GITHUB_ENV` 设置 `COREPACK_HOME=$RUNNER_TEMP/corepack`，让 Node setup 与后续命令共用当前 runner 用户可写的缓存，不依赖系统目录写权限。
@@ -109,7 +108,7 @@ CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装�
 - `deploy/web/Dockerfile` 的 `node:22-alpine` 与 `deploy/isolated-dev/web-dev.yaml` 的 `node:22-bookworm` 仍写在镜像 tag 里。
 - `deploy/deep/package.json` 与 `package-lock.json` 固定 `@earendil-works/pi-coding-agent@1.5.0`。Deep 镜像使用固定 digest 的 Node.js 22.22.0、`npm ci --ignore-scripts`（完整性由 lock 中的 integrity 校验），并执行 `pi-runner.test.mjs` 的离线协议测试。运行时版本检查与执行修订使用 `audit.policy.PI_VERSION`，须与部署依赖版本一致。
 
-所有 GitHub Actions 使用 GitHub 托管的 `ubuntu-24.04` runner，每个 job 使用默认的临时 checkout。CI 不依赖自托管主机、共享 checkout 或 runner 名称。CI 依赖 capability，而不是发行版。workflow 可以安装 uv/Python、Node、Corepack/pnpm 和项目依赖；不得用 `sudo` / `apt` / `yum` / `apk` / `systemctl` 修复 runner，也不得安装或启动 Docker。Python modules 的 services variant、Schema、Corpus PSW、Product integration 和 InsForge lifecycle 要求 runner 已提供 Docker Engine、Compose 和 Buildx；缺任一能力时 fail-fast 输出 `runner does not satisfy ppap-docker capability`。Web、无 PostgreSQL 的 Python modules 和普通 Corpus 不要求 Docker。Repository contract 需要 Docker Engine、Compose 和 Buildx：`docker compose config`、`docker buildx bake --check`/`--print`、nginx 黑盒、Kustomize 与 kubeconform。`actionlint` 1.7.7 检查 workflow 语法。InsForge static config 仍由 `verify-config.mjs` 调用 `docker compose config`。live InsForge lifecycle 需要 `local start` 使用的 runtime Docker capability，只在 InsForge 相关 path、手动 dispatch 或每周 schedule 上运行。LLM / Feishu readiness 是真实外部 probe，手动 dispatch 或每周 schedule，不进 `CI Gate`。Product integration 对同一 `PPAP_BUILD_SHA` 只 `docker buildx bake` 一次，生产 runtime/backup 与 isolated-dev E2E 复用这些镜像（E2E 使用 `compose up --no-build`）。PSW 是 Corpus matrix 的 purpose-built container variant，单独 `docker buildx bake worker` 后从 worker 派生测试镜像。CI Compose 使用 `ppap-ci-<purpose>-<run_id>-<run_attempt>` 作为 project name，cleanup 在独立 `if: always()` step。现有 Compose stack 仍 bind-mount 仓库内 `migrations/`，因此 services、Schema、Product integration 和 InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用原生 CLI，不另起 PPAP dispatcher。
+所有 GitHub Actions 使用 GitHub 托管的 `ubuntu-24.04` runner，每个 job 使用默认的临时 checkout。CI 不依赖自托管主机、共享 checkout 或 runner 名称。workflow 安装 uv/Python、Node、Corepack/pnpm 和项目依赖；Corpus（Excel/PDF）、Product contracts 与 Product integration 通过本地 action [`excel-converter`](../.github/actions/excel-converter/action.yml) 用 `sudo apt-get` 安装 LibreOffice Calc 与 CJK 字体（`.deb` 由 `actions/cache` 缓存），并编译本地 converter sandbox。除此之外不用 `sudo` 修改 runner，也不安装或启动 Docker。Repository contract、Python modules、Distribution closure、Schema、Corpus PSW、Product contracts 和 Product integration 先运行 `scripts/ci_assert_docker.sh`，要求 runner 已提供 Docker Engine、Compose 和 Buildx，缺任一能力时 fail-fast 输出 `runner does not satisfy ppap-docker capability`；Web 与 Corpus Excel/PDF 不要求 Docker。Repository contract 用 Docker 执行 `docker compose config`、`docker buildx bake --check`/`--print`、nginx 黑盒、Kustomize 与 kubeconform；`actionlint` 1.7.7 检查 workflow 语法。LLM / Feishu readiness 是真实外部 probe，手动 dispatch 或每周 schedule，不进 `CI Gate`。Product integration 对同一 `PPAP_BUILD_SHA` 只 `docker buildx bake` 一次，生产 runtime/backup 与 isolated-dev E2E 复用这些镜像（E2E 使用 `compose up --no-build`）。PSW 是 Corpus matrix 的 purpose-built container variant，单独 `docker buildx bake worker` 后从 worker 派生测试镜像。CI Compose 使用 `ppap-ci-<purpose>-<run_id>-<run_attempt>` 作为 project name，cleanup 在独立 `if: always()` step。现有 Compose stack 仍 bind-mount 仓库内 `migrations/`，因此 Docker daemon 需要能看到 runner 使用的同一份仓库路径。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用原生 CLI，不另起 PPAP dispatcher。
 
 Product integration 的 runtime/backup 与 E2E 通过 `bash scripts/run-compose-tests.sh <pytest-directory> <compose-options>` 启动：先由 Docker 分配 loopback 临时端口，再固定实际端口并同步 API/Web 的公开地址后执行测试，备份恢复仍使用同一组地址。`PPAP_API_HOST_PORT`、`PPAP_WEB_HOST_PORT` 只控制宿主映射，默认仍为 `8080`/`4173`；脚本不清理其他任务或常驻服务，workflow 保留失败诊断及本任务的 `always()` 清理。
 
@@ -142,12 +141,12 @@ PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e -k prev
 `scripts/deep_lab.py` 使用已有人工 checker、资源定义及 Fluent API 开发任务程序。用于平台离线开发检查程序；覆盖 Excel 与电子版 PDF，扫描版不纳入。使用 Pi 1.5.0，并从本地 `.env` 的完整 `PPAP_MODEL_CODING_*` 配置读取模型与认证；未提供覆盖时沿用 `PPAP_MODEL_TEXT_*`。先运行 `npm ci --ignore-scripts --prefix deploy/deep`，Node.js 必须至少为 22.19。不要提交认证配置或实验日志。
 
 ```sh
-uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high
-uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high \
+uv run --no-sync python scripts/deep_lab.py --seq 11 --effort high
+uv run --no-sync python scripts/deep_lab.py --seq 11 --effort high \
   --variant shifted-table --prior /absolute/path/to/artifact.json
-uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high \
+uv run --no-sync python scripts/deep_lab.py --seq 11 --effort high \
   --source /absolute/path/to/electronic.pdf
-uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort high \
+uv run --no-sync python scripts/deep_lab.py --seq 11 --effort high \
   --source /absolute/path/to/fixed.xlsx --rules /absolute/path/to/rule-input.json \
   --expected /absolute/path/to/expected.json --prior /absolute/path/to/artifact.json
 ```
@@ -158,17 +157,15 @@ uv run --no-sync python scripts/deep_lab.py --recipe checker --seq 11 --effort h
 
 ## Checker Core 官方发布
 
-官方 Suite 的安装、回归与发布是三个动作。仓库自带的目录叶子已离线验证，`product.seed_standard_suites --apply --publish-defaults` 在入库后直接把每个叶子设为官方默认（`repository_default`，不需要语料证明行），已有官方指针的规则组不会被覆盖，关联叶子先发布；企业未自选时自动跟随，显示为已验证。`product.seed_standard_suites --apply` 只保存 `checkers/<客户>/<规则组>/` 目录叶子的不可变候选，不安装 `standard_suites()` 或历史 generic carrier，也不因相同 `suite_key` 选择旧 carrier。企业 `PUT /suites/{key}/active` 即使带 `force_unverified` 也不能把历史 carrier 设为下一个头；数据库里已有的 carrier 头保持不动，新审核和预检会要求确认目录版本。关联套件的当前头如果是 carrier，企业采用和官方发布同样拒绝，不会改用同名的其他版本。平台以 migrator 角色调用 `SuiteReleaseStore.record_official_validation` 保存独立回归证明，再调用 `publish_official(revision_id, expected_revision=..., expected_validation_revision=...)` 发布。发布前用 `official_active(suite_key)` 读取官方指针修订；首次为 0，验证修订取刚确认的证明。发布在同一事务内重查证明、当前关联 Suite、共享库版本及对象字节，并以 CAS 更新唯一官方指针。过期发布请求须先读回，不自动用新修订重发。验证或保存新候选不会替换当前官方版本；回滚也须显式发布准确旧版本。
+官方 Suite 的安装、回归与发布是三个动作。仓库自带的目录叶子已离线验证，`product.seed_standard_suites --apply --publish-defaults` 在入库后直接把每个叶子设为官方默认（`repository_default`，不需要语料证明行），已有官方指针的规则组不会被覆盖，关联叶子先发布；企业未自选时自动跟随，显示为已验证。`product.seed_standard_suites --apply` 只保存 `checkers/<客户>/<规则组>/` 目录叶子的不可变候选。平台以 migrator 角色调用 `SuiteReleaseStore.record_official_validation` 保存独立回归证明，再调用 `publish_official(revision_id, expected_revision=..., expected_validation_revision=...)` 发布。发布前用 `official_active(suite_key)` 读取官方指针修订；首次为 0，验证修订取刚确认的证明。发布在同一事务内重查证明、当前关联 Suite、共享库版本及对象字节，并以 CAS 更新唯一官方指针。过期发布请求须先读回，不自动用新修订重发。验证或保存新候选不会替换当前官方版本；回滚也须显式发布准确旧版本。
 
-首次启用先按关联依赖顺序验证并发布官方 Suite，再受理跟随官方版本的审核。既有 latest 或验证记录不被当作发布批准，未激活的官方源仍可按 revision 查看。没有固定企业版本的租户仅跟随已发布官方指针，企业明确固定某个官方或企业 revision 后不会被后续官方发布覆盖。官方或企业指针若仍指向旧 carrier，新受理和预检拒绝并要求确认版本，不自动改选同 key 的目录版本，也不解除已有 pin。显式发布只影响之后的新 Round。已冻结 Round 继续使用原修订。
+首次启用先按关联依赖顺序验证并发布官方 Suite，再受理跟随官方版本的审核。既有 latest 或验证记录不被当作发布批准，未激活的官方源仍可按 revision 查看。没有固定企业版本的租户仅跟随已发布官方指针，企业明确固定某个官方或企业 revision 后不会被后续官方发布覆盖。显式发布只影响之后的新 Round。已冻结 Round 继续使用原修订。
 
 ## 企业首次采用检查版本
 
-审核规则下有两页：「规则模板」（默认，`/requirements`）按模板组织规则——产品预置规则按客户形成系统模板，上传规则按“所属模板”（规则的客户字段）归入本企业模板，不限定客户的归入「通用规则」；「自动审核」（`?rulesArea=automation`）列出执行自动审核的程序。新建审核在确认规则时可选一个模板，按文件类型为每份文件设置规则后重新识别。
+审核规则页（`/requirements`）按模板组织规则——产品预置规则按客户形成系统模板，上传规则按“所属模板”（规则的客户字段）归入本企业模板，不限定客户的归入「通用规则」。新建审核在确认规则时可选一个模板，按文件类型为每份文件设置规则后重新识别。
 
-「自动审核」中的程序页（`/requirements?rulesArea=automation&checkerSuite=...`，旧地址 `?checkerSuite=` 仍可打开）可在首次审核前读取可访问候选并明确采用。无企业或官方指针时，读取返回 `candidate_only`、`current_revision_id=null` 和单独的 `candidate_revision_id`，不把候选当作已生效。未验证候选须确认风险，只写本租户指针；先采用直接关联检查，UAES 顺序为 U12/U16 → U07 → U08。已采用版本因依赖变化而过期时，可重新验证，或在同一页面明确确认继续使用未验证版本。上述操作不构成官方发布，不改已有 Round。发布回包未知时只读取原操作，不自动重新发布。
-
-「自动审核」页底部的「系统程序目录」（`checkerPath` 或 `rulesArea=predefined`）按 `GET /suites` 返回的真实路径展开版本、客户和规则组。仓库存在但未安装的叶子可见，只有 `availability=installed` 且带有效官方 Revision 的来源可打开。来源路径与已安装 Revision 分开显示，不用企业当前采用版本替代官方来源。未安装、不可读、身份冲突或扫描失败分别报告，不回退。URL 深链及浏览器前进后退恢复同一选定路径；浏览目录不安装、不采用，也不调用模型。
+规则详情中的「检查程序」可在首次审核前读取可访问候选并明确采用。无企业或官方指针时，读取返回 `candidate_only`、`current_revision_id=null` 和单独的 `candidate_revision_id`，不把候选当作已生效。未验证候选须确认风险，只写本租户指针；先采用直接关联检查，UAES 顺序为 U12/U16 → U07 → U08。已采用版本因依赖变化而过期时，可重新验证，或在同一页面明确确认继续使用未验证版本。上述操作不构成官方发布，不改已有 Round。发布回包未知时只读取原操作，不自动重新发布。
 
 ## 模型来源：平台默认 + 企业 Key
 
@@ -186,7 +183,7 @@ Key 只从标准输入读取，不打印。保存前先用该 Key 完成一次�
 
 受理时冻结非秘密身份 `{source, provider, model, vision_model, coding_model, revision, deployment}`；之后每次调用都按当前选择重新解析，与冻结身份不一致即 `model_configuration_changed`，不在新模型上继续旧操作。旧版本冻结的个人模型身份返回 `model_contract_retired`。
 
-普通模型请求（文件识别、规则提取/形式化、规则匹配、文字证据、视觉事实）统一经 `documents.ai.run_json`，底层为 PydanticAI 的 OpenAI Responses 模型：文本用 Prompted JSON 输出，视觉用原生 JSON Schema；Codex 端点（`/backend-api/codex`）以流式读取。单次调用最多一次输出校正，不做传输重试，失败只返回代码（`timeout`、`invalid_output`、`provider_status`、`request_failed`）。Schema 合法不等于业务正确，PPAP 仍执行原有业务校验，未知不得 PASS。Token 用量只在 provider 回报时记录，缺失记为未知，不影响结果有效性。
+普通模型请求（文件识别、规则提取、规则匹配、文字证据、视觉事实）统一经 `documents.ai.run_json`，底层为 PydanticAI 的 OpenAI Responses 模型：文本用 Prompted JSON 输出，视觉用原生 JSON Schema；Codex 端点（`/backend-api/codex`）以流式读取。单次调用最多一次输出校正，不做传输重试，失败只返回代码（`timeout`、`invalid_output`、`provider_status`、`request_failed`）。Schema 合法不等于业务正确，PPAP 仍执行原有业务校验，未知不得 PASS。Token 用量只在 provider 回报时记录，缺失记为未知，不影响结果有效性。
 
 Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key。网关按冻结身份为每个请求选模型：Pi 的请求用编码模型，Suite 程序中的文本与视觉调用分别用冻结的文本、视觉模型，并补上部署选项（如视觉 `reasoning.effort=none`）。每个 Attempt 只有一个请求次数熔断 `PPAP_DEEP_MODEL_MAX_REQUESTS`（默认 200），用于停止失控循环：触发后按资源上限结束。没有累计 Token/Turn 预算，缺少 usage 回执不拒绝有效结果；墙钟时限、容器资源限制与取消保持不变。SDK 可对瞬时错误做少量重试，由请求熔断兜底。
 
@@ -194,16 +191,9 @@ Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key�
 
 `POST /rules` 将已授权规则原件发布为企业自己的不可变 Suite，不需要官方基线或预设文档类型。首次发布只保存规则和没有可执行入口的固定占位文件，所有条款覆盖均为 `unsupported`，没有回归证明，不自动调用付费模型，也不复用历史 profile 路由。默认指针、发布记录和 RuleVersion 在同一事务内提交；这是仅发布规则，不是强制执行未经验证的代码。新规则的检查程序由平台离线准备后作为新 revision 提供，客户在产品内不能生成或修复检查程序。
 
+规则形式化只在开发侧离线运行，用于交付前发现条款表达问题；线上不运行形式化，交付的规则已是修正后的表达。`uv run --no-sync python -m product.formalization rules.json [--clause ID] [--output out.jsonl] [--no-model]` 读取 rules.json、规则版本 JSON 或条款列表，每条条款输出一行 JSON（检查要点、待澄清问题、建议写法或拒收原因），模型取平台默认配置，不读写数据库。
+
 同一前置规则链共享 Suite key。后继规则只保存待发布候选，继承当前采用的 Checker 与资源，保留仍存在条款的绑定，删除条款的绑定移除，新增条款未绑定时为未检查。发布规则不会替换当前检查、起草代码或入队模型工作。新审核继续冻结已采用版本的旧规则与代码，并显示新版规则尚未采用；历史 Round 保持原快照。读取时按条款 ID 比较原文，分别显示新增、删除、正文变化和未变化，不猜测改编号的对应关系。规则页及检查工作区立即提示需要重新验证，旧规则下的原有证明仍只用于旧版执行。请求重发只读回原回执；同一前置规则已有后继时返回 `suite_head_conflict`，不能覆盖并发规则发布。
-
-## 企业 Suite 的官方升级
-
-企业工作区以服务端 `official_update_notice` 显示官方更新提示，显示后通过 `POST /suites/{suite_key}/official-update/seen` 保存当前成员对准确官方 revision 的已读记录。刷新或换浏览器不重复提示同一版本，其他成员和新的官方 revision 独立提示。已读不隐藏升级入口，也不表示同意采用。
-
-`POST /suites/{suite_key}/upgrades` 将所选企业 revision 相对原官方基线的净文件差量带到当前已发布官方 revision。请求固定 source、target、企业发布指针修订与 operation ID；服务端在官方／企业发布锁下校验，原子保存新候选和升级回执。未修改或已还原的文件继承新官方内容，企业修改过的文件完整保留，即使官方同时改过该文件；资源删除及关联 Suite 增删也保留。没有 Python 文本合并或规则语义猜测，不覆盖原 revision，不把最新官方当成企业发布批准。
-
-升级只创建候选，不运行样本或模型；当前采用版本和历史审核不变，候选仍需单独验证和发布。升级响应未知时通过 `GET /suites/{suite_key}/upgrades/{operation_id}` 读回原候选；刷新、读回均不重复升级或自动运行样本。
-
 
 ## 建议复核（确定性提示）
 
@@ -218,14 +208,3 @@ Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key�
 忽略或采纳通过 `PUT /rounds/{id}/review-hints` 保存到已有 finding 的独立回执字段，绑定完整对比对象及两边的 result_attempt。
 采纳只保存回执，不启动模型、不改机器结果。`GET /review-hints/responses` 返回当前用户可读轮次保留的采纳/忽略回执计数和比例，分母为已明确处理的提示，不把读取当作曝光。
 
-## Checker 历史身份导入
-
-`python -m scripts.import_checker_history` 只为本仓既有、终态、尚无 Core admission snapshot 的 Round 追加历史身份（`round_inputs.checker_history`，`code_identity=unavailable`、始终 `unverified`）；不创建 Round/Job、不执行代码或模型、不收费、不通知、不改机器结果或人工复核。生产运行须单独授权，不随应用启动执行。参数与安全默认见 `--help`：
-
-```sh
-uv run --no-sync python -m scripts.import_checker_history --tenant-id TENANT_UUID        # 只读 dry-run
-uv run --no-sync python -m scripts.import_checker_history --tenant-id TENANT_UUID --apply --expect-digest PLAN_DIGEST
-uv run --no-sync python -m scripts.import_checker_history --tenant-id TENANT_UUID --round-id ROUND_UUID --verify-user-id USER_UUID
-```
-
-缺损记录输出 `blocked` 并返回退出码 2；来源改变后须重新 dry-run，冲突或不确定结果先读回，不清空身份重试。

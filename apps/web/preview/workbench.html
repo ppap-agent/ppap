@@ -37,7 +37,7 @@
     <header class="top">
       <div class="heading"><h1>PPAP · 本地预览台</h1><p class="hint">概念原型与现有页面 · 模拟数据 · 不连接现网</p></div>
       <div class="toolbar" role="group" aria-label="预览设置">
-        <label id="scenes" class="group"><span class="label">场景（切换会重置）</span><select id="scene" aria-label="场景"><optgroup label="审核与规则"><option value="populated">有数据</option><option value="empty">空状态</option><option value="error">错误</option><option value="long">长列表</option><option value="invalid">异常文件</option><option value="partial">部分匹配</option><option value="unmatched">零匹配</option><option value="checking">文件检查中</option><option value="matching">识别中</option><option value="drive-loading">飞书读取中</option><option value="drive-error">飞书读取失败</option><option value="drive-denied">飞书待授权</option><option value="drive-empty">飞书空列表</option><option value="confirm-loading">受理回执中</option><option value="confirm-unknown">受理结果未知</option><option value="audit-loading">审核结果读取中</option><option value="summary-conflict">总结冲突</option><option value="evidence-outside">证据越界</option><option value="rule-conflict">条款冲突</option><option value="failed-report-ready">报告资格冲突</option></optgroup><optgroup label="传输与恢复"><option value="upload-partial">部分传输失败</option><option value="upload-loading">传输中</option><option value="restore-matching">恢复识别中</option><option value="restore-pending">恢复待确认</option><option value="restore-reviewing">恢复审核中</option><option value="restore-completed">恢复已完成</option><option value="restore-unknown">恢复受理未知</option><option value="restore-loading">恢复读取中</option><option value="restore-auth">恢复待登录</option><option value="restore-denied">恢复无权</option><option value="restore-missing">恢复不存在</option><option value="restore-error">恢复离线</option></optgroup><optgroup label="报告"><option value="reports-ready">逐文件报告</option><option value="reports-generating">报告生成中</option><option value="reports-failed">报告失败</option><option value="reports-none">无正式报告</option><option value="reports-unknown">生成回执未知</option><option value="reports-policy">重生成未开放</option><option value="reports-zip-unknown">ZIP 回执未知</option><option value="reports-zip-failed">ZIP 失败</option><option value="reports-duplicate">同名报告</option><option value="reports-pdf-race">PDF 迟到</option><option value="reports-generate-race">报告回执迟到</option></optgroup>
+        <label id="scenes" class="group"><span class="label">场景（切换会重置）</span><select id="scene" aria-label="场景"><optgroup label="审核与规则"><option value="populated">有数据</option><option value="empty">空状态</option><option value="error">错误</option><option value="long">长列表</option><option value="invalid">异常文件</option><option value="partial">部分匹配</option><option value="unmatched">零匹配</option><option value="checking">文件检查中</option><option value="matching">识别中</option><option value="drive-loading">飞书读取中</option><option value="drive-error">飞书读取失败</option><option value="drive-denied">飞书待授权</option><option value="drive-empty">飞书空列表</option><option value="confirm-loading">受理回执中</option><option value="confirm-unknown">受理结果未知</option><option value="audit-loading">审核结果读取中</option><option value="summary-conflict">总结冲突</option><option value="evidence-outside">证据越界</option><option value="rule-conflict">条款冲突</option><option value="failed-report-ready">报告资格冲突</option><option value="deep-unavailable">深度模式暂不可用</option></optgroup><optgroup label="传输与恢复"><option value="upload-partial">部分传输失败</option><option value="upload-loading">传输中</option><option value="restore-matching">恢复识别中</option><option value="restore-pending">恢复待确认</option><option value="restore-reviewing">恢复审核中</option><option value="restore-completed">恢复已完成</option><option value="restore-unknown">恢复受理未知</option><option value="restore-loading">恢复读取中</option><option value="restore-auth">恢复待登录</option><option value="restore-denied">恢复无权</option><option value="restore-missing">恢复不存在</option><option value="restore-error">恢复离线</option></optgroup><optgroup label="报告"><option value="reports-ready">逐文件报告</option><option value="reports-generating">报告生成中</option><option value="reports-failed">报告失败</option><option value="reports-none">无正式报告</option><option value="reports-unknown">生成回执未知</option><option value="reports-policy">重生成未开放</option><option value="reports-zip-unknown">ZIP 回执未知</option><option value="reports-zip-failed">ZIP 失败</option><option value="reports-duplicate">同名报告</option><option value="reports-pdf-race">PDF 迟到</option><option value="reports-generate-race">报告回执迟到</option></optgroup>
           <optgroup label="错误求助"><option value="confirm-traced">确认未知／服务请求编号</option><option value="recognition-traced">识别未知／服务请求编号</option></optgroup>
           <optgroup label="匹配恢复与云盘目录"><option value="matching-customer-required">客户待核对后重新匹配</option><option value="drive-folders">跨文件夹选择</option><option value="drive-folders-late">目录读取迟到</option><option value="drive-tree">并列目录与分页重试</option><option value="drive-tree-late">并列目录读取迟到</option><option value="drive-many">云盘长文件名与多选分页</option></optgroup>
           <optgroup label="资料缺口与部分进度"><option value="matching-gaps">匹配规则／缺少比对资料</option><option value="restore-progress">恢复部分审核结果</option><option value="restore-task-conflict">任务完成状态冲突</option><option value="restore-report-conflict">首次报告完成状态冲突</option></optgroup>
@@ -118,22 +118,18 @@
     document.getElementById('theme').addEventListener('click', () => { state.theme = state.theme === 'light' ? 'dark' : 'light'; render(state.page !== 'audit'); });
     document.getElementById('refresh').addEventListener('click', () => { frame.contentWindow.location.reload(); });
     for (const button of document.querySelectorAll('[data-read]')) button.addEventListener('click', () => frame.contentWindow.postMessage({type: 'ppap-preview-read', failed: button.dataset.read === 'fail'}, location.origin));
-    window.addEventListener('message', event => {
-      if (event.origin !== location.origin || event.source !== frame.contentWindow) return;
-      if (event.data?.type === 'ppap-audit-view') {
-        if (!['archive', 'audit', 'usage'].includes(event.data.view)) return;
-        if (['archiveDoc', 'auditRef', 'archiveReport', 'usageRange', 'usageSearch', 'usagePage', 'packageRequest'].some(key => event.data[key] != null && (typeof event.data[key] !== 'string' || event.data[key].length > 1200))) return;
-        state.view = event.data.view === 'audit' ? '' : event.data.view;
-        for (const key of ['archiveDoc', 'auditRef', 'archiveReport']) state[key] = state.view ? event.data[key] || '' : '';
-        for (const key of ['usageRange', 'usageSearch', 'usagePage']) if (key in event.data) state[key] = event.data[key] || '';
-        if ('packageRequest' in event.data) state.packageRequest = event.data.packageRequest || '';
-        render(false); return;
-      }
-      if (event.data?.type !== 'ppap-audit-task' || event.data.task !== null && (typeof event.data.task !== 'string' || event.data.task.length > 256)) return;
-      if (event.data.report != null && (typeof event.data.report !== 'string' || event.data.report.length > 256)) return;
-      if (event.data.packageRequest != null && (typeof event.data.packageRequest !== 'string' || event.data.packageRequest.length > 256)) return;
-      state.task = event.data.task || ''; state.report = state.task ? event.data.report || '' : ''; state.packageRequest = state.task ? event.data.packageRequest || '' : ''; state.view = ''; state.archiveDoc = ''; state.auditRef = ''; state.archiveReport = ''; render(false);
-    });
+    // The product frame is same-origin: follow its own address instead of messages from the product.
+    let seen = '';
+    window.setInterval(() => {
+      let url;
+      try { url = new URL(frame.contentWindow.location.href); } catch { return; }
+      if (url.href === seen || url.pathname !== paths.audit) return;
+      seen = url.href;
+      for (const key of ['task', 'report', 'packageRequest', 'view', 'archiveDoc', 'auditRef', 'archiveReport', 'usageRange', 'usageSearch', 'usagePage']) state[key] = url.searchParams.get(key) || '';
+      if (state.view === 'audit') state.view = '';
+      document.getElementById('standalone').href = url.pathname + url.search + url.hash;
+      history.replaceState(null, '', `/__preview?${new URLSearchParams(state)}`);
+    }, 200);
     render(true);
   </script>
 </body>

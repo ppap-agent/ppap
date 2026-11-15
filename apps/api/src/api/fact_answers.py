@@ -85,19 +85,6 @@ class FactAnswerReceipt(BaseModel):
     model_calls: Literal[0]
 
 
-class FactMachineFinding(BaseModel):
-    item_key: str
-    status: Literal["PASS", "NG", "NA", "UNABLE", "ERR"]
-    suggestions: str
-    locator: dict[str, Any] | None
-
-
-class FactAnswersExport(FactAnswersView):
-    schema_version: Literal["original-fact-confirmations-v1"] = Field(alias="schema")
-    training_eligible: Literal[False]
-    machine_findings: list[FactMachineFinding]
-
-
 def register_fact_answer_routes(app: FastAPI, store, principal_of) -> None:
     def call(request, operation):
         principal = principal_of(request)
@@ -128,10 +115,6 @@ def register_fact_answer_routes(app: FastAPI, store, principal_of) -> None:
             return store.apply_fact_answer(principal, round_id, body.model_dump())
 
         return call(request, apply)
-
-    @app.get("/audit-rounds/{round_id}/fact-answers/export", response_model=FactAnswersExport, response_model_exclude_unset=True)
-    def export_fact_answers(round_id: str, request: Request):
-        return call(request, lambda principal: store.export_fact_answers(principal, round_id))
 
     @app.get("/audit-rounds/{round_id}/fact-answers/report", responses={200: {"content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}}})
     def fact_confirmation_report(round_id: str, request: Request) -> Response:

@@ -53,7 +53,20 @@ class ReportBlocksTests(unittest.TestCase):
                     "classification": "资料",
                     "priority": "P0",
                     "suggestions": "缺少签字",
-                    "locator": {"file_version_id": "v1", "locator": "Sheet1!A1", "evidence": {"sources": [{"locator": "Sheet1!A1"}, {"locator": "image 2"}]}},
+                    "locator": {
+                        "file_version_id": "v1",
+                        "rule_item_id": "R1",
+                        "semantic": {
+                            "rule_version_id": "rule1",
+                            "clause_id": "R1",
+                            "rule_text": "签字",
+                            "scope": {"total": 1, "checked": 1, "unknown": 0},
+                            "sources": [
+                                {"file_version_id": "v1", "filename": "audit.xlsx", "role": "target", "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": "A1"}, "excerpt": "缺少签字"},
+                                {"file_version_id": "v2", "filename": "reference.xlsx", "role": "reference", "locator": {"kind": "xlsx_cell", "sheet": "签字页", "cell": "B2"}, "excerpt": "签字栏"},
+                            ],
+                        },
+                    },
                     "review": {"judgment": "接受", "rationale": "已核实", "next_step": "补签"},
                 }
             ],
@@ -63,13 +76,14 @@ class ReportBlocksTests(unittest.TestCase):
         blocks = report_blocks(self.body(), "https://example.test/?round=1")
         text = "\n".join(part["text_run"]["content"] for block in blocks for value in block.values() if isinstance(value, dict) for part in value["elements"])
         for expected in (
-            "NG · 1 · 资料",
-            "检查项正文：签字",
+            "NG · R1 · 资料",
+            "本轮有效条款：R1 · 签字",
             "分类/优先级：资料 · P0",
             "人工复核：接受",
             "理由：已核实",
             "下一步：补签",
-            "Sheet1!A1；image 2",
+            "来源：audit.xlsx（待审；文件版本 v1）；位置：Sheet1!A1；原文摘录：缺少签字",
+            "来源：reference.xlsx（参考；文件版本 v2）；位置：签字页!B2；原文摘录：签字栏",
             "参考资料（不单独审核）：reference.xlsx",
             "匹配规则：客户规则",
             "待审文件版本：v1",
@@ -123,21 +137,13 @@ class ReportBlocksTests(unittest.TestCase):
         self.assertIn("本轮有效条款：须提交签字记录", text)
         self.assertEqual(text.count("须提交签字记录"), 1)
 
-    def test_standard_finding_body_survives_empty_or_unrelated_rule_list(self):
-        cases = [
-            ([], True),
-            ([{"id": "R2", "rule_to_check": "另一项要求"}], True),
-            ([{"id": "R1", "rule_to_check": "另一项要求"}], True),
-            ([{"id": "R1", "rule_to_check": "签字"}], False),
-        ]
-        for clauses, needs_finding_body in cases:
-            with self.subTest(clauses=clauses):
-                body = self.body()
-                body["inputs"][0]["rule"]["body"] = {"rules": clauses}
-                body["findings"][0]["locator"]["rule_item_id"] = "R1"
-                blocks = report_blocks(body)
-                contents = [part["text_run"]["content"] for block in blocks for value in block.values() if isinstance(value, dict) for part in value["elements"]]
-                self.assertEqual("检查项正文：签字" in contents, needs_finding_body)
+    def test_finding_without_semantic_evidence_states_the_gap_instead_of_a_position(self):
+        body = self.body()
+        body["findings"][0]["locator"] = {"file_version_id": "v1", "rule_item_id": "R1"}
+        blocks = report_blocks(body)
+        text = "\n".join(part["text_run"]["content"] for block in blocks for value in block.values() if isinstance(value, dict) for part in value["elements"])
+        self.assertIn("依据：结果缺少可核对的证据记录，需核对原始审核记录。", text)
+        self.assertNotIn("来源：", text)
 
     def test_deep_report_keeps_status_scope_typed_sources_and_rule_authority(self):
         body = {

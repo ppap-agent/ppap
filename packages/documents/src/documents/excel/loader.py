@@ -394,9 +394,9 @@ def load_excel_workbook(file_path: str) -> Workbook:
     if file_path.startswith("http"):
         # 对于远程文件，这里需要先下载到本地
         from documents.files import download_file_to_temp_sync, parse_file_size
-        from documents.ocr.env import max_file_size as configured_max_file_size
+        from documents.ocr.env import MAX_FILE_SIZE
 
-        max_file_size = parse_file_size(configured_max_file_size())
+        max_file_size = parse_file_size(MAX_FILE_SIZE)
 
         downloads_dir = Path("./downloads")
         downloads_dir.mkdir(parents=True, exist_ok=True)

@@ -1,20 +1,19 @@
-import {isPreview} from './access'
 import {Disclosure} from '../components/disclosure'
 import {Alert, AlertTitle} from '../components/ui/alert'
 import {displayTime} from '../helpers'
 // Stitch: projects/13261964020862199279/screens/a0caaf69f431417481379fdd52f2075a.
-// Same account dialog, three task hierarchies via ?recordsLayout=...; no cloud sync.
+// This browser's rule-library draft; no cloud sync.
 import {useEffect, useRef, useState} from 'react'
-import {ArrowLeft, ArrowRight, Download, FolderClock, RefreshCw, Upload} from 'lucide-react'
+import {Download, FolderClock, RefreshCw, Upload} from 'lucide-react'
 import {Button} from '../components/ui/button'
 import {Checkbox} from '../components/ui/checkbox'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
 import {draftEvent, unsavedDrafts} from './saved-draft'
-import {clearRecords, createBackup, downloadRecords, localRecords, parseBackup, previewRestore, restoreBackup, type Backup, type LocalRecord, type RecordValidators} from './local-records-state'
-const layouts = ['概览与恢复', '记录优先', '操作与明细']
+import {clearRecords, createBackup, downloadRecords, localRecords, parseBackup, previewRestore, restoreBackup, type Backup, type LocalRecord} from './local-records-state'
 const stamp = (at: string) => at ? displayTime(at) : '保存时间未知'
-export function LocalRecordsDialog({open, onOpenChange, validators, returnTo = isPreview() ? '/preview/intake.html' : '/'}: {open: boolean; onOpenChange: (open: boolean) => void; validators: RecordValidators; returnTo?: string}) {
-  const [snapshot, setSnapshot] = useState(() => localRecords(validators))
+const returnTo = '/requirements'
+export function LocalRecordsDialog({open, onOpenChange}: {open: boolean; onOpenChange: (open: boolean) => void}) {
+  const [snapshot, setSnapshot] = useState(localRecords)
   const [backup, setBackup] = useState<Backup | null>(null)
   const [name, setName] = useState('')
   const [message, setMessage] = useState('')
@@ -22,29 +21,18 @@ export function LocalRecordsDialog({open, onOpenChange, validators, returnTo = i
   const [clearTarget, setClearTarget] = useState<LocalRecord[] | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
   const [reloadNeeded, setReloadNeeded] = useState(false)
-  const [layout, setLayout] = useState(() => Math.max(0, layouts.indexOf(new URLSearchParams(location.search).get('recordsLayout') ?? '')))
   const input = useRef<HTMLInputElement>(null)
   const selection = useRef(0)
-  function refresh() {setSnapshot(localRecords(validators))}
+  function refresh() {setSnapshot(localRecords())}
   useEffect(() => {
     if (!open) return
     refresh()
     const sync = () => refresh()
     window.addEventListener('storage', sync); window.addEventListener(draftEvent, sync)
     return () => {window.removeEventListener('storage', sync); window.removeEventListener(draftEvent, sync)}
-  }, [open, validators])
-  function choose(next: number) {setLayout(next); const url = new URL(location.href); url.searchParams.set('recordsLayout', layouts[next]); history.replaceState(history.state, '', url)}
-  useEffect(() => {
-    if (!open || !import.meta.env.DEV) return
-    const cycle = (event: KeyboardEvent) => {
-      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || (event.target as HTMLElement).closest('input,textarea,select,button,a,summary,[contenteditable]')) return
-      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
-      event.preventDefault(); event.stopImmediatePropagation(); choose((layout + (event.key === 'ArrowRight' ? 1 : 2)) % 3)
-    }
-    window.addEventListener('keydown', cycle, true); return () => window.removeEventListener('keydown', cycle, true)
-  }, [open, layout])
+  }, [open])
   function exportSaved() {
-    try {downloadRecords(createBackup(validators), '本机记录'); setMessage('已请求下载备份，请在浏览器下载列表确认文件。'); setError('')}
+    try {downloadRecords(createBackup(), '本机记录'); setMessage('已请求下载备份，请在浏览器下载列表确认文件。'); setError('')}
     catch (cause) {setError((cause as Error).message)}
   }
   async function selectFile(file: File | undefined) {
@@ -59,28 +47,26 @@ export function LocalRecordsDialog({open, onOpenChange, validators, returnTo = i
   }
   function restore() {
     if (!backup) return
-    try {const count = restoreBackup(backup, validators); setMessage(`已恢复 ${count} 条新增记录；相同内容保留本机版本。`); setError(''); setReloadNeeded(count > 0); refresh()}
+    try {const count = restoreBackup(backup); setMessage(`已恢复 ${count} 条新增记录；相同内容保留本机版本。`); setError(''); setReloadNeeded(count > 0); refresh()}
     catch (cause) {setError((cause as Error).message); refresh()}
   }
   function clear() {
     if (!clearTarget || !acknowledged) return
-    try {const count = clearRecords(clearTarget, validators); setMessage(`已清理 ${count} 条本机记录。仅可从已保存的备份恢复。`); setClearTarget(null); setBackup(null); setError(''); setReloadNeeded(true); refresh()}
+    try {const count = clearRecords(clearTarget); setMessage(`已清理 ${count} 条本机记录。仅可从已保存的备份恢复。`); setClearTarget(null); setBackup(null); setError(''); setReloadNeeded(true); refresh()}
     catch (cause) {setError((cause as Error).message); setClearTarget(null); refresh()}
   }
-  const preview = backup ? previewRestore(backup, validators) : null
-  const cases = snapshot.records.filter(row => row.key.startsWith('intake:')).length
+  const preview = backup ? previewRestore(backup) : null
   const invalid = snapshot.records.filter(row => !row.valid).length
-  const overview = <section className={"flex justify-between flex-wrap items-center gap-4.5 [&_strong]:text-base [&_p]:mt-1.5 [&_p]:mr-0 [&_p]:mb-0 [&_p]:ml-0"}><div><strong>{snapshot.unavailable ? '暂时无法读取完整记录' : `${cases} 项审核 · ${snapshot.records.length} 条记录`}</strong><p>{snapshot.records[0]?.at ? `最近保存 ${stamp(snapshot.records[0].at)}` : '尚无可确认的保存时间'}{invalid > 0 && ` · ${invalid} 条无法读取`}</p></div><div className={"flex flex-wrap gap-2 items-center"}><Button variant="outline" onClick={exportSaved} disabled={snapshot.unavailable || !snapshot.records.length}><Download/>下载记录备份</Button><Button variant="outline" onClick={() => input.current?.click()}><Upload/>选择备份恢复</Button><input ref={input} type="file" className={"sr-only"} aria-label="选择本机记录备份" accept=".json,application/json" onChange={event => {void selectFile(event.target.files?.[0]); event.target.value = ''}}/></div></section>
-  const records = <section className={""} aria-label="本机已保存记录"><div className={"flex items-center justify-between gap-3 mb-1"}><h2 className="text-sm font-semibold">已保存记录</h2><Button variant="ghost" size="sm" onClick={refresh}><RefreshCw/>重新读取</Button></div>{!snapshot.records.length ? <p className="text-sm text-muted-foreground">{snapshot.unavailable ? '读取失败不代表没有记录。请恢复浏览器存储权限后重试。' : '还没有本机事项记录。上传资料后，可在这里备份。'}</p> : snapshot.records.map(row => <div className={"flex items-center gap-3.5 py-3 px-0 border-b text-sm [&_>_div]:flex-1 [&_>_div]:min-w-0 [&_>_div]:grid [&_>_div]:gap-1 [&_strong]:font-medium last:border-b-0 [&_span]:text-muted-foreground"} key={row.key}><div><strong>{row.title}</strong><span>{stamp(row.at)}</span></div><span className={!row.valid ? "text-destructive" : ""}>{row.valid ? '可读取' : '无法读取'}</span>{!row.valid && <Button variant="outline" onClick={() => {downloadRecords({format: 'ppap-unreadable-record', key: row.key, raw: row.raw}, '原记录'); setMessage('已请求导出原始记录，未尝试修复或覆盖。')}}>导出原记录</Button>}</div>)}</section>
-  const restorePanel = <section className={"border-t pt-5.5 [&_>_p]:mt-2.5 [&_>_p]:mr-0 [&_>_p]:mb-4 [&_>_p]:ml-0 [&_>_p]:break-all"} aria-label="备份核对"><h2 className="text-sm font-semibold">备份核对</h2>{backup && preview ? <><p><strong>{name}</strong><br/>{stamp(backup.at)} · {backup.records.length} 条记录{backup.source === 'current-input' && ' · 含页面输入'}</p><div className={"mb-4 [&_>_div]:flex [&_>_div]:justify-between [&_>_div]:items-center [&_>_div]:gap-4 [&_>_div]:border-b [&_>_div]:py-2.5 [&_>_div]:px-0 [&_>_div]:text-sm [&_span]:min-w-0 [&_strong]:shrink-0 [&_strong]:text-xs [&_strong]:font-medium"}>{preview.rows.map(row => <div key={row.key}><span>{row.title}</span><strong>{({new: '新增', same: '相同，跳过', conflict: '内容不同，不覆盖', invalid: '无法读取'})[row.state]}</strong></div>)}</div>{preview.blocked && <p className={"text-destructive"}>{preview.pending ? '请先处理当前未保存输入。' : preview.unavailable ? '请先恢复本机记录读取。' : preview.orphan ? '备份缺少关联的来件事项，不能单独恢复判断记录。' : '存在冲突或无法读取的记录，整份备份暂不恢复。先下载本机备份，再核对要保留的版本。'}</p>}<div className={"flex flex-wrap gap-2 items-center"}><Button className={""} onClick={restore} disabled={preview.blocked || !preview.rows.some(row => row.state === 'new')}>恢复新增记录</Button><Button variant="ghost" onClick={() => {++selection.current; setBackup(null); setName('')}}>取消选取</Button></div></> : <p>选择备份后先比较记录；不会自动覆盖本机内容。</p>}</section>
+  const overview = <section className={"flex justify-between flex-wrap items-center gap-4.5 [&_strong]:text-base [&_p]:mt-1.5 [&_p]:mr-0 [&_p]:mb-0 [&_p]:ml-0"}><div><strong>{snapshot.unavailable ? '暂时无法读取完整记录' : `${snapshot.records.length} 条记录`}</strong><p>{snapshot.records[0]?.at ? `最近保存 ${stamp(snapshot.records[0].at)}` : '尚无可确认的保存时间'}{invalid > 0 && ` · ${invalid} 条无法读取`}</p></div><div className={"flex flex-wrap gap-2 items-center"}><Button variant="outline" onClick={exportSaved} disabled={snapshot.unavailable || !snapshot.records.length}><Download/>下载记录备份</Button><Button variant="outline" onClick={() => input.current?.click()}><Upload/>选择备份恢复</Button><input ref={input} type="file" className={"sr-only"} aria-label="选择本机记录备份" accept=".json,application/json" onChange={event => {void selectFile(event.target.files?.[0]); event.target.value = ''}}/></div></section>
+  const records = <section className={""} aria-label="本机已保存记录"><div className={"flex items-center justify-between gap-3 mb-1"}><h2 className="text-sm font-semibold">已保存记录</h2><Button variant="ghost" size="sm" onClick={refresh}><RefreshCw/>重新读取</Button></div>{!snapshot.records.length ? <p className="text-sm text-muted-foreground">{snapshot.unavailable ? '读取失败不代表没有记录。请恢复浏览器存储权限后重试。' : '还没有本机规则草稿。编辑审核规则后，可在这里备份。'}</p> : snapshot.records.map(row => <div className={"flex items-center gap-3.5 py-3 px-0 border-b text-sm [&_>_div]:flex-1 [&_>_div]:min-w-0 [&_>_div]:grid [&_>_div]:gap-1 [&_strong]:font-medium last:border-b-0 [&_span]:text-muted-foreground"} key={row.key}><div><strong>{row.title}</strong><span>{stamp(row.at)}</span></div><span className={!row.valid ? "text-destructive" : ""}>{row.valid ? '可读取' : '无法读取'}</span>{!row.valid && <Button variant="outline" onClick={() => {downloadRecords({format: 'ppap-unreadable-record', key: row.key, raw: row.raw}, '原记录'); setMessage('已请求导出原始记录，未尝试修复或覆盖。')}}>导出原记录</Button>}</div>)}</section>
+  const restorePanel = <section className={"border-t pt-5.5 [&_>_p]:mt-2.5 [&_>_p]:mr-0 [&_>_p]:mb-4 [&_>_p]:ml-0 [&_>_p]:break-all"} aria-label="备份核对"><h2 className="text-sm font-semibold">备份核对</h2>{backup && preview ? <><p><strong>{name}</strong><br/>{stamp(backup.at)} · {backup.records.length} 条记录{backup.source === 'current-input' && ' · 含页面输入'}</p><div className={"mb-4 [&_>_div]:flex [&_>_div]:justify-between [&_>_div]:items-center [&_>_div]:gap-4 [&_>_div]:border-b [&_>_div]:py-2.5 [&_>_div]:px-0 [&_>_div]:text-sm [&_span]:min-w-0 [&_strong]:shrink-0 [&_strong]:text-xs [&_strong]:font-medium"}>{preview.rows.map(row => <div key={row.key}><span>{row.title}</span><strong>{({new: '新增', same: '相同，跳过', conflict: '内容不同，不覆盖', invalid: '无法读取'})[row.state]}</strong></div>)}</div>{preview.blocked && <p className={"text-destructive"}>{preview.pending ? '请先处理当前未保存输入。' : preview.unavailable ? '请先恢复本机记录读取。' : '存在冲突或无法读取的记录，整份备份暂不恢复。先下载本机备份，再核对要保留的版本。'}</p>}<div className={"flex flex-wrap gap-2 items-center"}><Button className={""} onClick={restore} disabled={preview.blocked || !preview.rows.some(row => row.state === 'new')}>恢复新增记录</Button><Button variant="ghost" onClick={() => {++selection.current; setBackup(null); setName('')}}>取消选取</Button></div></> : <p>选择备份后先比较记录；不会自动覆盖本机内容。</p>}</section>
   return <Dialog open={open} onOpenChange={next => {++selection.current; if (!next && reloadNeeded) {location.assign(returnTo); return} onOpenChange(next)}}><DialogContent className={"w-[min(1000px,_calc(100vw_-_40px))] max-w-250 max-h-[calc(100dvh_-_40px)] flex flex-col      "}>
-    <DialogHeader><DialogTitle><span className="flex items-center gap-2"><FolderClock aria-hidden="true" className="size-4"/>本机记录</span></DialogTitle><DialogDescription>备份包含此浏览器的登记、要求、检查和判断，不含文件原件或登录信息，也不是审核报告。</DialogDescription></DialogHeader>
-    <div className={"min-h-0 overflow-y-auto flex flex-col gap-6.5 pt-0.5 pr-1 pb-3 pl-1"}>{layout === 0 ? <>{overview}{records}{restorePanel}</> : layout === 1 ? <>{records}{overview}{restorePanel}</> : <div className={"grid grid-cols-[280px_minmax(0,1fr)] gap-7 [&_>_div]:grid [&_>_div]:gap-6.5"}><div>{overview}{restorePanel}</div>{records}</div>}
+    <DialogHeader><DialogTitle><span className="flex items-center gap-2"><FolderClock aria-hidden="true" className="size-4"/>本机记录</span></DialogTitle><DialogDescription>备份包含此浏览器的审核规则草稿，不含文件原件或登录信息。</DialogDescription></DialogHeader>
+    <div className={"min-h-0 overflow-y-auto flex flex-col gap-6.5 pt-0.5 pr-1 pb-3 pl-1"}>{overview}{records}{restorePanel}
     {message && <p role="status" className="rounded-md bg-muted p-3 text-sm text-muted-foreground">{message}</p>}{error && <Alert variant="destructive"><AlertTitle>{error}</AlertTitle></Alert>}
     {reloadNeeded && <Button variant="outline" onClick={() => location.assign(returnTo)}>重新打开 PPAP Audit</Button>}
 <Disclosure summary="清理本机记录"><p className="text-sm">仅删除上方记录，保留登录状态、原件及其他数据。请先备份；清理无法撤销。</p>{clearTarget ? <div className={"grid gap-3.5 [&_label]:flex [&_label]:items-center [&_label]:gap-2.5 [&_label]:text-sm [&_label]:leading-relaxed"}><strong>清理刚才核对的 {clearTarget.length} 条记录？</strong><label><Checkbox checked={acknowledged} onCheckedChange={checked => setAcknowledged(checked === true)}/>我已保留所需备份，理解此浏览器中的原记录将被删除</label><div className={"flex flex-wrap gap-2 items-center"}><Button variant="destructive" onClick={clear} disabled={!acknowledged}>确认清理这 {clearTarget.length} 条记录</Button><Button variant="ghost" onClick={() => setClearTarget(null)}>取消清理</Button></div></div> : <Button variant="outline" onClick={() => {setClearTarget(snapshot.records); setAcknowledged(false)}} disabled={snapshot.unavailable || !snapshot.records.length || unsavedDrafts().some(row => row.raw)}>核对清理范围</Button>}</Disclosure>
     <p className={"text-xs m-0"}>备份仅含本机记录，不会同步到团队。恢复或清理前请关闭其他 PPAP 页面。</p>
     </div>
-    {isPreview() && import.meta.env.DEV && <aside className={"flex shrink-0 gap-3 justify-center items-center text-xs border-t pt-2"} aria-label="本机记录布局切换"><Button variant="ghost" aria-label="上一种记录布局" onClick={() => choose((layout + 2) % 3)}><ArrowLeft/></Button><span>{layout + 1} / 3 · {layouts[layout]}</span><Button variant="ghost" aria-label="下一种记录布局" onClick={() => choose((layout + 1) % 3)}><ArrowRight/></Button></aside>}
   </DialogContent></Dialog>
 }

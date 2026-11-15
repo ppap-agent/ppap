@@ -17,7 +17,7 @@ from documents.contracts import (
 )
 from documents.excel import load_excel_workbook
 from documents.files import download_file_to_dir_sync, parse_file_size
-from documents.ocr.env import max_file_size
+from documents.ocr.env import MAX_FILE_SIZE
 from documents.pdf import (
     DEFAULT_SPEC,
     PPAP_1_DIMENSION_MEASUREMENT_REPORT_SPEC,
@@ -360,7 +360,7 @@ def convert_pdf_to_excel_auto(
 
     if ref.is_remote:
         download_started_at = time.perf_counter()
-        max_size = parse_file_size(max_file_size())
+        max_size = parse_file_size(MAX_FILE_SIZE)
         dl_dir = os.path.join(tempfile.gettempdir(), "documents-conversion-dl")
         os.makedirs(dl_dir, exist_ok=True)
         ext = os.path.splitext(ref.location.split("?")[0].split("#")[0])[1] or ".pdf"

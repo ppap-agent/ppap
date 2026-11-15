@@ -77,7 +77,6 @@ from product.writeback_targets import public_target
 
 from api import web_contract as wc
 from api.audit_routes import register_audit_routes
-from api.formalization_routes import register_formalization_routes
 from api.mcp_confirmation import require_approved_source
 from api.notifications import run_task_notifications
 from api.office_routes import register_office_routes
@@ -89,7 +88,7 @@ from api.suite_routes import register_suite_routes
 from api.support_routes import register_support_routes
 from api.task_events import register_task_event_routes
 from api.template_routes import register_template_routes
-from api.usage_reporting import report_usage, run_pending_usage
+from api.usage_reporting import run_pending_usage
 
 Probe = Callable[[Settings], dict[str, str]]
 
@@ -868,14 +867,6 @@ def create_app(
             return JSONResponse(body)
         return JSONResponse(estimate_audit(target_count, remaining, partner, settings.usage_charge_enabled, deep_mode=deep_mode))
 
-    @app.post("/integrations/feishu/usage/events/{event_id}/report")
-    def feishu_usage_report(event_id: str, request: Request) -> JSONResponse:
-        session = session_of(request)
-        if not session:
-            return JSONResponse({"error": "unauthenticated"}, status_code=401)
-        body, status = report_usage(store, http, settings, session, event_id)
-        return JSONResponse(body, status_code=status)
-
     register_report_routes(app, store, session_of, http, settings)
     register_office_routes(app, store, principal_of, settings)
 
@@ -954,7 +945,6 @@ def create_app(
 
     register_fact_answer_routes(app, store, principal_of)
     register_rule_routes(app, store, principal_of, require_file_read)
-    register_formalization_routes(app, store, principal_of)
     register_suite_routes(app, store, principal_of)
     register_support_routes(app, principal_of, settings)
     register_template_routes(app, store, session_of, http, settings)

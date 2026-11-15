@@ -49,7 +49,7 @@ class SchemaUpgradeTests(unittest.TestCase):
                 ),
                 "save customer default before migration replay",
             )
-            # Two saved-rule notifications are distinct intents. Full replay
+            # Two ZIP notifications of one Task are distinct intents. Full replay
             # must not rebuild an older index that collapses their identities.
             self.schema.require(
                 self.schema.psql(
@@ -59,7 +59,7 @@ class SchemaUpgradeTests(unittest.TestCase):
                     "-c",
                     "INSERT INTO engine.jobs(id,tenant_id,kind,payload,status) "
                     f"SELECT gen_random_uuid(),'{tenant_id}','feishu_notification',"
-                    "jsonb_build_object('stage','formalization_ready','operation_id',gen_random_uuid()::text),'queued' FROM generate_series(1,2)",
+                    "jsonb_build_object('stage','zip_ready','task_id','replay-task','package_id',gen_random_uuid()::text),'queued' FROM generate_series(1,2)",
                 ),
                 "save distinct operation intents before migration replay",
             )
@@ -73,7 +73,7 @@ class SchemaUpgradeTests(unittest.TestCase):
                 self.schema.migrator_password(),
                 empty,
                 "-Atc",
-                "SELECT count(*) FROM engine.jobs WHERE kind='feishu_notification' AND payload->>'stage'='formalization_ready'",
+                "SELECT count(*) FROM engine.jobs WHERE kind='feishu_notification' AND payload->>'stage'='zip_ready'",
             )
             self.schema.require(intents, "read preserved operation intents")
             self.assertEqual(intents.stdout.strip(), b"2")
@@ -86,13 +86,10 @@ class SchemaUpgradeTests(unittest.TestCase):
             )
             self.schema.require(default, "read customer default after migration replay")
             self.assertEqual(default.stdout.strip(), b"UAES|7")
-            # Least privilege of the runtime roles on official heads, upgrade receipts and provider credentials.
+            # Least privilege of the runtime roles on official heads and provider credentials.
             privileges = {
                 ("ppap_api", "official_suite_heads"): "SELECT",
                 ("ppap_worker", "official_suite_heads"): "SELECT",
-                ("ppap_api", "suite_upgrade_operations"): "SELECT,INSERT",
-                ("ppap_api", "suite_official_update_views"): "SELECT,INSERT",
-                ("ppap_worker", "suite_upgrade_operations"): "SELECT",
                 ("ppap_worker", "provider_authorizations"): "",
             }
             for (role, table), expected in privileges.items():
@@ -130,6 +127,7 @@ class SchemaUpgradeTests(unittest.TestCase):
                 "seed previous ticket",
             )
 
+            # Rows written before the latest migration survive the upgrade.
             previous_apply = self.schema.apply(previous)
             self.schema.require(previous_apply, "upgrade previous")
             executed = [line.removeprefix("applying ") for line in (previous_apply.stdout or b"").decode().splitlines() if line.startswith("applying ")]
@@ -140,10 +138,10 @@ class SchemaUpgradeTests(unittest.TestCase):
                 self.schema.migrator_password(),
                 previous,
                 "-Atc",
-                "SELECT ticket, provider_event_ts IS NULL FROM product.app_tickets WHERE provider='feishu' AND app_id='upgrade-test-app'",
+                "SELECT ticket FROM product.app_tickets WHERE provider='feishu' AND app_id='upgrade-test-app'",
             )
             self.schema.require(ticket, "read preserved ticket")
-            self.assertEqual(ticket.stdout.strip(), b"upgrade-test-ticket|t")
+            self.assertEqual(ticket.stdout.strip(), b"upgrade-test-ticket")
 
             tables = self.schema.psql(
                 self.schema.migrator_user(),
@@ -157,6 +155,22 @@ class SchemaUpgradeTests(unittest.TestCase):
             self.assertIn("audit_rounds", names)
             self.assertIn("usage_events", names)
             self.assertIn("jobs", names)
+            # Replayed creations of retired tables end dropped again.
+            self.assertTrue(names.isdisjoint({"rule_formalizations", "rule_formalization_operations", "rule_formalization_confirmations", "suite_upgrade_operations", "suite_official_update_views"}))
+            # Checker history import columns, triggers and functions end dropped again.
+            for database in (empty, previous):
+                history = self.schema.psql(
+                    self.schema.migrator_user(),
+                    self.schema.migrator_password(),
+                    database,
+                    "-Atc",
+                    "SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='product'"
+                    " AND (table_name, column_name) IN (('round_inputs','checker_history'),('suite_revisions','history_only')))"
+                    " + (SELECT count(*) FROM pg_proc WHERE pronamespace='product'::regnamespace AND proname IN ('check_history_import','check_history_suite','reject_history_release'))"
+                    " + (SELECT count(*) FROM pg_trigger WHERE tgname IN ('check_history_import','check_history_suite','reject_history_release'))",
+                )
+                self.schema.require(history, f"read retired history objects in {database}")
+                self.assertEqual(history.stdout.strip(), b"0", database)
         finally:
             for name in (empty, previous):
                 self.schema.psql(

@@ -21,7 +21,7 @@ import {FileName} from '../journey/file-name'
 import {FileTypeBadge} from './file-type-badge'
 import {AccountMenu, useAccess} from '../journey/access'
 import {FeishuPicker, FeishuFolderPicker, type DrivePickerSource} from './feishu-picker'
-import {checkerSuiteUnavailable, confirmationScope, suiteAdmissionBlocks, suiteVersionConfirmationRequired, useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
+import {checkerSuiteUnavailable, confirmationScope, suiteAdmissionBlocks, useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
 import {useTaskRecognition, type AuditRecognitionAdapter} from './task-recognition'
 import {AuditExcludedFiles, AuditWorkspace} from './workspace'
 import {useMinWidth, type OriginalRenderer} from './review-content'
@@ -44,7 +44,7 @@ import {reconcileTaskDisplay, unconfirmedDisplayAccess, type DisplayInfo, type D
 import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
 import {ReviewEditorContext} from './review-editor'
 import {reconcileTaskSummary, subjectLabel, summarizeTask, taskIsBehindSummary, type TaskSummary} from './task-summary'
-import {auditAddressChanged, readAuditRoute, surfaceAddress, taskAddress as taskHref, writeAuditAddress} from './routes'
+import {auditAddressChanged, isPreview, readAuditRoute, rulesAddressKeys, surfaceAddress, taskAddress as taskHref, writeAuditAddress} from './routes'
 import {templateName} from './rule-templates'
 import type {ReadRound} from './workspace'
 import {TaskRecovery, type TaskRecoveryState} from './task-recovery'
@@ -102,14 +102,11 @@ type ProductSurface = typeof productLinks[number]['view']
 const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 type IntakeDraft = {files: AuditTaskFile[]; uploads: UploadRow[]; customer: string; step: 'upload' | 'check' | 'match'; predecessorId?: string}
 const replacementRemovalReason = '本次使用补件替换；原件此前已选中'
-const legacyReplacementRemovalReason = '本次使用补件替换'
 function reconcileReplacements(files: AuditTaskFile[]): AuditTaskFile[] {
   const replaced = new Set(files.filter(file => file.selection === 'selected' && file.replacement_of_file_version_id).map(file => file.replacement_of_file_version_id))
   return files.map(file => {
     if (replaced.has(file.file.id)) return file.selection === 'selected' ? {...file, selection: 'removed', removal_reason: replacementRemovalReason} : file
-    if (file.selection === 'removed' && file.removal_reason === replacementRemovalReason) return {...file, selection: 'selected', removal_reason: null}
-    // Older drafts did not retain the original choice. Never guess it was selected.
-    return file.selection === 'removed' && file.removal_reason === legacyReplacementRemovalReason ? {...file, selection: 'unselected', removal_reason: null} : file
+    return file.selection === 'removed' && file.removal_reason === replacementRemovalReason ? {...file, selection: 'selected', removal_reason: null} : file
   })
 }
 const sameRuleIntent = (a: AuditTaskFile, b: AuditTaskFile) => a.preferred_rule_version_id === b.preferred_rule_version_id && Boolean(a.reference_only) === Boolean(b.reference_only) && a.replacement_of_file_version_id === b.replacement_of_file_version_id
@@ -278,11 +275,10 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const blocked = transferBlocked ? '请先处理或排除未完成的传输，再开始识别。' : waiting.length ? `还有 ${waiting.length} 份文件等待文件检查，不能开始识别。` : exceptions.length ? '请先处理或移除异常文件。' : !selected.length ? '至少选择一份可审核文件。' : ''
   const matchingFiles = task ? files.filter(row => row.selection === 'selected') : []
   const matchFields = (row: typeof matchingFiles[number]) => [['文件类型', row.match?.document_type ? documentTypeLabel(row.match.document_type) : undefined], ['客户名称', row.match?.metadata.customer], ['车型', row.match?.metadata.model], ['零件号', row.match?.metadata.part_number], ['零件名称', row.match?.metadata.part]] as const
-  const historicalHead = (row: typeof matchingFiles[number]) => Boolean(row.match && suiteVersionConfirmationRequired(row.match))
-  const matched = matchingFiles.filter(row => row.match?.state === 'matched' && row.match.rule && !historicalHead(row))
+  const matched = matchingFiles.filter(row => row.match?.state === 'matched' && row.match.rule)
   const references = matchingFiles.filter(row => row.match?.state === 'reference')
   const matchPending = (row: typeof matchingFiles[number]) => !row.match || row.match.state === 'matching' || row.match.state === 'pending'
-  const needsHandling = matchingFiles.filter(row => !matchPending(row) && !(row.match?.state === 'matched' && row.match.rule && !historicalHead(row)) && row.match?.state !== 'reference')
+  const needsHandling = matchingFiles.filter(row => !matchPending(row) && !(row.match?.state === 'matched' && row.match.rule) && row.match?.state !== 'reference')
   // Results settle file by file, so rows keep their place until recognition has finished.
   const matchGroupTone: Record<string, [string, string]> = {需要处理: ['text-warning', 'bg-warning/10 text-warning'], 已匹配: ['text-success', 'bg-success/10 text-success'], 比对资料: ['text-primary', 'bg-primary/10 text-primary'], 等待识别: ['text-muted-foreground', 'bg-muted text-muted-foreground']}
   const matchGroups = task?.state === 'matching' ? [{title: '', rows: matchingFiles}] : [{title: '需要处理', rows: needsHandling}, {title: '已匹配', rows: matched}, {title: '比对资料', rows: references}, {title: '等待识别', rows: matchingFiles.filter(matchPending)}].filter(group => group.rows.length)
@@ -363,7 +359,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const scope = task ? confirmationScope(task) : null
   const basisNeedsRefresh = Boolean(task && acceptance.needsBasisRefresh(task))
   const suiteBlocks = task ? suiteAdmissionBlocks(task) : []
-  const canConfirm = suiteBlocks.length === 0 && !matchingFiles.some(historicalHead) && Boolean(scope?.target_file_version_ids.length) && !basisNeedsRefresh && Boolean(task?.confirmation_basis_digest) && task?.state === 'pending_confirm' && matched.length > 0 && matchingFiles.every(row => row.match?.state === 'unmatched' || row.match?.state === 'reference' || row.match?.state === 'matched' && row.match.rule) && !confirmationLocked && !recognitionLocked && !recognitionDirty && recognitionState?.phase !== 'conflict'
+  const canConfirm = suiteBlocks.length === 0 && Boolean(scope?.target_file_version_ids.length) && !basisNeedsRefresh && Boolean(task?.confirmation_basis_digest) && task?.state === 'pending_confirm' && matched.length > 0 && matchingFiles.every(row => row.match?.state === 'unmatched' || row.match?.state === 'reference' || row.match?.state === 'matched' && row.match.rule) && !confirmationLocked && !recognitionLocked && !recognitionDirty && recognitionState?.phase !== 'conflict'
   const precheck = usePrecheck(adapter.precheck, task, step === 'match' && task?.state === 'pending_confirm')
   // A file-level block (unreadable, several versions) on a file that would enter the audit holds the start; content-level findings are
   // reported for the formal audit and never hold it, and other files are already excluded.
@@ -371,7 +367,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   // Recognized files by precheck level, as on the precheck page; without a precheck the levels come from matching alone.
   // Cards stay where recognition put them, so a file taken out of the audit keeps its unchecked box until it is recognized again.
   const shownMatchRows = task ? task.files.filter(row => row.selection === 'selected').flatMap(row => {const local = files.find(file => file.file.id === row.file.id); return local?.selection === 'removed' ? [] : [local ?? row]}) : []
-  const isMatchedRow = (row: AuditTaskFile) => row.match?.state === 'matched' && Boolean(row.match.rule) && !historicalHead(row)
+  const isMatchedRow = (row: AuditTaskFile) => row.match?.state === 'matched' && Boolean(row.match.rule)
   const personAction = ['matching_customer_required', 'matching_customer_conflict', 'matching_document_type_required', 'ambiguous_available_rules', 'matching_rules_customer_unassigned']
   function sectionOf(row: AuditTaskFile) {
     if (matchPending(row)) return 'pending'
@@ -465,10 +461,10 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     const url = new URL(location.href)
     if (id) url.searchParams.set('task', id); else url.searchParams.delete('task')
     if (!keepSurface) {
-      if (!url.pathname.startsWith('/preview/') && url.pathname !== '/__preview') {url.pathname = taskHref(id); url.searchParams.delete('task')}
+      if (!isPreview(url)) {url.pathname = taskHref(id); url.searchParams.delete('task')}
       url.searchParams.delete('report'); url.searchParams.delete('view'); url.searchParams.delete('packageRequest')
       url.searchParams.delete('uploadDraft')
-      for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'fromRound', 'file', 'clause', 'focus', 'recognitionRequest', 'acceptRequest', 'checkFilter', 'case', 'draft', 'round', 'stage', 'resume']) url.searchParams.delete(key)
+      for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'fromRound', 'file', 'clause', 'focus', 'recognitionRequest', 'acceptRequest', 'checkFilter', 'round']) url.searchParams.delete(key)
     }
     const state = {...history.state, auditUploadDraft: id ? null : activeUploadDraftId.current}
     writeAuditAddress(url, keepSurface ? 'replace' : 'push', state)
@@ -545,7 +541,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       const id = round.id === roundId ? round.source_draft_id : null
       if (!id) throw new Error('round_without_task')
       const url = new URL(location.href); url.searchParams.delete('round')
-      if (url.pathname.startsWith('/preview/') || url.pathname === '/__preview') url.searchParams.set('task', id); else url.pathname = taskHref(id)
+      if (isPreview(url)) url.searchParams.set('task', id); else url.pathname = taskHref(id)
       writeAuditAddress(url)
       void recover(id)
     } catch {if (epoch === restoreEpoch.current) setRecovery({id: roundId, state: 'not_found', message: '未找到这次审核对应的任务，请核对链接。'})}
@@ -557,7 +553,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (view !== 'audit') {
       surfaceRef.current = view; setSurface(view)
       if (view === 'archive') setArchiveOpened(true); else if (view === 'requirements') setRulesOpened(true); else if (view === 'usage') setUsageOpened(true)
-      if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view, ...Object.fromEntries(['archiveDoc', 'auditRef', 'archiveReport', 'usageRange', 'usageSearch', 'usagePage', 'packageRequest'].map(key => [key, params.get(key)]))}, location.origin)
       return
     }
     const fromOtherSurface = surfaceRef.current !== 'audit'
@@ -832,17 +827,16 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (value === 'usage') setUsageOpened(true)
     if (value === 'templates') setTemplatesOpened(true)
     const url = new URL(location.href)
-    for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'requirement', 'reqVersion', 'reqTab', 'reqQuery', 'packageRequest', 'case', 'draft', 'round', 'stage', 'resume']) url.searchParams.delete(key)
+    for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'requirement', 'reqVersion', 'reqTab', 'reqQuery', 'packageRequest', 'round']) url.searchParams.delete(key)
     if (value !== 'audit') url.searchParams.set('view', value); else url.searchParams.delete('view')
     if (value === 'audit' && activeTaskId.current) url.searchParams.set('task', activeTaskId.current)
-    if (!url.pathname.startsWith('/preview/') && url.pathname !== '/__preview') {
+    if (!isPreview(url)) {
       url.pathname = value === 'audit' ? taskHref(activeTaskId.current) : surfaceAddress(value)
       url.searchParams.delete('view'); url.searchParams.delete('task'); url.searchParams.delete('report')
       // One page's own address state (rule tabs, chosen rule or checker) must not follow the person to another page.
-      if (value !== 'requirements') for (const key of ['rulesArea', 'requirement', 'reqVersion', 'reqTab', 'checkerSuite', 'checkerPath', 'template', 'systemRule']) url.searchParams.delete(key)
+      if (value !== 'requirements') for (const key of rulesAddressKeys) url.searchParams.delete(key)
     }
     history.pushState(history.state, '', url)
-    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: value, packageRequest: null}, location.origin)
     if (value === 'audit') {restoreAddress(); return}
     surfaceRef.current = value
     setSurface(value)
@@ -857,7 +851,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   function openRules(suiteKey?: string) {
     showSurface('requirements')
     const url = new URL(location.href)
-    for (const key of ['template', 'systemRule', 'requirement', 'reqVersion', 'reqTab', 'rulesArea', 'checkerSuite', 'checkerPath']) url.searchParams.delete(key)
+    for (const key of rulesAddressKeys) url.searchParams.delete(key)
     if (suiteKey?.startsWith('custom:')) {url.searchParams.set('requirement', suiteKey.slice('custom:'.length))}
     writeAuditAddress(url)
   }
@@ -923,7 +917,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }
   const cardTone = {ok: 'bg-card', warn: 'border-warning/40 bg-warning/5', block: 'border-destructive/30 bg-destructive/5', soft: 'bg-muted/30'} as const
   const fileCustomer = (row: AuditTaskFile) => row.match?.metadata.customer || task?.customer_preference || ''
-  const matchBadge = (row: AuditTaskFile): ['success' | 'warning' | 'outline', string] => row.match && suiteVersionConfirmationRequired(row.match) ? ['warning', '需更新检查程序'] : row.match?.state === 'matched' && row.match.rule ? ['success', '已匹配'] : row.match?.state === 'reference' ? ['outline', '比对资料'] : row.match?.state === 'unmatched' ? ['warning', '未匹配'] : row.match?.state === 'matching' ? ['outline', '识别中'] : !row.match || row.match.state === 'pending' ? ['outline', '等待识别'] : checkerSuiteUnavailable(row.match) ? ['warning', '还不能自动审核'] : ['warning', '识别异常']
+  const matchBadge = (row: AuditTaskFile): ['success' | 'warning' | 'outline', string] => row.match?.state === 'matched' && row.match.rule ? ['success', '已匹配'] : row.match?.state === 'reference' ? ['outline', '比对资料'] : row.match?.state === 'unmatched' ? ['warning', '未匹配'] : row.match?.state === 'matching' ? ['outline', '识别中'] : !row.match || row.match.state === 'pending' ? ['outline', '等待识别'] : checkerSuiteUnavailable(row.match) ? ['warning', '还不能自动审核'] : ['warning', '识别异常']
   // Inside a file card a notice is plain text: what happened, then what to do.
   const cardNotice = (title: string, body: string, action?: ReactNode) => <div className="space-y-1.5"><p className="text-sm font-medium">{title}</p><p className="text-xs text-muted-foreground">{body}</p>{action}</div>
   // One card per file: format, name and where it came from; the recognized facts; then the rule or what to do next.
@@ -936,8 +930,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
             {/* Recognized facts appear once recognition has produced them, never as placeholders. */}
             {!matchPending(row) && <p className="text-xs leading-relaxed text-muted-foreground">{matchFields(row).map(([label, value], index) => <span key={label}>{index > 0 && <span aria-hidden="true" className="mx-1.5 text-muted-foreground/60">·</span>}{label}：<span className="font-semibold text-foreground">{value || '—'}</span></span>)}</p>}
             <PrecheckNotes result={precheck.result} fileVersionId={row.file.id}/>
-            {row.match && suiteVersionConfirmationRequired(row.match) ? cardNotice('检查程序需要更新', '这是旧版检查程序。检查程序由平台离线准备；如需准备或更新，请联系我们。新版本就绪后刷新审核依据。审核没有开始。', <Button variant="outline" size="sm" onClick={() => openSupport({scenario: '准备检查程序', facts: [{label: '文件', value: row.file.original_filename}, {label: '检查程序', value: row.suite_admission?.suite_key || '未知'}]})}>联系支持</Button>)
-              : row.match?.state === 'matched' && row.match.rule ? <Collapsible data-rule-version={row.match.rule.id}><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">{fileCustomer(row) && <>{fileCustomer(row)} · </>}<span>{row.match.rule.title}</span></p><div className="flex flex-wrap items-center gap-1">{ruleChoiceButton(row)}<CollapsibleTrigger asChild><Button variant="ghost" size="sm" className="group" aria-label={`查看 ${row.file.original_filename} 的条款`}>{row.match.rule.body.kind === 'engine' ? `${row.match.rule.body.rules.length} 条条款` : '文件存在性检查'}<ChevronDown aria-hidden="true" className="transition-transform group-data-[state=open]:rotate-180"/></Button></CollapsibleTrigger></div></div><CollapsibleContent><ul aria-label={`${row.file.original_filename} · 匹配条款`} className="grid gap-1 pt-2">{row.match.rule.body.kind === 'engine' ? row.match.rule.body.rules.map(clause => <li key={clause.id}><Button variant="ghost" size="sm" className="h-auto max-w-full justify-start whitespace-normal text-left" onClick={event => {ruleTrigger.current = event.currentTarget; setRuleSource({rule: row.match!.rule!, clause, filename: row.file.original_filename})}}><BookOpen aria-hidden="true"/>{clauseLabel(row.match!.rule!.body.kind === 'engine' ? row.match!.rule!.body.rules : [], clause.id)}</Button></li>) : <li><Button variant="ghost" size="sm" className="justify-start" onClick={event => {ruleTrigger.current = event.currentTarget; setRuleSource({rule: row.match!.rule!, clause: null, filename: row.file.original_filename})}}>文件存在性检查</Button></li>}</ul></CollapsibleContent></Collapsible>
+            {row.match?.state === 'matched' && row.match.rule ? <Collapsible data-rule-version={row.match.rule.id}><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">{fileCustomer(row) && <>{fileCustomer(row)} · </>}<span>{row.match.rule.title}</span></p><div className="flex flex-wrap items-center gap-1">{ruleChoiceButton(row)}<CollapsibleTrigger asChild><Button variant="ghost" size="sm" className="group" aria-label={`查看 ${row.file.original_filename} 的条款`}>{row.match.rule.body.kind === 'engine' ? `${row.match.rule.body.rules.length} 条条款` : '文件存在性检查'}<ChevronDown aria-hidden="true" className="transition-transform group-data-[state=open]:rotate-180"/></Button></CollapsibleTrigger></div></div><CollapsibleContent><ul aria-label={`${row.file.original_filename} · 匹配条款`} className="grid gap-1 pt-2">{row.match.rule.body.kind === 'engine' ? row.match.rule.body.rules.map(clause => <li key={clause.id}><Button variant="ghost" size="sm" className="h-auto max-w-full justify-start whitespace-normal text-left" onClick={event => {ruleTrigger.current = event.currentTarget; setRuleSource({rule: row.match!.rule!, clause, filename: row.file.original_filename})}}><BookOpen aria-hidden="true"/>{clauseLabel(row.match!.rule!.body.kind === 'engine' ? row.match!.rule!.body.rules : [], clause.id)}</Button></li>) : <li><Button variant="ghost" size="sm" className="justify-start" onClick={event => {ruleTrigger.current = event.currentTarget; setRuleSource({rule: row.match!.rule!, clause: null, filename: row.file.original_filename})}}>文件存在性检查</Button></li>}</ul></CollapsibleContent></Collapsible>
               : row.match?.state === 'reference' ? null
               : row.match?.state === 'matching' || !row.match || row.match.state === 'pending' ? <ReadSkeleton label="等待识别结果…" kind="inline"/>
               : row.match.state === 'unmatched' || row.match.gaps.some(isMatchingReason) ? <MatchingFeedback gaps={row.match.gaps} candidates={row.match.candidates} onCheck={() => setStep(row.match!.gaps.some(gap => gap === 'matching_customer_required' || gap === 'matching_customer_conflict') ? 'upload' : 'check')} onRules={rules ? () => showSurface('requirements') : undefined} onTemplates={templateAdapter ? openTemplates : undefined} onRemove={() => remove(row.file.id)}/>
@@ -983,7 +976,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
           <li className="flex min-w-0 items-center gap-1">{task && !recovery ? <a href={taskResultsAddress().href} aria-label="返回审核结果" className="font-medium hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showTaskResults()}}}>{task.number}</a> : <span className="text-muted-foreground">审核任务</span>}</li>
           <li aria-hidden="true" className="text-muted-foreground">/</li><li aria-current="page" className="font-medium">审核报告</li>
         </ol></nav> : <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1">{surface === 'audit' && workbenchCrumb}<li aria-current="page" className="flex min-w-0 items-center gap-1 font-medium"><span className="min-w-0 truncate">{pageContext}</span></li></ol></nav>}
-      </div><div className="flex shrink-0 items-center gap-2"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && <AccountMenu compact onUsage={() => showSurface('usage')} showLocalRecords={Boolean(rules)}/>}</div></header>
+      </div><div className="flex shrink-0 items-center gap-2"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && <AccountMenu compact onUsage={() => showSurface('usage')}/>}</div></header>
       {/* PPAP Audit keeps its task list on the left, on the new-audit page and on every task. */}
       <main id="audit-main" tabIndex={-1} className="flex min-h-0 w-full flex-1 overflow-hidden">
         {taskRail}
@@ -1067,8 +1060,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
             {(noMatches ? endInputsDirty : recognitionDirty) && <div className="flex flex-wrap items-center gap-3"><p role="status" className="text-muted-foreground">文件或规则选择已有变更，请重新识别后再确认或结束任务。</p><Button variant="outline" size="sm" disabled={recognitionLocked || Boolean(blocked)} onClick={() => void startMatching()}>重新识别</Button></div>}
             {confirmation?.message && <Alert data-request-id={confirmation.requestId} variant={confirmation.phase === 'rejected' ? 'default' : 'destructive'}><AlertTitle>{confirmation.phase === 'rejected' ? '本次未被接收' : '提交结果待确认'}</AlertTitle><AlertDescription><p>{confirmation.staleBasisDigest && task.confirmation_basis_digest && !basisNeedsRefresh ? '已读取当前审核依据，请核对后重新确认。' : confirmation.message}</p><Button variant="outline" size="sm" onClick={() => openSupport({scenario: '确认审核', traceId: confirmation.traceId, facts: [{label: '任务标识', value: task.id}, {label: '确认请求', value: confirmation.requestId}, {label: '接收状态', value: confirmation.phase === 'rejected' ? '明确未被接收' : '尚未确认'}, {label: '服务说明', value: confirmation.message}]})}>联系支持</Button></AlertDescription></Alert>}
             {task.state === 'pending_confirm' && suiteBlocks.length > 0 && <Alert><AlertTitle>部分文件的检查程序需要先验证</AlertTitle><AlertDescription><p>检查程序由平台离线准备；如需准备或更新，请联系我们。处理后点“刷新审核依据”。</p><ul className="mb-2">{suiteBlocks.map(file => <li key={file.file.id}><FileName name={file.file.original_filename}/></li>)}</ul><Button variant="outline" size="sm" disabled={confirmationLocked || readStatus[task.id]?.busy} onClick={() => void recover(task.id)}>刷新审核依据</Button></AlertDescription></Alert>}
-            {task.state === 'pending_confirm' && matchingFiles.some(historicalHead) && <Alert><AlertTitle>检查程序需要更新</AlertTitle><AlertDescription><p>检查程序由平台离线准备；如需准备或更新，请联系我们。新版本就绪后刷新审核依据。审核没有开始。</p></AlertDescription></Alert>}
-            {task.state === 'pending_confirm' && matched.length > 0 && !matchingFiles.some(historicalHead) && !confirmationLocked && (basisNeedsRefresh || !task.confirmation_basis_digest || !scope) && <Alert><AlertTitle>请刷新审核依据</AlertTitle><AlertDescription><p>刷新只读取当前规则，不会开始审核。核对后需要再次确认。</p><Button variant="outline" size="sm" onClick={() => void recover(task.id)}>刷新审核依据</Button></AlertDescription></Alert>}
+            {task.state === 'pending_confirm' && matched.length > 0 && !confirmationLocked && (basisNeedsRefresh || !task.confirmation_basis_digest || !scope) && <Alert><AlertTitle>请刷新审核依据</AlertTitle><AlertDescription><p>刷新只读取当前规则，不会开始审核。核对后需要再次确认。</p><Button variant="outline" size="sm" onClick={() => void recover(task.id)}>刷新审核依据</Button></AlertDescription></Alert>}
             {endStatus[task.id] === 'rejected' && <Alert><AlertTitle>结束请求已拒绝</AlertTitle><AlertDescription><p>输入版本可能已更新。当前文件与选择已保留，请读取当前任务后再操作。</p><Button variant="outline" size="sm" onClick={() => void recover(task.id)}>读取当前任务</Button></AlertDescription></Alert>}
             <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" disabled={confirmationLocked || endStatus[task.id] === 'sending' || endStatus[task.id] === 'unknown'} onClick={() => setStep('check')}><ArrowLeft/>上一步</Button>{noMatches ? <Button disabled={Boolean(endStatus[task.id])} onClick={() => void endTask(task)}>{endStatus[task.id] === 'sending' ? '正在结束任务…' : '结束任务'}</Button> : <div className="flex flex-wrap gap-2">{confirmation && ['unknown', 'reading'].includes(confirmation.phase) && <Button variant="outline" disabled={confirmation.phase === 'reading'} onClick={() => void acceptance.reconcile(task)}>{confirmation.phase === 'reading' ? '正在读取提交结果…' : '读取提交结果'}</Button>}{task.estimated_points != null && <span className="self-center text-sm tabular-nums text-muted-foreground">预计 {task.estimated_points} 点</span>}<Button disabled={!canConfirm || precheckHolds.length > 0} onClick={() => confirm(task)}>{confirmation?.phase === 'sending' ? '正在确认…' : '开始审核'}<ArrowRight/></Button></div>}</div>
           </footer>

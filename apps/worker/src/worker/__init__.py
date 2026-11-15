@@ -108,22 +108,13 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
 
 
 def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> dict:
-    from documents.model_access import ModelUnavailable
     from product.model_access import tenant_model_scope
 
     # A job without a frozen identity resolves the tenant's current selection; one with an
     # identity runs only while the selection is unchanged.
     payload = claimed.payload if isinstance(claimed.payload, dict) else {}
-    try:
-        with tenant_model_scope(store, tenant_id=claimed.tenant_id or "", expected_identity=payload.get("model_identity")):
-            return _process_claimed(store, claimed, ident, rule_ai=rule_ai)
-    except ModelUnavailable:
-        if claimed.kind != "rule_formalization":
-            raise
-        from product.store.formalizations import FormalizationStore
-
-        FormalizationStore(store).finish(claimed, ident, error_code="model_unavailable")
-        return {"state": "failed", "failure": "model_unavailable"}
+    with tenant_model_scope(store, tenant_id=claimed.tenant_id or "", expected_identity=payload.get("model_identity")):
+        return _process_claimed(store, claimed, ident, rule_ai=rule_ai)
 
 
 def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> dict:
@@ -135,10 +126,6 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
     )
     emit("job_claimed", kind=claimed.kind)
     try:
-        if claimed.kind == "rule_formalization":
-            from worker.formalization import process_rule_formalization
-
-            return process_rule_formalization(store, claimed, ident, ai=rule_ai)
         if claimed.kind in {"report_pdf", "report_zip"}:
             return process_report_job(store, claimed, ident)
         if claimed.kind in FILE_PREPARATION_KINDS:
@@ -284,19 +271,6 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
         return failure_result("deep_execution_failed"), "failed"
 
 
-def formalization_room(running) -> str:
-    """Which readings this worker may still take, given whether each one it runs came from a saved version's batch.
-
-    A full pool only stops more readings; audits and other jobs are still claimed.
-    """
-    from product.rules import BATCH_FORMALIZATIONS, PARALLEL_FORMALIZATIONS
-
-    running = list(running)
-    if len(running) >= PARALLEL_FORMALIZATIONS:
-        return "none"
-    return "manual" if sum(1 for batch in running if batch) >= BATCH_FORMALIZATIONS else "any"
-
-
 def run() -> None:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -307,17 +281,7 @@ def run() -> None:
     ident = worker_id(settings.worker_id)
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     store = build_product_store(settings, role="worker")
-    # Check points for one rule are short, independent model calls; they run side by side
-    # while every other job keeps this loop's one-at-a-time order.
-    from concurrent.futures import ThreadPoolExecutor
-
-    from product.rules import PARALLEL_FORMALIZATIONS
-
-    side = ThreadPoolExecutor(max_workers=PARALLEL_FORMALIZATIONS, thread_name_prefix="ppap-formalization")
-    # Each reading in flight, and whether it came from a saved version's batch.
-    running: dict = {}
     while not STOP:
-        running = {future: batch for future, batch in running.items() if not future.done()}
         try:
             with connect(settings, "worker") as conn:
                 conn.execute(
@@ -329,18 +293,14 @@ def run() -> None:
                     """,
                     (ident, started, settings.git_sha),
                 )
-            claimed = store.claim_job(ident, formalizations=formalization_room(running.values()))
+            claimed = store.claim_job(ident)
         except Exception:
             time.sleep(2)
-            continue
-        if claimed and claimed.kind == "rule_formalization":
-            running[side.submit(process_claimed, store, claimed, ident)] = bool((claimed.payload or {}).get("batch"))
             continue
         if claimed:
             process_claimed(store, claimed, ident)
             continue
         time.sleep(1)
-    side.shutdown(wait=True)
 
 
 if __name__ == "__main__":

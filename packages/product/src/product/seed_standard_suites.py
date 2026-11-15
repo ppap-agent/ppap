@@ -72,7 +72,7 @@ def install_official_sources(store: Any, suites) -> list[dict[str, str]]:
                 (str(row[0]), row[1])
                 for row in conn.execute(
                     """SELECT id, source_path FROM product.suite_revisions
-                       WHERE tenant_id IS NULL AND suite_key=%s AND resolved_digest=%s AND NOT history_only
+                       WHERE tenant_id IS NULL AND suite_key=%s AND resolved_digest=%s
                        ORDER BY revision_number, id""",
                     (suite.suite_key, digest),
                 ).fetchall()

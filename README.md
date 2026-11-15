@@ -23,4 +23,4 @@
 apps/web -> apps/api -> PostgreSQL / object storage -> apps/worker -> packages
 ```
 
-审核规则的条款形式化合同见 [DATA_MODEL](docs/DATA_MODEL.md)。模型语义质量未验收。
+条款形式化是交付规则前的离线工具，见 [DATA_MODEL](docs/DATA_MODEL.md#规则形式化)。

@@ -15,10 +15,8 @@ from audit.contracts import AuditResultItem
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _ENTRYPOINT = re.compile(r"^[a-zA-Z_]\w*:[a-zA-Z_]\w*$")
 
-# The non-secret identity of the models an operation froze. Historical rows carry the
-# first four keys; current ones also name their source and their vision and coding models.
-LEGACY_MODEL_IDENTITY_KEYS = frozenset({"provider", "model", "revision", "deployment"})
-MODEL_IDENTITY_KEYS = LEGACY_MODEL_IDENTITY_KEYS | {"source", "vision_model", "coding_model"}
+# The non-secret identity of the models an operation froze.
+MODEL_IDENTITY_KEYS = frozenset({"source", "provider", "model", "vision_model", "coding_model", "revision", "deployment"})
 
 
 def _json(value: Any) -> bytes:
@@ -262,36 +260,6 @@ def clause_ids(rules: Mapping[str, Any]) -> tuple[str, ...]:
     if any(not isinstance(clause, str) or not clause.strip() for clause in ids) or len(set(ids)) != len(ids):
         raise ValueError("invalid_clause_ids")
     return ids  # type: ignore[return-value]
-
-
-def clause_rejections(rules: Mapping[str, Any], clause_id: str) -> tuple[Mapping[str, Any], ...]:
-    """Parts of one clause a person rejected, in its confirmed snapshot, because they give no checkable criterion."""
-    specs = rules.get("formalizations")
-    item = specs.get(clause_id) if isinstance(specs, Mapping) else None
-    found = item.get("rejections") if isinstance(item, Mapping) and item.get("clause_id") == clause_id else None
-    return tuple(entry for entry in found or () if isinstance(entry, Mapping)) if isinstance(found, (list, tuple)) else ()
-
-
-def rejected_whole(rejections: Sequence[Mapping[str, Any]]) -> bool:
-    return any(item.get("scope") == "clause" for item in rejections)
-
-
-def rejection_basis(rejections: Sequence[Mapping[str, Any]]) -> str:
-    """The basis an UNABLE carries: what was rejected, why, and that a person must review it."""
-    stated = []
-    for item in rejections:
-        parts = "；".join(str(part) for part in item.get("parts") or ()) or ("整条条款" if item.get("scope") == "clause" else "部分内容")
-        stated.append(f"{parts}（原因：{item.get('reason') or '未写明'}）")
-    return "已按用户决定拒绝自动判定，无可程序化判定标准：" + "；".join(stated) + "。请人工复核。"
-
-
-def without_rejected_pass(result: dict, rejections: Sequence[Mapping[str, Any]]) -> dict:
-    """A rejected part was never checked, so the clause cannot pass. A defect in the defined parts stays NG."""
-    if not rejections or result.get("status") != "PASS":
-        return result
-    checked = str(result.get("suggestions") or "").strip()
-    basis = rejection_basis(rejections)
-    return {**result, "status": "UNABLE", "suggestions": f"已定义部分：{checked}\n{basis}" if checked else basis}
 
 
 SEVERITIES = ("A", "B", "C")

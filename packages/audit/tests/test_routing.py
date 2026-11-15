@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 from audit.checker_lib.li import control_plan_agent as li_cp
 from audit.checker_lib.li import dimension_measurement_excel_agent as li_dmr
+from audit.checker_lib.li import dpvr_excel_agent as li_dpvr
+from audit.checker_lib.li import dvp_r_excel_agent as li_dvp_r
 from audit.checker_lib.li import equipment_list_docx_agent as li_equipment
 from audit.checker_lib.li import pdf_excel_delegator_agent as li_pdf
 from audit.checker_lib.li import psw_docx_agent as li_psw
@@ -30,6 +32,11 @@ CP = PpapDocumentType.CONTROL_PLAN
         (PpapDocumentType.EQUIPMENT_LIST, "/tmp/量检具、检测试验设备清单.docx", "v3", nio_equipment.EquipmentListDocxAgent),
         (PpapDocumentType.PSW, "/tmp/零件提交保证书.docx", "v2", li_psw.PswDocxAgent),
         (PpapDocumentType.PSW, "/tmp/零件提交保证书.docx", "v3", nio_psw.PswDocxAgent),
+        # Explicit table types keep DVP and DPVR routes apart without filename prefixes.
+        (PpapDocumentType.DVP_R, "/tmp/unrelated.xlsx", "v2", li_dvp_r.DvpRExcelAgent),
+        (PpapDocumentType.DPVR, "/tmp/unrelated.xlsx", "v2", li_dpvr.DpvrExcelAgent),
+        (PpapDocumentType.DVP_R, "/tmp/unrelated.pdf", "v2", li_pdf.DvpRPdfExcelDelegatorAgent),
+        (PpapDocumentType.DPVR, "/tmp/unrelated.pdf", "v2", li_pdf.DpvrPdfExcelDelegatorAgent),
         # Unsupported carriers never fall back to an unrelated agent.
         (CP, "/tmp/test.doc", "v2", None),
         (CP, "/tmp/test.unknown", "v3", None),
@@ -38,6 +45,11 @@ CP = PpapDocumentType.CONTROL_PLAN
 )
 def test_routes(doc_type, file_url, rule_profile, expected) -> None:
     assert resolve_engine_agent_class(doc_type, file_url, rule_profile) is expected
+
+
+def test_li_auto_preset_runs_the_li_equipment_list_implementation() -> None:
+    kind = PpapDocumentType.EQUIPMENT_LIST
+    assert resolve_engine_agent_class(kind, "equipment.docx", "v4", preset_key="L13", preset_customer="理想") is li_equipment.EquipmentListDocxAgent
 
 
 @pytest.mark.parametrize(

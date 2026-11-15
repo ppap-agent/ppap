@@ -14,14 +14,6 @@ web_binding=$("${compose[@]}" port web 4173)
 export PPAP_API_HOST_PORT="${api_binding##*:}"
 export PPAP_WEB_HOST_PORT="${web_binding##*:}"
 [[ "$PPAP_API_HOST_PORT" =~ ^[0-9]+$ && "$PPAP_WEB_HOST_PORT" =~ ^[0-9]+$ ]]
-if [[ "$suite" == "tests/e2e" ]]; then
-  # Only isolated-dev publishes PostgreSQL for host-side browser fixtures.
-  # Production runtime tests access it through Compose, without a host port.
-  postgres_binding=$("${compose[@]}" port postgres 5432)
-  [[ "$postgres_binding" == 127.0.0.1:* ]]
-  export PGPORT="${postgres_binding##*:}"
-  [[ "$PGPORT" =~ ^[0-9]+$ ]] && (( PGPORT > 0 ))
-fi
 (( PPAP_API_HOST_PORT > 0 && PPAP_WEB_HOST_PORT > 0 ))
 export PPAP_PUBLIC_API_URL="http://$api_binding"
 export PPAP_WEB_URL="http://$web_binding"

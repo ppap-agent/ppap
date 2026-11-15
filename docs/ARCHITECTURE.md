@@ -26,7 +26,7 @@ PC Web 入口在 `apps/web`，只调用 Product API。飞书 docs-addon 进入�
 
 MCP 表只保存客户端授权、确认、传输凭证和调用回执。写入先持久 claim，再执行原业务入口；响应丢失不自动恢复执行权。人工复核的回执与复核内容在同一事务提交，并通过授权记录关联实际确认人及客户端。其它业务操作仍以各自的原生回执和恢复合同为准，不能从一个通用 `unknown` 状态推导可重试。配置、传输与客户端边界见 [MCP](MCP.md)。
 
-生产部署可以把 API/Worker 放到 self-hosted InsForge Custom Compute 上，由 InsForge 提供 PostgreSQL 集群与容器生命周期；PPAP 仍是唯一 Product API 与领域 authority。Web 不直连 InsForge Database/PostgREST。细节见 [deploy/insforge/README.md](../deploy/insforge/README.md)。
+当前生产预览运行在 TKE，见 [deploy/tke/README.md](../deploy/tke/README.md)。PPAP 是唯一 Product API 与领域 authority；Web 不直连 PostgreSQL/PostgREST。
 
 ## 所有权
 

@@ -113,14 +113,6 @@ class Metadata(TypedDict):
     project: NotRequired[str | None]
 
 
-class Analysis(TypedDict):
-    metadata: Metadata
-    document_type: str | None
-    matched_rule_id: str | None
-    matching_status: str
-    notices: list[str]
-
-
 class Rule(TypedDict):
     id: str
     title: str
@@ -256,16 +248,6 @@ class RulePublishRequest(TypedDict):
 
 class JobError(TypedDict):
     error: str
-
-
-class AnalysisJob(TypedDict):
-    id: str
-    status: str
-    result: NotRequired[Analysis | JobError | None]
-
-
-class LatestAnalysis(TypedDict):
-    analysis: AnalysisJob | None
 
 
 class FileAnalysisRequest(TypedDict):
@@ -545,16 +527,6 @@ class SemanticEvidence(TypedDict):
     deep_review: NotRequired[DeepClauseReview]
 
 
-class EvidenceSource(TypedDict):
-    excerpt: NotRequired[str]
-    kind: str
-    locator: str
-
-
-class Evidence(TypedDict):
-    sources: NotRequired[list[EvidenceSource]]
-
-
 class FindingLocator(TypedDict, total=False):
     suite_revision_id: str
     checker_digest: str
@@ -563,9 +535,7 @@ class FindingLocator(TypedDict, total=False):
     file_id: str
     file_version_id: str
     filename: str
-    locator: str
     rule_item_id: str
-    evidence: Evidence | None
     semantic: SemanticEvidence
 
 
@@ -731,11 +701,6 @@ class RoundSummary(TypedDict):
 class RoundList(TypedDict):
     rounds: list[RoundSummary]
     next_offset: int | None
-
-
-class ResubmitRequest(TypedDict, total=False):
-    idempotency_key: str
-    items: list[DraftInputItem]
 
 
 class ReviewRequest(TypedDict):

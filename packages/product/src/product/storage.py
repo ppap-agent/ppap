@@ -27,14 +27,6 @@ def object_store_ready(settings: Settings) -> dict[str, str]:
         return {"state": "unavailable"}
 
 
-def ensure_bucket(settings: Settings) -> None:
-    client = s3_client(settings)
-    try:
-        client.head_bucket(Bucket=settings.s3_bucket)
-    except ClientError:
-        client.create_bucket(Bucket=settings.s3_bucket)
-
-
 class S3Objects:
     """Exclusive object writes. Unique version keys are the product identity; If-None-Match is extra."""
 

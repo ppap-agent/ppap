@@ -7,11 +7,8 @@ def category_key(model, part=None):
     return json.dumps([model or "其他"] + ([part or "其他"] if part is not None else []), ensure_ascii=False)
 
 
-# What the archive row shows: the latest decided conclusion, else none yet; an audit in flight is shown beside either.
-ARCHIVE_RESULTS = frozenset({"PASS", "NG", "UNKNOWN", "none", "active"})
-
-
 def archive_result_states(document: dict) -> set[str]:
+    """The latest decided conclusion, else none yet; an audit in flight is shown beside either."""
     completed, activity = document["latest_completed"], document["latest_activity"]
     states = {completed["conclusion"]} if completed else {"none"}
     if activity and activity["execution"] in {"queued", "running"}:

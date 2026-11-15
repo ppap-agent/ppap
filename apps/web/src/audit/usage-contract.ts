@@ -59,5 +59,4 @@ export function writeUsageQuery(query: UsageQuery) {
   url.searchParams.set('usageRange', query.range); url.searchParams.set('usageSearch', query.search); url.searchParams.set('usagePage', String(query.page))
   if (query.settlement) url.searchParams.set('usageState', query.settlement); else url.searchParams.delete('usageState')
   history.replaceState(history.state, '', url)
-  if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: 'usage', usageRange: query.range, usageSearch: query.search, usagePage: String(query.page), usageState: query.settlement, archiveDoc: url.searchParams.get('archiveDoc'), auditRef: url.searchParams.get('auditRef'), archiveReport: url.searchParams.get('archiveReport')}, location.origin)
 }

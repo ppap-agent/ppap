@@ -8,7 +8,6 @@ dependencies = [
     "pydantic>=2.10.6",
     "documents",
     "openai",
-    "pandas",
     "openpyxl",
     "Pillow>=10.2.0",
 ]

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import threading
 import time
@@ -22,9 +21,9 @@ class RuleMatchingAIService:
     """规则匹配AI服务"""
 
     _UNKNOWN_SENTINEL = "__unknown__"
-    _content_excerpt_chars = max(0, int(os.getenv("RULE_MATCH_CONTENT_EXCERPT_CHARS", "2000")))
-    _cache_ttl_seconds = max(1, int(os.getenv("RULE_MATCH_CACHE_TTL_SECONDS", "1800")))
-    _cache_max_entries = max(1, int(os.getenv("RULE_MATCH_CACHE_MAX_ENTRIES", "2048")))
+    _content_excerpt_chars = 2000
+    _cache_ttl_seconds = 1800
+    _cache_max_entries = 2048
     _cache_lock = threading.Lock()
     _match_cache: "OrderedDict[str, Tuple[float, str]]" = OrderedDict()
 
@@ -80,7 +79,7 @@ class RuleMatchingAIService:
 
     @classmethod
     def _build_content_excerpt(cls, audit_file_content: str) -> str:
-        if not audit_file_content or cls._content_excerpt_chars <= 0:
+        if not audit_file_content:
             return ""
         return str(audit_file_content)[: cls._content_excerpt_chars]
 
