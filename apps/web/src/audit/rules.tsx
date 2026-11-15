@@ -96,10 +96,10 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
       const key = version ? enterpriseTemplateKey(version.scope) : ''
       const owner = templates.find(item => item.key === key)
       const row = version && owner?.rows.find(item => item.type === version.documentType)
-      return <RulesTrail items={[{label: '规则库', href: rulesAddress({})}, ...owner ? [{label: owner.name, href: rulesAddress({template: owner.key})}] : [], {label: row?.label || version?.documentType || version?.title || '规则'}]}/>
+      return <RulesTrail items={[{label: '审核规则库', href: rulesAddress({})}, ...owner ? [{label: owner.name, href: rulesAddress({template: owner.key})}] : [], {label: row?.label || version?.documentType || version?.title || '规则'}]}/>
     }}
     headerActions={headerActions}
-    title="规则库"
+    title="审核规则库"
     uploadLabel="上传规则"
     automaticMatching
     active={active}

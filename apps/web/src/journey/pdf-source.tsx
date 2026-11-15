@@ -1,4 +1,4 @@
-import {Collapsible, CollapsibleTrigger, CollapsibleContent} from '../components/ui/collapsible'
+import {Disclosure} from '../components/disclosure'
 // Same Stitch reader: pages are rendered locally, never uploaded to a conversion service.
 import {useEffect, useRef, useState} from 'react'
 import {ChevronLeft, ChevronRight, Minus, Plus, RotateCw} from 'lucide-react'
@@ -91,7 +91,7 @@ export function PdfSource({url, name, onCite}: {url: string; name: string; onCit
     </div>
     {onCite && <div className="flex flex-wrap items-center gap-2 px-2 py-1"><Button variant="outline" size="sm" disabled={rendering || Boolean(error)} onClick={() => onCite(page, region || undefined)}>{region ? '引用选区' : '引用当前页'}</Button>{region && <><span role="status" className="text-xs">已选择第 {page} 页区域</span><Button variant="ghost" size="sm" onClick={clearRegion}>清除选区</Button></>}</div>}
     <div className={"relative flex-1 min-h-40 overflow-auto"} ref={viewport} role="region" aria-label="PDF 页面" tabIndex={0} aria-busy={!error && rendering}>
-      {error ? <p role="alert" className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}>{error}</p> : rendering && <ReadSkeleton label={`正在排版第 ${page} 页…`} kind="document" className="min-h-55 p-3"/>}
+      {error ? <div className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}><h3>PDF 无法显示</h3><p role="alert">{error}</p></div> : rendering && <ReadSkeleton label={`正在排版第 ${page} 页…`} kind="document" className="min-h-55 p-3"/>}
       <div className={["relative w-max min-w-full p-3 [&_canvas]:block [&_canvas]:m-auto [&_canvas]:bg-background", onCite ? "touch-none cursor-crosshair" : ""].join(' ')} ref={paper} onPointerDown={event => {
         if (!onCite || event.button !== 0 || event.target !== selection.current?.canvas) return
         const start = point(event.clientX, event.clientY)
@@ -103,6 +103,6 @@ export function PdfSource({url, name, onCite}: {url: string; name: string; onCit
         if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
       }} onPointerCancel={() => {if (selection.current) delete selection.current.start; clearRegion()}}/>
     </div>
-    {pdf && !rendering && !error && <Collapsible className={"max-h-40 overflow-auto"}><CollapsibleTrigger asChild><Button variant="ghost" size="sm">本页文字（可复制）</Button></CollapsibleTrigger><CollapsibleContent><pre>{text.trim() || '此页没有可提取的文字，请查看页面图像。'}</pre></CollapsibleContent></Collapsible>}
+    {pdf && !rendering && !error && <Disclosure className="max-h-40 shrink-0 overflow-auto" summary="本页文字（可复制）"><pre>{text.trim() || '此页没有可提取的文字，请查看页面图像。'}</pre></Disclosure>}
   </div>
 }

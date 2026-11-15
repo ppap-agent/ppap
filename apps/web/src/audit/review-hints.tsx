@@ -19,11 +19,10 @@ export function ReviewHintDetails({roundId, hint, onHandled}: {roundId: string; 
       onHandled()
     } catch (cause) {setError(message(cause))} finally {setBusy(false)}
   }
-  return <section aria-label="建议复核对比" className="space-y-3 rounded-md border p-3 text-sm">
+  return <section aria-label="建议复核对比" className="space-y-3 border-l-2 pl-4 text-sm">
     <p className="font-medium">建议复核</p><p>{reviewHintText(hint)}</p>
-    <div className="grid grid-cols-2 gap-3"><div><p className="text-muted-foreground">本次结果</p><p>{resultLabel[hint.current_status]}</p></div><div><p className="text-muted-foreground">对比结果 · {hint.compared_filename}</p><p>{resultLabel[hint.compared_status]}</p><a className="underline" href={reviewHintUrl(hint)} target="_blank" rel="noreferrer">打开对比审核与依据</a></div></div>
-    
+    <div className="grid grid-cols-2 gap-3"><div><p className="text-muted-foreground">本次结果</p><p>{resultLabel[hint.current_status]}</p></div><div><p className="text-muted-foreground">对比结果 · {hint.compared_filename}</p><p>{resultLabel[hint.compared_status]}</p><Button variant="link" size="xs" asChild><a href={reviewHintUrl(hint)} target="_blank" rel="noreferrer">打开对比审核与依据</a></Button></div></div>
     <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={busy} onClick={() => void respond('accepted')}>已核对，这条判错了</Button><Button size="sm" variant="ghost" disabled={busy} onClick={() => void respond('ignored')}>忽略此提示</Button></div>
-    {error && <p role="alert">{error}</p>}
+    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
   </section>
 }

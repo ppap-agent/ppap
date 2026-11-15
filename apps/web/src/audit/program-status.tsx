@@ -2,6 +2,8 @@ import {useEffect, useRef, useState, type ReactNode} from 'react'
 import {request} from '../api'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
+import {Disclosure} from '../components/disclosure'
+import {ReadSkeleton} from '../components/read-skeleton'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
 import {message} from '../journey/remote'
 import {displayTime} from '../helpers'
@@ -11,7 +13,7 @@ type Related = (suiteKey: string) => {label: string; open: () => void} | undefin
 
 /** The card at the top of a rule page frames a rule's program: whether audits can use it, which version, and the one next step. */
 export function StatusCard({badge, tone = 'outline', title, children, action, label = '检查程序'}: {badge: string; tone?: 'success' | 'warning' | 'outline'; title: string; children?: ReactNode; action?: ReactNode; label?: string}) {
-  return <section aria-label={label} className="flex flex-wrap items-start justify-between gap-4 rounded-lg border bg-muted/30 px-5 py-4">
+  return <section aria-label={label} className="flex flex-wrap items-start justify-between gap-4 rounded-lg border bg-muted/30 p-4">
     <div className="min-w-0 flex-1 space-y-1.5">
       <p className="flex flex-wrap items-center gap-2"><Badge shape="square" variant={tone}>{badge}</Badge><span className="font-medium">{title}</span></p>
       {children && <div className="space-y-1 text-sm text-muted-foreground">{children}</div>}
@@ -50,7 +52,7 @@ export function ProgramStatus({suiteKey, offered, related, extra, onChanged}: {s
   }, [suiteKey, offered, attempt])
   if (readError === 'missing') return <StatusCard badge="还不能用于审核" title="还没有检查程序"><p>{OFFLINE_PROGRAM_NOTE}</p></StatusCard>
   if (readError) return <StatusCard badge="暂时读不到" title="检查程序的状态没读到" action={<Button variant="outline" onClick={() => setAttempt(value => value + 1)}>重新读取</Button>}>{readError}</StatusCard>
-  if (!active) return <StatusCard badge="正在读取" title="正在读取…"/>
+  if (!active) return <section aria-label="检查程序" className="rounded-lg border bg-muted/30 p-4"><ReadSkeleton kind="inline" label="正在读取检查程序…"/></section>
   const verified = offer?.validation.verified === true
   const waiting = offer?.unadopted_related_suite_keys ?? []
   const inUse = Boolean(active.current_revision_id)
@@ -100,7 +102,7 @@ export function ProgramStatus({suiteKey, offered, related, extra, onChanged}: {s
         return target ? <Button key={key} variant="outline" size="sm" onClick={target.open}>{target.label}</Button> : <span key={key}>{key}</span>
       })}</div></div>}
       {extra}
-      {earlier.length > 0 && <details className="pt-1"><summary className="cursor-pointer text-foreground">以前的版本</summary><ul className="mt-2 space-y-1.5">{earlier.map(row => <li key={row.revision_id} className="flex flex-wrap items-center justify-between gap-2"><span>{displayTime(row.published_at)} · {row.published_by_name || '已离开的成员'}采用</span><Button variant="outline" size="sm" disabled={busy} onClick={() => void pick(row.revision_id)}>改回这个版本</Button></li>)}</ul></details>}
+      {earlier.length > 0 && <Disclosure className="pt-1" summary={<>以前的版本（{earlier.length}）</>}><ul className="space-y-1.5">{earlier.map(row => <li key={row.revision_id} className="flex flex-wrap items-center justify-between gap-2"><span>{displayTime(row.published_at)} · {row.published_by_name || '已离开的成员'}采用</span><Button variant="outline" size="sm" disabled={busy} onClick={() => void pick(row.revision_id)}>改回这个版本</Button></li>)}</ul></Disclosure>}
       {error && !confirming && <p role="alert" className="text-destructive">{error}</p>}
     </StatusCard>
     <Dialog open={confirming} onOpenChange={open => !busy && !open && setChoice(null)}>

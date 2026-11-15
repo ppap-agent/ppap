@@ -1,7 +1,6 @@
 import {ExternalLink} from 'lucide-react'
 import {TEMPLATE_GUIDE_URL, TEMPLATE_CONTACT_URL} from './template-links'
 import {analysisNotice} from '../helpers'
-import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 
 const titles: Record<string, string> = {
@@ -21,10 +20,12 @@ export function MatchingFeedback({gaps, candidates, onCheck, onRules, onRemove, 
 }) {
   const reason = gaps.find(gap => Object.hasOwn(titles, gap))
   const needsInput = reason === 'matching_customer_required' || reason === 'matching_customer_conflict' || reason === 'matching_document_type_required'
-  return <Alert><AlertTitle>{reason ? titles[reason] : '未匹配到生效规则'}</AlertTitle><AlertDescription>
-    <p>{reason ? analysisNotice(reason) : '不会自动套用通用标准，也不会产生审核结论。'}</p>
-    {candidates && candidates.length > 0 && <ul className="space-y-1">{candidates.map(row => <li key={row.id}>{row.title}</li>)}</ul>}
-    <div className="flex flex-wrap gap-2 pt-2">
+  // Shown inside a file card or above a batch of files, so it is plain text rather than a bordered alert.
+  return <div className="space-y-1.5">
+    <p className="text-sm font-medium">{reason ? titles[reason] : '未匹配到生效规则'}</p>
+    <p className="text-xs text-muted-foreground">{reason ? analysisNotice(reason) : '不会自动套用通用标准，也不会产生审核结论。'}</p>
+    {candidates && candidates.length > 0 && <ul className="space-y-1 text-xs">{candidates.map(row => <li key={row.id}>{row.title}</li>)}</ul>}
+    <div className="flex flex-wrap gap-2">
       {needsInput && <Button size="sm" onClick={onCheck}>{reason === 'matching_customer_required' || reason === 'matching_customer_conflict' ? '返回核对客户' : '返回核对文件'}</Button>}
       {!needsInput && onRules && <Button size="sm" onClick={onRules}>{reason === 'matching_rules_customer_unassigned' || reason === 'ambiguous_available_rules' ? '核对规则范围与版本' : '上传对应规则'}</Button>}
       {onTemplates ? <><Button variant="link" size="sm" onClick={() => onTemplates(false)}>查看标准模板</Button><Button variant="link" size="sm" onClick={() => onTemplates(true)}>反馈对应模板</Button></> : <>
@@ -33,7 +34,7 @@ export function MatchingFeedback({gaps, candidates, onCheck, onRules, onRemove, 
       </>}
       {onRemove && <Button variant="ghost" size="sm" onClick={onRemove}>移除</Button>}
     </div>
-  </AlertDescription></Alert>
+  </div>
 }
 
 export const isMatchingReason = (gap: string) => Object.hasOwn(titles, gap)

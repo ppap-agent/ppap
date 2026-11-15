@@ -133,7 +133,7 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
         mismatch[0] = False
         hold_next_read[0] = True
         page.reload()
-        expect(page.get_by_text("正在恢复 ZIP 工作…", exact=True)).to_be_visible()
+        expect(page.get_by_text("正在读取打包进度…", exact=True)).to_be_visible()
         page.get_by_role("button", name="用量记录", exact=True).click()
         assert "packageRequest" not in parse_qs(urlsplit(page.url).query)
         with page.expect_response(lambda response: urlsplit(response.url).path.endswith("/audit-report-packages/original-request")):

@@ -12,8 +12,9 @@ import type {AuditSharingAdapter, ShareTarget} from './sharing-contract'
 import {shareUnresolved, type useShareActions, type ShareContentFor} from './share-actions'
 import type {ReportShare, ShareRequest} from './sharing-contract'
 import {ShareResults} from './share-results'
+import {resultTone} from './status-labels'
 
-export type ShareDescription = (reference: Reference) => {name: string; conclusion: string; context?: string}
+export type ShareDescription = (reference: Reference) => {name: string; conclusion: string; status?: Parameters<typeof resultTone>[0]; context?: string}
 type Reference = components['schemas']['AuditReportReference']
 
 export function ReportShareDialog({open, share, describe, contentFor, reports, adapter, actions, onClose, trigger}: {open: boolean; share?: ReportShare | null; describe: ShareDescription; contentFor: ShareContentFor; reports: Reference[]; adapter: AuditSharingAdapter; actions: ReturnType<typeof useShareActions<ShareRequest>>; onClose: () => void; trigger: HTMLButtonElement | null}) {
@@ -28,9 +29,9 @@ export function ReportShareDialog({open, share, describe, contentFor, reports, a
   return <Dialog open={open} onOpenChange={open => {if (!open) onClose()}}><DialogContent className="flex max-h-[88dvh] flex-col overflow-hidden sm:max-w-xl" onCloseAutoFocus={event => {event.preventDefault(); trigger?.focus()}}>
     <DialogHeader><DialogTitle>分享报告</DialogTitle><DialogDescription>发送给本组织的飞书用户或群组。</DialogDescription></DialogHeader>
     <div className="min-h-0 space-y-5 overflow-y-auto">
-      <section className="rounded-lg border bg-muted/30 p-3" aria-label="分享的报告"><h3 className="sr-only">本次分享 {scope.length} 份已就绪报告</h3><ItemGroup>{scope.map(reference => {
+      <section className="rounded-lg border bg-muted/30 p-4" aria-label="分享的报告"><h3 className="sr-only">本次分享 {scope.length} 份已就绪报告</h3><ItemGroup>{scope.map(reference => {
         const row = describe(reference)
-        return <Item role="listitem" size="xs" key={JSON.stringify(reference)}><ItemContent><FileName name={`${row.name}-审核报告`} format="pdf"/>{row.context && <p className="text-xs text-muted-foreground">{row.context}</p>}</ItemContent><Badge variant="outline">{row.conclusion}</Badge></Item>
+        return <Item role="listitem" size="xs" key={JSON.stringify(reference)}><ItemContent><FileName name={`${row.name}-审核报告`} format="pdf"/>{row.context && <p className="text-xs text-muted-foreground">{row.context}</p>}</ItemContent><Badge variant={resultTone(row.status)}>{row.conclusion}</Badge></Item>
       })}</ItemGroup></section>
       {job && job.request.content.kind !== 'link' && <p>附件：{job.request.content.artifact?.filename}</p>}
       {actions.error && <Alert variant="destructive"><AlertTitle>结果待确认</AlertTitle><AlertDescription>{actions.error}</AlertDescription></Alert>}
@@ -44,7 +45,7 @@ export function ReportShareDialog({open, share, describe, contentFor, reports, a
             <label className="mr-6 flex items-center gap-2"><RadioGroupItem value="link"/>报告链接</label>
             <label className="flex items-center gap-2"><RadioGroupItem value="file"/>报告文件</label>
           </RadioGroup>
-          {mode === 'file' && (content ? <p className="[overflow-wrap:anywhere] text-xs text-muted-foreground">附件：{content.artifact?.filename}</p> : <Alert><AlertTitle>所选 ZIP 尚未就绪</AlertTitle><AlertDescription>请先打包所选报告。<Button variant="outline" onClick={onClose}>返回报告页打包</Button></AlertDescription></Alert>)}
+          {mode === 'file' && (content ? <p className="[overflow-wrap:anywhere] text-xs text-muted-foreground">附件：{content.artifact?.filename}</p> : <Alert><AlertTitle>所选 ZIP 尚未就绪</AlertTitle><AlertDescription><p>请先打包所选报告。</p><Button variant="outline" size="sm" onClick={onClose}>返回报告页打包</Button></AlertDescription></Alert>)}
         </section>
         {/* What the recipient gets, as the sharing service delivers it (api/sharing_routes.py, product/store/report_sharing.py). */}
         <p className="rounded-sm bg-primary-soft px-3 py-2 text-xs leading-relaxed text-primary">{mode === 'link'

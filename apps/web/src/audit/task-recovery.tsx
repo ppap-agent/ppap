@@ -10,9 +10,7 @@ export function TaskRecovery({recovery, report, onRead, onSupport}: {recovery: T
   const errors = {unauthenticated: '登录已失效', forbidden: '无法访问此任务', not_found: '未找到此任务', error: report ? '报告暂时无法打开' : '任务暂时无法打开'}
   const title = recovery.state === 'loading' ? report ? '审核报告' : '审核任务' : errors[recovery.state]
   return <section className={loading ? 'min-w-0' : 'min-w-0 space-y-5'} aria-label={report ? '报告读取状态' : '任务读取状态'}>
-    <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
-      <h1 className={loading ? 'sr-only' : 'text-2xl font-semibold'}>{title}</h1>
-    </header>
-    {loading ? <ReadSkeleton label={report ? '正在打开报告…' : '正在打开任务…'} kind={report ? 'document' : 'detail'}/> : <Alert className="max-w-xl" variant={recovery.state === 'error' ? 'destructive' : 'default'}><AlertDescription><p>{recovery.message}</p><div className="mt-3 flex flex-wrap gap-2">{/* A task that does not exist or cannot be opened is left by going back, not by reading it again. */}{recovery.state === 'not_found' || recovery.state === 'forbidden' ? <Button asChild><a href={surfaceAddress('audit')}>返回 PPAP Audit</a></Button> : <Button variant="outline" onClick={onRead}>{recovery.state === 'unauthenticated' ? '重新登录' : '重试'}</Button>}<Button variant="ghost" onClick={onSupport}>联系支持</Button></div></AlertDescription></Alert>}
+    <h1 className={loading ? 'sr-only' : 'text-2xl font-semibold'}>{title}</h1>
+    {loading ? <ReadSkeleton label={report ? '正在打开报告…' : '正在打开任务…'} kind={report ? 'document' : 'detail'}/> : <Alert className="max-w-xl" variant={recovery.state === 'error' ? 'destructive' : 'default'}><AlertDescription><p>{recovery.message}</p><div className="flex flex-wrap gap-2">{/* A task that does not exist or cannot be opened is left by going back, not by reading it again. */}{recovery.state === 'not_found' || recovery.state === 'forbidden' ? <Button size="sm" asChild><a href={surfaceAddress('audit')}>返回 PPAP Audit</a></Button> : <Button variant="outline" size="sm" onClick={onRead}>{recovery.state === 'unauthenticated' ? '重新登录' : '重试'}</Button>}<Button variant="outline" size="sm" onClick={onSupport}>联系支持</Button></div></AlertDescription></Alert>}
   </section>
 }

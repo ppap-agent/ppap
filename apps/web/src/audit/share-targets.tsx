@@ -71,13 +71,13 @@ export function ShareTargets({adapter, value, onChange, onReadyChange}: {adapter
     {value.length > 0 && <ItemGroup aria-label="已选接收人">{value.map(target => <Item role="listitem" size="xs" key={targetKey(target)}><ItemContent><span>{target.display_name}</span>{target.reason && <p className="text-xs text-muted-foreground">{target.reason}</p>}</ItemContent>{target.eligibility !== 'eligible' && <Button variant="outline" size="sm" disabled={loading} aria-label={`核对 ${target.display_name}`} onClick={() => verify(target)}>核对</Button>}<Button variant="ghost" size="sm" aria-label={`移除 ${target.display_name}`} onClick={() => toggle(target, false)}>移除</Button></Item>)}</ItemGroup>}
     <Tabs value={kind} onValueChange={value => setKind(value as ShareTarget['kind'])}><TabsList><TabsTrigger value="user">人员</TabsTrigger><TabsTrigger value="group">群组</TabsTrigger></TabsList><TabsContent value={kind}><div className="space-y-3">
     <form role="search" aria-label="搜索分享目标" className="flex gap-2" onSubmit={event => {event.preventDefault(); void load()}}><Input aria-label="搜索人员或群组" placeholder={kind === 'user' ? '搜索飞书用户' : '搜索飞书群组'} value={query} onChange={event => setQuery(event.target.value)}/><Button type="submit" variant="outline" disabled={loading}>搜索</Button></form>
-    {error && <Alert variant="destructive"><AlertTitle>无法读取接收人</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={() => {const last = retry.current; if (last) void load(last.pageToken, last.lookup)}}>重新读取目标</Button></AlertDescription></Alert>}
+    {error && <Alert variant="destructive"><AlertTitle>无法读取接收人</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" size="sm" onClick={() => {const last = retry.current; if (last) void load(last.pageToken, last.lookup)}}>重新读取目标</Button></AlertDescription></Alert>}
     {loading && <ReadSkeleton label="正在读取组织目录…" kind={targets.length ? 'inline' : 'list'} rows={3}/>}
     <ItemGroup>{targets.map(target => {
       const checked = value.some(row => targetKey(row) === targetKey(target))
       return <Item role="listitem" size="xs" key={targetKey(target)} className="items-start"><Checkbox id={`share-${targetKey(target)}`} aria-label={`选择${target.kind === 'user' ? '人员' : '群组'} ${target.display_name}`} disabled={loading || target.eligibility !== 'eligible' && !checked} checked={checked} onCheckedChange={checked => toggle(target, checked === true)}/><ItemContent><Label htmlFor={`share-${targetKey(target)}`}>{target.display_name}</Label>{target.reason && <p className="text-xs text-muted-foreground">{target.reason}</p>}</ItemContent></Item>
     })}</ItemGroup>
-    {!loading && !targets.length && !error && <p>没有符合条件的组织内目标。</p>}
+    {!loading && !targets.length && !error && <p className="text-sm text-muted-foreground">没有符合条件的组织内目标。</p>}
     {nextPage && <Button variant="outline" disabled={loading} onClick={() => void load(nextPage)}>加载更多目标</Button>}
     </div></TabsContent></Tabs>
     {value.length > 0 && <p className="text-xs text-muted-foreground">已选 {value.length} 个接收人或群组</p>}

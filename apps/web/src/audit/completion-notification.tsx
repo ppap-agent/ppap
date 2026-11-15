@@ -4,6 +4,8 @@ import type {components} from '../generated/openapi'
 import {Button} from '../components/ui/button'
 import {Checkbox} from '../components/ui/checkbox'
 import {Label} from '../components/ui/label'
+import {ReadSkeleton} from '../components/read-skeleton'
+import {Tooltip, TooltipContent, TooltipTrigger} from '../components/ui/tooltip'
 import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
 
 type Task = components['schemas']['AuditTask']
@@ -49,6 +51,6 @@ export function CompletionNotification({task, adapter, onChange, compact = false
   }
   const unavailable = preference && !preference.available
   const status = preference?.delivery.reason === 'feishu_connection_unavailable' ? '等待飞书连接恢复' : preference ? states[preference.delivery.state] : ''
-  const controls = <div className="grid gap-2 text-sm"><Label><Checkbox checked={preference?.enabled ?? task.notification_enabled ?? false} disabled={busy || Boolean(error) || !preference?.available || !preference.can_change} onCheckedChange={value => void save(value === true)}/>完成后飞书通知</Label>{busy && <span role="status" className="text-muted-foreground">正在核对设置…</span>}{unavailable && <span className="text-muted-foreground">飞书通知暂不可用</span>}{!unavailable && status && <span role="status" className="text-muted-foreground">{status}</span>}{error && <p role="alert">{error}</p>}{(error || preference?.delivery.state === 'unknown' || preference?.delivery.state === 'failed') && <Button size="sm" variant="outline" disabled={busy} onClick={() => void read()}>读取通知设置</Button>}</div>
-  return compact ? <Sheet><SheetTrigger asChild><Button variant="ghost" size="icon" aria-label="完成通知设置" title="完成后飞书通知"><Bell/></Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>完成通知设置</SheetTitle><SheetDescription>本任务的飞书完成通知</SheetDescription></SheetHeader>{controls}</SheetContent></Sheet> : controls
+  const controls = <div className="grid gap-2 text-sm"><Label><Checkbox checked={preference?.enabled ?? task.notification_enabled ?? false} disabled={busy || Boolean(error) || !preference?.available || !preference.can_change} onCheckedChange={value => void save(value === true)}/>完成后飞书通知</Label>{busy && <ReadSkeleton label="正在核对设置…" kind="inline"/>}{unavailable && <span className="text-muted-foreground">飞书通知暂不可用</span>}{!unavailable && status && <span role="status" className="text-muted-foreground">{status}</span>}{error && <p role="alert">{error}</p>}{(error || preference?.delivery.state === 'unknown' || preference?.delivery.state === 'failed') && <Button size="sm" variant="outline" disabled={busy} onClick={() => void read()}>读取通知设置</Button>}</div>
+  return compact ? <Sheet><Tooltip><TooltipTrigger asChild><SheetTrigger asChild><Button variant="ghost" size="icon" aria-label="完成通知设置"><Bell/></Button></SheetTrigger></TooltipTrigger><TooltipContent>完成后飞书通知</TooltipContent></Tooltip><SheetContent><SheetHeader><SheetTitle>完成通知设置</SheetTitle><SheetDescription>本任务的飞书完成通知</SheetDescription></SheetHeader>{controls}</SheetContent></Sheet> : controls
 }

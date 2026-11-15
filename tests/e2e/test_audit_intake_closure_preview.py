@@ -63,7 +63,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
                 page.get_by_role("button", name="上一步", exact=True).click()
                 # The upload step lists the draft; the pending transfer stays in it, still unconfirmed.
                 draft = page.get_by_role("region", name="已选文件", exact=True)
-                expect(draft.get_by_role("heading", name="已选 1 个文件", exact=True)).to_be_visible()
+                expect(draft.get_by_role("heading", name="已选 1 份", exact=True)).to_be_visible()
                 expect(draft.get_by_role("listitem")).to_have_count(1)
                 expect(draft.get_by_role("listitem").filter(has_text="等待回执.pdf")).to_contain_text("上传待确认" if fail_reply else "上传中")
                 page.get_by_role("button", name="查看已选文件", exact=True).click()
@@ -140,7 +140,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page.get_by_role("button", name="上一步", exact=True).click()
             # The upload step lists all draft files; the unchecked one stays in the draft but is marked unselected.
             draft = page.get_by_role("region", name="已选文件", exact=True)
-            expect(draft.get_by_role("heading", name="已选 2 个文件", exact=True)).to_be_visible()
+            expect(draft.get_by_role("heading", name="已选 2 份", exact=True)).to_be_visible()
             expect(draft.get_by_role("listitem")).to_have_count(3)
             expect(draft.get_by_role("listitem").filter(has_text="PFMEA.xlsx")).to_contain_text("未选择")
             expect(draft.get_by_role("listitem").filter(has_text="控制计划.xlsx")).not_to_contain_text("未选择")

@@ -1,4 +1,4 @@
-import {ClipboardList, PanelLeftClose, Plus, Search} from 'lucide-react'
+import {PanelLeftClose, Plus, Search} from 'lucide-react'
 import {displayTime} from '../helpers'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Badge} from '../components/ui/badge'
@@ -37,7 +37,7 @@ export function TaskRail({currentId, tasks, labels, query, onQuery, filter, onFi
     <ul className="grid">{tasks.map(task => <TaskRailItem key={task.id} task={task} current={task.id === currentId} labels={labels} onOpen={onOpen}/>)}</ul>
     {busy && <ReadSkeleton label="正在读取任务…" kind={tasks.length ? 'inline' : 'list'}/>}
     {!tasks.length && ready && !busy && !error && <div className="grid justify-items-start gap-2 px-1"><p className="text-sm text-muted-foreground">{hasTasks ? '没有符合条件的任务。' : '开始识别后，任务显示在这里。'}</p>{(query || filter !== 'all') && <Button variant="outline" size="sm" onClick={() => {onQuery(''); onFilter('all')}}>清空条件</Button>}</div>}
-    {(hasMore || error) && <div className="grid gap-2 border-t pt-3">{error && <p role="alert" className="text-xs">{error}</p>}<Button variant="outline" size="sm" disabled={busy} onClick={onMore}>{busy ? '正在读取任务…' : error ? '重新读取任务列表' : '加载更多任务'}</Button></div>}
+    {(hasMore || error) && <div className="grid gap-2 border-t pt-3">{error && <p role="alert" className="text-xs text-destructive">{error}</p>}<Button variant="outline" size="sm" disabled={busy} onClick={onMore}>{busy ? '正在读取任务…' : error ? '重新读取任务列表' : '加载更多任务'}</Button></div>}
   </nav>
 }
 
@@ -45,7 +45,7 @@ export function TaskRail({currentId, tasks, labels, query, onQuery, filter, onFi
 function TaskRailItem({task, current, labels, onOpen}: {task: TaskSummary; current: boolean; labels: Record<TaskSummary['state'], string>; onOpen: (id: string) => void}) {
   const id = useId(), files = task.files.filter(file => file.selection === 'selected')
   return <li><button type="button" aria-current={current ? 'page' : undefined} aria-labelledby={`${id}-title`} aria-describedby={`${id}-state ${id}-detail`} onClick={() => onOpen(task.id)} className={`flex w-full items-start gap-2.5 rounded-md border px-2 py-3.5 text-left transition-colors ${current ? 'border-primary bg-primary-soft' : 'border-transparent border-b-border hover:bg-header'}`}>
-    <ClipboardList aria-hidden="true" className="mt-0.5 size-4.5 shrink-0 text-primary"/><span className="grid min-w-0 flex-1 gap-1"><span className="flex items-center justify-between gap-2"><span id={`${id}-title`} className={`truncate text-sm ${current ? 'font-semibold text-primary' : 'font-medium'}`}>{task.number}</span><Badge id={`${id}-state`} variant={hasExecutionError(task) ? 'destructive' : task.state === 'completed' ? 'success' : task.state === 'pending_confirm' ? 'warning' : 'info'}>{hasExecutionError(task) ? '审核异常' : labels[task.state]}</Badge></span>
+    <span className="grid min-w-0 flex-1 gap-1"><span className="flex items-center justify-between gap-2"><span id={`${id}-title`} className={`truncate text-sm ${current ? 'font-semibold text-primary' : 'font-medium'}`}>{task.number}</span><Badge id={`${id}-state`} variant={hasExecutionError(task) ? 'destructive' : task.state === 'completed' ? 'success' : task.state === 'pending_confirm' ? 'warning' : 'info'}>{hasExecutionError(task) ? '审核异常' : labels[task.state]}</Badge></span>
     <span id={`${id}-detail`} className="grid min-w-0 gap-1">{subjectLabel(task.subject) ? <span className="truncate text-xs text-foreground/80" title={subjectLabel(task.subject)}>{subjectLabel(task.subject)}</span> : files[0] && <span className="truncate text-xs text-muted-foreground">{files[0].file.original_filename}</span>}
     <span className="text-xs text-muted-foreground">共 {files.length} 份文件{task.deep_mode ? ' · 深度模式' : ''} · {displayTime(task.created_at)}</span></span></span>
   </button></li>

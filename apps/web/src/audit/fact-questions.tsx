@@ -7,6 +7,8 @@ import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {Input} from '../components/ui/input'
+import {RadioGroup, RadioGroupItem} from '../components/ui/radio-group'
+import {ReadSkeleton} from '../components/read-skeleton'
 import {FileName} from '../journey/file-name'
 import {sourceLocation} from '../journey/product'
 import {RemoteSourcePane} from '../journey/remote-source'
@@ -105,8 +107,8 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
   return <section aria-label="原件事实确认" className="min-w-0 border-b px-6 py-2" data-fact-answer-state={saving ? 'saving' : pending ? 'unknown' : 'ready'}>
     <Disclosure open={expanded || Boolean(error)} onOpenChange={setExpanded} summary={<><span className="font-medium">原件事实确认</span><span className="ml-3 text-muted-foreground">{pending ? '回答结果待确认' : error ? '读取失败' : loading && !view ? '读取中…' : `待确认 ${questions.filter(question => !question.answered).length} 项 · 人工确认结果 ${results.length} 项`}</span></>}>
     <div className="space-y-4 py-4">
-    <header className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">核对原件中的事实</h2></div><Button variant="ghost" size="icon" aria-label="读取最新事实问题" disabled={loading || saving} onClick={() => void read()}><RefreshCw className={loading ? 'animate-spin' : ''}/></Button></header>
-    {loading && !view && <p role="status" className="text-sm text-muted-foreground">正在读取可确认的问题…</p>}
+    <header className="flex justify-end"><Button variant="ghost" size="icon-sm" aria-label="读取最新事实问题" title="读取最新事实问题" disabled={loading || saving} onClick={() => void read()}><RefreshCw className={loading ? 'animate-spin motion-reduce:animate-none' : ''}/></Button></header>
+    {loading && !view && <ReadSkeleton label="正在读取可确认的问题…" rows={2}/>}
     {error && <Alert variant="destructive"><AlertTitle>{pending ? '回答结果待确认' : '事实确认暂不可用'}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     {notice && <p role="status" className="text-sm">{notice}</p>}
     {pending && <div className="flex flex-wrap items-center gap-3 text-sm"><p role="status">{saving ? '正在保存并核对回答…' : '有一次回答等待确认，当前不能再次提交。'}</p><Button variant="outline" disabled={saving} onClick={() => void recover()}>查看原回答操作</Button></div>}
@@ -117,7 +119,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
     {results.length > 0 && <section aria-label="人工确认结果" className="space-y-4 border-t pt-4"><h3 className="font-medium">人工确认结果</h3>{results.map(result => {
       const machine = findings.find(row => row.item_key === result.item_key)
       const clause = questions.find(row => row.item_keys.includes(result.item_key))?.clause_ids.join('、')
-      return <article key={result.item_key} className="space-y-2 border-l-2 pl-3 text-sm"><h4 className="font-medium">{machine?.item || clause || result.item_key}</h4><p>原机器结果：{machine ? resultLabel[machine.status] : '请在原审核记录中查看'}</p><div className="flex items-center gap-2"><Badge variant="outline">人工确认</Badge><Badge variant={resultTone(result.status)}>{resultLabel[result.status]}</Badge></div><p className="whitespace-pre-wrap">{result.suggestions}</p><p className="text-xs text-muted-foreground">回答人：{result.confirmed_by.join('、')} · <time dateTime={result.confirmed_at}>{displayTime(result.confirmed_at)}</time></p>{result.sources.map(source => <p key={`${source.file_version_id}:${source.field}`} className="break-words text-xs text-muted-foreground">依据：{filename(source.file_version_id)} · {sourceLocation(source.locator)} · {answers.find(answer => answer.field === source.field && answer.file_version_id === source.file_version_id)?.prompt || source.field}：{factValueLabel(source.value)}</p>)}</article>
+      return <article key={result.item_key} className="space-y-2 border-l-2 pl-3 text-sm"><h4 className="font-medium">{machine?.item || clause || '未命名条款'}</h4><p>原机器结果：{machine ? resultLabel[machine.status] : '请在原审核记录中查看'}</p><div className="flex items-center gap-2"><Badge variant="outline">人工确认</Badge><Badge variant={resultTone(result.status)}>{resultLabel[result.status]}</Badge></div><p className="whitespace-pre-wrap">{result.suggestions}</p><p className="text-xs text-muted-foreground">回答人：{result.confirmed_by.join('、')} · <time dateTime={result.confirmed_at}>{displayTime(result.confirmed_at)}</time></p>{result.sources.map(source => <p key={`${source.file_version_id}:${source.field}`} className="break-words text-xs text-muted-foreground">依据：{filename(source.file_version_id)} · {sourceLocation(source.locator)} · {answers.find(answer => answer.field === source.field && answer.file_version_id === source.file_version_id)?.prompt || '未命名事实'}：{factValueLabel(source.value)}</p>)}</article>
     })}</section>}
     {answers.length > 0 && <Button variant="outline" asChild><a href={`${apiUrl}/audit-rounds/${encodeURIComponent(roundId)}/fact-answers/report`} download="original-fact-confirmations.pdf">下载人工确认报告</a></Button>}
     {answers.length > 0 && <Disclosure className="border-t pt-3 text-sm" summary={<>已记录的原件回答（{answers.length}）</>}><div className="space-y-3">{answers.map(answer => <article key={answer.operation_id} className="space-y-1"><p>{answer.prompt}：{factValueLabel(answer.value)}</p><p className="text-xs text-muted-foreground">{filename(answer.file_version_id)} · {sourceLocation(answer.locator)} · {answer.answered_by} · <time dateTime={answer.answered_at}>{displayTime(answer.answered_at)}</time></p></article>)}</div></Disclosure>}
@@ -137,10 +139,10 @@ function FactQuestionForm({question, file, roundId, disabled, onAnswer}: {questi
     {file && <Button type="button" variant="outline" size="sm" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? '收起原件' : '对照原件'}</Button>}
     {open && file && <div className="flex h-[26rem] min-w-0"><RemoteSourcePane nativeOffice file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={focus}/></div>}
     <form onSubmit={event => {event.preventDefault(); if (ready && !disabled) onAnswer(choice === 'unknown' ? null : question.answer_type === 'boolean' ? choice === 'yes' : text.trim())}}>
-      <fieldset disabled={disabled} className="space-y-3"><legend className="sr-only">{question.prompt}</legend><div className="flex flex-wrap gap-4">
-        {question.answer_type === 'boolean' ? [['yes', '是'], ['no', '否']].map(([value, label]) => <label key={value} className="flex items-center gap-2 text-sm"><input type="radio" name={id} checked={choice === value} onChange={() => setChoice(value)}/>{label}</label>) : <label className="flex items-center gap-2 text-sm"><input type="radio" name={id} checked={choice === 'text'} onChange={() => setChoice('text')}/>填写原件内容</label>}
-        <label className="flex items-center gap-2 text-sm"><input type="radio" name={id} checked={choice === 'unknown'} onChange={() => setChoice('unknown')}/>看不清</label>
-      </div>{question.answer_type === 'text' && choice === 'text' && <Input aria-label="原件内容" value={text} onChange={event => setText(event.target.value)} maxLength={2000}/>}
+      <fieldset disabled={disabled} className="space-y-3"><legend className="sr-only">{question.prompt}</legend><RadioGroup aria-label={question.prompt} name={id} className="flex flex-wrap" value={choice} onValueChange={setChoice} disabled={disabled}>
+        {question.answer_type === 'boolean' ? [['yes', '是'], ['no', '否']].map(([value, label]) => <label key={value} className="mr-6 flex items-center gap-2 text-sm"><RadioGroupItem value={value}/>{label}</label>) : <label className="mr-6 flex items-center gap-2 text-sm"><RadioGroupItem value="text"/>填写原件内容</label>}
+        <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="unknown"/>看不清</label>
+      </RadioGroup>{question.answer_type === 'text' && choice === 'text' && <Input aria-label="原件内容" value={text} onChange={event => setText(event.target.value)} maxLength={2000}/>}
       <Button type="submit" size="sm" disabled={!ready || disabled}>保存回答</Button></fieldset>
     </form>
   </article>

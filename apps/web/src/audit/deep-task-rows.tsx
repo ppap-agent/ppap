@@ -1,5 +1,6 @@
 import {BookOpen, Check, ChevronDown, FileCode2, FileSpreadsheet, FileText, Image, ImageUp, type LucideIcon, MessageSquareText, PencilLine, Search, SquareTerminal} from 'lucide-react'
 import {type ReactNode, useState} from 'react'
+import {Badge} from '../components/ui/badge'
 import {PixelLoader} from './live-progress'
 import type {LiveSteps, StepRow} from './live-steps'
 import type {ActivityAction} from './task-events'
@@ -28,7 +29,7 @@ export type DeepTarget = {id: string; name: string}
 const RING = 24, STROKE = 2, RADIUS = (RING - STROKE) / 2, CIRCLE = 2 * Math.PI * RADIUS
 
 function StageBadge({status, index}: {status: StageStatus; index: number}) {
-  if (status === 'done') return <span className="flex size-5.5 items-center justify-center rounded-full bg-success text-white motion-safe:animate-pop-in"><Check aria-hidden="true" className="size-3.5" strokeWidth={3.5}/></span>
+  if (status === 'done') return <span className="flex size-6 items-center justify-center rounded-full bg-success text-white motion-safe:animate-pop-in"><Check aria-hidden="true" className="size-3.5" strokeWidth={3.5}/></span>
   return <span className="relative inline-flex size-6 items-center justify-center">
     <svg aria-hidden="true" width={RING} height={RING} className={`absolute inset-0 ${status === 'running' ? 'motion-safe:animate-spin' : ''}`}>
       <circle cx={RING / 2} cy={RING / 2} r={RADIUS} fill="none" stroke="currentColor" strokeWidth={STROKE} className="text-border"/>
@@ -54,12 +55,12 @@ function StepLine({row, current}: {row: StepRow; current: boolean}) {
 }
 
 function StageRow({stage, index, open, onToggle, children}: {stage: Stage; index: number; open: boolean; onToggle: () => void; children?: ReactNode}) {
-  return <div className={`overflow-hidden bg-card shadow-sm ring-1 ring-border transition-all duration-300 motion-safe:animate-fade-up ${open ? 'rounded-xl' : 'rounded-3xl'}`}>
+  return <div className={`overflow-hidden bg-card ring-1 ring-border transition-all duration-300 motion-safe:animate-fade-up ${open ? 'rounded-xl' : 'rounded-3xl'}`}>
     <button type="button" aria-expanded={open} disabled={!children} onClick={onToggle} className="flex h-11 w-full items-center gap-2.5 px-2.5 text-left">
       <span className="flex size-6 shrink-0 items-center justify-center"><StageBadge status={stage.status} index={index}/></span>
       <span className={`min-w-0 flex-1 truncate text-sm font-medium ${stage.status === 'pending' ? 'text-muted-foreground' : ''}`}>{stage.label}</span>
       {stage.amount && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{stage.amount}</span>}
-      {stage.status === 'done' && <span className="inline-flex h-5.5 shrink-0 items-center rounded-full bg-success/10 px-2 text-xs font-medium text-success">已完成</span>}
+      {stage.status === 'done' && <Badge variant="success">已完成</Badge>}
       {children && <ChevronDown aria-hidden="true" className={`size-4 shrink-0 text-muted-foreground transition-transform duration-300 ${open ? 'rotate-180' : ''}`}/>}
     </button>
     {open && children && <div className="mb-2.5 ml-5.5 border-l pl-3.5">{children}</div>}
