@@ -374,7 +374,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(current.locator('[role="checkbox"][aria-checked="true"]')).to_have_count(0)
             expect(picker.get_by_role("button", name="添加 0 份文件", exact=True)).to_be_disabled()
             picker.get_by_role("button", name="取消", exact=True).click()
-            expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="新建审核", exact=True)).to_be_visible()
             expect(task_list(page).get_by_role("button")).to_have_count(0)
             close_workspace_panel(page)
             page.close()
@@ -400,7 +400,7 @@ class AuditPreviewTests(unittest.TestCase):
             picker.get_by_role("button", name="展开文件夹 客户项目", exact=True).click()
             expect(picker.get_by_role("checkbox", name="选择飞书文件 PFMEA.xlsx", exact=True)).to_be_visible()
             picker.get_by_role("button", name="取消", exact=True).click()
-            expect(product.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
+            expect(product.get_by_role("heading", name="新建审核", exact=True)).to_be_visible()
             expect(task_list(product).get_by_role("button")).to_have_count(0)
             browser.close()
 
@@ -1389,9 +1389,9 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("dialog", name="联系我们", exact=True)).to_be_visible()
             page.keyboard.press("Escape")
             expect(support_trigger).to_be_focused()
-            for label, heading in (("审核文件", "审核文件"), ("用量记录", "用量记录")):
+            for label in ("审核文件", "用量记录"):
                 navigation.get_by_role("button", name=label, exact=True).click()
-                expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
+                expect(page.get_by_role("navigation", name="当前位置", exact=True).get_by_text(label, exact=True)).to_be_visible()
                 expect(navigation.get_by_role("button", name=label, exact=True)).to_have_attribute("aria-current", "page")
             # PPAP Audit returns to the task being prepared, not to a new audit.
             navigation.get_by_role("button", name="PPAP Audit", exact=True).click()
@@ -1615,7 +1615,7 @@ class AuditPreviewTests(unittest.TestCase):
                 expect(page.get_by_role("complementary", name="预览事件控制", exact=True)).to_be_visible()
             new_task(page)
             page.evaluate("window.postMessage({type:'ppap-preview-read'},location.origin)")
-            expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="新建审核", exact=True)).to_be_visible()
             page.go_back()
             close_workspace_panel(page)
             queue.get_by_role("button").nth(1).click()
@@ -2029,7 +2029,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.go_back()
             expect(page.get_by_text("草稿B.pdf", exact=True)).to_be_visible()
             page.go_back()
-            expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="新建审核", exact=True)).to_be_visible()
             # The upload step lists draft A's own files: its pick and its unchecked sample, never draft B's.
             draft = page.get_by_role("region", name="已选文件", exact=True)
             expect(draft.get_by_role("heading", name="已选 3 份", exact=True)).to_be_visible()
@@ -2908,12 +2908,12 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核文件", exact=True).click()
-            expect(page.get_by_role("heading", name="审核文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("navigation", name="当前位置", exact=True).get_by_text("审核文件", exact=True)).to_be_visible()
             page.go_back()
             expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
             expect(page.get_by_role("table").get_by_text("PFMEA.xlsx", exact=True)).to_be_visible()
             page.go_forward()
-            expect(page.get_by_role("heading", name="审核文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("navigation", name="当前位置", exact=True).get_by_text("审核文件", exact=True)).to_be_visible()
             browser.close()
 
     def test_archive_report_access_does_not_imply_original_or_private_task_access(self):
@@ -3073,8 +3073,8 @@ class AuditPreviewTests(unittest.TestCase):
             page.set_default_navigation_timeout(20000)
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready")
             page.get_by_role("button", name="审核文件", exact=True).click()
-            expect(page.get_by_role("heading", name="审核文件", exact=True)).to_be_visible()
-            expect(page.get_by_text("共 12 份文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("navigation", name="当前位置", exact=True).get_by_text("审核文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("complementary", name="文件分类", exact=True).get_by_role("button", name="全部文件 12", exact=True)).to_be_visible()
             table = page.get_by_role("table", name="审核文件列表", exact=True)
             expect(table.get_by_role("row")).to_have_count(11)
             first = table.get_by_role("row", name=re.compile("P0418901"))
@@ -4064,7 +4064,7 @@ class AuditPreviewTests(unittest.TestCase):
                         expect(main.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
                         self.assertEqual(parse_qs(urlparse(page.url).query)["report"], [report])
                     self.assertEqual(parse_qs(urlparse(page.url).query)["task"], ["preview-recovery-task"])
-                    expect(main.get_by_role("heading", name="PPAP Audit", exact=True)).to_have_count(0)
+                    expect(main.get_by_role("heading", name="新建审核", exact=True)).to_have_count(0)
                     page.close()
             browser.close()
 
@@ -4087,7 +4087,7 @@ class AuditPreviewTests(unittest.TestCase):
             main.get_by_role("button", name="重试", exact=True).click()
             expect(main.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
             self.assertEqual(page.url, address)
-            expect(main.get_by_role("heading", name="PPAP Audit", exact=True)).to_have_count(0)
+            expect(main.get_by_role("heading", name="新建审核", exact=True)).to_have_count(0)
             browser.close()
 
     def test_recovery_late_response_cannot_replace_new_uploads(self):
@@ -4662,7 +4662,7 @@ class AuditPreviewTests(unittest.TestCase):
                 expect(picker.get_by_role("button", name="添加 0 份文件", exact=True)).to_be_disabled()
                 page.keyboard.press("Escape")
                 expect(trigger).to_be_focused()
-                expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
+                expect(page.get_by_role("heading", name="新建审核", exact=True)).to_be_visible()
             browser.close()
 
     def test_failed_and_stale_match_reads_do_not_create_a_task_or_restore_unchecked_files(self):
@@ -4723,7 +4723,7 @@ class AuditPreviewTests(unittest.TestCase):
             new_task(page)
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
-            expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="新建审核", exact=True)).to_be_visible()
             expect(page.get_by_role("navigation", name="当前位置", exact=True).get_by_text("新建审核", exact=True)).to_be_visible()
             expect(page.get_by_text("PFMEA.xlsx", exact=True)).to_have_count(0)
             task_list(page).get_by_role("button").click()
@@ -4784,7 +4784,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html")
             page.get_by_role("button", name="使用三类文件示例").click()
             page.get_by_role("button", name="上一步", exact=True).click()
-            expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="新建审核", exact=True)).to_be_visible()
             page.get_by_role("button", name="查看已选文件", exact=True).click()
             expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).to_be_checked()
             expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_have_count(1)
@@ -4798,7 +4798,7 @@ class AuditPreviewTests(unittest.TestCase):
             business_requests = []
             page.on("request", lambda request: business_requests.append(request.url) if request.resource_type in {"fetch", "xhr"} else None)
             page.goto(PREVIEW + "/preview/audit.html")
-            expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="新建审核", exact=True)).to_be_visible()
             page.get_by_role("button", name="使用三类文件示例").click()
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
             page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()

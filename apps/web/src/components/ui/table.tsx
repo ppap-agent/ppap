@@ -3,11 +3,11 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+function Table({ className, containerClassName, ...props }: React.ComponentProps<"table"> & {containerClassName?: string}) {
   return (
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      className={cn("relative w-full overflow-x-auto", containerClassName)}
     >
       <table
         data-slot="table"
@@ -18,11 +18,12 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   )
 }
 
-function TableHeader({ className, variant = "default", ...props }: React.ComponentProps<"thead"> & {variant?: "default" | "muted"}) {
+/** `sticky` keeps the header row visible while the table container scrolls. */
+function TableHeader({ className, variant = "default", sticky = false, ...props }: React.ComponentProps<"thead"> & {variant?: "default" | "muted"; sticky?: boolean}) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", variant === "muted" && "bg-header [&_th]:font-semibold [&_th]:text-[13px]", className)}
+      className={cn("[&_tr]:border-b", variant === "muted" && "bg-header [&_th]:font-semibold [&_th]:text-[13px]", sticky && "[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-header", className)}
       {...props}
     />
   )
@@ -51,12 +52,13 @@ function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
   )
 }
 
-function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
+/** `interactive={false}` is for rows that are not records, such as an empty state. */
+function TableRow({ className, interactive = true, ...props }: React.ComponentProps<"tr"> & {interactive?: boolean}) {
   return (
     <tr
       data-slot="table-row"
       className={cn(
-        "border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+        "border-b transition-colors", interactive && "hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
         className
       )}
       {...props}

@@ -140,7 +140,7 @@ def test_choose_folder_cancel_and_resume_keep_original_upload_request(recover_wi
         )
         page.route("**/api/files/*/versions/*/validation", lambda r: r.fulfill(json={"validation": None}))
         page.goto(WEB + "/audit")
-        expect(page.get_by_role("heading", name="PPAP Audit", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="新建审核", exact=True)).to_be_visible()
         files = [{"name": "审核资料.xlsx", "mimeType": "application/octet-stream", "buffer": b"abcde"}]
         page.locator("input[type=file]").set_input_files(files)
         dialog = page.get_by_role("dialog", name="保存到飞书", exact=True)
