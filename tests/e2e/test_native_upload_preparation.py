@@ -497,10 +497,11 @@ def test_customer_mode_keeps_task_selection_separate_from_confirmed_default():
         page.get_by_role("button", name="设为企业默认", exact=True).click()
         page.get_by_role("button", name="确认更改", exact=True).click()
         expect(page.get_by_role("status")).to_contain_text("保存结果待确认")
-        expect(page.get_by_text("企业默认：蔚来", exact=True)).to_be_visible()
+        expect(page.get_by_text("企业默认：蔚来", exact=True)).to_have_count(0)
         assert len(server.default_writes) == 2
         choice.click()
         page.get_by_role("option", name="自动识别", exact=True).click()
+        expect(page.get_by_text("企业默认：蔚来", exact=True)).to_be_visible()
         page.get_by_role("button", name="重新读取企业默认", exact=True).click()
         expect(choice).to_contain_text("自动识别")
         assert len(server.default_writes) == 2
