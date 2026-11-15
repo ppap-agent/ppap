@@ -54,6 +54,7 @@ class PublicConfig(TypedDict):
     feishu_app_id: str
     current_access: str
     usage_charge_enabled: bool
+    rule_upload_enabled: bool
     login: str
     personal_drive_upload: bool
 

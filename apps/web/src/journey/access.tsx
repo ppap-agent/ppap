@@ -2,7 +2,7 @@
 // and screens/9a6cb6189e92450da32d95a31820b41c (connection failure).
 import {createContext, useContext, useEffect, useRef, useState, type ReactNode} from 'react'
 import {ArrowRight, ChartNoAxesColumn, ChevronDown, FolderClock, LogOut, Sparkles} from 'lucide-react'
-import {apiUrl, connect, feishuAppId, request, type HostLoginRequest, type PrincipalPublic} from '../api'
+import {apiUrl, connect, feishuAppId, request, ruleUploadEnabled, type HostLoginRequest, type PrincipalPublic} from '../api'
 import {isFeishuHost, requestHostCode} from '../hostLogin'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Button} from '../components/ui/button'
@@ -28,7 +28,7 @@ export function AccountMenu({compact = false, className, onUsage}: {compact?: bo
     </Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end"><DropdownMenuLabel>{name}</DropdownMenuLabel><DropdownMenuSeparator/>
       <DropdownMenuItem onSelect={onUsage}><ChartNoAxesColumn/>用量记录</DropdownMenuItem>
-      <DropdownMenuItem onSelect={access?.records}><FolderClock/>本机草稿</DropdownMenuItem>
+      {ruleUploadEnabled && <DropdownMenuItem onSelect={access?.records}><FolderClock/>本机草稿</DropdownMenuItem>}
       <DropdownMenuItem onSelect={access?.logout}><LogOut/>退出登录</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>

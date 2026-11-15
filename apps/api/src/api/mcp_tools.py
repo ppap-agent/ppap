@@ -221,28 +221,31 @@ def register_tools(mcp, gateway, authority):
         """Read publishable source selections and provenance for an authorized original."""
         return await read("rules:read", f"/files/{file_id}/versions/{version_id}/rule-sources", page)
 
-    @mcp.tool(annotations=EXTERNAL)
-    async def parse_rule(request_id: UUID, body: wc.RuleParseRequest) -> Reply[dict]:
-        """Parse the selected rule original. It can call a model; publishing is a separate confirmation."""
-        return await write(
-            "rules:write",
-            "parse_rule",
-            request_id,
-            "/rules/parse",
-            {**body, "request_id": str(request_id)},
-            probes=[f"/files/{body['source_file_id']}/versions/{body['source_file_version_id']}"],
-            result_path=lambda v: f"/rules/parse/{v['id']}",
-        )
+    # Users only upload rules or publish new versions when the deployment enables it.
+    if gateway.store.settings.rule_upload_enabled:
+
+        @mcp.tool(annotations=EXTERNAL)
+        async def parse_rule(request_id: UUID, body: wc.RuleParseRequest) -> Reply[dict]:
+            """Parse the selected rule original. It can call a model; publishing is a separate confirmation."""
+            return await write(
+                "rules:write",
+                "parse_rule",
+                request_id,
+                "/rules/parse",
+                {**body, "request_id": str(request_id)},
+                probes=[f"/files/{body['source_file_id']}/versions/{body['source_file_version_id']}"],
+                result_path=lambda v: f"/rules/parse/{v['id']}",
+            )
+
+        @mcp.tool(annotations=WRITE)
+        async def publish_rule(request_id: UUID, body: wc.RulePublishRequest) -> Reply[dict]:
+            """Request user confirmation of the exact source, rule text and customer scope, then publish one version."""
+            return await write("rules:write", "publish_rule", request_id, "/rules", {**body, "request_id": str(request_id)}, confirm=True, result_path=lambda v: f"/rules/{v['id']}")
 
     @mcp.tool(annotations=READ)
     async def get_rule_parse(parse_id: UUID, page: PageRequest | None = None) -> Reply[DataPage]:
         """Read the original parsing result after completion, restart or disconnection."""
         return await read("rules:read", f"/rules/parse/{parse_id}", page)
-
-    @mcp.tool(annotations=WRITE)
-    async def publish_rule(request_id: UUID, body: wc.RulePublishRequest) -> Reply[dict]:
-        """Request user confirmation of the exact source, rule text and customer scope, then publish one version."""
-        return await write("rules:write", "publish_rule", request_id, "/rules", {**body, "request_id": str(request_id)}, confirm=True, result_path=lambda v: f"/rules/{v['id']}")
 
     @mcp.tool(annotations=READ)
     async def get_rule_types() -> Reply[DataPage]:

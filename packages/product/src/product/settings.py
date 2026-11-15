@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     current_tenant_allowlist: str = Field(default="", alias="PPAP_CURRENT_TENANT_ALLOWLIST")
     usage_charge_enabled: bool = Field(default=True, alias="PPAP_USAGE_CHARGE_ENABLED")
     mcp_enabled: bool = Field(default=False, alias="PPAP_MCP_ENABLED")
+    # Rules are delivered by developers; users neither upload rules nor publish new versions unless enabled.
+    rule_upload_enabled: bool = Field(default=False, alias="PPAP_RULE_UPLOAD_ENABLED")
     mcp_allowed_origins: list[str] = Field(default_factory=list, alias="PPAP_MCP_ALLOWED_ORIGINS")
     support_phone: str = Field(default="", alias="PPAP_SUPPORT_PHONE", max_length=200)
     support_email: str = Field(default="", alias="PPAP_SUPPORT_EMAIL", max_length=320)
@@ -230,6 +232,7 @@ class Settings(BaseSettings):
             "feishu_app_id": self.feishu_app_id,
             "current_access": "allowlist" if self.allowed_tenant_keys() else "open",
             "usage_charge_enabled": self.usage_charge_enabled,
+            "rule_upload_enabled": self.rule_upload_enabled,
         }
 
 

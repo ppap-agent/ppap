@@ -197,7 +197,7 @@ class ApiSurfaceTests(unittest.TestCase):
 
     def test_public_config_has_no_secrets(self):
         body = self.client.get("/public-config").json()
-        self.assertEqual(set(body), {"git_sha", "profile", "api_url", "login", "feishu_app_id", "current_access", "usage_charge_enabled", "personal_drive_upload"})
+        self.assertEqual(set(body), {"git_sha", "profile", "api_url", "login", "feishu_app_id", "current_access", "usage_charge_enabled", "rule_upload_enabled", "personal_drive_upload"})
         self.assertEqual(body["current_access"], "open")
         self.assertTrue(body["usage_charge_enabled"])
         blob = " ".join(str(value).lower() for value in body.values())

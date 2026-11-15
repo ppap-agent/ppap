@@ -3856,6 +3856,8 @@ export interface components {
             personal_drive_upload: boolean;
             /** Profile */
             profile: string;
+            /** Rule Upload Enabled */
+            rule_upload_enabled: boolean;
             /** Usage Charge Enabled */
             usage_charge_enabled: boolean;
         };

@@ -2,7 +2,7 @@ import {useEffect, useState} from 'react'
 import {RequirementLibraryPanel} from '../journey/requirement-library'
 import {isRequirementLibrary} from '../journey/requirement-library-state'
 import {readRuleVersions} from '../journey/product'
-import {request, type RulesList, type RuleTypes} from '../api'
+import {request, ruleUploadEnabled, type RulesList, type RuleTypes} from '../api'
 import type {components} from '../generated/openapi'
 import {publishedLibraryAfterRead, requirementDirectory, type RequirementDirectoryCollection} from '../journey/requirement-directory'
 import {message} from '../journey/remote'
@@ -94,6 +94,7 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
     headerActions={headerActions}
     title="审核规则库"
     uploadLabel="上传规则"
+    editable={ruleUploadEnabled}
     automaticMatching
     active={active}
     collections={collections}

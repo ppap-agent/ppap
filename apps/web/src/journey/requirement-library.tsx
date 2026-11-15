@@ -53,7 +53,7 @@ function ClauseDifference({before, after, label}: {before?: RequirementClause; a
   </article>
 }
 
-export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核规则', uploadLabel = '上传规则', onPublished, active = true, automaticMatching = false, directory, readVersions, readRevision = 0, headerActions, listView, trail}: {
+export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核规则', uploadLabel = '上传规则', onPublished, active = true, automaticMatching = false, directory, readVersions, readRevision = 0, headerActions, listView, trail, editable = true}: {
   /** What the page shows when no rule is open; the rules page passes its templates. */
   listView?: ReactNode
   /** Where the open rule sits, e.g. 规则模板 / 模板 / 文件类型; replaces the plain back link. */
@@ -64,6 +64,8 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   title?: string; uploadLabel?: string; onPublished?: () => void; active?: boolean; automaticMatching?: boolean
   directory?: RequirementDirectoryCollection[]; readVersions?: ReadRequirementVersions; readRevision?: number
   headerActions?: HTMLElement | null
+  /** False when users may not upload rules or publish new versions: the page only reads. */
+  editable?: boolean
 }) {
   const [selection, setSelection] = useState(routeSelection)
   const [content, setContent] = useState(routeContent)
@@ -84,7 +86,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   const collection = collections.find(item => item.id === selection.id)
   const catalog = requirementDirectory(collections, directory)
   const catalogCollection = catalog.find(item => item.id === selection.id)
-  const draftSelected = Boolean(collection?.draft && (!selection.version || selection.version === 'draft'))
+  const draftSelected = editable && Boolean(collection?.draft && (!selection.version || selection.version === 'draft'))
   const selectedVersion = selection.version ? catalogCollection?.versions.find(version => version.id === selection.version) : catalogCollection?.versions.at(-1)
   const storedCurrent = draftSelected ? collection!.draft! : selection.version ? collection?.versions.find(version => version.id === selection.version) : collection?.versions.at(-1)
   const baseId = content === 'changes' ? (draftSelected ? storedCurrent?.baseId : selectedVersion?.baseId) : null
@@ -216,9 +218,9 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, state: 'manual'}, clauses: [...draft.basis.clauses, {id, title: '', text: '', original: '', source: draft.basis.source.filename, location: '', applicability: 'pending', checked: false, reason: ''}]}}))
     setEditing(id)
   }
-  const uploadAction = <Button disabled={locked} onClick={() => picker.current?.click()}><Upload/>{uploadLabel}</Button>
+  const uploadAction = editable ? <Button disabled={locked} onClick={() => picker.current?.click()}><Upload/>{uploadLabel}</Button> : null
   return <Dialog open={active && discard} onOpenChange={open => !working.current && setDiscard(open)}><section className="min-w-0 space-y-6 pb-10 text-sm">
-    <input hidden aria-label="上传共用规则文件" ref={picker} type="file" accept={requirementFileAccept} disabled={locked} onChange={event => {uploadRevision.current = visibility.current.revision; void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
+    {editable && <input hidden aria-label="上传共用规则文件" ref={picker} type="file" accept={requirementFileAccept} disabled={locked} onChange={event => {uploadRevision.current = visibility.current.revision; void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>}
     {selection.id ? trail ? trail(selectedVersion ?? catalogCollection?.draft ?? undefined) : <nav aria-label="规则导航"><a className="inline-flex min-h-9 items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-ring" href={requirementHref()} aria-disabled={locked || undefined} onClick={event => {if (locked) event.preventDefault(); else navigate(event)}}><ArrowLeft className="size-4"/>返回{title}</a></nav> : headerActions ? <>{/* A list view names the page itself. */}{!listView && <h1 className="sr-only">{title}</h1>}{active && createPortal(uploadAction, headerActions)}</> : <header className="flex items-center justify-between gap-4"><h1 className="text-xl font-semibold">{title}</h1>{uploadAction}</header>}
     {upload.busy && <ReadSkeleton label="正在上传…" kind="inline"/>}
     {readError && <Alert variant="destructive"><AlertTitle>规则没读到</AlertTitle><AlertDescription><p>{readError}</p><Button variant="outline" size="sm" disabled={locked} onClick={onReload}>重新读取</Button></AlertDescription></Alert>}
@@ -226,7 +228,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     {feedback && (feedback.failed ? <Alert variant="destructive"><AlertTitle>版本未保存</AlertTitle><AlertDescription>{feedback.text}</AlertDescription></Alert> : <p role="status" className="text-muted-foreground">{feedback.text}</p>)}
     {!selection.id ? listView : current && collection ? <>
       <header className="space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-4"><h1 className="min-w-0 break-words text-xl font-semibold">{current.basis.source.title || '新规则'}</h1>{!draftSelected && <Button variant="outline" disabled={locked} onClick={startVersion}><GitBranch/>{collection.draft ? '继续编辑草稿' : '创建新版本'}</Button>}</div>
+        <div className="flex flex-wrap items-start justify-between gap-4"><h1 className="min-w-0 break-words text-xl font-semibold">{current.basis.source.title || '新规则'}</h1>{editable && !draftSelected && <Button variant="outline" disabled={locked} onClick={startVersion}><GitBranch/>{collection.draft ? '继续编辑草稿' : '创建新版本'}</Button>}</div>
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
             <Select value={draftSelected ? 'draft' : current.id} onValueChange={value => select(collection.id, value, true)} disabled={locked}>
               <SelectTrigger aria-label="规则版本" className="min-w-0 max-w-full"><SelectValue className="min-w-0">版本 {current.basis.source.version || '待确认'}</SelectValue></SelectTrigger>

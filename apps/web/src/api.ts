@@ -68,6 +68,8 @@ export let apiUrl = ''
 export let profile = ''
 export let feishuAppId = ''
 export let personalDriveUpload = false
+/** Users upload rules and publish new versions only when the deployment enables it. */
+export let ruleUploadEnabled = false
 export async function connect() {
   const runtime = await fetch('/runtime-config.json').then(r => r.json())
   apiUrl = runtime.api_url
@@ -75,10 +77,11 @@ export async function connect() {
   apiUrl = runtime.api_url || config.api_url; profile = config.profile
   feishuAppId = config.feishu_app_id || ''
   personalDriveUpload = config.personal_drive_upload === true
+  ruleUploadEnabled = config.rule_upload_enabled === true
   return config
 }
 const messages: Record<string,string> = {
-  unauthenticated: '请先登录飞书。', access_denied: '没有访问这份资料的权限。', file_not_ready: '文件尚未上传完成。',
+  unauthenticated: '请先登录飞书。', rule_upload_disabled: '规则由平台交付，当前不开放上传或修改。', access_denied: '没有访问这份资料的权限。', file_not_ready: '文件尚未上传完成。',
   rule_required: '请为待审文件选择规则。', target_required: '请添加至少一份待审文件。', review_conflict: '复核已被更新，请刷新后核对。',
   draft_already_accepted: '此草稿已提交，请打开对应审核。', rule_parse_failed: '规则解析失败，请检查原文件或文档类型。',
   rule_source_unverified: '条款出处与原件不一致。请重新选择原文位置并核对，草稿未发布。',

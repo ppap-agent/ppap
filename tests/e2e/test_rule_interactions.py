@@ -1045,6 +1045,7 @@ class RuleInteractionTests(unittest.TestCase):
                         "feishu_app_id": "",
                         "current_access": "allowed",
                         "usage_charge_enabled": False,
+                        "rule_upload_enabled": True,
                     },
                     headers=cors,
                 )

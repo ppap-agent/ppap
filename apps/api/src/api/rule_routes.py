@@ -106,6 +106,8 @@ def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if not store.settings.rule_upload_enabled:
+            return JSONResponse({"error": "rule_upload_disabled"}, status_code=403)
         if not isinstance(body, dict):
             return JSONResponse({"error": "invalid_rule_request"}, status_code=400)
         try:
@@ -133,6 +135,8 @@ def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if not store.settings.rule_upload_enabled:
+            return JSONResponse({"error": "rule_upload_disabled"}, status_code=403)
         if not isinstance(body, dict):
             return JSONResponse({"error": "invalid_rule_request"}, status_code=400)
         try:
