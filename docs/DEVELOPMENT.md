@@ -207,4 +207,3 @@ Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key�
 
 忽略或采纳通过 `PUT /rounds/{id}/review-hints` 保存到已有 finding 的独立回执字段，绑定完整对比对象及两边的 result_attempt。
 采纳只保存回执，不启动模型、不改机器结果。`GET /review-hints/responses` 返回当前用户可读轮次保留的采纳/忽略回执计数和比例，分母为已明确处理的提示，不把读取当作曝光。
-
