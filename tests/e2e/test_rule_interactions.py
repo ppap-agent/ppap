@@ -57,7 +57,7 @@ def open_rule(page, title):
     if trail.count():
         back_to_templates(page)
     find_rule_template(page, title).click()
-    page.get_by_role("table", name=re.compile("的文件类型$")).get_by_role("link").filter(has_text=title).first.click()
+    page.get_by_role("table", name=re.compile("的规则列表$")).get_by_role("link").filter(has_text=title).first.click()
 
 
 JOB = "00000000-0000-4000-8000-000000000001"
@@ -829,7 +829,7 @@ class RuleInteractionTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="UAES 规则", exact=True)).to_be_visible()
             # Six types to a page; a search for the rule narrows the chosen customer's types to it.
             page.get_by_role("searchbox", name="搜索客户", exact=True).fill("生产件样品照片")
-            photo = page.get_by_role("table", name="UAES 规则 的文件类型", exact=True).get_by_role("row").filter(has_text="生产件样品照片")
+            photo = page.get_by_role("table", name="UAES 规则 的规则列表", exact=True).get_by_role("row").filter(has_text="生产件样品照片")
             expect(photo).to_contain_text("尚无检查程序")
             expect(page.get_by_text(re.compile("本模板没有这些文件的规则：.*检具验收报告"))).to_be_visible()
             photo.get_by_role("link").click()

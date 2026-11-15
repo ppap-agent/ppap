@@ -122,7 +122,7 @@ function TemplateDetail({template, focus}: {template: RuleTemplate; focus: strin
     {pending.length > 0 && <Alert><AlertCircle aria-hidden="true"/><AlertTitle>{pending.map(row => row.label).join('、')}的规则已更新，在规则页“检查程序”中采用新版本后新审核才会使用。</AlertTitle></Alert>}
     {template.missing.length > 0 && <p className="text-sm text-muted-foreground">本模板没有这些文件的规则：{template.missing.join('、')}。审核时会提示你另选模板或人工审核。</p>}
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
-      {rows.length ? <Table aria-label={`${template.name} 的文件类型`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>文件类型</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{rows.map(row => {
+      {rows.length ? <Table aria-label={`${template.name} 的规则列表`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>规则</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{rows.map(row => {
         const href = rowHref(row), name = row.ruleTitle || row.label || '未识别类型', updated = day(row.updatedAt)
         return <TableRow key={`${row.target.kind}:${row.target.id}`}>
           <TableCell className="whitespace-normal"><span className="flex min-w-0 flex-wrap items-center gap-2"><a className="rounded-sm font-medium text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50" href={href} onClick={event => followRulesLink(event, href)}>{name}</a>{row.draft && <Badge variant="outline">草稿</Badge>}</span></TableCell>
@@ -131,7 +131,7 @@ function TemplateDetail({template, focus}: {template: RuleTemplate; focus: strin
           <TableCell><RowStatus automation={row.automation}/></TableCell>
         </TableRow>
       })}</TableBody></Table> : <p className="grid flex-1 place-items-center py-12 text-center text-sm text-muted-foreground">{focus ? '这个客户没有匹配的规则。' : '这个模板还没有规则。'}</p>}
-      {rows.length > 0 && <footer className="border-t px-3 py-3 text-right text-xs text-muted-foreground tabular-nums">共 {groups.length} 类</footer>}
+      {rows.length > 0 && <footer className="border-t px-3 py-3 text-right text-xs text-muted-foreground tabular-nums">共 {rows.length} 条规则{rows.length !== groups.length && ` · ${groups.length} 类文件`}</footer>}
     </div>
   </section>
 }
