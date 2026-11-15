@@ -26,6 +26,7 @@ export function fixtureDisplay(tasks: Map<string, AuditTask>, scene: string): Au
       }
       receipts.set(request.request_id, structuredClone(receipt))
       if (scene === 'restore-display-unknown') throw new Error('preview_display_response_lost')
+      if (scene === 'restore-display-invalid') return {...receipt, request: {...request, reference: {...request.reference, file_version_id: 'different-version'}}}
       return receipt
     },
     read: async (request: DisplayRequest) => structuredClone(receipts.get(request.request_id) || {request, state: 'unknown', info: null, reason: '保存结果待确认。'}),

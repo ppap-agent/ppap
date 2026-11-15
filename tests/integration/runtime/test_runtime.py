@@ -75,12 +75,12 @@ class DeployRuntimeTests(unittest.TestCase):
         self.assertEqual(ready["postgres"]["state"], "ok")
         self.assertEqual(ready["object_storage"]["state"], "ok")
 
-    def test_web_serves_the_workbench_and_customer_aliases(self):
+    def test_web_serves_the_app_routes_and_addon(self):
         status, body = _page("/")
         self.assertEqual(status, 200)
         self.assertIn('id="app"', body)
         self.assertIn("PPAP Audit", body)
-        for path in ("/audit-files", "/usage", "/rules"):
+        for path in ("/usage", "/requirements", "/files"):
             status, page = _page(path)
             self.assertEqual(status, 200)
             self.assertIn('id="app"', page)
