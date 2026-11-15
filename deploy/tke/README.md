@@ -71,6 +71,8 @@ is needed. Only preview caches are ephemeral; originals remain in PPAP storage.
 export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ipv6.kubeconfig"
 ```
 
+主入口不通时，按 hax `runtime/tke-cls-6e71r2cz/OPS-KUBECTL.md` 的备用入口连接。不要把备用入口写成默认。
+
 ### 更新镜像或应用清单
 
 每次发布同时同步最新的 ConfigMap、Secret 和容器配置引用，然后执行滚动更新。更新配置属于发布步骤，不能只更新镜像而遗漏新版本必需的凭据或端点。流程保持直接：**整理本次配置 → 按授权同步配置 → 应用清单／滚动更新**；失败后再诊断，不增加预演环境或完整预检。
