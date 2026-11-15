@@ -850,7 +850,7 @@ class AuditPreviewTests(unittest.TestCase):
             open_basis(page)
             expect(record.get_by_text("人工查阅原件后认为频次符合要求。", exact=True)).to_have_count(0)
             close_workspace_panel(page)
-            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^2 记录完整性 .*未覆盖 .*查看依据 1\.2"))).to_be_visible()
+            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^第 2 条 记录完整性 .*未覆盖 .*查看依据 1\.2"))).to_be_visible()
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name="控制计划.xlsx", exact=True).click()
             open_basis(page)
             expect(record).to_have_count(0)
