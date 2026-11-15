@@ -1,6 +1,7 @@
 import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/5bc532c5a9a142a8a378434ddfe73fd5
 import {useContext, useEffect, useRef, useState, type ReactNode} from 'react'
+import {createPortal} from 'react-dom'
 import {requestTrace} from '../api'
 import {analysisNotice} from '../helpers'
 import {MatchingFeedback, isMatchingReason} from './matching-feedback'
@@ -149,6 +150,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [rulesOpened, setRulesOpened] = useState(surface === 'requirements')
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
+  const ruleDetail = () => {const params = new URL(location.href).searchParams; return params.has('systemRule') || params.has('requirement')}
+  const [ruleDetailOpen, setRuleDetailOpen] = useState(ruleDetail)
   // The product navigation starts as an icon rail; the person may expand it.
   const [navigationMode, setNavigationMode] = useState<'expanded' | 'collapsed'>('collapsed')
   const [navigationTooltip, setNavigationTooltip] = useState<string | null>(null)
@@ -560,6 +563,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     setSurface('audit')
     setReportView(new URL(location.href).searchParams.has('report'))
     const id = readAuditRoute(new URL(location.href)).taskId
+    // checkFilter belongs to a task's review, not to a new audit.
+    if (!id && params.has('checkFilter')) {const url = new URL(location.href); url.searchParams.delete('checkFilter'); writeAuditAddress(url)}
     if (!id && params.get('round') && adapter.readRound) {void openRoundTask(params.get('round')!); return}
     if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: new URL(location.href).searchParams.get('report'), packageRequest: new URL(location.href).searchParams.get('packageRequest')}, location.origin)
     const localId = params.get('uploadDraft') || (typeof history.state?.auditUploadDraft === 'string' ? history.state.auditUploadDraft : null)
@@ -591,8 +596,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const addressCurrent = useRef(restoreAddress)
   addressCurrent.current = restoreAddress
   useEffect(() => {
-    const changed = () => addressCurrent.current()
-    const remember = () => {if (readAuditRoute(new URL(location.href)).surface === 'audit') retainAuditAddress()}
+    const changed = () => {addressCurrent.current(); setRuleDetailOpen(ruleDetail())}
+    const remember = () => {setRuleDetailOpen(ruleDetail()); if (readAuditRoute(new URL(location.href)).surface === 'audit') retainAuditAddress()}
     changed(); window.addEventListener('popstate', changed); window.addEventListener(auditAddressChanged, remember)
     return () => {restoreEpoch.current += 1; window.removeEventListener('popstate', changed); window.removeEventListener(auditAddressChanged, remember)}
   }, [])
@@ -953,11 +958,12 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const recognitionSupport = recognitionState && <Button variant="outline" size="sm" onClick={() => openSupport({scenario: '识别文件与匹配规则', traceId: recognitionState.traceId, facts: [{label: '任务标识', value: recognitionState.taskId}, {label: '识别请求', value: recognitionState.requestId}, {label: '文件', value: files.map(row => row.file.original_filename).join('\n')}, {label: '服务说明', value: recognitionState.message}]})}>联系支持</Button>
   const pageContext = surface !== 'audit' ? productLinks.find(link => link.view === surface)?.label : task ? task.number : recovery ? reportView ? '审核报告' : '审核任务' : '新建审核'
   const taskCoverage = task?.customer_preference ? coverageOf(task.customer_preference) : null
-  const stepper = <ol aria-label="审核步骤" className="flex shrink-0 items-center gap-1.5 pt-2 text-base whitespace-nowrap text-muted-foreground">{['上传与检查', '确认规则', 'AI 审核'].map((label, index) => {
+  const stepper = <ol aria-label="审核步骤" className="flex shrink-0 items-center gap-1.5 text-base whitespace-nowrap text-muted-foreground">{['上传与检查', '确认规则', 'AI 审核'].map((label, index) => {
     const current = step === 'match' ? 1 : 0, done = index < current
     return <li key={label} aria-current={current === index ? 'step' : undefined} data-state={done ? 'complete' : current === index ? 'current' : 'upcoming'} className={`flex items-center gap-1.5 ${current === index ? 'font-semibold text-primary' : done ? 'text-success' : ''}`}><span className={`flex size-5.5 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${current === index ? 'bg-primary text-primary-foreground' : done ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'}`}>{done ? <Check aria-label="已完成" className="size-3.5"/> : index + 1}</span>{label}{index < 2 && <span aria-hidden="true" className="ml-1.5 text-muted-foreground/60">&gt;</span>}</li>
   })}</ol>
-  const customerHint = <><span className="text-sm text-muted-foreground">选择客户后，系统按该客户的 PPAP 模板与审核规则预检</span>{templateAdapter && <Button variant="link" size="xs" onClick={() => openTemplates(true)}><Plus aria-hidden="true"/>更多模板，请补充</Button>}</>
+  const customerHint = <span className="text-sm text-muted-foreground">选择客户后，系统按该客户的 PPAP 模板与审核规则预检</span>
+  const templateSupplement = templateAdapter ? <Button variant="link" size="sm" className="-mx-3 h-auto justify-start" onClick={() => openTemplates(true)}><Plus aria-hidden="true"/>更多模板，请补充</Button> : null
   const workbenchCrumb = <><li><a href={surfaceAddress('audit')} className="text-muted-foreground hover:text-foreground hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); newTask()}}}>PPAP Audit</a></li><li aria-hidden="true" className="text-muted-foreground">/</li></>
   return <TooltipProvider><SupportEntryContext.Provider value={openSupport}><div className="flex h-dvh overflow-hidden bg-canvas text-sm text-foreground">
     <a href="#audit-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-background focus:p-3 focus-visible:outline-ring focus-visible:ring-2 focus-visible:ring-ring">跳到主要内容</a>
@@ -975,18 +981,18 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
           {workbenchCrumb}
           <li className="flex min-w-0 items-center gap-1">{task && !recovery ? <a href={taskResultsAddress().href} aria-label="返回审核结果" className="font-medium hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showTaskResults()}}}>{task.number}</a> : <span className="text-muted-foreground">审核任务</span>}</li>
           <li aria-hidden="true" className="text-muted-foreground">/</li><li aria-current="page" className="font-medium">审核报告</li>
-        </ol></nav> : <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1">{surface === 'audit' && workbenchCrumb}<li aria-current="page" className="flex min-w-0 items-center gap-1 font-medium"><span className="min-w-0 truncate">{pageContext}</span></li></ol></nav>}
+        </ol></nav> : <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1">{surface === 'audit' && (task || recovery) && workbenchCrumb}<li aria-current="page" className="flex min-w-0 items-center gap-1 font-medium">{surface === 'requirements' && ruleDetailOpen ? <a href="/requirements" className="min-w-0 truncate hover:underline" onClick={event => {if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); const url = new URL(location.href); for (const key of rulesAddressKeys) url.searchParams.delete(key); if (!isPreview(url)) {url.pathname = surfaceAddress('requirements'); url.searchParams.delete('view')}; writeAuditAddress(url)}}>{pageContext}</a> : (surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) || surface === 'audit' && !task && !recovery && step === 'upload') ? <h1 className="min-w-0 truncate text-sm font-medium">{pageContext}</h1> : <span className="min-w-0 truncate">{pageContext}</span>}</li></ol></nav>}
       </div><div className="flex shrink-0 items-center gap-2"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && <AccountMenu compact onUsage={() => showSurface('usage')}/>}</div></header>
       {/* PPAP Audit keeps its task list on the left, on the new-audit page and on every task. */}
       <main id="audit-main" tabIndex={-1} className="flex min-h-0 w-full flex-1 overflow-hidden">
         {taskRail}
-        <div className={surface === 'audit' && workbench && !reportView ? 'h-full w-full min-w-0' : 'min-w-0 flex-1 overflow-y-auto p-6'}>
-        <div className={surface === 'audit' && workbench && !reportView ? 'h-full' : `mx-auto w-full space-y-6 ${recovery || workbench || surface !== 'audit' ? '' : step === 'match' ? 'max-w-7xl' : 'max-w-5xl'}`}>
-        {archiveOpened && <div hidden={surface !== 'archive'}>{archiveAdapter ? <AuditArchive headerActions={surface === 'archive' ? pageActions : null} active={surface === 'archive'} adapter={archiveAdapter} onUpload={newTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>审核文件暂不可用</AlertTitle><AlertDescription>请稍后重试。</AlertDescription></Alert>}</div>}
-        {rulesOpened && <div hidden={surface !== 'requirements'}>{rules?.(surface === 'requirements', surface === 'requirements' ? pageActions : null)}</div>}
-        {templatesOpened && templateAdapter && <div hidden={surface !== 'templates'}><TemplateLibraryPage adapter={templateAdapter}/></div>}
+        <div className={surface === 'audit' && workbench && !reportView ? 'h-full w-full min-w-0' : surface === 'archive' || surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-6' : 'min-w-0 flex-1 overflow-y-auto p-6'}>
+        <div className={surface === 'audit' && workbench && !reportView ? 'h-full' : surface === 'archive' || surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) ? 'flex min-h-0 min-w-0 flex-1 flex-col' : `mx-auto w-full space-y-6 ${recovery || workbench || surface !== 'audit' ? '' : step === 'match' ? 'max-w-7xl' : 'max-w-5xl'}`}>
+        {archiveOpened && <div className={surface === 'archive' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}>{archiveAdapter ? <AuditArchive headerActions={surface === 'archive' ? pageActions : null} active={surface === 'archive'} adapter={archiveAdapter} onUpload={newTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>审核文件暂不可用</AlertTitle><AlertDescription>请稍后重试。</AlertDescription></Alert>}</div>}
+        {rulesOpened && <div className={surface !== 'requirements' ? 'hidden' : ruleDetailOpen ? 'min-w-0' : 'flex min-h-0 min-w-0 flex-1 flex-col'}>{rules?.(surface === 'requirements', surface === 'requirements' ? pageActions : null)}</div>}
+        {templatesOpened && templateAdapter && <div className={surface === 'templates' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}><TemplateLibraryPage adapter={templateAdapter}/></div>}
         {usageOpened && <div hidden={surface !== 'usage'}><AuditUsage headerActions={surface === 'usage' ? pageActions : null} active={surface === 'usage'} adapter={usageAdapter} archiveAdapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}} onSupport={notice => openSupport({scenario: `用量记录 · ${notice}`})}/></div>}
-        <div hidden={surface !== 'audit'} className={workbench && !reportView ? 'flex h-full flex-col' : 'space-y-6'}>
+        <div className={surface !== 'audit' ? 'hidden' : workbench && !reportView ? 'flex h-full flex-col' : 'space-y-6'}>
         {error && <Alert variant="destructive"><AlertTitle>操作未完成</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
         {preparingReaudit && <ReadSkeleton label="正在读取原审核的文件和规则…" kind={'detail'}/>}
         {predecessorId && !workbench && <Alert><AlertTitle>新建关联重审</AlertTitle><AlertDescription>原任务和报告都保留。本次用当前规则重新审核所有文件，人工复核从头开始。</AlertDescription></Alert>}
@@ -999,16 +1005,17 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         {!task && preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'saving' && <ReadSkeleton label="正在保存上传准备…" kind="inline"/>}
         {!task && preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'error' && <Alert variant="destructive"><AlertTitle>上传准备待确认</AlertTitle><AlertDescription><p>{preparationStatus.message}</p><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => void readPreparation(activeUploadDraftId.current!)}>读取准备记录</Button>{preparationStatus.conflict && <Button variant="outline" size="sm" onClick={() => {retainDraft(); void readPreparation(activeUploadDraftId.current!, true)}}>载入已保存资料</Button>}</div></AlertDescription></Alert>}
         <fieldset hidden={preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'reading'} disabled={inputLocked || preparingReaudit} className="min-w-0 space-y-6">
-        <header className="flex items-start justify-between gap-6"><div className="min-w-0 flex-1 space-y-1.5">
+        {surface === 'audit' && step === 'upload' && pageActions && createPortal(stepper, pageActions)}
+        {step !== 'upload' && <header className="flex items-start justify-between gap-6"><div className="min-w-0 flex-1 space-y-1.5">
           {step === 'match' && <p className="text-xs text-muted-foreground">PPAP Audit<span aria-hidden="true" className="mx-1.5 text-muted-foreground/60">/</span>预检与匹配</p>}
-          <h1 className={step === 'upload' ? 'text-4xl leading-tight font-bold tracking-tight text-primary' : 'text-2xl font-semibold tracking-tight'}>{step === 'upload' ? 'PPAP Audit' : step === 'check' ? '核对本次文件' : task?.state === 'matching' ? '正在识别文件与匹配规则' : '确认每份文件的审核规则'}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{step === 'check' ? '核对本次文件' : task?.state === 'matching' ? '正在识别文件与匹配规则' : '确认每份文件的审核规则'}</h1>
           {step === 'check' && <p className="text-muted-foreground">勾选要审核的文件，然后开始识别。</p>}
           {step === 'match' && task && <div className="space-y-0.5 text-sm leading-relaxed text-muted-foreground"><p>上传后系统自动完成格式预检 → 识别文件要素 → 匹配客户规则；确认后点击【开始审核】计费送审。</p><p className="tabular-nums">当前客户：{task.customer_preference ? adapter.customers?.find(option => option.value === task.customer_preference)?.label ?? task.customer_preference : '自动识别'}{taskCoverage && <> · 规则覆盖 {taskCoverage.supported}/{taskCoverage.total} 类</>} · 本批 {matchingFiles.length} 份文件</p></div>}
-        </div>{stepper}</header>
+        </div>{stepper}</header>}
         {step === 'check' && <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" onClick={() => input.current?.click()}><Plus/>继续添加文件</Button>{driveButton}</div>}
         <input ref={input} disabled={!customerReady} type="file" className="sr-only" aria-label="选择审核文件" multiple accept={acceptedUploads(customer).accept} onChange={event => {receive(Array.from(event.target.files || [])); event.target.value = ''}}/>
         {step === 'upload' && <section aria-label="上传文件" className="space-y-5 rounded-lg border bg-card p-6">
-          {surface === 'audit' && (adapter.customerDefaults ? <CustomerMode key={draftEpoch.current} value={customer} ready={customerReady} options={adapter.customers ?? []} adapter={adapter.customerDefaults} onInitialDefault={initializeCustomer} onRefresh={onRefreshCustomers} onChange={changeCustomer} coverage={coverageOf} hint={customerHint}/> : <div className="grid gap-2"><div className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><Label htmlFor="audit-customer">客户（可选）</Label>{customerHint}</div><Select value={customer} onValueChange={changeCustomer} onOpenChange={open => {if (open) onRefreshCustomers?.()}}><SelectTrigger id="audit-customer" className="h-10 w-80 max-w-full"><SelectValue/></SelectTrigger><SelectContent><CustomerListNote count={(adapter.customers ?? []).length}/><CustomerItem value="auto" label="自动识别客户"/>{(adapter.customers ?? []).map(option => <CustomerItem key={option.value} value={option.value} label={option.label} coverage={coverageOf(option.value)}/>)}</SelectContent></Select></div>)}
+          {surface === 'audit' && (adapter.customerDefaults ? <CustomerMode key={draftEpoch.current} value={customer} ready={customerReady} options={adapter.customers ?? []} adapter={adapter.customerDefaults} onInitialDefault={initializeCustomer} onRefresh={onRefreshCustomers} onChange={changeCustomer} coverage={coverageOf} hint={customerHint}/> : <div className="grid gap-2"><div className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><Label htmlFor="audit-customer">客户（可选）</Label>{customerHint}</div><Select value={customer} onValueChange={changeCustomer} onOpenChange={open => {if (open) onRefreshCustomers?.()}}><SelectTrigger id="audit-customer" className="h-10 w-80 max-w-full"><SelectValue/></SelectTrigger><SelectContent><CustomerListNote count={(adapter.customers ?? []).length}/><CustomerItem value="auto" label="自动识别客户"/>{(adapter.customers ?? []).map(option => <CustomerItem key={option.value} value={option.value} label={option.label} coverage={coverageOf(option.value)}/>)}</SelectContent></Select></div>)}{templateSupplement}
           <div className="flex min-h-72 flex-col items-center justify-center gap-2.5 rounded-md border border-dashed border-primary-line bg-primary-soft/40 px-4 py-10 text-center transition-colors hover:border-primary data-[dragging=true]:border-primary data-[dragging=true]:bg-primary-soft" data-dragging={dragging} onDragOver={event => {event.preventDefault(); setDragging(true)}} onDragLeave={() => setDragging(false)} onDrop={event => {event.preventDefault(); setDragging(false); receive(Array.from(event.dataTransfer.files))}}><Plus aria-hidden="true" className="size-11 stroke-1 text-primary"/><h2 className="text-xl font-semibold">上传文件</h2><p className="text-sm text-muted-foreground">将文件拖到这里，或</p><Button variant="outline" disabled={!customerReady} onClick={() => input.current?.click()}>选择本地文件</Button></div>
           {driveButton && <><div className="flex items-center gap-4 text-xs text-muted-foreground before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border">或</div><div className="grid [&>button]:h-11 [&>button]:text-base">{driveButton}</div></>}
           <p className="text-center text-sm text-muted-foreground">{acceptedUploads(customer).hint}</p>

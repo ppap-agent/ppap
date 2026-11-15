@@ -3,7 +3,7 @@ import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/bfd8b8db93484b159a6ce9d171447c80
 import {useEffect, useRef, useState} from 'react'
 import {createPortal} from 'react-dom'
-import {ListFilter, RefreshCw, Search, Upload, X} from 'lucide-react'
+import {RefreshCw, Search, Upload, X} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
@@ -11,10 +11,10 @@ import {Button} from '../components/ui/button'
 import {Checkbox} from '../components/ui/checkbox'
 import {Input} from '../components/ui/input'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
-import {Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {FileName} from '../journey/file-name'
 import {Segmented} from '../components/segmented'
+import {Tooltip, TooltipContent, TooltipTrigger} from '../components/ui/tooltip'
 import {Pager} from '../components/pager'
 import {cn} from '../lib/utils'
 import {ArchiveHistory} from './history'
@@ -31,7 +31,7 @@ import type {ArchiveDocument, ArchiveQuery, AuditArchiveAdapter} from './archive
 
 const initialQuery: ArchiveQuery = {search: '', category_id: null, document_type: null, customer: null, initiator: null, from_date: null, through_date: null, result: null, page: 1, page_size: 10}
 
-const ranges = [['7', '最近 7 天'], ['30', '最近 30 天'], ['90', '最近 90 天'], ['all', '全部']] as const
+const ranges = [['7', '7 天'], ['30', '30 天'], ['90', '90 天'], ['all', '全部']] as const
 type Range = typeof ranges[number][0]
 // A preset is a start date counted back from today, today included; the end stays open.
 function rangeStart(days: number) {
@@ -46,11 +46,11 @@ const resultName = (value: ArchiveQuery['result']) => results.find(([key]) => ke
 const otherLabel = (label: string, kind: string) => label === '其他' ? `未归类${kind}` : label
 
 export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, reportAdapter, sharingAdapter, active = true, headerActions}: {adapter: AuditArchiveAdapter; onUpload: () => void; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; active?: boolean; headerActions?: HTMLElement | null}) {
-  const [query, setQuery] = useState(initialQuery), [search, setSearch] = useState('')
+  const [query, setQuery] = useState(initialQuery), [search, setSearch] = useState(''), [searchOpen, setSearchOpen] = useState(false)
   const [page, setPage] = useState<components['schemas']['AuditArchivePage'] | null>(null)
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0)
   const [address, setAddress] = useState(() => readArchiveAddress(location.search)), [restore, setRestore] = useState(0)
-  const [filtersOpen, setFiltersOpen] = useState(false), [readAt, setReadAt] = useState<Date | null>(null)
+  const [readAt, setReadAt] = useState<Date | null>(null)
   const [packageRequest, setPackageRequest] = useState(() => new URLSearchParams(location.search).get('packageRequest'))
   const packageRequestRef = useRef(packageRequest), packageEpoch = useRef(0), activeRef = useRef(active)
   activeRef.current = active
@@ -165,7 +165,6 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
   </nav>
   const choices = (label: string, value: string | null, options: string[], key: 'document_type' | 'customer' | 'initiator') => <Select value={value || 'all'} onValueChange={value => filter({[key]: value === 'all' ? null : value})}><SelectTrigger aria-label={label} className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">{label}</SelectItem>{options.map(option => <SelectItem key={option} value={option}>{key === 'document_type' ? documentTypeLabel(option) : option}</SelectItem>)}</SelectContent></Select>
   const range = rangeOf(query), preset = range && range !== 'all' ? ranges.find(([days]) => days === range)?.[1] : null
-  const advancedCount = [query.initiator, query.from_date, query.through_date].filter(Boolean).length
   const categoryLabel = page?.categories.flatMap(category => [{id: category.id, label: otherLabel(category.label, '车型')}, ...category.parts.map(part => ({id: part.id, label: `${otherLabel(category.label, '车型')} / ${otherLabel(part.label, '零件')}`}))]).find(category => category.id === query.category_id)?.label
   const applied = ([['search', '搜索', query.search], ['category_id', '分类', query.category_id ? categoryLabel || '已选分类' : null], ['document_type', '文件类型', query.document_type && documentTypeLabel(query.document_type)], ['customer', '客户', query.customer], ['result', '审核结果', resultName(query.result)], ['initiator', '发起人', query.initiator], ['from_date', preset ? '时间' : '开始日期', preset || query.from_date], ['through_date', '结束日期', query.through_date]] as const).filter(([, , value]) => Boolean(value))
   const clearFilters = () => {setSearch(''); setQuery(initialQuery)}
@@ -177,31 +176,31 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
   if (address.documentId) return <ArchiveHistory key={`${address.documentId}:${restore}`} documentId={address.documentId} document={page?.documents.find(row => row.document_id === address.documentId) || null} initialAddress={address} onNavigate={(reference, report, replace) => {if (activeRef.current && readArchiveAddress(location.search).documentId === address.documentId) writeArchiveAddress(address.documentId, reference, report, replace)}} adapter={adapter} renderOriginal={renderOriginal} onBack={closeDocument} onOpenTask={onOpenTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter}/>
   const upload = <Button onClick={onUpload}><Upload/>上传文件</Button>
   const time = (document: ArchiveDocument) => (document.latest_completed ?? document.latest_activity)?.audited_at
-  return <section className="space-y-4" aria-label="文件档案">
+  return <section className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden" aria-label="文件档案">
     {headerActions && createPortal(upload, headerActions)}
-    <div className="grid grid-cols-[15rem_minmax(0,1fr)] gap-4">
-    <aside aria-label="文件分类" className="sticky top-0 grid max-h-[calc(100dvh-7rem)] gap-3 self-start overflow-y-auto rounded-lg border bg-card p-3">
+    <div className="grid min-h-0 flex-1 grid-cols-[15rem_minmax(0,1fr)] grid-rows-1 gap-4">
+    <aside aria-label="文件分类" className="min-h-0 space-y-4 overflow-y-auto rounded-lg border bg-card p-3">
       {tree}
+      <section aria-label="表格筛选" className="grid gap-3 border-t pt-3">
+        <div className="grid gap-2"><span className="text-sm font-medium">结果</span><Select value={query.result || 'all'} onValueChange={value => filter({result: results.find(([key]) => key === value)?.[0] ?? null})}><SelectTrigger aria-label="全部结果" className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部结果</SelectItem>{results.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+        <div className="grid gap-2"><span className="text-sm font-medium">文件类型</span>{choices('全部文件类型', query.document_type, page?.document_types || [], 'document_type')}</div>
+        <div className="grid gap-2"><span className="text-sm font-medium">发起人</span>{choices('全部发起人', query.initiator, page?.initiators || [], 'initiator')}</div>
+        <label className="grid gap-2 text-sm font-medium">开始日期<Input type="date" aria-label="开始日期" value={query.from_date || ''} onChange={event => filter({from_date: event.target.value || null})}/></label>
+        <label className="grid gap-2 text-sm font-medium">结束日期<Input type="date" aria-label="结束日期" value={query.through_date || ''} onChange={event => filter({through_date: event.target.value || null})}/></label>
+      </section>
     </aside>
-    <div className="min-w-0 space-y-4">
-    <header className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1"><h1 className="text-xl font-semibold">审核文件</h1><p className="text-xs text-muted-foreground">{current && <><span>共 {current.total} 份文件</span> · </>}按客户与车型归集，可追溯历史版本</p></div>
-      {!headerActions && upload}
-    </header>
-    <div role="search" aria-label="筛选审核文件" className="flex flex-wrap items-center gap-1.5">
-      <div className="relative w-44 min-w-0"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search aria-hidden="true" className="size-3.5"/></span><Input type="search" aria-label="搜索文件或零件号" placeholder="搜索文件 / 零件号" iconStart value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => {if (event.key === 'Enter') {event.preventDefault(); filter({search: search.trim()})}}}/></div>
-      <div className="w-32"><Select value={query.customer || 'all'} onValueChange={value => filter({customer: value === 'all' ? null : value, category_id: null})}><SelectTrigger aria-label="全部客户" className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部客户</SelectItem>{(page?.customers || []).map(option => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select></div>
-      <div className="w-32"><Select value={query.result || 'all'} onValueChange={value => filter({result: results.find(([key]) => key === value)?.[0] ?? null})}><SelectTrigger aria-label="全部结果" className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部结果</SelectItem>{results.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
-      <div className="w-32">{choices('全部文件类型', query.document_type, page?.document_types || [], 'document_type')}</div>
-      <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}><SheetTrigger asChild><Button type="button" variant="outline" aria-label="更多筛选"><ListFilter/>筛选{advancedCount > 0 && <Badge variant="secondary">{advancedCount}</Badge>}</Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>筛选审核文件</SheetTitle><SheetDescription className="sr-only">按发起人和发起时间筛选。</SheetDescription></SheetHeader><div className="grid gap-5"><div className="grid gap-2"><span className="text-sm font-medium">发起人</span>{choices('全部发起人', query.initiator, page?.initiators || [], 'initiator')}</div><div className="grid gap-2"><span className="text-sm font-medium">发起时间</span><Segmented label="审核时间范围" value={range} options={ranges} onChange={days => filter({from_date: days === 'all' ? null : rangeStart(Number(days)), through_date: null})}/></div><label className="grid gap-2 text-sm font-medium">开始日期<Input type="date" value={query.from_date || ''} onChange={event => filter({from_date: event.target.value || null})}/></label><label className="grid gap-2 text-sm font-medium">结束日期<Input type="date" value={query.through_date || ''} onChange={event => filter({through_date: event.target.value || null})}/></label></div><SheetFooter><SheetClose asChild><Button type="button">查看筛选结果</Button></SheetClose><Button type="button" variant="outline" onClick={clearFilters}>清除筛选</Button></SheetFooter></SheetContent></Sheet>
-      <div className="ml-auto flex items-center gap-2"><span className="text-xs whitespace-nowrap text-muted-foreground">{readAt && <>数据更新于 <time className="tabular-nums" dateTime={readAt.toISOString()}>{displayTime(readAt)}</time></>}</span><Button type="button" variant="outline" size="icon-sm" aria-label="刷新审核文件" disabled={loading} onClick={() => setReload(value => value + 1)}><RefreshCw className={cn(loading && 'animate-spin motion-reduce:animate-none')}/></Button></div>
+    <div className="flex min-h-0 min-w-0 flex-col gap-4">
+    {!headerActions && <div className="flex justify-end">{upload}</div>}
+    <div role="search" aria-label="筛选审核文件" className="flex flex-nowrap items-center gap-1.5">
+      <div className="flex min-w-0 flex-1"><div className={`relative transition-all duration-200 ease-out ${searchOpen || search.trim() ? 'w-full' : 'w-44'}`}><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search aria-hidden="true" className="size-3.5"/></span><Input type="search" aria-label="搜索文件或零件号" placeholder="搜索文件 / 零件号" iconStart value={search} onChange={event => setSearch(event.target.value)} onFocus={() => setSearchOpen(true)} onBlur={() => setSearchOpen(false)} onKeyDown={event => {if (event.key === 'Escape') {event.preventDefault(); if (search) {setSearch(''); filter({search: ''}); return}; setSearchOpen(false); event.currentTarget.blur(); return}; if (event.key === 'Enter') {event.preventDefault(); filter({search: search.trim()})}}}/></div></div>
+      <div className="ml-auto flex shrink-0 items-center gap-2"><Segmented label="审核时间范围" value={range} options={ranges} onChange={days => filter({from_date: days === 'all' ? null : rangeStart(Number(days)), through_date: null})}/><Tooltip><TooltipTrigger asChild><Button type="button" variant="outline" size="icon-sm" aria-label="刷新审核文件" disabled={loading} onClick={() => setReload(value => value + 1)}><RefreshCw className={cn(loading && 'animate-spin motion-reduce:animate-none')}/></Button></TooltipTrigger><TooltipContent>{readAt ? <>数据更新于 <time dateTime={readAt.toISOString()}>{displayTime(readAt)}</time></> : '尚未读取审核文件'}</TooltipContent></Tooltip></div>
     </div>
     {applied.length > 0 && <div className="flex flex-wrap items-center gap-2" aria-label="已应用筛选">{applied.map(([key, label, value]) => <Button key={key} variant="secondary" size="sm" aria-label={`移除${label}筛选`} className="h-auto min-h-7 whitespace-normal text-left" onClick={() => {if (key === 'search') setSearch(''); filter({[key]: key === 'search' ? '' : null})}}>{label}：{value}<X/></Button>)}<Button variant="ghost" size="sm" onClick={clearFilters}>清除筛选</Button></div>}
     {loading && <ReadSkeleton label="正在读取审核文件…" kind={current ? 'inline' : 'table'}/>}
     {error && <Alert variant="destructive"><AlertTitle>审核文件读取未完成</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" size="sm" onClick={() => setReload(value => value + 1)}>重新读取审核文件</Button></AlertDescription></Alert>}
-    {current && <div className="overflow-hidden rounded-lg border bg-card">
-      {/* Twelve columns do not fit a narrow desktop; the table scrolls inside its card, never the page. */}
-      <Table aria-label="审核文件列表"><TableHeader variant="muted"><TableRow><TableHead className="w-10"><span className="sr-only">选择报告</span></TableHead><TableHead>文档名称</TableHead><TableHead>审核规则</TableHead><TableHead>审核结果</TableHead><TableHead>文件类型</TableHead><TableHead>发起人</TableHead><TableHead>发起时间</TableHead><TableHead>客户名称</TableHead><TableHead>车型</TableHead><TableHead>零件号</TableHead><TableHead>零件名称</TableHead></TableRow></TableHeader><TableBody>{current.documents.map(document => {
+    {current && <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
+      {/* Wide rows scroll inside this card. Column names and the pager stay in view. */}
+      <Table aria-label="审核文件列表" containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead className="w-10"><span className="sr-only">选择报告</span></TableHead><TableHead>文档名称</TableHead><TableHead>审核规则</TableHead><TableHead>审核结果</TableHead><TableHead>文件类型</TableHead><TableHead>发起人</TableHead><TableHead>发起时间</TableHead><TableHead>客户名称</TableHead><TableHead>车型</TableHead><TableHead>零件号</TableHead><TableHead>零件名称</TableHead></TableRow></TableHeader><TableBody>{current.documents.map(document => {
         const initiator = document.latest_completed?.initiator ?? document.latest_activity?.initiator, rule = document.latest_completed?.rule_title ?? document.latest_activity?.rule_title, at = time(document)
         return <TableRow key={document.document_id} data-state={checked[document.document_id] ? 'selected' : undefined} className="cursor-pointer" onClick={event => {if (event.target instanceof Element && event.currentTarget.contains(event.target) && !event.target.closest('button, a, [role="checkbox"]')) openDocument(document)}}>
         <TableCell><Checkbox aria-label={`选择 ${document.title}`} checked={Boolean(checked[document.document_id])} disabled={!checked[document.document_id] && (!document.latest_completed || !historyReportReady(document.latest_completed))} onCheckedChange={value => toggle(document, value === true)}/></TableCell>
@@ -215,8 +214,7 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
         <TableCell>{document.metadata.model || unset}</TableCell>
         <TableCell>{document.metadata.part_number ? <span className="tabular-nums">{document.metadata.part_number}</span> : unset}</TableCell>
         <TableCell>{document.metadata.part || unset}</TableCell>
-      </TableRow>})}</TableBody></Table>
-      {!current.documents.length && <div className="grid justify-items-center gap-3 py-12 text-center"><p className="text-sm text-muted-foreground">没有符合条件的文件</p>{applied.length > 0 && <Button variant="outline" size="sm" onClick={clearFilters}>清空条件</Button>}</div>}
+      </TableRow>})}{!current.documents.length && <TableRow interactive={false}><TableCell colSpan={12} className="text-center whitespace-normal"><div className="grid justify-items-center py-12 gap-3"><p className="text-sm text-muted-foreground">没有符合条件的文件</p>{applied.length > 0 && <Button variant="outline" size="sm" onClick={clearFilters}>清空条件</Button>}</div></TableCell></TableRow>}</TableBody></Table>
       <footer className="space-y-3 border-t px-3 py-3">
         {selection}
         <Pager total={current.total} page={query.page} jump onPage={value => setQuery({...query, page: value})}/>

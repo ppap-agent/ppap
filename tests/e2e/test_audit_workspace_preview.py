@@ -77,7 +77,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(focus.get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()
             # PPAP Audit in the product navigation returns to the same task position.
             navigation.get_by_role("button", name="审核文件", exact=True).click()
-            expect(page.get_by_role("heading", name="审核文件", level=1, exact=True)).to_be_visible()
+            expect(page.get_by_role("navigation", name="当前位置", exact=True).get_by_text("审核文件", exact=True)).to_be_visible()
             navigation.get_by_role("button", name="PPAP Audit", exact=True).click()
             expect(page).to_have_url(address)
             expect(focus.get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()

@@ -76,7 +76,7 @@ class UiA11yTests(unittest.TestCase):
             session.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
             page.goto(WEB)
             # The home address opens PPAP Audit, the new-audit page.
-            expect(page.get_by_role("heading", name="PPAP Audit", level=1, exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="新建审核", level=1, exact=True)).to_be_visible()
             expect(page.locator("aside").get_by_role("navigation", name="产品导航", exact=True)).to_be_visible()
             page.keyboard.press("Tab")
             expect(page.locator(":focus")).to_contain_text("跳到主要内容")

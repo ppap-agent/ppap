@@ -32,7 +32,7 @@ def back_to_templates(page):
     """Rules sit in templates; the trail's first link returns to the template list."""
     from playwright.sync_api import expect
 
-    page.get_by_role("navigation", name="位置", exact=True).get_by_role("link", name="审核规则库", exact=True).click()
+    page.get_by_role("navigation", name="当前位置", exact=True).get_by_role("link", name="审核规则库", exact=True).click()
     expect(page.get_by_role("searchbox", name="搜索客户", exact=True)).to_be_visible()
 
 
@@ -57,7 +57,7 @@ def open_rule(page, title):
     if trail.count():
         back_to_templates(page)
     find_rule_template(page, title).click()
-    page.get_by_role("list", name=re.compile("的文件类型$")).get_by_role("link").filter(has_text=title).first.click()
+    page.get_by_role("table", name=re.compile("的文件类型$")).get_by_role("link").filter(has_text=title).first.click()
 
 
 JOB = "00000000-0000-4000-8000-000000000001"
@@ -386,7 +386,7 @@ class RuleInteractionTests(unittest.TestCase):
             held[0].fulfill(json={**state["source"], "status": "ready"})
             # The late reply lands as an unsorted draft in the hidden rules page, without leaving this page.
             page.locator("a").filter(has_text="待整理").first.wait_for(state="attached")
-            expect(page.get_by_role("heading", name="PPAP Audit", exact=True, level=1)).to_be_visible()
+            expect(page.get_by_role("heading", name="新建审核", exact=True, level=1)).to_be_visible()
             self.assertEqual(page.url, address)
             open_customer_requirements(page)
             find_rule_template(page, "迟到规则")
@@ -470,7 +470,7 @@ class RuleInteractionTests(unittest.TestCase):
                     with page.expect_response("**/api/audit-customers"):
                         reply.fulfill(status=201, json=rule)
                     if destination == "completed-then-back":
-                        expect(page.get_by_role("heading", name="PPAP Audit", exact=True, level=1)).to_be_visible()
+                        expect(page.get_by_role("heading", name="新建审核", exact=True, level=1)).to_be_visible()
                         self.assertEqual(page.url, address)
                         page.go_back()
                     if destination in {"same-draft", "completed-then-back"}:
@@ -744,7 +744,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_label("上传共用规则文件").set_input_files({"name": "草稿规则.json", "mimeType": "application/json", "buffer": b"{}"})
             page.get_by_label("规则名称", exact=True).fill("未发布的规则草稿")
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
-            expect(page.get_by_role("heading", name="PPAP Audit", exact=True, level=1)).to_be_visible()
+            expect(page.get_by_role("heading", name="新建审核", exact=True, level=1)).to_be_visible()
             open_customer_requirements(page)
             open_rule(page, "未发布的规则草稿")
             expect(page.get_by_label("规则名称", exact=True)).to_have_value("未发布的规则草稿")
@@ -829,7 +829,7 @@ class RuleInteractionTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="UAES 规则", exact=True)).to_be_visible()
             # Six types to a page; a search for the rule narrows the chosen customer's types to it.
             page.get_by_role("searchbox", name="搜索客户", exact=True).fill("生产件样品照片")
-            photo = page.get_by_role("list", name="UAES 规则 的文件类型", exact=True).get_by_role("listitem").filter(has_text="生产件样品照片")
+            photo = page.get_by_role("table", name="UAES 规则 的文件类型", exact=True).get_by_role("row").filter(has_text="生产件样品照片")
             expect(photo).to_contain_text("尚无检查程序")
             expect(page.get_by_text(re.compile("本模板没有这些文件的规则：.*检具验收报告"))).to_be_visible()
             photo.get_by_role("link").click()

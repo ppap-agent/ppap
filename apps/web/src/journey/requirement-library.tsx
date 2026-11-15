@@ -219,14 +219,14 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     setEditing(id)
   }
   const uploadAction = editable ? <Button disabled={locked} onClick={() => picker.current?.click()}><Upload/>{uploadLabel}</Button> : null
-  return <Dialog open={active && discard} onOpenChange={open => !working.current && setDiscard(open)}><section className="min-w-0 space-y-6 pb-10 text-sm">
+  return <Dialog open={active && discard} onOpenChange={open => !working.current && setDiscard(open)}><section className={listView && !selection.id ? "flex min-h-0 min-w-0 flex-1 flex-col gap-4 text-sm" : "min-w-0 space-y-6 pb-10 text-sm"}>
     {editable && <input hidden aria-label="上传共用规则文件" ref={picker} type="file" accept={requirementFileAccept} disabled={locked} onChange={event => {uploadRevision.current = visibility.current.revision; void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>}
     {selection.id ? trail ? trail(selectedVersion ?? catalogCollection?.draft ?? undefined) : <nav aria-label="规则导航"><a className="inline-flex min-h-9 items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-ring" href={requirementHref()} aria-disabled={locked || undefined} onClick={event => {if (locked) event.preventDefault(); else navigate(event)}}><ArrowLeft className="size-4"/>返回{title}</a></nav> : headerActions ? <>{/* A list view names the page itself. */}{!listView && <h1 className="sr-only">{title}</h1>}{active && createPortal(uploadAction, headerActions)}</> : <header className="flex items-center justify-between gap-4"><h1 className="text-xl font-semibold">{title}</h1>{uploadAction}</header>}
     {upload.busy && <ReadSkeleton label="正在上传…" kind="inline"/>}
     {readError && <Alert variant="destructive"><AlertTitle>规则没读到</AlertTitle><AlertDescription><p>{readError}</p><Button variant="outline" size="sm" disabled={locked} onClick={onReload}>重新读取</Button></AlertDescription></Alert>}
     {(upload.error || saveError) && <Alert variant="destructive"><AlertTitle>没保存成功</AlertTitle><AlertDescription>{upload.error || saveError}</AlertDescription></Alert>}
     {feedback && (feedback.failed ? <Alert variant="destructive"><AlertTitle>版本未保存</AlertTitle><AlertDescription>{feedback.text}</AlertDescription></Alert> : <p role="status" className="text-muted-foreground">{feedback.text}</p>)}
-    {!selection.id ? listView : current && collection ? <>
+    {!selection.id ? <div className="flex min-h-0 flex-1 flex-col">{listView}</div> : current && collection ? <>
       <header className="space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-4"><h1 className="min-w-0 break-words text-xl font-semibold">{current.basis.source.title || '新规则'}</h1>{editable && !draftSelected && <Button variant="outline" disabled={locked} onClick={startVersion}><GitBranch/>{collection.draft ? '继续编辑草稿' : '创建新版本'}</Button>}</div>
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">

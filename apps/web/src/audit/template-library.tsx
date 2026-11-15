@@ -102,17 +102,15 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
       setActionError('保存结果尚未确认。请先在飞书目录中查看；再次保存时会先核对同名文件，不会重复保存。'); setPicking(false)
     } finally {setSaving(false)}
   }
-  const title = <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1"><h1 className="text-xl font-semibold">模板库</h1><p className="text-xs text-muted-foreground">按客户归集 PPAP 文件模板，可下载或分享给同事</p></header>
-  if (loading && !library) return <section aria-label="模板库" className="space-y-4">{title}<ReadSkeleton label="正在读取模板库…" kind="table"/></section>
-  if (error && !library) return <section aria-label="模板库" className="space-y-4">{title}<Alert variant="destructive"><AlertTitle>模板库未能读取</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" size="sm" onClick={() => setReload(value => value + 1)}>重新读取模板库</Button></AlertDescription></Alert></section>
+  if (loading && !library) return <section aria-label="模板库" className="space-y-4"><ReadSkeleton label="正在读取模板库…" kind="table"/></section>
+  if (error && !library) return <section aria-label="模板库" className="space-y-4"><Alert variant="destructive"><AlertTitle>模板库未能读取</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" size="sm" onClick={() => setReload(value => value + 1)}>重新读取模板库</Button></AlertDescription></Alert></section>
   const shownSave = saved && customer && saved.customer === customer.id ? saved : null
   const unsettled = shownSave?.results.filter(row => row.state !== 'saved') ?? [], open = unsettled.filter(row => row.state === 'failed' || row.state === 'unknown').length
-  const coverage = customer ? templateCoverage(customer) : null
   const pageCount = Math.max(1, Math.ceil((customer?.templates.length ?? 0) / 10)), shownPage = Math.min(page, pageCount)
-  return <section aria-label="模板库" className="grid grid-cols-[16rem_minmax(0,1fr)] gap-4">
-    <aside aria-label="模板库客户" className="sticky top-0 flex max-h-[calc(100dvh-7rem)] min-w-0 flex-col gap-3 self-start overflow-y-auto rounded-lg border bg-card p-3">
+  return <section aria-label="模板库" className="grid min-h-0 flex-1 grid-cols-[16rem_minmax(0,1fr)] grid-rows-1 gap-4">
+    <aside aria-label="模板库客户" className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden rounded-lg border bg-card p-3">
       <div className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search aria-hidden="true" className="size-3.5"/></span><Input type="search" aria-label="搜索客户" placeholder="搜索客户" iconStart value={customerSearch} onChange={event => setCustomerSearch(event.target.value)}/></div>
-      <nav aria-label="客户" className="flex min-w-0 flex-col gap-1">
+      <nav aria-label="客户" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
         {shownCustomers.map(row => {const value = templateCoverage(row), current = row.id === customer?.id; return <Button key={row.id} type="button" variant={current ? 'soft' : 'ghost'} aria-pressed={current} onClick={() => choose(row.id)} className="h-auto w-full justify-start whitespace-normal text-left"><span className="flex min-w-0 flex-1 items-center gap-3 py-2">
           <CustomerAvatar name={row.name}/>
           <span className="min-w-0 flex-1 font-normal"><span className="block truncate text-sm" title={row.name}>{row.name}</span><span className="block text-xs text-muted-foreground tabular-nums">{value.covered} / {value.total} 类</span></span>
@@ -121,11 +119,10 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
       </nav>
       <div className="flex justify-end border-t pt-3"><Button variant="link" size="sm" onClick={() => setSubmitting(true)}><Plus aria-hidden="true"/>更多模板，请补充</Button></div>
     </aside>
-    <div className="min-w-0 space-y-4">
-    {title}
-    {customer && coverage ? <>
+    <div className="flex min-h-0 min-w-0 flex-col gap-4">
+    {customer ? <>
       <header className="flex items-center justify-between gap-3 rounded-lg border bg-card p-4">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1"><CustomerAvatar name={customer.name}/><h2 className="truncate text-lg font-semibold" title={customer.name}>{customer.name}</h2><p className="text-xs text-muted-foreground tabular-nums">已支持 {coverage.covered} / {coverage.total} 类 PPAP 文件</p></div>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1"><CustomerAvatar name={customer.name}/><h2 className="truncate text-lg font-semibold" title={customer.name}>{customer.name}</h2></div>
         <div className="flex shrink-0 gap-2">
           <Button onClick={() => void share()}><Share2 aria-hidden="true"/>分享</Button>
           <Button variant="outline" disabled={Boolean(busy) || !customer.templates.length} onClick={() => void run('zip', async () => saveBlob(await adapter.downloadAll(customer.id), `${customer.name}模板.zip`), '模板 ZIP 暂时无法下载，请重试。')}><Download aria-hidden="true"/>{busy === 'zip' ? '正在打包…' : '下载模板（ZIP）'}</Button>
@@ -134,15 +131,15 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
       </header>
       {actionError && <Alert variant="destructive"><AlertTitle>操作未完成</AlertTitle><AlertDescription><p>{actionError}</p></AlertDescription></Alert>}
       {shownSave && <Alert variant={open ? 'destructive' : 'default'}><AlertTitle>{open ? `已保存 ${shownSave.results.filter(row => row.state === 'saved').length} 份，${open} 份未完成` : '模板已在所选飞书目录中'}</AlertTitle><AlertDescription><p>保存位置：{shownSave.folder}</p>{unsettled.length > 0 && <ul className="space-y-1">{unsettled.map(row => <li key={row.template_id}>{row.filename}：{saveStates[row.state]}{row.state !== 'exists' && row.reason ? `。${row.reason}` : ''}</li>)}</ul>}</AlertDescription></Alert>}
-      <div className="overflow-hidden rounded-lg border bg-card">
-        {customer.templates.length ? <Table aria-label={`${customer.name}模板`}>
-          <TableHeader variant="muted"><TableRow><TableHead>模板名称</TableHead><TableHead>文件类型</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
+        {customer.templates.length ? <Table aria-label={`${customer.name}模板`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto">
+          <TableHeader variant="muted" sticky><TableRow><TableHead>模板名称</TableHead><TableHead>文件类型</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
           <TableBody>{customer.templates.slice((shownPage - 1) * 10, shownPage * 10).map(template => <TableRow key={template.id}>
             <TableCell className="whitespace-normal"><span className="flex min-w-0 items-center gap-2"><FileTypeBadge name={template.filename}/><span className="[overflow-wrap:anywhere]">{template.filename}</span></span></TableCell>
             <TableCell><span className="text-muted-foreground">{template.document_type}</span></TableCell>
             <TableCell className="text-right"><Button variant="ghost" size="sm" aria-label={`下载 ${template.filename}`} disabled={Boolean(busy)} onClick={() => void run(template.id, async () => saveBlob(await adapter.download(customer.id, template.id), template.filename), `${template.filename} 暂时无法下载，请重试。`)}><Download aria-hidden="true"/>{busy === template.id ? '下载中…' : '下载'}</Button></TableCell>
           </TableRow>)}</TableBody>
-        </Table> : <p className="py-12 text-center text-sm text-muted-foreground">暂无模板</p>}
+        </Table> : <p className="grid flex-1 place-items-center py-12 text-center text-sm text-muted-foreground">暂无模板</p>}
         {customer.templates.length > 0 && <Pager className="border-t px-3 py-3" total={customer.templates.length} page={shownPage} onPage={setPage}/>}
       </div>
     </> : <p className="text-sm text-muted-foreground">暂无可用模板。</p>}
