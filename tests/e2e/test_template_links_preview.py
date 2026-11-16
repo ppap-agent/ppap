@@ -18,8 +18,7 @@ class TemplateLinksPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=unmatched")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("button", name="开始识别", exact=True).click()
-            page.get_by_role("button", name="确认规则", exact=True).click()
-            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
             for name in ("查看标准模板", "反馈对应模板"):
                 # All three files are stopped for one reason, so they share one set of entries.
                 expect(page.get_by_role("button", name=name, exact=True)).to_have_count(1)

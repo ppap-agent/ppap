@@ -253,13 +253,21 @@ class AuditArchivePreviewTests(unittest.TestCase):
             self.assertEqual(parse_qs(urlparse(page.url).query)["auditRef"], old_reference)
             browser.close()
 
-    def test_filter_sheet_applies_both_dates_as_removable_filters(self):
+    def test_time_range_has_one_control_and_the_page_starts_no_audit(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1280, "height": 844})
             page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
-            page.get_by_label("开始日期", exact=True).fill("2026-10-01")
-            page.get_by_label("结束日期", exact=True).fill("2026-10-20")
-            expect(page.get_by_role("button", name="移除开始日期筛选", exact=True)).to_be_visible()
-            expect(page.get_by_role("button", name="移除结束日期筛选", exact=True)).to_be_visible()
+            expect(page.get_by_role("table", name="审核文件列表", exact=True)).to_be_visible()
+            # New audits start from the task rail; this page only reads past ones.
+            expect(page.get_by_role("button", name="上传文件", exact=True)).to_have_count(0)
+            expect(page.get_by_label("开始日期", exact=True)).to_have_count(0)
+            expect(page.get_by_label("结束日期", exact=True)).to_have_count(0)
+            ranges = page.get_by_role("group", name="审核时间范围", exact=True)
+            ranges.get_by_role("button", name="7 天", exact=True).click()
+            expect(ranges.get_by_role("button", name="7 天", exact=True)).to_have_attribute("aria-pressed", "true")
+            # The pressed range is the only place the time filter shows.
+            expect(page.get_by_role("button", name=re.compile("^移除.*时间筛选$"))).to_have_count(0)
+            ranges.get_by_role("button", name="全部", exact=True).click()
+            expect(ranges.get_by_role("button", name="全部", exact=True)).to_have_attribute("aria-pressed", "true")
             browser.close()

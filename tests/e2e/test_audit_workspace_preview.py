@@ -21,7 +21,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 960})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").nth(1).click()
-            page.get_by_role("button", name="查看报告", exact=True).click()
+            page.get_by_role("button", name="审核报告", exact=True).click()
             report_address = page.url
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
             page.go_back()
@@ -85,22 +85,21 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True)).to_have_attribute("aria-pressed", "true")
             browser.close()
 
-    def test_escape_closes_only_the_display_editor_and_returns_focus_to_file_info(self):
+    def test_escape_closes_the_display_editor_and_returns_focus_to_its_one_entry(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1280, "height": 844})
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-display-ready&task=preview-recovery-task")
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
-            page.get_by_role("button", name="文件信息", exact=True).click()
-            info = page.get_by_role("dialog", name="文件信息", exact=True)
-            edit = info.get_by_role("button", name="更正显示信息", exact=True)
+            # The file overview holds the only correction entry; the file information sheet does not repeat it.
+            edit = page.get_by_role("region", name="文件信息概览", exact=True).get_by_role("button", name="更正显示信息", exact=True)
+            expect(page.get_by_role("button", name="更正显示信息", exact=True)).to_have_count(1)
             edit.focus()
             page.keyboard.press("Enter")
             editor = page.get_by_role("dialog", name="更正显示信息", exact=True)
             expect(editor.get_by_role("textbox", name="项目名称", exact=True)).to_be_focused()
             page.keyboard.press("Escape")
             expect(editor).to_have_count(0)
-            expect(info).to_be_visible()
             expect(edit).to_be_focused()
             browser.close()
 
@@ -171,7 +170,8 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(basis.get_by_role("heading", name="第 1 条 · 频次一致性", exact=True)).to_be_visible()
             page.keyboard.press("Escape")
             expect(page.get_by_role("region", name="审核详情", exact=True).get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()
-            expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
+            # In a task the page bar's 审核报告 is the one report entry; the file header does not repeat it.
+            expect(page.get_by_role("button", name="查看报告", exact=True)).to_have_count(0)
             page.get_by_role("button", name="审核报告", exact=True).click()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
             page.get_by_role("link", name="返回审核结果", exact=True).click()

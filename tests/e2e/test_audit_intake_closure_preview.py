@@ -22,7 +22,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-card-pending&task=preview-recovery-task")
             reason = "已收到卡片确认，正在核对用量，尚未受理。"
-            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
             expect(page.get_by_role("alert")).to_have_attribute("data-request-id", "preview-recovery-request")
             expect(page.get_by_role("alert")).to_contain_text(reason)
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
@@ -42,7 +42,7 @@ class AuditIntakeClosureTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-card-rejected&task=preview-recovery-task")
-            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
             expect(page.get_by_role("alert")).to_contain_text("本次未被接收")
             expect(page.get_by_role("alert")).to_contain_text("文件或客户选择已变化，请打开页面核对。")
             expect(page.get_by_role("button", name="读取提交结果", exact=True)).to_have_count(0)
@@ -61,19 +61,21 @@ class AuditIntakeClosureTests(unittest.TestCase):
                 if fail_reply:
                     page.get_by_role("button", name="令示例读取 1 失败", exact=True).click()
                     expect(page.get_by_role("button", name="读取传输 等待回执.pdf", exact=True)).to_be_enabled()
-                # The upload page keeps the pending transfer and recognition waits for it. A transfer still running
-                # only needs time; an unconfirmed one needs the person.
-                expect(page.get_by_role("heading", name=("待处理传输" if fail_reply else "正在上传") + " · 1 份", exact=True)).to_be_visible()
-                expect(page.get_by_role("row").filter(has_text="等待回执.pdf")).to_contain_text("结果未确认" if fail_reply else "传输中")
-                expect(page.get_by_role("status").filter(has_text="请先处理或排除未完成的传输，再开始识别。" if fail_reply else "正在上传…（还有 1 份）")).to_be_visible()
+                # The pending transfer is a line among the files and recognition waits for it. A transfer still
+                # running only needs time; an unconfirmed one needs the person.
+                added = page.get_by_role("region", name="已添加", exact=True)
+                line = added.get_by_role("listitem").filter(has_text="等待回执.pdf")
+                expect(line).to_contain_text("结果未确认" if fail_reply else "传输中")
+                expect(page.get_by_role("status").filter(has_text="请先处理或移除未完成的传输，再开始识别。" if fail_reply else "正在上传…（还有 1 份）")).to_be_visible()
                 if not fail_reply:
                     page.get_by_role("button", name="返回示例读取 1", exact=True).click()
                 else:
                     page.get_by_role("button", name="读取传输 等待回执.pdf", exact=True).click()
-                # The original receipt places the file on the board, waiting for its check.
-                expect(page.get_by_role("heading", name=re.compile(r"^(待处理传输|正在上传) · "))).to_have_count(0)
-                added = page.get_by_role("region", name="已添加", exact=True)
-                expect(added.get_by_role("listitem").filter(has_text="等待回执.pdf")).to_contain_text("检查中")
+                # The original receipt turns the same line into the file, waiting for its check.
+                expect(line).to_have_count(1)
+                expect(line).to_contain_text("检查中")
+                expect(line).not_to_contain_text("传输中")
+                expect(page.get_by_role("button", name="读取传输 等待回执.pdf", exact=True)).to_have_count(0)
             browser.close()
 
     def test_steps_do_not_confuse_a_terminal_task_with_ready_reports(self):
@@ -99,15 +101,14 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=recognition-progress-removal")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("button", name="开始识别", exact=True).click()
-            # Recognition is observed on the upload page; one file is still being recognized.
-            expect(page.get_by_role("status").filter(has_text="正在识别，完成后可修改。")).to_be_visible()
-            expect(page.get_by_role("listitem").filter(has_text="控制计划.xlsx").last).to_contain_text("识别中")
+            # Recognition is observed on the confirm-rules page; one file is still being recognized.
+            expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("status").filter(has_text=re.compile(r"^识别中 \d/3$"))).to_be_visible()
+            expect(page.get_by_role("region", name="已添加", exact=True)).to_have_count(0)
             expect(page.get_by_role("button", name="读取识别结果", exact=True)).to_have_count(0)
             expect(page.get_by_role("button", name="重新读取识别结果", exact=True)).to_have_count(0)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
-            expect(page.get_by_role("status").filter(has_text="识别完成，请确认每份文件的审核规则。")).to_be_visible()
-            page.get_by_role("button", name="确认规则", exact=True).click()
-            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("status").filter(has_text=re.compile(r"^待确认$"))).to_be_visible()
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
             browser.close()
 
@@ -118,7 +119,6 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=with-reference")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("button", name="开始识别", exact=True).click()
-            page.get_by_role("button", name="确认规则", exact=True).click()
             page.get_by_role("button", name="查看 控制计划.xlsx 的条款", exact=True).click()
             clauses = page.get_by_role("list", name="控制计划.xlsx · 匹配条款", exact=True)
             trigger = clauses.get_by_role("button").first
@@ -140,16 +140,16 @@ class AuditIntakeClosureTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=populated")
-            expect(page.get_by_label("客户（可选）", exact=True)).to_be_visible()
+            expect(page.get_by_role("combobox", name="审核客户", exact=True)).to_be_visible()
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             # Files stay on the upload page beside the customer choice.
-            expect(page.get_by_label("客户（可选）", exact=True)).to_be_visible()
+            expect(page.get_by_role("combobox", name="审核客户", exact=True)).to_be_visible()
             page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True).uncheck()
-            # The unchecked file stays in the draft but is marked unselected.
+            # The unchecked file stays in the draft; its box says it is not selected, and no recognition state is shown.
             added = page.get_by_role("region", name="已添加", exact=True)
             expect(added.get_by_role("listitem")).to_have_count(3)
-            expect(added.get_by_role("listitem").filter(has_text="PFMEA.xlsx")).to_contain_text("未选择")
-            expect(added.get_by_role("listitem").filter(has_text="控制计划.xlsx")).not_to_contain_text("未选择")
+            expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).not_to_be_checked()
+            expect(added).not_to_contain_text("待识别")
             expect(page.get_by_role("button", name="上传规则", exact=True)).to_have_count(0)
             page.get_by_role("button", name="从飞书云文档选择", exact=True).click()
             picker = page.get_by_role("dialog", name="从飞书选择文件", exact=True)
@@ -168,12 +168,12 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=with-reference")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("button", name="开始识别", exact=True).click()
-            expect(page.get_by_role("button", name="确认规则", exact=True)).to_be_visible()
-            for name in ("PFMEA.xlsx", "控制计划.xlsx", "特殊特性清单.xlsx"):
-                page.get_by_role("checkbox", name=f"选择 {name}", exact=True).uncheck()
-            expect(page.get_by_role("button", name="开始识别", exact=True)).to_have_count(0)
+            expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+            for name in ("PFMEA.xlsx", "控制计划.xlsx"):
+                page.get_by_role("checkbox", name=f"送审 {name}", exact=True).uncheck()
+            expect(page.get_by_role("button", name="重新识别", exact=True)).to_have_count(0)
             page.get_by_role("button", name="结束任务", exact=True).click()
             expect(page.get_by_role("heading", name="任务已结束", exact=True)).to_be_visible()
-            expect(page.get_by_text("未选择待审文件，未开始审核", exact=True)).to_be_visible()
+            expect(page.get_by_text("仅保留比对资料，未开始审核", exact=True)).to_be_visible()
             expect(page.get_by_text("未产生审核费用，也没有生成报告。", exact=True)).to_be_visible()
             browser.close()

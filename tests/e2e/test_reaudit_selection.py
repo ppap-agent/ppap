@@ -241,10 +241,10 @@ def test_current_rule_matching_choice_survives_readback_and_releasing_the_replac
     choose_replacement(page, "替换：原文件A.xlsx")
     files = recognition_command(page, commands)
     assert not files[2].get("preferred_rule_version_id")
-    # Recognition finishes on the upload page; the next step is the person's.
-    expect(page.get_by_role("button", name="确认规则", exact=True)).to_be_visible()
+    # Recognition results open on the confirm-rules page, also after a reload.
+    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
     page.reload()
-    expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
     page.get_by_role("button", name="上一步", exact=True).click()
     expect(page.get_by_role("combobox", name="补件C.xlsx 的识别方式", exact=True)).to_have_text("重新识别规则")
     choose_replacement(page, "新增文件 · 重新匹配")
@@ -293,10 +293,10 @@ def test_server_readback_retains_the_automatic_exclusion_until_replacement_is_cl
     page, commands = reaudit_page
     choose_replacement(page, "替换：原文件A.xlsx")
     recognition_command(page, commands)
-    # Recognition finishes on the upload page; the next step is the person's.
-    expect(page.get_by_role("button", name="确认规则", exact=True)).to_be_visible()
+    # Recognition results open on the confirm-rules page, also after a reload.
+    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
     page.reload()
-    expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
     page.get_by_role("button", name="上一步", exact=True).click()
     expect(page.get_by_role("checkbox", name="选择 原文件A.xlsx", exact=True)).to_have_count(0)
     choose_replacement(page, "新增文件 · 重新匹配")
@@ -313,10 +313,10 @@ def test_unselected_replacement_readback_retains_its_explicit_relation(reaudit_p
     files = recognition_command(page, commands)
     assert [file["selection"] for file in files] == ["selected", "selected", "unselected"]
     assert files[2]["replacement_of_file_version_id"] == "A"
-    # Recognition finishes on the upload page; the next step is the person's.
-    expect(page.get_by_role("button", name="确认规则", exact=True)).to_be_visible()
+    # Recognition results open on the confirm-rules page, also after a reload.
+    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
     page.reload()
-    expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
     page.get_by_role("button", name="上一步", exact=True).click()
     page.get_by_role("checkbox", name="选择 补件C.xlsx", exact=True).check()
     expect(page.get_by_role("checkbox", name="选择 原文件A.xlsx", exact=True)).to_have_count(0)

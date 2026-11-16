@@ -61,18 +61,17 @@ export function useMinWidth(width: number) {
   return matches
 }
 
-function DisplayInformation({file, onEdit}: {file: File; onEdit?: () => void}) {
-  const values = fileDisplayValues(file)
-  const corrected = validDisplayInfo(file.display_info) && file.display_info.revision > 0
-  if (file.match === undefined && file.display_info === undefined) return null
-  return <section aria-label="本次审核文件信息" className="space-y-3">
-    <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">页面显示信息{corrected ? ' · 已更正' : ''}</p>{onEdit && <Button variant="outline" size="sm" disabled={!validDisplayInfo(file.display_info)} onClick={onEdit}>更正显示信息</Button>}</div>
-    <dl className="grid grid-cols-2 gap-4 text-sm">{displayFields.map(([field, label]) => <div className="min-w-0" key={field}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 break-words">{values[field] || '—'}</dd></div>)}</dl>
-    {corrected && <Disclosure summary="查看原始识别信息"><section aria-label="原始识别信息" className="space-y-2"><dl className="grid grid-cols-2 gap-3 text-sm">{displayFields.map(([field, label]) => <div key={field}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="break-words">{file.match?.metadata[field] || '—'}</dd></div>)}</dl></section></Disclosure>}
+/** What recognition read before the displayed values were corrected; the corrected values themselves sit in the file overview. */
+function RecognizedValues({file}: {file: File}) {
+  if (!(validDisplayInfo(file.display_info) && file.display_info.revision > 0)) return null
+  return <section aria-label="原始识别信息" className="space-y-2">
+    <h3 className="text-sm font-medium">原始识别信息</h3>
+    <p className="text-xs text-muted-foreground">页面显示的信息已更正，以下是识别时的原值。</p>
+    <dl className="grid grid-cols-2 gap-3 text-sm">{displayFields.map(([field, label]) => <div key={field}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="break-words">{file.match?.metadata[field] || '—'}</dd></div>)}</dl>
   </section>
 }
 
-/** P5 and historical readers share the same frozen results, evidence and review actions. */
+/** P5 and historical readers share the same frozen results, evidence and review actions. `onReport` adds a report entry to the file header only where the page has none of its own (the archive history). */
 export function AuditReviewContent({file, roundId, taskId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, reportAccess, onEditDisplay, showFileTitle = true, previous, facts = [], sourceTask = null}: {facts?: {label: string; value: string}[]; file: File; roundId: string; taskId?: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; reportAccess?: components['schemas']['AuditArchiveAccess']; onEditDisplay?: () => void; showFileTitle?: boolean; previous?: {label: string; checks: Evaluation[]} | null; sourceTask?: {allowed: boolean; reason: string | null; onOpen: () => void} | null}) {
   const reviewEditor = useContext(ReviewEditorContext)
   const filterId = useId()
@@ -225,17 +224,17 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {sourceTask && (sourceTask.allowed ? <Button variant="outline" size="sm" onClick={sourceTask.onOpen}>打开来源任务<ArrowUpRight/></Button> : <p className="max-w-64 text-sm text-muted-foreground">{sourceTask.reason || '尚未取得来源任务读取许可。'}</p>)}
-        <Button variant={audit?.report.state === 'ready' && !issue && !reportAccessIssue ? 'default' : 'outline'} size="sm" disabled={!onReport || Boolean(issue || reportAccessIssue) || !audit || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={onReport}><FileText/>查看报告</Button>
-        <Sheet open={infoOpen} onOpenChange={setInfoOpen}><SheetTrigger asChild><Button variant="ghost" size="icon-sm" aria-label="文件信息" title="文件信息"><Info/></Button></SheetTrigger><SheetContent onEscapeKeyDown={event => {if (event.target instanceof Element && event.target.closest('[data-slot="dialog-content"]')) event.preventDefault()}} className="overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-2xl"><SheetHeader><SheetTitle>文件信息</SheetTitle><SheetDescription className="sr-only">查看文件显示信息与本轮确认的规则</SheetDescription></SheetHeader><FileName name={file.file.original_filename}/><DisplayInformation file={file} onEdit={onEditDisplay}/>{rule && <section aria-label="本轮审核规则" data-rule-version={rule.id} className="space-y-4 border-t pt-4"><h3 className="font-semibold">本轮审核规则</h3><p className="text-sm">{rule.title}</p>{rule.body.kind === 'engine' ? rule.body.rules.map(item => <article key={item.id} className="space-y-2 border-t pt-3"><h4 className="font-medium">{item.id} · {item.category}</h4><p className="whitespace-pre-wrap text-sm">{item.rule_to_check}</p></article>) : <p className="text-sm">文件存在性检查。</p>}</section>}{/* Pairing only means something when this round holds both a PDF and an Excel original. */}{audit?.execution === 'completed' && !issue && [/\.pdf$/i, /\.xlsx?$/i].every(format => originals.some(row => format.test(row.file?.original_filename || ''))) && <div className="border-t pt-4"><ReviewDocumentPairs key={roundId} roundId={roundId}/></div>}</SheetContent></Sheet>
+        {onReport && <Button variant={audit?.report.state === 'ready' && !issue && !reportAccessIssue ? 'default' : 'outline'} size="sm" disabled={Boolean(issue || reportAccessIssue) || !audit || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={onReport}><FileText/>查看报告</Button>}
+        <Sheet open={infoOpen} onOpenChange={setInfoOpen}><SheetTrigger asChild><Button variant="ghost" size="icon-sm" aria-label="文件信息" title="文件信息"><Info/></Button></SheetTrigger><SheetContent onEscapeKeyDown={event => {if (event.target instanceof Element && event.target.closest('[data-slot="dialog-content"]')) event.preventDefault()}} className="overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-2xl"><SheetHeader><SheetTitle>文件信息</SheetTitle><SheetDescription className="sr-only">查看原始识别信息与本轮审核规则</SheetDescription></SheetHeader><FileName name={file.file.original_filename}/><RecognizedValues file={file}/>{rule && <section aria-label="本轮审核规则" data-rule-version={rule.id} className="space-y-4 border-t pt-4"><h3 className="font-semibold">本轮审核规则</h3><p className="text-sm">{rule.title}</p>{rule.body.kind === 'engine' ? rule.body.rules.map((item, _, items) => <article key={item.id} className="space-y-2 border-t pt-3"><h4 className="font-medium" title={`来源编号 ${item.id}`}>{clauseLabel(items, item.id)}</h4><p className="whitespace-pre-wrap text-sm">{item.rule_to_check}</p></article>) : <p className="text-sm">文件存在性检查。</p>}</section>}{/* Pairing only means something when this round holds both a PDF and an Excel original. */}{audit?.execution === 'completed' && !issue && [/\.pdf$/i, /\.xlsx?$/i].every(format => originals.some(row => format.test(row.file?.original_filename || ''))) && <div className="border-t pt-4"><ReviewDocumentPairs key={roundId} roundId={roundId}/></div>}</SheetContent></Sheet>
       </div>
       </div>
-      {/* The file's facts in one compact grid, as on the prototype's detail panel; the pencil corrects the displayed values. */}
+      {/* The file's facts in one compact grid, as on the prototype's detail panel; the pencil is the one place to correct the displayed values. */}
       {overview && <section aria-label="文件信息概览" className="flex items-start gap-2 py-0.5">
         <h3 className="sr-only">文件信息</h3>
         <dl className={`grid min-w-0 flex-1 ${docked ? 'grid-cols-2' : 'grid-cols-4'} gap-x-5 gap-y-1 text-xs [&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-1.5 [&_dd]:min-w-0 [&_dd]:truncate [&_dt]:shrink-0 [&_dt]:text-muted-foreground`}>
-          {([['匹配规则', rule?.title || ''], ['文件类型', file.match?.document_type && !file.file.original_filename.includes(documentTypeLabel(file.match.document_type)) ? documentTypeLabel(file.match.document_type) : ''], ['客户名称', displayValues.customer || ''], ['车型', displayValues.model || ''], ['零件号', displayValues.part_number || ''], ['零件名称', displayValues.part || ''], ...facts.map(fact => [fact.label, fact.value] as [string, string])].filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd title={value}>{label === '匹配规则' && rule ? <Button variant="link" size="xs" className="h-auto max-w-full" title={rule.title} onClick={() => setInfoOpen(true)}><span className="truncate">{rule.title}</span></Button> : value}</dd></div>))}
+          {([['匹配规则', rule?.title || ''], ['文件类型', file.match?.document_type && !file.file.original_filename.includes(documentTypeLabel(file.match.document_type)) ? documentTypeLabel(file.match.document_type) : ''], ['客户名称', displayValues.customer || ''], ['车型', displayValues.model || ''], ['项目名称', displayValues.project || ''], ['零件号', displayValues.part_number || ''], ['零件名称', displayValues.part || ''], ...facts.map(fact => [fact.label, fact.value] as [string, string])].filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd title={value}>{label === '匹配规则' && rule ? <Button variant="link" size="xs" className="h-auto max-w-full" title={rule.title} onClick={() => setInfoOpen(true)}><span className="truncate">{rule.title}</span></Button> : value}</dd></div>))}
         </dl>
-        {onEditDisplay && <Button variant="ghost" size="icon-xs" aria-label="编辑文件信息" title="更正显示信息" disabled={!validDisplayInfo(file.display_info)} onClick={onEditDisplay}><Pencil/></Button>}
+        {onEditDisplay && <Button variant="ghost" size="icon-xs" aria-label="更正显示信息" title="更正显示信息" disabled={!validDisplayInfo(file.display_info)} onClick={onEditDisplay}><Pencil/></Button>}
       </section>}
       {/* Verification, rule and report status share one quiet line under the verdict. */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">{audit && !issue && <VerificationDisclosure verification={audit.checker_verification} evidenceUnverified={audit.checks.some(row => Boolean(row.finding) && !row.evidence_verified)}/>}
@@ -264,7 +263,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
               <TableCell className="text-right align-top"><Button variant="ghost" size="icon-sm" title="查看依据" aria-label={'查看依据 ' + row.rule_item.id} aria-haspopup="dialog" onClick={() => showEvidence(row)}><ArrowRight/></Button></TableCell>
             </TableRow>)}</TableBody>
           </Table>
-          {!filtered.length && <div className="flex flex-wrap items-center gap-3"><p className="text-sm text-muted-foreground">{filter === 'attention' && !query ? '没有需关注的审核项。' : '没有符合条件的审核项。'}</p>{(query || filter !== 'all') && <Button variant="outline" size="sm" onClick={clearFilters}>{filter === 'attention' && !query ? '查看全部审核项' : '清空条件'}</Button>}</div>}
+          {!filtered.length && <div className="flex flex-wrap items-center gap-3"><p className="text-sm text-muted-foreground">{filter === 'attention' && !query ? '没有需关注的审核项。' : '没有符合条件的审核项。'}</p>{(query || filter !== 'all') && <Button variant="outline" size="sm" onClick={clearFilters}>{filter === 'attention' && !query ? '查看全部审核项' : '清除筛选'}</Button>}</div>}
         </section>
       </div>
     </>}

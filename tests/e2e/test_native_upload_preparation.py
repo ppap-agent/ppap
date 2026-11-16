@@ -13,6 +13,8 @@ from playwright.sync_api import expect, sync_playwright  # noqa: E402
 from .conftest import pick_audit_files  # noqa: E402
 
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
+# Recognition progress on the confirm-rules page.
+RECOGNIZING = re.compile(r"^识别中 \d+/\d+$")
 # The picker names the automatic choice with its description, as the person reads it.
 
 
@@ -262,12 +264,14 @@ def test_begin_recognition_promotes_and_reopens_the_same_draft_without_resubmiss
         page.get_by_role("button", name="开始识别", exact=True).click()
         # A lost reply is read once from the same request by the upload page itself; it is never sent again.
         expect(page).to_have_url(re.compile(rf"/tasks/{draft_id}(?:\?|$)"))
-        # Recognition runs on the upload page; reopening the address shows the same task.
-        expect(page.get_by_role("status").filter(has_text="正在识别，完成后可修改。")).to_be_visible()
+        # Recognition progress is shown on the confirm-rules page; reopening the address shows the same task.
+        expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_be_visible()
         assert len(http.task_commands) == 1 and http.task_commands[0]["request_id"] != draft_id
         page.goto(saved_url)
         expect(page).to_have_url(re.compile(rf"/tasks/{draft_id}(?:\?|$)"))
-        expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_be_visible()
         assert len(http.task_commands) == 1 and len(http.creates) == len(http.blobs) == 1
         browser.close()
 
@@ -288,7 +292,7 @@ def test_failed_preparation_read_after_back_does_not_leave_the_previous_task_act
         page.goto(saved_url)
         expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
         page.get_by_role("button", name="开始识别", exact=True).click()
-        expect(page.get_by_role("status").filter(has_text="正在识别，完成后可修改。")).to_be_visible()
+        expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_be_visible()
         http.fail_draft_read = True
         # Recognition first replaces the prepared address with its readback URL.
         # The earlier prepared history entry reproduces restoration from a Task.
@@ -297,11 +301,12 @@ def test_failed_preparation_read_after_back_does_not_leave_the_previous_task_act
         page.go_back()
         expect(page).to_have_url(saved_url)
         expect(page.get_by_role("button", name="读取准备记录", exact=True)).to_be_visible()
-        expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_have_count(0)
-        expect(page.get_by_role("status").filter(has_text="正在识别，完成后可修改。")).to_have_count(0)
+        expect(page.get_by_role("heading", name="确认规则", exact=True)).to_have_count(0)
+        expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_have_count(0)
         http.fail_draft_read = False
         page.get_by_role("button", name="读取准备记录", exact=True).click()
-        expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_be_visible()
         assert len(http.task_commands) == 1
         browser.close()
 
@@ -386,7 +391,7 @@ def test_one_unreadable_local_file_does_not_block_the_other_files_before_transfe
         assert len(http.creates) == len(http.blobs) == 2
         assert {row["original_filename"] for row in http.creates} == {"已接收.xlsx", "另一份.xlsx"}
         assert len(http.preparation_creates) == 1
-        page.get_by_role("button", name="排除传输 不可读取.xlsx", exact=True).click()
+        page.get_by_role("button", name="移除传输 不可读取.xlsx", exact=True).click()
         expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
         assert http.task_commands == []
         browser.close()
@@ -434,7 +439,7 @@ def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task(
         pick_audit_files(page, {"name": "已接收.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
         expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
         page.get_by_role("button", name="开始识别", exact=True).click()
-        expect(page.get_by_role("status").filter(has_text="正在识别，完成后可修改。")).to_be_visible()
+        expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_be_visible()
         original_id = http.task["id"]
         metadata = {"customer": None, "model": None, "part": None, "part_number": None}
         http.task.update(state="pending_confirm")
@@ -443,13 +448,13 @@ def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task(
         expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
         page.get_by_role("combobox", name="已接收.xlsx 的适用规则", exact=True).click()
         page.get_by_role("option", name="规则 B", exact=True).click()
-        expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
         expect(page.get_by_role("combobox", name="已接收.xlsx 的适用规则", exact=True)).to_contain_text("规则 B")
         expect(page.get_by_role("status").filter(has_text="文件或规则选择已有变更，请重新识别后再确认或结束任务。")).to_be_visible()
         expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
         assert http.task["id"] == original_id and len(http.task_commands) == 1
         page.get_by_role("button", name="按所选规则重新识别", exact=True).click()
-        expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_be_visible()
         http.task.update(
             state="pending_confirm",
             estimated_points=500,
@@ -570,7 +575,7 @@ def test_v4_reference_choice_reaches_preparation_and_recognition():
         reference.click()
         expect(role).to_contain_text("比对资料")
         page.get_by_role("button", name="开始识别", exact=True).click()
-        expect(page.get_by_role("status").filter(has_text="正在识别，完成后可修改。")).to_be_visible()
+        expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_be_visible()
         assert server.task_commands[0]["files"][0]["reference_only"] is True
         assert server.draft["upload_preparation"]["files"][0]["reference_only"] is True
         browser.close()

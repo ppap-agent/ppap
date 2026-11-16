@@ -2,8 +2,7 @@ import {displayTime} from '../helpers'
 import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/bfd8b8db93484b159a6ce9d171447c80
 import {useEffect, useRef, useState} from 'react'
-import {createPortal} from 'react-dom'
-import {RefreshCw, Search, Upload, X} from 'lucide-react'
+import {RefreshCw, Search, X} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
@@ -38,14 +37,14 @@ function rangeStart(days: number) {
   const date = new Date(); date.setDate(date.getDate() - days + 1)
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
-const rangeOf = (query: ArchiveQuery): Range | null => !query.from_date && !query.through_date ? 'all' : query.through_date ? null : ranges.find(([days]) => days !== 'all' && rangeStart(Number(days)) === query.from_date)?.[0] ?? null
+const rangeOf = (query: ArchiveQuery): Range | null => !query.from_date ? 'all' : ranges.find(([days]) => days !== 'all' && rangeStart(Number(days)) === query.from_date)?.[0] ?? null
 const unset = <span className="text-muted-foreground">—</span>
 // The values match what the result column shows: the latest decided conclusion, none yet, or an audit in flight.
 const results = [['PASS', conclusionLabel.PASS], ['NG', conclusionLabel.NG], ['UNKNOWN', conclusionLabel.UNKNOWN], ['none', '尚无完成审核'], ['active', '审核中']] as const
 const resultName = (value: ArchiveQuery['result']) => results.find(([key]) => key === value)?.[1] ?? null
 const otherLabel = (label: string, kind: string) => label === '其他' ? `未归类${kind}` : label
 
-export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, reportAdapter, sharingAdapter, active = true, headerActions}: {adapter: AuditArchiveAdapter; onUpload: () => void; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; active?: boolean; headerActions?: HTMLElement | null}) {
+export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter, sharingAdapter, active = true}: {adapter: AuditArchiveAdapter; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; active?: boolean; headerActions?: HTMLElement | null}) {
   const [query, setQuery] = useState(initialQuery), [search, setSearch] = useState(''), [searchOpen, setSearchOpen] = useState(false)
   const [page, setPage] = useState<components['schemas']['AuditArchivePage'] | null>(null)
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0)
@@ -164,9 +163,9 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
     </div>)}
   </nav>
   const choices = (label: string, value: string | null, options: string[], key: 'document_type' | 'customer' | 'initiator') => <Select value={value || 'all'} onValueChange={value => filter({[key]: value === 'all' ? null : value})}><SelectTrigger aria-label={label} className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">{label}</SelectItem>{options.map(option => <SelectItem key={option} value={option}>{key === 'document_type' ? documentTypeLabel(option) : option}</SelectItem>)}</SelectContent></Select>
-  const range = rangeOf(query), preset = range && range !== 'all' ? ranges.find(([days]) => days === range)?.[1] : null
+  const range = rangeOf(query)
   const categoryLabel = page?.categories.flatMap(category => [{id: category.id, label: otherLabel(category.label, '车型')}, ...category.parts.map(part => ({id: part.id, label: `${otherLabel(category.label, '车型')} / ${otherLabel(part.label, '零件')}`}))]).find(category => category.id === query.category_id)?.label
-  const applied = ([['search', '搜索', query.search], ['category_id', '分类', query.category_id ? categoryLabel || '已选分类' : null], ['document_type', '文件类型', query.document_type && documentTypeLabel(query.document_type)], ['customer', '客户', query.customer], ['result', '审核结果', resultName(query.result)], ['initiator', '发起人', query.initiator], ['from_date', preset ? '时间' : '开始日期', preset || query.from_date], ['through_date', '结束日期', query.through_date]] as const).filter(([, , value]) => Boolean(value))
+  const applied = ([['search', '搜索', query.search], ['category_id', '分类', query.category_id ? categoryLabel || '已选分类' : null], ['document_type', '文件类型', query.document_type && documentTypeLabel(query.document_type)], ['customer', '客户', query.customer], ['result', '审核结果', resultName(query.result)], ['initiator', '发起人', query.initiator]] as const).filter(([, , value]) => Boolean(value))
   const clearFilters = () => {setSearch(''); setQuery(initialQuery)}
   const status = (document: ArchiveDocument) => <div className="space-y-1">{document.latest_completed ? <Badge variant={resultTone(document.latest_completed.conclusion)}>{document.latest_completed.conclusion ? conclusionLabel[document.latest_completed.conclusion] ?? '结果未知' : '结果未知'}</Badge> : <span className="text-xs text-muted-foreground">尚无完成审核</span>}{document.latest_completed && <p className="text-xs text-muted-foreground">第 {document.latest_completed.sequence} 次审核</p>}{document.latest_activity && ['queued', 'running'].includes(document.latest_activity.execution) && <p className="text-xs text-muted-foreground">第 {document.latest_activity.sequence} 次审核{document.latest_activity.execution === 'queued' ? '排队中' : '中'}</p>}</div>
   const selection = chosen.length > 0 && <section aria-label="已选固定报告" className="space-y-3"><div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-sm font-medium">已选择 {chosen.length} 份报告</span>{chosen.length > 1 ? <Button variant="outline" size="sm" disabled={!packaging.canCreatePackage(chosenReferences)} onClick={() => void packaging.createPackage(chosenReferences)}>打包所选 {chosen.length} 份历史报告</Button> : <Button variant="outline" size="sm" disabled={!reportAdapter || downloading} onClick={() => void download()}>下载所选 1 份历史报告</Button>}<Button variant="ghost" size="sm" onClick={() => setChecked({})}>清空选择</Button></div><div className="flex flex-wrap gap-2">{chosen.map(item => <Badge variant="outline" className="max-w-full whitespace-normal text-left" key={resultKey(item.entry.reference)}>{item.title} · 第 {item.entry.sequence} 次审核</Badge>)}</div></section>
@@ -174,10 +173,8 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
   if (!address.documentId && (address.reference || address.invalid || address.report)) return <Alert><AlertTitle>无法打开这次审核</AlertTitle><AlertDescription><p>链接缺少有效的文件或审核信息。</p><Button variant="outline" size="sm" onClick={closeDocument}>返回审核文件</Button></AlertDescription></Alert>
   // A history read that settles after the person left this document must not write it back into the address.
   if (address.documentId) return <ArchiveHistory key={`${address.documentId}:${restore}`} documentId={address.documentId} document={page?.documents.find(row => row.document_id === address.documentId) || null} initialAddress={address} onNavigate={(reference, report, replace) => {if (activeRef.current && readArchiveAddress(location.search).documentId === address.documentId) writeArchiveAddress(address.documentId, reference, report, replace)}} adapter={adapter} renderOriginal={renderOriginal} onBack={closeDocument} onOpenTask={onOpenTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter}/>
-  const upload = <Button onClick={onUpload}><Upload/>上传文件</Button>
   const time = (document: ArchiveDocument) => (document.latest_completed ?? document.latest_activity)?.audited_at
-  return <section className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden" aria-label="文件档案">
-    {headerActions && createPortal(upload, headerActions)}
+  return <section className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden" aria-label="审核文件">
     <div className="grid min-h-0 flex-1 grid-cols-[15rem_minmax(0,1fr)] grid-rows-1 gap-4">
     <aside aria-label="文件分类" className="min-h-0 space-y-4 overflow-y-auto rounded-lg border bg-card p-3">
       {tree}
@@ -185,12 +182,9 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
         <div className="grid gap-2"><span className="text-sm font-medium">结果</span><Select value={query.result || 'all'} onValueChange={value => filter({result: results.find(([key]) => key === value)?.[0] ?? null})}><SelectTrigger aria-label="全部结果" className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部结果</SelectItem>{results.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
         <div className="grid gap-2"><span className="text-sm font-medium">文件类型</span>{choices('全部文件类型', query.document_type, page?.document_types || [], 'document_type')}</div>
         <div className="grid gap-2"><span className="text-sm font-medium">发起人</span>{choices('全部发起人', query.initiator, page?.initiators || [], 'initiator')}</div>
-        <label className="grid gap-2 text-sm font-medium">开始日期<Input type="date" aria-label="开始日期" value={query.from_date || ''} onChange={event => filter({from_date: event.target.value || null})}/></label>
-        <label className="grid gap-2 text-sm font-medium">结束日期<Input type="date" aria-label="结束日期" value={query.through_date || ''} onChange={event => filter({through_date: event.target.value || null})}/></label>
       </section>
     </aside>
     <div className="flex min-h-0 min-w-0 flex-col gap-4">
-    {!headerActions && <div className="flex justify-end">{upload}</div>}
     <div role="search" aria-label="筛选审核文件" className="flex flex-nowrap items-center gap-1.5">
       <div className="flex min-w-0 flex-1"><div className={`relative transition-all duration-200 ease-out ${searchOpen || search.trim() ? 'w-full' : 'w-44'}`}><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search aria-hidden="true" className="size-3.5"/></span><Input type="search" aria-label="搜索文件或零件号" placeholder="搜索文件 / 零件号" iconStart value={search} onChange={event => setSearch(event.target.value)} onFocus={() => setSearchOpen(true)} onBlur={() => setSearchOpen(false)} onKeyDown={event => {if (event.key === 'Escape') {event.preventDefault(); if (search) {setSearch(''); filter({search: ''}); return}; setSearchOpen(false); event.currentTarget.blur(); return}; if (event.key === 'Enter') {event.preventDefault(); filter({search: search.trim()})}}}/></div></div>
       <div className="ml-auto flex shrink-0 items-center gap-2"><Segmented label="审核时间范围" value={range} options={ranges} onChange={days => filter({from_date: days === 'all' ? null : rangeStart(Number(days)), through_date: null})}/><Tooltip><TooltipTrigger asChild><Button type="button" variant="outline" size="icon-sm" aria-label="刷新审核文件" disabled={loading} onClick={() => setReload(value => value + 1)}><RefreshCw className={cn(loading && 'animate-spin motion-reduce:animate-none')}/></Button></TooltipTrigger><TooltipContent>{readAt ? <>数据更新于 <time dateTime={readAt.toISOString()}>{displayTime(readAt)}</time></> : '尚未读取审核文件'}</TooltipContent></Tooltip></div>
@@ -214,7 +208,7 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
         <TableCell>{document.metadata.model || unset}</TableCell>
         <TableCell>{document.metadata.part_number ? <span className="tabular-nums">{document.metadata.part_number}</span> : unset}</TableCell>
         <TableCell>{document.metadata.part || unset}</TableCell>
-      </TableRow>})}{!current.documents.length && <TableRow interactive={false}><TableCell colSpan={12} className="text-center whitespace-normal"><div className="grid justify-items-center py-12 gap-3"><p className="text-sm text-muted-foreground">没有符合条件的文件</p>{applied.length > 0 && <Button variant="outline" size="sm" onClick={clearFilters}>清空条件</Button>}</div></TableCell></TableRow>}</TableBody></Table>
+      </TableRow>})}{!current.documents.length && <TableRow interactive={false}><TableCell colSpan={12} className="text-center whitespace-normal"><div className="grid justify-items-center py-12 gap-3"><p className="text-sm text-muted-foreground">没有符合条件的文件</p></div></TableCell></TableRow>}</TableBody></Table>
       <footer className="space-y-3 border-t px-3 py-3">
         {selection}
         <Pager total={current.total} page={query.page} jump onPage={value => setQuery({...query, page: value})}/>

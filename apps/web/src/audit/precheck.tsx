@@ -50,7 +50,7 @@ export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdap
   const routed = result.files.filter(row => row.entry_key).length
   // The fixed ten chapters of the precheck outline, each with what this batch puts in it.
   const chapters: [string, string, string][] = [
-    ['一', '结论摘要', conclusion], ['二', '提交范围与文件集', `${result.files.length} 份文件`], ['三', '问题总览', `阻断 ${result.blocks.length} · 警告 ${result.warnings.length}`],
+    ['一', '结论摘要', conclusion], ['二', '提交范围与文件集', '本批文件清单与用途'], ['三', '问题总览', `阻断 ${result.blocks.length} · 警告 ${result.warnings.length}`],
     ['四', '阻断项明细', result.blocks.length ? `${result.blocks.length} 项` : '无阻断项'], ['五', '警告项明细', result.warnings.length ? `${result.warnings.length} 项，移交正式审核` : '无警告项'],
     ['六', '状态登记', result.statuses.length ? `${result.statuses.length} 项` : '无'], ['七', '整改建议汇总', `${result.blocks.length + result.warnings.length} 条`],
     ['八', '结论作用域与局限性声明', '只检查文件能否被可靠审核，不判定内容是否合规'], ['九', '附录·检查项全量结果', `${result.files.filter(row => row.criteria?.length).length} 份文件有逐项结果`], ['十', '附录·分则附加节', routed ? `${routed} 份文件已路由` : '无路由条目'],

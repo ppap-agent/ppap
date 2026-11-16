@@ -45,7 +45,7 @@ class TaskNavigationPreviewTests(unittest.TestCase):
             listing = rail.get_by_role("navigation", name="审核任务列表", exact=True)
             expect(listing.get_by_role("heading", name="审核任务", exact=True)).to_be_visible()
             expect(rail.get_by_role("navigation", name="产品导航", exact=True)).to_have_count(0)
-            expect(rail.get_by_role("button", name="联系我们", exact=True)).to_have_count(0)
+            expect(rail.get_by_role("button", name="联系支持", exact=True)).to_have_count(0)
             listing.get_by_role("textbox", name="搜索审核任务", exact=True).fill("恢复示例")
             listing.get_by_role("button", name="收起", exact=True).click()
             expect(listing).to_have_count(0)
@@ -94,7 +94,9 @@ class TaskNavigationPreviewTests(unittest.TestCase):
                 "&packageRequest=original-package&file=preview-recovery-version-1&clause=2&focus=compare"
             )
             trail = page.get_by_role("navigation", name="当前位置", exact=True)
-            expect(trail.get_by_role("link", name="PPAP Audit", exact=True)).to_be_visible()
+            # The trail names only where the person is: the task and its report, no product root.
+            expect(trail.get_by_role("link", name="PPAP Audit", exact=True)).to_have_count(0)
+            expect(trail.get_by_role("listitem")).to_have_count(2)
             result_link = trail.get_by_role("link", name="返回审核结果", exact=True)
             expect(result_link).to_have_text("PPAP-报告示例")
             expect(trail.get_by_text("审核报告", exact=True)).to_be_visible()

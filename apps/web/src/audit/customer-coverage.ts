@@ -74,7 +74,7 @@ export function customerCoverage(source: CoverageSource | null, customer: string
 
 export type FileSlot = {type: string; label: string}
 
-/** Document types this customer's rules actually name. Automatic mode and an unknown customer have none; nothing is filled in. */
+/** Document types this customer's rules name, listed on the upload page as a hint. Automatic mode and an unknown customer have none; nothing is filled in. */
 export function customerFileSlots(source: CoverageSource | null, customer: string): FileSlot[] | null {
   const template = customerTemplate(source, customer)
   if (!template) return null
@@ -82,13 +82,4 @@ export function customerFileSlots(source: CoverageSource | null, customer: strin
     const named = documentTypeLabel(group.type)
     return {type: group.type, label: named !== group.type ? named : group.rows[0]?.label || group.type}
   })
-}
-
-const sameToken = (left: string, right: string) => left.trim().toLowerCase() === right.trim().toLowerCase()
-
-/** A file joins a slot only when recognition named that slot's type. An empty or unknown type stays unplaced. */
-export function slotForDocumentType(slots: FileSlot[] | null, documentType: string | null | undefined): FileSlot | null {
-  if (!slots || !documentType?.trim()) return null
-  const named = documentTypeLabel(documentType)
-  return slots.find(slot => [slot.type, slot.label].some(value => sameToken(value, documentType) || sameToken(value, named))) ?? null
 }

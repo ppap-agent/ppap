@@ -87,8 +87,8 @@ class UsagePreviewTests(unittest.TestCase):
                 address = page.url
                 alert = page.get_by_role("alert")
                 expect(alert).to_contain_text(notice)
-                alert.get_by_role("button", name="联系我们", exact=True).click()
-                dialog = page.get_by_role("dialog", name="联系我们", exact=True)
+                alert.get_by_role("button", name="联系支持", exact=True).click()
+                dialog = page.get_by_role("dialog", name="联系支持", exact=True)
                 expect(dialog).to_contain_text(notice)
 
                 reference = dialog.get_by_label("页面参考编号", exact=True).input_value()
@@ -104,7 +104,7 @@ class UsagePreviewTests(unittest.TestCase):
                 expect(usage_row(page, 1)).to_be_visible()
                 # PPAP Audit opens the new-audit page directly.
                 page.get_by_role("navigation", name="产品导航").get_by_role("button", name="PPAP Audit", exact=True).click()
-                page.get_by_role("button", name="联系我们", exact=True).click()
+                page.get_by_role("button", name="联系支持", exact=True).click()
                 expect(dialog.get_by_text("当前场景：上传与文件核对", exact=True)).to_be_visible()
                 expect(dialog).not_to_contain_text(notice)
                 page.keyboard.press("Escape")

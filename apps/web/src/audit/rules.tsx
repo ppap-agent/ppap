@@ -14,7 +14,7 @@ import {rulesAddress, RulesTrail, SystemRuleDetail, TemplateBrowser} from './rul
 import {ProgramStatus} from './program-status'
 import {writeAuditAddress} from './routes'
 
-/** One read of the program catalog labels every template row; it is never repeated per row. */
+/** One read of the program catalog labels every customer-rule row; it is never repeated per row. */
 export type SuitesRead = {value: components['schemas']['SuiteCatalog'] | null; loading: boolean; error: string; revision: number}
 
 export function AuditRules({onPublished, active, headerActions}: {onPublished: () => void; active: boolean; headerActions?: HTMLElement | null}) {
@@ -79,18 +79,21 @@ function RulesWorkspace({onPublished, active, headerActions}: {onPublished: () =
     const owner = templates.flatMap(item => item.rows).find(row => row.automation.suiteKey === key)
     return owner && {label: owner.label, open: () => writeAuditAddress(owner.target.kind === 'system' ? rulesAddress({systemRule: owner.target.id}) : rulesAddress({requirement: owner.target.id}), 'push')}
   }
-  const program = active && suite ? <ProgramStatus key={suite.suite_key} suiteKey={suite.suite_key} related={related} onChanged={() => setRevision(value => value + 1)}/> : undefined
+  // Adopting a program changes which rules count as effective, so the catalog and the customer rules are read again.
+  const programFor = (suiteKey: string, key = suiteKey) => <ProgramStatus key={key} suiteKey={suiteKey} related={related} onChanged={() => setRevision(value => value + 1)}/>
+  const program = active && suite ? programFor(suite.suite_key) : undefined
   const listView = route.systemRule
     ? <SystemRuleDetail ruleId={route.systemRule} template={systemTemplate} row={systemRow} program={program}/>
     : <TemplateBrowser templates={templates} selectedKey={route.template} loading={read.loading} failed={Boolean(read.error)}/>
   return <RequirementLibraryPanel
     listView={listView}
     trail={version => {
+      // The page bar already leads back to the library; the trail names only the customer, as on a system rule.
       const key = version ? enterpriseTemplateKey(version.scope) : ''
       const owner = templates.find(item => item.key === key)
-      const row = version && owner?.rows.find(item => item.type === version.documentType)
-      return <RulesTrail items={[{label: '审核规则库', href: rulesAddress({})}, ...owner ? [{label: owner.name, href: rulesAddress({template: owner.key})}] : [], {label: row?.label || version?.documentType || version?.title || '规则'}]}/>
+      return owner ? <RulesTrail items={[{label: owner.name, href: rulesAddress({template: owner.key})}]}/> : null
     }}
+    program={(suiteKey, versionId) => programFor(suiteKey, versionId)}
     headerActions={headerActions}
     title="审核规则库"
     uploadLabel="上传规则"

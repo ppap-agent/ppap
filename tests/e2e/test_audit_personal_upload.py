@@ -151,7 +151,9 @@ def test_choose_folder_cancel_and_resume_keep_original_upload_request(recover_wi
         page.get_by_label("选择审核文件", exact=True).set_input_files(files)
         dialog.get_by_role("button", name="打开文件夹 项目资料", exact=True).click()
         dialog.get_by_role("button", name="上传到此文件夹", exact=True).click()
-        expect(page.get_by_role("heading", name="待处理传输 · 1 份", exact=True)).to_be_visible()
+        # The unconfirmed transfer is a line among the files, waiting for the person.
+        transfer = page.get_by_role("region", name="已添加", exact=True).get_by_role("listitem").filter(has=page.get_by_role("button", name="读取传输 审核资料.xlsx", exact=True))
+        expect(transfer).to_contain_text("结果未确认")
         expect(page.get_by_role("button", name="读取传输 审核资料.xlsx", exact=True)).to_be_enabled()
         assert creates[0]["feishu_folder_token"] == "chosen-folder"
         assert len(creates) == len(blobs) == len(finishes) == 1
@@ -161,18 +163,19 @@ def test_choose_folder_cancel_and_resume_keep_original_upload_request(recover_wi
             read_cloud.click()
             cloud_dialog = page.get_by_role("dialog", name="从飞书选择文件", exact=True)
             cloud_dialog.get_by_role("button", name="取消", exact=True).click()
-            expect(page.get_by_role("heading", name="待处理传输 · 1 份", exact=True)).to_be_visible()
+            expect(transfer).to_contain_text("结果未确认")
             assert import_inputs == [] and len(finishes) == 1
             read_cloud.click()
             cloud_dialog.get_by_role("checkbox", name="选择飞书文件 审核资料.xlsx", exact=True).check()
             cloud_dialog.get_by_role("button", name="添加 1 份文件", exact=True).click()
             expect(page.get_by_role("checkbox", name="选择 审核资料.xlsx", exact=True)).to_be_checked()
-            expect(page.get_by_role("heading", name="待处理传输 · 1 份", exact=True)).to_be_visible()
+            expect(transfer).to_contain_text("结果未确认")
             assert version["id"] == original_id and imported["id"] != original_id
             assert import_inputs[0]["file_token"] == "real-cloud-file"
-            page.get_by_role("button", name="排除传输 审核资料.xlsx", exact=True).click()
+            page.get_by_role("button", name="移除传输 审核资料.xlsx", exact=True).click()
             expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
-            expect(page.get_by_role("heading", name="已排除传输 · 1 份", exact=True)).to_be_visible()
+            # The removed transfer joins the one removed list, where its original request can still be read.
+            expect(page.get_by_role("region", name="已移除文件", exact=True).get_by_role("button", name="读取传输 审核资料.xlsx", exact=True)).to_be_visible()
         else:
             page.get_by_role("button", name="读取传输 审核资料.xlsx", exact=True).click()
         expect(page.get_by_role("checkbox", name="选择 审核资料.xlsx", exact=True)).to_be_checked()

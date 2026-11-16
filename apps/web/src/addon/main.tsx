@@ -257,7 +257,7 @@ export default function AddonApp() {
       const result = await authorizedJson<Round>(api, host, `${api}/rounds/${encodeURIComponent(id)}`)
       if (!result.ok) return null
       setRound(result.body)
-      setStatus(result.body.execution === 'completed' ? '审核完成' : result.body.execution === 'failed' ? '审核失败' : '正在审核…')
+      setStatus(result.body.execution === 'completed' || result.body.execution === 'failed' ? roundExecutionLabel[result.body.execution] : '正在审核…')
       if (result.body.execution === 'completed' || result.body.execution === 'failed') return result.body
       await new Promise(resolve => window.setTimeout(resolve, 500))
     }

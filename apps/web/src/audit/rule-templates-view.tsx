@@ -13,6 +13,7 @@ import {cn} from '../lib/utils'
 import {message} from '../journey/remote'
 import {rulesAddressKeys, writeAuditAddress} from './routes'
 import {CustomerAvatar} from './customer-avatar'
+import {clauseCount, RuleClause, RuleClauseList, RuleDetailHeader} from './rule-detail'
 import {automationLabel, coverage, effective, pendingRows, typeGroups, type Automation, type RuleTemplate, type TemplateRow} from './rule-templates'
 
 /** Rules-page addresses: a template, a preset rule or an uploaded rule. Every other rules key is dropped. */
@@ -58,12 +59,12 @@ export function TemplateBrowser({templates, selectedKey, loading, failed}: {temp
   const needle = query.trim().toLocaleLowerCase()
   const shown = needle ? templates.filter(template => matches(needle, template.name, ...template.rows.flatMap(row => [row.label, row.ruleTitle]))) : templates
   // Before the read finishes only this browser's drafts are known; a partial list would look complete.
-  if (loading) return <div className="flex min-h-0 flex-1 flex-col"><ReadSkeleton label="正在读取规则模板…" kind="list" rows={5}/></div>
+  if (loading) return <div className="flex min-h-0 flex-1 flex-col"><ReadSkeleton label="正在读取客户规则…" kind="list" rows={5}/></div>
   const template = selectedKey ? templates.find(item => item.key === selectedKey) : shown[0] ?? templates[0]
   // A search that names a rule narrows the chosen customer's types to it; a search that names the customer shows them all.
   const focus = needle && template && !matches(needle, template.name) ? needle : ''
   return <div className="grid min-h-0 flex-1 grid-cols-[17.5rem_minmax(0,1fr)] grid-rows-1 gap-4">
-    <aside aria-label="规则模板列表" className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden rounded-lg border bg-card p-3">
+    <aside aria-label="客户规则列表" className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden rounded-lg border bg-card p-3">
       <div role="search" className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search aria-hidden="true" className="size-3.5"/></span><Input aria-label="搜索客户" type="search" iconStart placeholder="搜索客户" maxLength={200} value={query} onChange={event => setQuery(event.target.value)}/></div>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">{(['system', 'enterprise'] as const).map(source => {
         const group = shown.filter(item => item.source === source)
@@ -80,12 +81,12 @@ export function TemplateBrowser({templates, selectedKey, loading, failed}: {temp
           })}</ul>
         </section>
       })}
-      {/* A refused read is not an empty library; the page above says it could not read. */}{!failed && !shown.length && <div className="grid justify-items-center gap-3 py-12 text-center"><p className="text-sm text-muted-foreground">{query ? '没有匹配的模板' : '还没有规则模板'}</p>{query && <Button variant="outline" size="sm" onClick={() => setQuery('')}>清除搜索</Button>}</div>}
+      {/* A refused read is not an empty library; the page above says it could not read. */}{!failed && !shown.length && <div className="grid justify-items-center gap-3 py-12 text-center"><p className="text-sm text-muted-foreground">{query ? '没有匹配的客户' : '还没有客户规则'}</p>{query && <Button variant="outline" size="sm" onClick={() => setQuery('')}>清除搜索</Button>}</div>}
       </div>
       <p className="border-t pt-3 text-xs leading-relaxed text-muted-foreground">规则由本企业自行上传，检查程序由平台离线准备，准备好后生效。系统提供的规则可直接使用。</p>
     </aside>
     <div className="flex min-h-0 min-w-0 flex-col">
-      {template ? <TemplateDetail key={`${template.key}:${focus}`} template={template} focus={focus}/> : selectedKey && <Alert><AlertTitle>这个模板已不存在</AlertTitle><AlertDescription>请从左侧另选一个模板。</AlertDescription></Alert>}
+      {template ? <TemplateDetail key={`${template.key}:${focus}`} template={template} focus={focus}/> : selectedKey && <Alert><AlertTitle>这组客户规则已不存在</AlertTitle><AlertDescription>请从左侧另选一个客户。</AlertDescription></Alert>}
     </div>
   </div>
 }
@@ -120,7 +121,7 @@ function TemplateDetail({template, focus}: {template: RuleTemplate; focus: strin
       <h2 className="min-w-0 truncate text-lg font-semibold" title={template.name}>{template.name}</h2>
     </header>
     {pending.length > 0 && <Alert><AlertCircle aria-hidden="true"/><AlertTitle>{pending.map(row => row.label).join('、')}的规则已更新，在规则页“检查程序”中采用新版本后新审核才会使用。</AlertTitle></Alert>}
-    {template.missing.length > 0 && <p className="text-sm text-muted-foreground">本模板没有这些文件的规则：{template.missing.join('、')}。审核时会提示你另选模板或人工审核。</p>}
+    {template.missing.length > 0 && <p className="text-sm text-muted-foreground">这个客户没有这些文件的规则：{template.missing.join('、')}。审核时会提示你另选客户规则或人工审核。</p>}
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
       {rows.length ? <Table aria-label={`${template.name} 的规则列表`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>规则</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{rows.map(row => {
         const href = rowHref(row), name = row.ruleTitle || row.label || '未识别类型', updated = day(row.updatedAt)
@@ -130,7 +131,7 @@ function TemplateDetail({template, focus}: {template: RuleTemplate; focus: strin
           <TableCell>{updated || row.version ? <span className="text-muted-foreground tabular-nums">{[updated, row.version && `版本 ${row.version}`].filter(Boolean).join(' · ')}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
           <TableCell><RowStatus automation={row.automation}/></TableCell>
         </TableRow>
-      })}</TableBody></Table> : <p className="grid flex-1 place-items-center py-12 text-center text-sm text-muted-foreground">{focus ? '这个客户没有匹配的规则。' : '这个模板还没有规则。'}</p>}
+      })}</TableBody></Table> : <p className="grid flex-1 place-items-center py-12 text-center text-sm text-muted-foreground">{focus ? '这个客户没有匹配的规则。' : '这个客户还没有规则。'}</p>}
       {rows.length > 0 && <footer className="border-t px-3 py-3 text-right text-xs text-muted-foreground tabular-nums">共 {rows.length} 条规则{rows.length !== groups.length && ` · ${groups.length} 类文件`}</footer>}
     </div>
   </section>
@@ -156,15 +157,9 @@ export function SystemRuleDetail({ruleId, template, row, actions, program}: {rul
     {read.error && <Alert variant="destructive"><AlertTitle>规则未能读取</AlertTitle><AlertDescription><p>{read.error}</p><Button variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}>重新读取</Button></AlertDescription></Alert>}
     {!read.rule && !read.error && <ReadSkeleton label="正在读取规则…" kind="detail" rows={6}/>}
     {read.rule && <>
-      <header className="space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-4"><h1 className="min-w-0 break-words text-xl font-semibold">{read.rule.title}</h1>{actions}</div>
-        <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground"><Badge shape="square" variant="outline">系统提供</Badge><span>{read.rule.body.rules?.length ?? 0} 条</span>{row && !program && <AutomationBadge automation={row.automation}/>}</div>
-      </header>
+      <RuleDetailHeader title={read.rule.title} action={actions}><Badge shape="square" variant="outline">系统提供</Badge><span className="text-sm text-muted-foreground">{clauseCount(read.rule.body.rules?.length ?? 0)}</span>{row && !program && <AutomationBadge automation={row.automation}/>}</RuleDetailHeader>
       {program}
-      <section aria-label="规则条款" className="divide-y border-t">{(read.rule.body.rules ?? []).map((clause, index) => <article key={clause.id} aria-label={`第 ${index + 1} 条`} className="grid grid-cols-[1.5rem_minmax(0,1fr)] items-baseline gap-x-4 py-5">
-        <span className="text-xs tabular-nums text-muted-foreground" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
-        <div className="min-w-0 space-y-1">{clause.category && !new RegExp(`^(?:条款\\s*${index + 1}|第\\s*${index + 1}\\s*条|0*${index + 1})$`).test(clause.category.trim()) && <h2 className="break-words font-medium">{clause.category}</h2>}<p className="whitespace-pre-wrap break-words leading-relaxed">{clause.rule_to_check}</p></div>
-      </article>)}</section>
+      <RuleClauseList className="border-t">{(read.rule.body.rules ?? []).map((clause, index) => <RuleClause key={clause.id} number={index + 1} title={clause.category} text={clause.rule_to_check}/>)}</RuleClauseList>
     </>}
   </div>
 }

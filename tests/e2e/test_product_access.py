@@ -209,7 +209,7 @@ def test_authorization_failure_keeps_task_and_requires_an_explicit_new_login(pag
     assert host_posts == []
 
 
-def test_native_account_usage_and_logout_keep_the_task_report_address(page):
+def test_native_records_usage_and_logout_keep_the_task_report_address(page):
     page.set_viewport_size({"width": 1280, "height": 720})
     login_config(page)
     page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
@@ -233,7 +233,11 @@ def test_native_account_usage_and_logout_keep_the_task_report_address(page):
     expect(records).to_have_count(0)
     assert page.url == WEB + "/tasks/original-task?report=frozen-report#original-clause"
     account.click()
-    page.get_by_role("menuitem", name="用量记录").click()
+    # Usage is reached from the product navigation only; the account menu does not repeat it.
+    expect(page.get_by_role("menuitem", name="退出登录")).to_be_visible()
+    expect(page.get_by_role("menuitem", name="用量记录")).to_have_count(0)
+    page.keyboard.press("Escape")
+    page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="用量记录", exact=True).click()
     expect(page.get_by_role("heading", name="用量记录", exact=True)).to_be_visible()
     expect(page).to_have_url(re.compile(r"/usage#original-clause$"))
     address = urlsplit(page.url)

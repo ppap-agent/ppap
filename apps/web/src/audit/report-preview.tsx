@@ -1,6 +1,6 @@
 import {VerificationDisclosure} from './verification-disclosure'
 import {lazy, Suspense, useEffect, useState, type ReactNode} from 'react'
-import {Copy, Download, Info} from 'lucide-react'
+import {Copy, Download, Info, Share2} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
@@ -20,8 +20,13 @@ export function ReportTime({value}: {value: string}) {
   return Number.isNaN(instant.valueOf()) ? <span>待确认</span> : <time dateTime={value}>{displayTime(instant)}</time>
 }
 
-/** The same fixed-artifact reader is used by P6 and P11. */
-export function ReportPreview({name, rule, ruleVersion, reference, report, verification, ready, issue, adapter, navigation, information, actions, children}: {name: string; rule: string; ruleVersion?: string; verification?: components['schemas']['AuditCheckerVerification'] | null; reference: AuditReportReference | null; report?: components['schemas']['AuditFileReport'] | null; ready: boolean; issue: string; adapter?: AuditReportAdapter; navigation?: ReactNode; information?: ReactNode; actions?: ReactNode; children?: ReactNode}) {
+/** Sharing the report being read; it sits beside its download on every report page. */
+export function ReportShareButton({disabled, onOpen}: {disabled: boolean; onOpen: (trigger: HTMLButtonElement) => void}) {
+  return <Button size="sm" variant="outline" disabled={disabled} onClick={event => onOpen(event.currentTarget)}><Share2/>分享</Button>
+}
+
+/** The same fixed-artifact reader is used by P6 and P11; the current report's own actions (share, download) live only in its header. */
+export function ReportPreview({name, rule, ruleVersion, reference, report, verification, ready, issue, adapter, navigation, information, actions, share, children}: {name: string; rule: string; ruleVersion?: string; verification?: components['schemas']['AuditCheckerVerification'] | null; reference: AuditReportReference | null; report?: components['schemas']['AuditFileReport'] | null; ready: boolean; issue: string; adapter?: AuditReportAdapter; navigation?: ReactNode; information?: ReactNode; actions?: ReactNode; share?: {disabled: boolean; onOpen: (trigger: HTMLButtonElement) => void}; children?: ReactNode}) {
   const [pdf, setPdf] = useState<{key: string; url: string; error: string} | null>(null), [reload, setReload] = useState(0)
   const pdfKey = ready && reference ? JSON.stringify([reference, report?.artifact]) : ''
   useEffect(() => {
@@ -59,7 +64,7 @@ export function ReportPreview({name, rule, ruleVersion, reference, report, verif
           </div>}
         </div>
       </SheetContent></Sheet>
-      {actions}<Button size="sm" variant="outline" disabled={!currentPdf?.url} onClick={download}><Download/>下载当前报告</Button>
+      {actions}{share && <ReportShareButton {...share}/>}<Button size="sm" variant="outline" disabled={!currentPdf?.url} onClick={download}><Download/>下载当前报告</Button>
     </div>
     </header>
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">

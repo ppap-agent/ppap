@@ -1,7 +1,7 @@
 // Stitch: projects/13261964020862199279/screens/5a80a77a4f524928b808862728d5677a (login)
 // and screens/9a6cb6189e92450da32d95a31820b41c (connection failure).
 import {createContext, useContext, useEffect, useRef, useState, type ReactNode} from 'react'
-import {ArrowRight, ChartNoAxesColumn, ChevronDown, FolderClock, LogOut, Sparkles} from 'lucide-react'
+import {ArrowRight, ChevronDown, FolderClock, LogOut, Sparkles} from 'lucide-react'
 import {apiUrl, connect, feishuAppId, request, ruleUploadEnabled, type HostLoginRequest, type PrincipalPublic} from '../api'
 import {isFeishuHost, requestHostCode} from '../hostLogin'
 import {ReadSkeleton} from '../components/read-skeleton'
@@ -18,7 +18,7 @@ const loginErrors: Record<string, string> = {
   tenant_not_allowed: '当前企业尚未开通此审核服务，请切换飞书账号或联系管理员。',
 }
 
-export function AccountMenu({compact = false, className, onUsage}: {compact?: boolean; className?: string; onUsage: () => void}) {
+export function AccountMenu({compact = false, className}: {compact?: boolean; className?: string}) {
   const access = useAccess()
   const name = access?.principal.display_name || '审核账号'
   return <DropdownMenu>
@@ -27,7 +27,6 @@ export function AccountMenu({compact = false, className, onUsage}: {compact?: bo
       {!compact && <><span className={"min-w-0 flex-1 truncate text-left"}>{name}</span><ChevronDown/></>}
     </Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end"><DropdownMenuLabel>{name}</DropdownMenuLabel><DropdownMenuSeparator/>
-      <DropdownMenuItem onSelect={onUsage}><ChartNoAxesColumn/>用量记录</DropdownMenuItem>
       {ruleUploadEnabled && <DropdownMenuItem onSelect={access?.records}><FolderClock/>本机草稿</DropdownMenuItem>}
       <DropdownMenuItem onSelect={access?.logout}><LogOut/>退出登录</DropdownMenuItem>
     </DropdownMenuContent>

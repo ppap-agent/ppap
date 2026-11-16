@@ -163,7 +163,7 @@ class RulePreparationTests(unittest.TestCase):
             clause = clauses.get_by_role("article", name="第 1 条", exact=True)
             confirm_clause_source(page, clause, "rules[0].rule_to_check", "必须填写零件号")
             page.get_by_label("规则名称", exact=True).fill(title)
-            page.get_by_label("所属模板", exact=True).fill("  测试客户  ")
+            page.get_by_label("所属客户", exact=True).fill("  测试客户  ")
             page.get_by_label("适用零件", exact=True).fill("  零件 P-1  ")
             page.get_by_label("不限定图纸修订", exact=True).check()
             page.get_by_label("这次改了什么", exact=True).fill("依据结构化客户规则核对首个版本。")
@@ -177,7 +177,7 @@ class RulePreparationTests(unittest.TestCase):
             page.get_by_role("button", name="保存版本", exact=True).click()
             expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
             saved_url = page.url
-            page.get_by_role("navigation", name="位置", exact=True).get_by_role("link", name="审核规则库", exact=True).click()
+            page.get_by_role("navigation", name="当前位置", exact=True).get_by_role("link", name="审核规则库", exact=True).click()
             page.get_by_role("searchbox", name="搜索客户", exact=True).fill(title)
             page.get_by_role("main").get_by_role("listitem").get_by_role("link").first.click()
             row = page.get_by_role("table", name=re.compile("的规则列表$")).get_by_role("row").filter(has_text=title)

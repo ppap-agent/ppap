@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {customerCoverage, customerFileSlots, sameCustomer, slotForDocumentType} from './customer-coverage.ts'
+import {customerCoverage, customerFileSlots, sameCustomer} from './customer-coverage.ts'
 import {buildTemplates, coverage} from './rule-templates.ts'
 
 type Rule = components['schemas']['Rule']
@@ -33,18 +33,14 @@ test('no coverage is reported for the automatic customer, an unread checker cata
   assert.equal(customerCoverage({rules, types, catalog}, '长城'), null)
 })
 
-test('upload slots are that customer\'s rule types, and an unrecognized type is not placed', () => {
+test('the upload hint lists that customer\'s rule types', () => {
   const rules = [rule('a', '控制计划', ['理想汽车']), rule('b', '过程流程图', ['理想汽车']), rule('c', 'E07', ['UAES'])]
   const li = customerFileSlots({rules, types, catalog}, '理想')
   assert.deepEqual(li, [
     {type: '过程流程图', label: '过程流程图'},
     {type: '控制计划', label: '控制计划'},
   ])
-  assert.equal(slotForDocumentType(li, '控制计划')?.type, '控制计划')
-  assert.equal(slotForDocumentType(li, '未知'), null)
-  assert.equal(slotForDocumentType(li, null), null)
   assert.deepEqual(customerFileSlots({rules, types, catalog: null}, 'UAES'), [{type: 'E07', label: '生产件样品照片'}])
-  assert.equal(slotForDocumentType(customerFileSlots({rules, types, catalog: null}, 'UAES'), 'E07')?.label, '生产件样品照片')
   assert.equal(customerFileSlots({rules, types, catalog}, 'auto'), null)
   assert.equal(customerFileSlots(null, '理想'), null)
   assert.equal(customerFileSlots({rules, types, catalog}, '长城'), null)

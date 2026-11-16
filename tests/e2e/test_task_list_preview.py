@@ -35,7 +35,7 @@ def expect_unresolved(listing):
     expect(listing.get_by_role("status", name="正在读取任务…", exact=True)).to_be_visible()
     expect(listing.get_by_text("没有符合条件的任务。", exact=True)).to_have_count(0)
     expect(listing.get_by_text("开始识别后，任务显示在这里。", exact=True)).to_have_count(0)
-    expect(listing.get_by_role("button", name="清空条件", exact=True)).to_have_count(0)
+    expect(listing.get_by_role("button", name="清除筛选", exact=True)).to_have_count(0)
 
 
 def open_list(browser, *, paged=False):
@@ -78,7 +78,7 @@ class TaskListPreviewTests(unittest.TestCase):
             expect(row).to_contain_text("待确认")
             expect(task_row(listing, "乙任务")).to_have_count(0)
             row.click()
-            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
             # The rail stays beside the opened task and marks it as the current one.
             expect(row).to_have_attribute("aria-current", "page")
             self.assertEqual(parse_qs(urlparse(page.url).query)["task"], ["preview-list-甲任务"])
@@ -100,14 +100,14 @@ class TaskListPreviewTests(unittest.TestCase):
             expect(rail.get_by_role("alert")).to_contain_text("任务列表读取失败")
             expect(listing.get_by_role("status")).to_have_count(0)
             expect(listing.get_by_text("没有符合条件的任务。", exact=True)).to_have_count(0)
-            expect(listing.get_by_role("button", name="清空条件", exact=True)).to_have_count(0)
+            expect(listing.get_by_role("button", name="清除筛选", exact=True)).to_have_count(0)
             rail.get_by_role("button", name="重新读取任务列表", exact=True).click()
             expect(held_list(page, "不存在")).to_have_count(1)
             expect_unresolved(listing)
             release_list(page, "不存在")
             expect(rail.get_by_role("alert")).to_have_count(0)
             expect(listing.get_by_text("没有符合条件的任务。", exact=True)).to_be_visible()
-            listing.get_by_role("button", name="清空条件", exact=True).click()
+            listing.get_by_role("button", name="清除筛选", exact=True).click()
             expect(search).to_have_value("")
             page.clock.run_for(1)
             release_list(page)
@@ -215,7 +215,7 @@ class TaskListPreviewTests(unittest.TestCase):
             release_list(page)
             expect(task_row(listing, "甲任务")).to_be_visible()
             rail.get_by_role("combobox", name="任务状态", exact=True).click()
-            page.get_by_role("option", name="已完成", exact=True).click()
+            page.get_by_role("option", name="审核完成", exact=True).click()
             expect_unresolved(listing)
             page.clock.run_for(1)
             held = held_list(page, state="completed")
