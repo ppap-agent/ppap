@@ -5,7 +5,7 @@
 import { bucket, checkerUnavailable, needsAttention, reviewOf } from './model';
 import type { Attachment, Check, Task, TaskFile } from './model';
 
-export type DocState = 'new' | 'added' | 'matching' | 'confirm' | 'running' | 'done' | 'failed' | 'reference' | 'no_rule' | 'unavailable' | 'unread';
+export type DocState = 'unsupported' | 'new' | 'added' | 'matching' | 'confirm' | 'running' | 'done' | 'failed' | 'reference' | 'no_rule' | 'unavailable' | 'unread';
 
 export type Doc = {
   attachment: Attachment;
@@ -14,6 +14,10 @@ export type Doc = {
   row: TaskFile | null;
   type: string | null;
 };
+
+// The formats PPAP's file check accepts for audit (worker/intake/file_validation.py).
+const AUDITABLE = ['.xlsx', '.xls', '.xlsm', '.docx', '.doc', '.pdf'];
+export const auditable = (name: string) => AUDITABLE.some(suffix => name.toLowerCase().endsWith(suffix));
 
 export type Rule = { id: string; title: string; type: string | null; customers: string[] | null; predecessor_id: string | null };
 
@@ -48,7 +52,8 @@ export function buildPackage(attachments: Attachment[], tasks: Task[], sources: 
       return { attachment, state, row: moving, type: moving.match?.document_type ?? null };
     }
     const row = inRound(latest, attachment.uid);
-    if (!row) return { attachment, state: latest ? 'added' : 'new', row: null, type: null };
+    // A format PPAP cannot audit is not part of the package, so it never makes a conclusion stale.
+    if (!row) return { attachment, state: !auditable(attachment.name) ? 'unsupported' : latest ? 'added' : 'new', row: null, type: null };
     return { attachment, state: row.audit ? (row.audit.execution === 'review_failed' ? 'failed' : 'done') : unaudited(row), row, type: row.match?.document_type ?? null };
   });
   const attached = new Set(attachments.map(file => file.uid));

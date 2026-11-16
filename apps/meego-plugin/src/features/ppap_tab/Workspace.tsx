@@ -48,7 +48,7 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
 
   // A package is everything attached, so each attachment starts selected; a person's own choices are kept.
   useEffect(() => {
-    const fresh = docs.filter(doc => !seen.current.has(doc.attachment.uid));
+    const fresh = docs.filter(doc => !seen.current.has(doc.attachment.uid) && doc.state !== 'unsupported');
     if (fresh.length) setPicked(previous => new Set([...previous, ...fresh.map(doc => doc.attachment.uid)]));
     docs.forEach(doc => seen.current.add(doc.attachment.uid));
   }, [docs]);
@@ -265,6 +265,8 @@ function DocStatus({ doc, onIssues, onReport, onDownload }: { doc: Doc; onIssues
   const row = doc.row;
   const audit = row?.audit;
   switch (doc.state) {
+    case 'unsupported':
+      return <Text type="tertiary">不是可审核的格式（Excel、Word、PDF）</Text>;
     case 'new':
       return <Text type="tertiary">未审核</Text>;
     case 'added':
