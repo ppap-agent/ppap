@@ -20,6 +20,14 @@ MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 # A space opts in to a conclusion field by creating a single-select field with this alias or name.
 CONCLUSION_FIELD_ALIAS = "ppap_conclusion"
 CONCLUSION_FIELD_NAME = "PPAP 审核结论"
+# Report PDFs go to their own attachment field, never to the field the package is read from.
+REPORT_FIELD_ALIAS = "ppap_reports"
+REPORT_FIELD_NAME = "PPAP 审核报告"
+UPLOAD_TIMEOUT = httpx.Timeout(60.0, connect=20.0)
+
+
+def _is_report_field(field: dict) -> bool:
+    return field.get("field_alias") == REPORT_FIELD_ALIAS or field.get("field_name") == REPORT_FIELD_NAME
 
 
 class MeegoError(Exception):
@@ -177,7 +185,8 @@ class MeegoClient:
         row = rows[0]
         files = []
         for field in row.get("fields") or []:
-            if not isinstance(field, dict) or field.get("field_type_key") != "multi_file":
+            # Reports PPAP wrote back are results, not material to audit.
+            if not isinstance(field, dict) or field.get("field_type_key") != "multi_file" or _is_report_field(field):
                 continue
             for value in field.get("field_value") or []:
                 if isinstance(value, dict) and value.get("uid") and value.get("name"):
@@ -261,6 +270,42 @@ class MeegoClient:
             user_key,
             "field_update",
         )
+
+    def report_field(self, user_key: str, item: WorkItemRef) -> str | None:
+        """The space's attachment field for written-back reports; a space opts in by creating it."""
+        payload = self._post(f"/open_api/{item.project_key}/field/all", {"work_item_type_key": item.work_item_type_key}, user_key, "field")
+        fields = [field for field in payload.get("data") or [] if isinstance(field, dict) and field.get("field_type_key") == "multi_file"]
+        chosen = next((f for f in fields if f.get("field_alias") == REPORT_FIELD_ALIAS), None) or next((f for f in fields if f.get("field_name") == REPORT_FIELD_NAME), None)
+        return str(chosen["field_key"]) if chosen and chosen.get("field_key") else None
+
+    def field_file_names(self, user_key: str, item: WorkItemRef, field_key: str) -> set[str]:
+        """Names of the files an attachment field holds now."""
+        payload = self._post(
+            f"/open_api/{item.project_key}/work_item/{item.work_item_type_key}/query",
+            {"work_item_ids": [int(item.work_item_id)], "fields": [field_key]},
+            user_key,
+            "work_item",
+        )
+        rows = payload.get("data") or []
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            raise MeegoError("meego_work_item_not_found")
+        names: set[str] = set()
+        for field in rows[0].get("fields") or []:
+            if isinstance(field, dict) and field.get("field_key") == field_key:
+                names.update(str(value.get("name")) for value in field.get("field_value") or [] if isinstance(value, dict) and value.get("name"))
+        return names
+
+    def upload_file(self, user_key: str, item: WorkItemRef, field_key: str, name: str, content: bytes, content_type: str) -> None:
+        """Append one file to an attachment field."""
+        headers = {"X-Plugin-Token": self.plugin_token(), "X-User-Key": user_key}
+        url = f"{self.base}/open_api/{item.project_key}/work_item/{item.work_item_type_key}/{item.work_item_id}/file/upload"
+        try:
+            response = self.http.post(url, headers=headers, data={"field_key": field_key}, files={"file": (name, content, content_type)}, timeout=UPLOAD_TIMEOUT)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            raise MeegoError("meego_upload_failed") from None
+        except httpx.HTTPError:
+            raise MeegoError("meego_upload_failed", unknown=True) from None
+        self._json(response, "upload")
 
     def _comment_object(self, item: WorkItemRef) -> dict:
         return {"type": "WORKITEM", "work_item_type_key": item.work_item_type_key, "work_item_id": item.work_item_id}

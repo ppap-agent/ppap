@@ -71,6 +71,20 @@ def _clock(raw) -> str:
     return stamp.astimezone(BEIJING).strftime("%Y 年 %m 月 %d 日 %H:%M（北京时间）")
 
 
+def report_name(filename: str, round_started_at) -> str:
+    """The attachment name of one file's report in one round: the file and the round's Beijing time."""
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    stamp = datetime.now(timezone.utc)
+    if isinstance(round_started_at, str) and round_started_at:
+        try:
+            stamp = datetime.fromisoformat(round_started_at.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return f"PPAP 审核报告 · {stem} · {stamp.astimezone(BEIJING).strftime('%Y-%m-%d %H%M')}.pdf"
+
+
 def overall(task: dict) -> str:
     """The round's one conclusion: any NG is NG, any unknown keeps it open; only all PASS conforms."""
     conclusions = {row["audit"]["conclusion"] for row in _selected(task) if row.get("audit")}

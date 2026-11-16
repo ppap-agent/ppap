@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.parse
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -56,10 +57,14 @@ class FakeMeego:
         self.field_updates = 0
         self.fail_field_unknown = False
         self.files = [{"uid": FILE_UID, "name": "PFMEA.xlsx", "size": "12KB", "type": "application/vnd.ms-excel"}]
+        # The space's report attachment field: None means the space has not created one.
+        self.reports: list[dict] | None = None
+        self.uploads = 0
+        self.fail_upload_unknown = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        body = json.loads(request.content or b"{}") if request.method == "POST" else {}
+        body = json.loads(request.content or b"{}") if request.method == "POST" and "json" in request.headers.get("content-type", "") else {}
         if path == "/open_api/authen/plugin_token":
             return httpx.Response(200, json={"data": {"token": "p-token", "expire_time": 7200}, "error": {"code": 0}})
         if path == "/open_api/authen/user_plugin_token":
@@ -71,7 +76,9 @@ class FakeMeego:
             return httpx.Response(200, json={"err_code": 0, "data": [{"user_key": self.user_key, "name_cn": "飞书项目用户", "status": "activated", "out_id": "on_x"}]})
         if path.endswith("/work_item/story/query"):
             assert request.headers.get("X-User-Key") == self.user_key
-            fields = [{"field_key": "field_files", "field_type_key": "multi_file", "field_value": self.files}]
+            fields = [{"field_key": "field_files", "field_type_key": "multi_file", "field_alias": "", "field_name": "附件", "field_value": self.files}]
+            if self.reports is not None:
+                fields.append({"field_key": "field_reports", "field_type_key": "multi_file", "field_alias": "", "field_name": "PPAP 审核报告", "field_value": self.reports})
             if self.conclusion is not None:
                 fields.append({"field_key": "field_ppap", "field_type_key": "select", "field_value": {"label": "?", "value": self.conclusion}})
             return httpx.Response(200, json={"err_code": 0, "data": [{"id": 42, "name": "PPAP 交付", "fields": fields}]})
@@ -80,6 +87,8 @@ class FakeMeego:
             if self.conclusion_options is not None:
                 options = [{"label": label, "value": value, "is_disabled": 2} for label, value in self.conclusion_options.items()]
                 fields.append({"field_key": "field_ppap", "field_alias": "ppap_conclusion", "field_type_key": "select", "field_name": "PPAP 审核结论", "options": options})
+            if self.reports is not None:
+                fields.append({"field_key": "field_reports", "field_alias": "", "field_type_key": "multi_file", "field_name": "PPAP 审核报告"})
             return httpx.Response(200, json={"err_code": 0, "data": fields})
         if request.method == "PUT" and path.endswith("/work_item/story/42"):
             update = json.loads(request.content)["update_fields"][0]
@@ -90,6 +99,14 @@ class FakeMeego:
             if self.fail_field_unknown:
                 raise httpx.ReadTimeout("lost reply", request=request)
             return httpx.Response(200, json={"err_code": 0, "err": {}})
+        if path.endswith("/work_item/story/42/file/upload"):
+            assert b'name="field_key"' in request.content and b"field_reports" in request.content
+            name = re.search(rb'filename\*?=(?:utf-8\'\')?"?([^"\r\n]+)', request.content).group(1)
+            self.uploads += 1
+            self.reports.append({"uid": "r" + str(self.uploads), "name": urllib.parse.unquote(name.decode())})
+            if self.fail_upload_unknown:
+                raise httpx.ReadTimeout("lost reply", request=request)
+            return httpx.Response(200, json={"err_code": 0, "data": ["https://file/r"]})
         if path.endswith("/file/download"):
             self.downloads += 1
             return httpx.Response(200, content=b"workbook bytes", headers={"Content-Type": "application/octet-stream"})
@@ -375,3 +392,46 @@ def test_writeback_sets_the_conclusion_field_only_for_the_latest_round_and_reads
         fake.fail_field_unknown = True
         assert client.post(f"/integrations/meego/rounds/{latest}/writeback", headers=bearer).json()["field"] == "written"
         assert fake.conclusion == "opt_ng"
+
+
+def test_writeback_attaches_each_report_once_per_round_outside_the_audited_attachments(auth_store_factory, monkeypatch):
+    tenant = "meego-feishu-" + uuid.uuid4().hex
+    fake = FakeMeego()
+    store = auth_store_factory(settings_for(tenant, fake.tenant), reset=False, role="api")
+    principal, browser = feishu_login(store, tenant)
+    round_id = str(uuid.uuid4())
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
+    monkeypatch.setattr(store, "grants", lambda rid, uid: {"read"})
+    monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
+    monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
+    monkeypatch.setattr(store, "list_audit_tasks", lambda who, limit, offset, target=None: [])
+
+    def with_report(task_id):
+        task = finished_task(task_id)
+        row = task["files"][0]
+        row["file"]["id"] = "v-1"
+        row["audit"].update(round_id=task["round_id"], result_attempt=1, report={"state": "ready", "report_id": "rep-1", "artifact": {"artifact_id": "a-1", "filename": "x.pdf"}})
+        return task
+
+    monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: with_report(task_id))
+    asked: list[dict] = []
+    monkeypatch.setattr(store, "audit_report_pdf", lambda who, reference, artifact_id: (asked.append(reference) or {"filename": "x.pdf"}, b"%PDF-1.7 report"))
+    with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
+        bearer = {"Authorization": "Bearer " + connect(client, browser)}
+        # A space without the report field still gets the comment.
+        assert client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer).json()["reports"]["state"] == "not_configured"
+        fake.reports = []
+        first = client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer).json()
+        assert first["reports"] == {"state": "written", "written": 1, "total": 1}
+        assert [row["name"] for row in fake.reports] == ["PPAP 审核报告 · PFMEA · 2026-11-16 1530.pdf"]
+        assert asked[0]["round_id"] == round_id and asked[0]["file_version_id"] == "v-1"
+        # Written back again: the name is already there, nothing is sent twice.
+        assert client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer).json()["reports"]["written"] == 1
+        assert fake.uploads == 1
+        # Reports are results; the package read from the work item does not include them.
+        files = client.get("/integrations/meego/work-items/proj_1/story/42/files", headers=bearer).json()
+        assert [row["name"] for row in files["files"]] == ["PFMEA.xlsx"]
+        # A lost upload reply is settled by reading the field back, not by sending again.
+        fake.reports, fake.fail_upload_unknown = [], True
+        landed = client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer).json()["reports"]
+        assert landed["state"] == "written" and fake.uploads == 2

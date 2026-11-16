@@ -130,12 +130,19 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
     setBusy('写回中…');
     setNotice('');
     try {
-      const reply = await call<{ field: string }>(`/integrations/meego/rounds/${latest.round_id}/writeback`, { method: 'POST' });
+      const reply = await call<{ field: string; reports?: { state: string; written: number; total: number } }>(`/integrations/meego/rounds/${latest.round_id}/writeback`, { method: 'POST' });
       onWritten(latest.round_id);
       const field = { written: '，并更新了“PPAP 审核结论”字段', unchanged: '，“PPAP 审核结论”字段已是该结论', not_configured: '' }[reply.field] ?? '';
-      void window.JSSDK.toast.success('已写入工作项评论区' + field);
-      if (reply.field === 'not_configured') setNotice('结论已写入评论区。这个空间还没有“PPAP 审核结论”字段，管理员添加后，结论会同时写入字段，可用于流转条件和视图筛选。');
-      else if (reply.field === 'failed' || reply.field === 'unknown') setNotice('结论已写入评论区，但“PPAP 审核结论”字段没有更新成功，请检查你对这个字段的编辑权限后再写回一次。');
+      const reports = reply.reports?.state === 'written' && reply.reports.written > 0 ? `，${reply.reports.written} 份审核报告已在“PPAP 审核报告”字段` : '';
+      void window.JSSDK.toast.success('已写入工作项评论区' + field + reports);
+      // One notice at a time, the one the person can act on first.
+      const notes: string[] = [];
+      if (reply.field === 'not_configured') notes.push('这个空间还没有“PPAP 审核结论”字段，管理员添加后，结论会同时写入字段，可用于流转条件和视图筛选。');
+      else if (reply.field === 'failed' || reply.field === 'unknown') notes.push('“PPAP 审核结论”字段没有更新成功，请检查你对这个字段的编辑权限后再写回一次。');
+      if (reply.reports?.state === 'not_configured') notes.push('这个空间还没有“PPAP 审核报告”附件字段，管理员添加后，逐文件审核报告会一并写回。');
+      else if (reply.reports?.state === 'pending') notes.push('有审核报告还在生成，生成后再写回一次即可补上。');
+      else if (reply.reports?.state === 'failed' || reply.reports?.state === 'unknown') notes.push('审核报告没有全部附上，请稍后再写回一次；已附上的不会重复。');
+      if (notes.length) setNotice('结论已写入评论区。' + notes.join(''));
     } catch (failure) {
       setNotice(say(failure));
     } finally {

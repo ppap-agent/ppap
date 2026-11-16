@@ -16,10 +16,11 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from product.feishu import authorize_url
+from product.files import ObjectMissing
 from product.identity import SESSION_COOKIE, can_read, new_token
 from product.logs import emit
 from product.meego import MeegoClient, MeegoError, WorkItemRef, work_item
-from product.meego_writeback import CONCLUSION_LABEL, marker, overall, summary, task_link
+from product.meego_writeback import CONCLUSION_LABEL, marker, overall, report_name, summary, task_link
 from product.store.meego import MeegoConnectError, MeegoStore
 from product.store.store import _as_uuid
 
@@ -302,11 +303,12 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
                 if isinstance(state, JSONResponse):
                     return state
                 field = write_field(session.principal, binding["user_key"], item, task)
+                reports = write_reports(session.principal, binding["user_key"], item, task)
             except MeegoError as exc:
                 return meego_failure(exc)
             finally:
                 guard.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (lock_key,))
-        return JSONResponse({"state": state, "field": field, "round_id": round_body["id"], "link": link})
+        return JSONResponse({"state": state, "field": field, "reports": reports, "round_id": round_body["id"], "link": link})
 
     def write_comment(user_key: str, item: WorkItemRef, lines: list[str], mark: str):
         # Read before writing: an earlier attempt may already have landed.
@@ -322,6 +324,44 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
                 return "written"
             return JSONResponse({"error": "meego_writeback_unknown"}, status_code=502)
         return "written"
+
+    def write_reports(principal, user_key: str, item: WorkItemRef, task: dict) -> dict:
+        """Append each audited file's report PDF to the space's report field, once per round.
+
+        A report's name carries its round's time, so a re-audit adds its own reports beside the
+        earlier ones and never replaces them. Names already in the field are not sent again; an
+        upload with an unknown outcome is read back once, never resent blindly.
+        """
+        rows = [row for row in task.get("files") or [] if row.get("selection") == "selected" and row.get("audit")]
+        try:
+            field_key = client.report_field(user_key, item)
+            if field_key is None:
+                return {"state": "not_configured", "written": 0, "total": len(rows)}
+            present = client.field_file_names(user_key, item, field_key)
+            written = pending = 0
+            for row in rows:
+                audit, report = row["audit"], row["audit"].get("report") or {}
+                artifact = report.get("artifact") or {}
+                if report.get("state") != "ready" or not report.get("report_id") or not artifact.get("artifact_id"):
+                    pending += 1
+                    continue
+                name = report_name(str(row["file"]["original_filename"]), task.get("round_started_at"))
+                if name in present:
+                    written += 1
+                    continue
+                reference = {"task_id": task["id"], "report_id": report["report_id"], "round_id": audit["round_id"], "file_version_id": row["file"]["id"], "result_attempt": audit["result_attempt"]}
+                _, content = store.audit_report_pdf(principal, reference, artifact["artifact_id"])
+                try:
+                    client.upload_file(user_key, item, field_key, name, content, "application/pdf")
+                except MeegoError as exc:
+                    if not exc.unknown or name not in client.field_file_names(user_key, item, field_key):
+                        return {"state": "unknown" if exc.unknown else "failed", "written": written, "total": len(rows)}
+                written += 1
+            return {"state": "pending" if pending else "written", "written": written, "total": len(rows)}
+        except (MeegoError, KeyError, ValueError, ObjectMissing) as exc:
+            # The comment already landed; a report that cannot be attached does not undo it.
+            emit("meego_report_writeback_failed", level=logging.WARNING, code=getattr(exc, "code", type(exc).__name__))
+            return {"state": "failed", "written": 0, "total": len(rows)}
 
     def write_field(principal, user_key: str, item: WorkItemRef, task: dict) -> str:
         """Set the work item's conclusion field when the space has one; flow conditions and views read it.
