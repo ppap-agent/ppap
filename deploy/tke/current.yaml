@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: 0f64d80a5154ca86a98c279b0f9a7de48044ff7a
+  PPAP_BUILD_SHA: 05753d821949af203e73f0c438f1974c750e8eaf
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_ONLYOFFICE_URL: https://ppap.icoastline.com/office
@@ -413,7 +413,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-api@sha256:8712668d50517a9dff82d4d596f8ecb5a13917b8fa0da8ee9be43d7914864280
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-api@sha256:d2a0285a7d3d83f57dbb7bb146926c280a444a470d54ca935e3afb47197456c3
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -483,6 +483,18 @@ spec:
                   name: ppap-current
                   key: PPAP_MEEGO_PLUGIN_SECRET
                   optional: true
+            - name: PPAP_MEEGO_PLUGIN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_MEEGO_PLUGIN_ID
+                  optional: true
+            - name: PPAP_MEEGO_TENANT_MAP
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_MEEGO_TENANT_MAP
+                  optional: true
             - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
@@ -539,7 +551,7 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-deep@sha256:34a38ed531f1795c41532b67efe24614508cfd8b265eb4cd8ff4a5056ff124d2
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-deep@sha256:16c012219df07c190b10f28790e2ee8b3b5608849e3e4b38f9458bf405fb95d4
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -616,7 +628,7 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
         - name: worker
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-worker@sha256:e8ed44eb1f56511c01e49748c517127fff5133cbd85264bac0b888ed87fdd546
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-worker@sha256:da8f1067a070af9e7e7fb1a61b47c0c6e020195f5c463a0f655d201e0c1cdcd2
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -724,7 +736,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-web@sha256:51030e8927f9870608e85c8979f71547db14d1089051cd9cdba9f6efb6beaa2c
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-web@sha256:3d39de3d6564b3843e519a05f9b3e02a192c82706c81a3826762ed72d651003d
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 4173
