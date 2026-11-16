@@ -19,7 +19,7 @@ from product.feishu import authorize_url
 from product.identity import SESSION_COOKIE, can_read, new_token
 from product.logs import emit
 from product.meego import MeegoClient, MeegoError, WorkItemRef, work_item
-from product.meego_writeback import marker, summary, task_link
+from product.meego_writeback import CONCLUSION_LABEL, marker, overall, summary, task_link
 from product.store.meego import MeegoConnectError, MeegoStore
 from product.store.store import _as_uuid
 
@@ -292,25 +292,66 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             return JSONResponse({"error": str(exc)}, status_code=409)
         link = task_link(web_base, str(task["id"]))
         mark = marker(str(round_body["id"]))
+        lock_key = "meego-writeback:" + item.object_ref()
         with store._conn() as guard:
-            row = guard.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", ("meego-writeback:" + str(round_body["id"]),)).fetchone()
+            row = guard.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (lock_key,)).fetchone()
             if not (row and row[0]):
                 return JSONResponse({"error": "writeback_in_progress"}, status_code=409)
             try:
-                # Read before writing: an earlier attempt may already have landed.
-                if any(mark in text for text in client.comment_texts(binding["user_key"], item)):
-                    return JSONResponse({"state": "already_written", "round_id": round_body["id"], "link": link})
-                try:
-                    client.add_comment(binding["user_key"], item, lines)
-                except MeegoError as exc:
-                    if not exc.unknown:
-                        return meego_failure(exc)
-                    # Unknown outcome: read back once, never write blindly again.
-                    if any(mark in text for text in client.comment_texts(binding["user_key"], item)):
-                        return JSONResponse({"state": "written", "round_id": round_body["id"], "link": link})
-                    return JSONResponse({"error": "meego_writeback_unknown"}, status_code=502)
+                state = write_comment(binding["user_key"], item, lines, mark)
+                if isinstance(state, JSONResponse):
+                    return state
+                field = write_field(session.principal, binding["user_key"], item, task)
             except MeegoError as exc:
                 return meego_failure(exc)
             finally:
-                guard.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", ("meego-writeback:" + str(round_body["id"]),))
-        return JSONResponse({"state": "written", "round_id": round_body["id"], "link": link})
+                guard.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (lock_key,))
+        return JSONResponse({"state": state, "field": field, "round_id": round_body["id"], "link": link})
+
+    def write_comment(user_key: str, item: WorkItemRef, lines: list[str], mark: str):
+        # Read before writing: an earlier attempt may already have landed.
+        if any(mark in text for text in client.comment_texts(user_key, item)):
+            return "already_written"
+        try:
+            client.add_comment(user_key, item, lines)
+        except MeegoError as exc:
+            if not exc.unknown:
+                raise
+            # Unknown outcome: read back once, never write blindly again.
+            if any(mark in text for text in client.comment_texts(user_key, item)):
+                return "written"
+            return JSONResponse({"error": "meego_writeback_unknown"}, status_code=502)
+        return "written"
+
+    def write_field(principal, user_key: str, item: WorkItemRef, task: dict) -> str:
+        """Set the work item's conclusion field when the space has one; flow conditions and views read it.
+
+        Only the latest finished round of this work item may set it, so an older round written back
+        later never replaces a newer conclusion. The field holds the round's own overall conclusion.
+        """
+        target = {"provider": "meego", "object_kind": "work_item", "object_ref": item.object_ref()}
+        rounds = [t for t in store.list_audit_tasks(principal, 50, 0, target=target) if t.get("state") == "completed" and t.get("round_id")]
+        if not rounds or max(rounds, key=lambda t: t["created_at"])["id"] != task["id"]:
+            return "older_round"
+        try:
+            found = client.conclusion_field(user_key, item)
+            if found is None:
+                return "not_configured"
+            field_key, options = found
+            option = options.get(CONCLUSION_LABEL[overall(task)])
+            if not option:
+                return "not_configured"
+            if client.field_option(user_key, item, field_key) == option:
+                return "unchanged"
+            try:
+                client.set_field(user_key, item, field_key, option)
+            except MeegoError as exc:
+                if not exc.unknown:
+                    raise
+                # Setting a value is idempotent, but an unknown result is still read back, not resent.
+                return "written" if client.field_option(user_key, item, field_key) == option else "unknown"
+            return "written"
+        except MeegoError as exc:
+            # The comment already landed; a field the person cannot edit does not undo it.
+            emit("meego_field_writeback_failed", level=logging.WARNING, code=exc.code)
+            return "failed"

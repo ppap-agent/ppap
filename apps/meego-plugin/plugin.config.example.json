@@ -6,6 +6,10 @@
     {
       "id": "REPLACE_WITH_DETAIL_TAB_RESOURCE_ID",
       "entry": "./src/features/ppap_tab/index.tsx"
+    },
+    {
+      "id": "REPLACE_WITH_NODE_CONTROL_RESOURCE_ID",
+      "entry": "./src/features/ppap_node/index.tsx"
     }
   ]
 }

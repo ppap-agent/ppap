@@ -9,7 +9,7 @@ never presented as passed.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
 # One vocabulary with the PPAP web app (apps/web/src/audit/status-labels.ts).
@@ -55,6 +55,10 @@ def writeback_state(task: dict) -> str:
     return "ready" if audited else "round_incomplete"
 
 
+# Customers read the comment in China; a bare UTC clock reads as the wrong time.
+BEIJING = timezone(timedelta(hours=8))
+
+
 def _clock(raw) -> str:
     stamp = datetime.now(timezone.utc)
     if isinstance(raw, str) and raw:
@@ -62,9 +66,15 @@ def _clock(raw) -> str:
             stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         except ValueError:
             pass
-    if stamp.tzinfo is not None:
-        stamp = stamp.astimezone(timezone.utc)
-    return stamp.strftime("%Y 年 %m 月 %d 日 %H:%M")
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(BEIJING).strftime("%Y 年 %m 月 %d 日 %H:%M（北京时间）")
+
+
+def overall(task: dict) -> str:
+    """The round's one conclusion: any NG is NG, any unknown keeps it open; only all PASS conforms."""
+    conclusions = {row["audit"]["conclusion"] for row in _selected(task) if row.get("audit")}
+    return "NG" if "NG" in conclusions else "UNKNOWN" if "UNKNOWN" in conclusions or not conclusions else "PASS"
 
 
 def summary(task: dict, web_url: str) -> list[str]:
@@ -86,7 +96,6 @@ def summary(task: dict, web_url: str) -> list[str]:
         ng += int(counts.get("ng_count") or 0)
         unsure += sum(int(counts.get(key) or 0) for key in ("unknown_count", "not_covered_count", "error_count"))
         lines.append(f"{name}：{CONCLUSION_LABEL[conclusion]}")
-    overall = "NG" if "NG" in conclusions else "UNKNOWN" if "UNKNOWN" in conclusions else "PASS"
-    lines.append(f"总体：{CONCLUSION_LABEL[overall]}；不符合 {ng} 项，尚未确定 {unsure} 项")
+    lines.append(f"总体：{CONCLUSION_LABEL[overall(task)]}；不符合 {ng} 项，尚未确定 {unsure} 项")
     lines.append("查看详情：" + task_link(web_url, str(task["id"])))
     return lines

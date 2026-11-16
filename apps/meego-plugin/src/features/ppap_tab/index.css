@@ -46,6 +46,11 @@ body { margin: 0; background: transparent; }
 .paper { overflow: auto; }
 .paper canvas { display: block; }
 
+.confirm-row { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.remove-reason .semi-input-wrapper { min-width: 180px; }
+.report-view { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.scope { margin-bottom: 8px; }
+
 /* Narrow panes (a phone, or a slim detail tab): one thing at a time. */
 @container ppap (max-width: 679px) {
   .split.has-detail .issues { display: none; }
@@ -61,3 +66,5 @@ body { margin: 0; background: transparent; }
   .split { grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); }
   .issue { grid-template-columns: minmax(280px, 2fr) minmax(0, 3fr); grid-template-areas: "main original" "review original"; grid-template-rows: auto 1fr; align-items: start; }
 }
+
+.node-card { display: flex; flex-direction: column; gap: 6px; padding: 8px 4px; font-size: 14px; color: var(--semi-color-text-0); }

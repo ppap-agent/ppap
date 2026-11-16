@@ -17,6 +17,9 @@ from product.settings import Settings
 TIMEOUT = httpx.Timeout(20.0)
 DOWNLOAD_TIMEOUT = httpx.Timeout(60.0, connect=20.0)
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
+# A space opts in to a conclusion field by creating a single-select field with this alias or name.
+CONCLUSION_FIELD_ALIAS = "ppap_conclusion"
+CONCLUSION_FIELD_NAME = "PPAP 审核结论"
 
 
 class MeegoError(Exception):
@@ -207,6 +210,56 @@ class MeegoClient:
         except httpx.HTTPError:
             raise MeegoError("meego_download_failed") from None
         return b"".join(chunks)
+
+    def _put(self, path: str, body: dict, user_key: str, stage: str) -> dict:
+        headers = {"X-Plugin-Token": self.plugin_token(), "X-User-Key": user_key, "Content-Type": "application/json"}
+        try:
+            response = self.http.put(self.base + path, json=body, headers=headers, timeout=TIMEOUT)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            raise MeegoError(f"meego_{stage}_failed") from None
+        except httpx.HTTPError:
+            raise MeegoError(f"meego_{stage}_failed", unknown=True) from None
+        return self._json(response, stage)
+
+    def conclusion_field(self, user_key: str, item: WorkItemRef) -> tuple[str, dict[str, str]] | None:
+        """The space's single-select field for the PPAP conclusion and its option ids by label.
+
+        A space opts in by creating it; it is found by its integration alias, else its name.
+        """
+        payload = self._post(f"/open_api/{item.project_key}/field/all", {"work_item_type_key": item.work_item_type_key}, user_key, "field")
+        fields = [field for field in payload.get("data") or [] if isinstance(field, dict) and field.get("field_type_key") == "select"]
+        chosen = next((f for f in fields if f.get("field_alias") == CONCLUSION_FIELD_ALIAS), None) or next((f for f in fields if f.get("field_name") == CONCLUSION_FIELD_NAME), None)
+        if not chosen or not chosen.get("field_key"):
+            return None
+        options = {str(o.get("label") or ""): str(o.get("value") or "") for o in chosen.get("options") or [] if isinstance(o, dict) and o.get("is_disabled") != 1}
+        return str(chosen["field_key"]), {label: value for label, value in options.items() if label and value}
+
+    def field_option(self, user_key: str, item: WorkItemRef, field_key: str) -> str | None:
+        """The option id a single-select field holds on this work item now, or None when empty."""
+        payload = self._post(
+            f"/open_api/{item.project_key}/work_item/{item.work_item_type_key}/query",
+            {"work_item_ids": [int(item.work_item_id)], "fields": [field_key]},
+            user_key,
+            "work_item",
+        )
+        rows = payload.get("data") or []
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            raise MeegoError("meego_work_item_not_found")
+        for field in rows[0].get("fields") or []:
+            if isinstance(field, dict) and field.get("field_key") == field_key:
+                value = field.get("field_value")
+                if isinstance(value, dict):
+                    value = value.get("value")
+                return str(value) if value not in (None, "") else None
+        return None
+
+    def set_field(self, user_key: str, item: WorkItemRef, field_key: str, value: str) -> None:
+        self._put(
+            f"/open_api/{item.project_key}/work_item/{item.work_item_type_key}/{item.work_item_id}",
+            {"update_fields": [{"field_key": field_key, "field_value": value}]},
+            user_key,
+            "field_update",
+        )
 
     def _comment_object(self, item: WorkItemRef) -> dict:
         return {"type": "WORKITEM", "work_item_type_key": item.work_item_type_key, "work_item_id": item.work_item_id}

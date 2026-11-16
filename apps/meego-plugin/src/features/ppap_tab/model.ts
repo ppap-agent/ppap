@@ -31,7 +31,7 @@ export type Check = {
   finding: { status: FindingStatus; classification?: string; suggestions?: string; review?: Review | null } | null;
 };
 
-export type Report = { state: 'not_eligible' | 'pending' | 'generating' | 'ready' | 'failed'; report_id: string | null; artifact: { artifact_id: string; filename: string } | null };
+export type Report = { state: 'not_eligible' | 'pending' | 'generating' | 'ready' | 'failed'; report_id: string | null; artifact: { artifact_id: string; filename: string } | null; regenerate_allowed?: boolean; reason?: string | null };
 
 export type FileAudit = {
   round_id: string;
@@ -45,12 +45,18 @@ export type FileAudit = {
   report: Report;
 };
 
+export type Choice = { id: string; title: string };
+
 export type TaskFile = {
   file: FileVersion;
   selection: 'selected' | 'unselected' | 'removed';
   removal_reason: string | null;
   reference_only?: boolean;
-  match: { state: string; document_type: string | null; rule: { title: string } | null; gaps?: string[] } | null;
+  validation_id?: string | null;
+  preferred_rule_version_id?: string | null;
+  replacement_of_file_version_id?: string | null;
+  rule_options?: Choice[];
+  match: { state: string; document_type: string | null; rule: { title: string } | null; gaps?: string[]; candidates?: Choice[] } | null;
   audit?: FileAudit | null;
 };
 
@@ -66,6 +72,8 @@ export type Task = {
   estimated_points: number | null;
   input_revision?: number;
   confirmation_basis_digest: string | null;
+  deep_mode?: boolean;
+  deep_mode_option?: { available: boolean; reason?: string | null };
   execution?: 'queued' | 'running' | 'completed' | 'failed';
   has_execution_error?: boolean;
   progress?: { completed: number; total: number };

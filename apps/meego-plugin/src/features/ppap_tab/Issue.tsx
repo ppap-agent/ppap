@@ -1,6 +1,6 @@
 // One requirement of one file: what the machine concluded, where the original shows it,
 // and the person's own review. The review is saved beside the machine result, never over it.
-import { Banner, Button, Radio, RadioGroup, Space, Tag, TextArea, Typography } from '@douyinfe/semi-ui';
+import { Banner, Button, Input, Radio, RadioGroup, Space, Tag, TextArea, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useId, useState } from 'react';
 import { OriginalView } from './Evidence';
 import { bucket, bucketColor, bucketLabel, judgmentLabel, locationLabel, observation, reviewOf } from './model';
@@ -53,7 +53,7 @@ export function Issue({ task, row, check, position, stale, onBack, onChanged }: 
       </div>
       {check.review_item_key && task.round_id && (
         <div className="issue-review">
-          <ReviewForm key={check.review_item_key} roundId={task.round_id} check={check} fileName={fileOf} onChanged={onChanged} />
+          <ReviewForm key={check.review_item_key} roundId={task.round_id} check={check} fileName={fileOf} ownFile={row.file.id} onChanged={onChanged} />
         </div>
       )}
     </article>
@@ -62,7 +62,9 @@ export function Issue({ task, row, check, position, stale, onBack, onChanged }: 
 
 const judgments = ['confirm', 'disagree', 'unknown', 'manual-satisfied', 'manual-unsatisfied'] as const;
 
-function ReviewForm({ roundId, check, fileName, onChanged }: { roundId: string; check: Check; fileName: (versionId: string) => { original_filename: string } | undefined; onChanged: () => Promise<void> }) {
+function ReviewForm({ roundId, check, fileName, ownFile, onChanged }: { roundId: string; check: Check; fileName: (versionId: string) => { original_filename: string } | undefined; ownFile: string; onChanged: () => Promise<void> }) {
+  const [where, setWhere] = useState('');
+  const [quote, setQuote] = useState('');
   const saved = reviewOf(check);
   const id = useId();
   const [editing, setEditing] = useState(!saved);
@@ -87,7 +89,10 @@ function ReviewForm({ roundId, check, fileName, onChanged }: { roundId: string; 
     .map(item => ({ file_version_id: item.file_version_id, location: locationLabel(item.locator), excerpt: item.excerpt.trim().slice(0, 4000) }))
     .slice(0, 20);
   const manual = judgment.startsWith('manual-');
-  const valid = Boolean(judgment) && rationale.trim().length > 0 && rationale.trim().length <= 2000 && nextStep.trim().length <= 2000 && (!manual || cited.length > 0);
+  // Without a located result, the reviewer cites the original themself: where, and what it says.
+  const own: Citation[] = where.trim() && quote.trim() ? [{ file_version_id: ownFile, location: where.trim(), excerpt: quote.trim() }] : [];
+  const citations = cited.length ? cited : own;
+  const valid = Boolean(judgment) && rationale.trim().length > 0 && rationale.trim().length <= 2000 && nextStep.trim().length <= 2000 && (!manual || citations.length > 0);
 
   async function submit() {
     setBusy(true);
@@ -101,7 +106,7 @@ function ReviewForm({ roundId, check, fileName, onChanged }: { roundId: string; 
           rationale: rationale.trim(),
           next_step: nextStep.trim(),
           version: saved?.version ?? 0,
-          ...(manual ? { citations: cited } : saved?.citations?.length ? { citations: saved.citations } : {}),
+          ...(manual ? { citations } : saved?.citations?.length ? { citations: saved.citations } : {}),
         },
       });
       setEditing(false);
@@ -136,12 +141,20 @@ function ReviewForm({ roundId, check, fileName, onChanged }: { roundId: string; 
       {notice && <Banner type="warning" fullMode={false} closeIcon={null} description={notice} />}
       <RadioGroup direction="vertical" aria-label="人工判断" value={judgment} disabled={busy} onChange={event => setJudgment(String(event.target.value))}>
         {judgments.map(value => (
-          <Radio key={value} value={value} disabled={value.startsWith('manual-') && cited.length === 0}>
+          <Radio key={value} value={value}>
             {judgmentLabel[value]}
           </Radio>
         ))}
       </RadioGroup>
-      {cited.length === 0 && <Text type="tertiary" size="small">这一条没有可引用的原件位置，人工确认满足或不满足需要在 PPAP 中补充引用。</Text>}
+      {manual && cited.length === 0 && (
+        <>
+          <Text type="tertiary" size="small">这一条没有可定位的原件位置。人工确认需要写明你依据的位置和原文。</Text>
+          <label htmlFor={`${id}-where`}>原件位置</label>
+          <Input id={`${id}-where`} value={where} maxLength={4000} disabled={busy} onChange={setWhere} placeholder="例如：工作表 PFD 第 12 行" />
+          <label htmlFor={`${id}-quote`}>原文摘录</label>
+          <TextArea id={`${id}-quote`} value={quote} maxLength={4000} autosize={{ minRows: 1, maxRows: 4 }} disabled={busy} onChange={setQuote} />
+        </>
+      )}
       <label htmlFor={`${id}-why`}>理由</label>
       <TextArea id={`${id}-why`} value={rationale} maxLength={2000} autosize={{ minRows: 2, maxRows: 8 }} disabled={busy} onChange={setRationale} placeholder="说明你的判断依据" />
       <label htmlFor={`${id}-next`}>下一步（选填）</label>

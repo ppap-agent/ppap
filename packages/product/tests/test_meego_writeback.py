@@ -26,7 +26,8 @@ REMOVED = {"file": {"original_filename": "旧版.xlsx"}, "selection": "removed",
 def test_comment_states_the_web_conclusions_and_counts():
     lines = summary(task(audited("PFMEA.xlsx", "NG", ng_count=2, unknown_count=1), audited("流程图.xlsx", "PASS", pass_count=1044), REFERENCE, REMOVED), "https://ppap.example")
     assert lines[0] == "PPAP 审核结果（PPAP 审核轮次 r1）"
-    assert lines[1] == "审核时间：2026 年 11 月 16 日 07:30"
+    # 07:30 UTC is read in China as Beijing time.
+    assert lines[1] == "审核时间：2026 年 11 月 16 日 15:30（北京时间）"
     assert lines[2:5] == ["PFMEA.xlsx：不符合", "流程图.xlsx：符合", "图纸.pdf：作为参考资料，未单独审核"]
     assert lines[5] == "总体：不符合；不符合 2 项，尚未确定 1 项"
     assert all("旧版" not in line for line in lines)

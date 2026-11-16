@@ -50,6 +50,11 @@ class FakeMeego:
         self.comments: list[str] = []
         self.downloads = 0
         self.fail_comment_unknown = False
+        # The space's conclusion field: None means the space has not created one.
+        self.conclusion_options: dict[str, str] | None = None
+        self.conclusion: str | None = None
+        self.field_updates = 0
+        self.fail_field_unknown = False
         self.files = [{"uid": FILE_UID, "name": "PFMEA.xlsx", "size": "12KB", "type": "application/vnd.ms-excel"}]
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -66,8 +71,24 @@ class FakeMeego:
             return httpx.Response(200, json={"err_code": 0, "data": [{"user_key": self.user_key, "name_cn": "飞书项目用户", "status": "activated", "out_id": "on_x"}]})
         if path.endswith("/work_item/story/query"):
             assert request.headers.get("X-User-Key") == self.user_key
-            field = {"field_key": "field_files", "field_type_key": "multi_file", "field_value": self.files}
-            return httpx.Response(200, json={"err_code": 0, "data": [{"id": 42, "name": "PPAP 交付", "fields": [field]}]})
+            fields = [{"field_key": "field_files", "field_type_key": "multi_file", "field_value": self.files}]
+            if self.conclusion is not None:
+                fields.append({"field_key": "field_ppap", "field_type_key": "select", "field_value": {"label": "?", "value": self.conclusion}})
+            return httpx.Response(200, json={"err_code": 0, "data": [{"id": 42, "name": "PPAP 交付", "fields": fields}]})
+        if path.endswith("/field/all"):
+            fields = [{"field_key": "priority", "field_type_key": "select", "field_name": "优先级", "options": [{"label": "P0", "value": "0"}]}]
+            if self.conclusion_options is not None:
+                options = [{"label": label, "value": value, "is_disabled": 2} for label, value in self.conclusion_options.items()]
+                fields.append({"field_key": "field_ppap", "field_alias": "ppap_conclusion", "field_type_key": "select", "field_name": "PPAP 审核结论", "options": options})
+            return httpx.Response(200, json={"err_code": 0, "data": fields})
+        if request.method == "PUT" and path.endswith("/work_item/story/42"):
+            update = json.loads(request.content)["update_fields"][0]
+            assert update["field_key"] == "field_ppap"
+            self.field_updates += 1
+            self.conclusion = update["field_value"]
+            if self.fail_field_unknown:
+                raise httpx.ReadTimeout("lost reply", request=request)
+            return httpx.Response(200, json={"err_code": 0, "err": {}})
         if path.endswith("/file/download"):
             self.downloads += 1
             return httpx.Response(200, content=b"workbook bytes", headers={"Content-Type": "application/octet-stream"})
@@ -312,3 +333,44 @@ def test_work_item_audits_are_this_persons_tasks_for_that_item_with_readback_sta
             assert unknown.status_code == 200 and unknown.json()["written_round_ids"] is None
         with httpx.Client(transport=httpx.MockTransport(denied)) as shut, TestClient(create_app(store.settings, auth_store=store, http=shut)) as shut_client:
             assert shut_client.get("/integrations/meego/work-items/proj_1/story/42/audits", headers=bearer).status_code == 403
+
+
+def test_writeback_sets_the_conclusion_field_only_for_the_latest_round_and_reads_back_first(auth_store_factory, monkeypatch):
+    tenant = "meego-feishu-" + uuid.uuid4().hex
+    fake = FakeMeego()
+    store = auth_store_factory(settings_for(tenant, fake.tenant), reset=False, role="api")
+    principal, browser = feishu_login(store, tenant)
+    latest, older = str(uuid.uuid4()), str(uuid.uuid4())
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
+    monkeypatch.setattr(store, "grants", lambda rid, uid: {"read"})
+    monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
+    monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
+    monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: finished_task(task_id))
+    rounds = [
+        {"id": "t-" + latest, "round_id": latest, "state": "completed", "created_at": "2026-11-16T02:00:00+00:00"},
+        {"id": "t-" + older, "round_id": older, "state": "completed", "created_at": "2026-11-15T02:00:00+00:00"},
+        {"id": "draft", "round_id": None, "state": "pending_confirm", "created_at": "2026-11-16T03:00:00+00:00"},
+    ]
+    monkeypatch.setattr(store, "list_audit_tasks", lambda who, limit, offset, target=None: rounds)
+    with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
+        bearer = {"Authorization": "Bearer " + connect(client, browser)}
+        # A space without the field still gets the comment.
+        first = client.post(f"/integrations/meego/rounds/{latest}/writeback", headers=bearer).json()
+        assert (first["state"], first["field"]) == ("written", "not_configured")
+        assert "北京时间" in fake.comments[0]
+        fake.conclusion_options = {"符合": "opt_pass", "不符合": "opt_ng", "尚有未确定项": "opt_unknown"}
+        # The round's overall conclusion (NG) goes into the field; the comment is not repeated.
+        again = client.post(f"/integrations/meego/rounds/{latest}/writeback", headers=bearer).json()
+        assert (again["state"], again["field"]) == ("already_written", "written")
+        assert fake.conclusion == "opt_ng" and len(fake.comments) == 1
+        # Reading first: an equal value is not written again.
+        assert client.post(f"/integrations/meego/rounds/{latest}/writeback", headers=bearer).json()["field"] == "unchanged"
+        assert fake.field_updates == 1
+        # An older round written back later never replaces the newer conclusion.
+        fake.conclusion = "opt_pass"
+        assert client.post(f"/integrations/meego/rounds/{older}/writeback", headers=bearer).json()["field"] == "older_round"
+        assert fake.conclusion == "opt_pass" and fake.field_updates == 1
+        # A lost reply is settled by reading the field back.
+        fake.fail_field_unknown = True
+        assert client.post(f"/integrations/meego/rounds/{latest}/writeback", headers=bearer).json()["field"] == "written"
+        assert fake.conclusion == "opt_ng"
