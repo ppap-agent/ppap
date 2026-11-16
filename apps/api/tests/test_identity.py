@@ -552,6 +552,39 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(host.json()["identity"]["tenant_key"], "tk-live")
         self.assertTrue(host.cookies.get("ppap_session"))
 
+    def test_docs_addon_signs_in_with_a_bearer_session_that_is_never_a_cookie(self):
+        with _clean_env(
+            FEISHU_APP_ID="cli_test",
+            FEISHU_APP_SECRET="secret",
+            FEISHU_VERIFICATION_TOKEN="verify-test",
+            PPAP_CURRENT_TENANT_ALLOWLIST="tk-live",
+            PPAP_BUILD_SHA="a" * 40,
+        ):
+            settings = Settings()
+        client = self._oauth_client(_TokenHttp(), settings)
+        self.assertEqual(client.post("/login/feishu/addon", json={}).status_code, 400)
+        signed = client.post("/login/feishu/addon", json={"code": "host-code"})
+        self.assertEqual(signed.status_code, 200, signed.text)
+        self.assertEqual(signed.json()["identity"]["tenant_key"], "tk-live")
+        self.assertFalse(signed.cookies.get("ppap_session"))
+        self.assertNotIn("set-cookie", signed.headers)
+        token = signed.json()["session_token"]
+        bearer = {"Authorization": "Bearer " + token}
+        self.assertEqual(client.get("/me").status_code, 401)
+        me = client.get("/me", headers=bearer)
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.json()["identity"], signed.json()["identity"])
+        self.assertNotIn("session_token", me.json())
+        # The add-on token is not a cookie, and a web cookie is not an add-on token.
+        self.assertEqual(client.get("/me", cookies={"ppap_session": token}).status_code, 401)
+        web = client.post("/login/feishu/host", json={"code": "host-code"}).cookies.get("ppap_session")
+        client.cookies.clear()
+        self.assertEqual(client.get("/me", headers={"Authorization": "Bearer docs_" + web}).status_code, 401)
+        self.assertEqual(client.get("/me", headers={"Authorization": "Bearer docs_forged"}).status_code, 401)
+        # A stale add-on token does not fall back to a valid cookie.
+        self.assertEqual(client.get("/me", headers={"Authorization": "Bearer docs_forged"}, cookies={"ppap_session": web}).status_code, 401)
+        self.assertEqual(client.get("/me", cookies={"ppap_session": web}).status_code, 200)
+
 
 class _Resp:
     def __init__(self, payload, status=200):

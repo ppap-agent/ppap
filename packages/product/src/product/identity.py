@@ -13,6 +13,9 @@ from product.settings import Settings
 
 SESSION_COOKIE = "ppap_session"
 EDITION_COOKIE = "ppap_edition"
+# Docs add-on host sessions are Bearer tokens that carry their channel in this prefix.
+DOCS_TOKEN_PREFIX = "docs_"
+DOCS_SESSION_SECONDS = 7200
 PROVIDER_FEISHU = "feishu"
 
 

@@ -1261,6 +1261,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/login/feishu/addon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Login Feishu Addon
+         * @description Sign the Docs add-on in. It runs in a frame inside Feishu, so it gets a short Bearer session and no cookie.
+         */
+        post: operations["login_feishu_addon_login_feishu_addon_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/login/feishu/callback": {
         parameters: {
             query?: never;
@@ -1879,6 +1899,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AddonSession */
+        AddonSession: {
+            /** Display Name */
+            display_name: string;
+            identity: components["schemas"]["IdentityPublic"];
+            /** Membership */
+            membership: string;
+            /** Session Token */
+            session_token: string;
+            /** Tenant Id */
+            tenant_id: string;
+            /** User Id */
+            user_id: string;
+        };
         /** AuditAcceptance */
         AuditAcceptance: {
             /** Reason */
@@ -7990,6 +8024,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    login_feishu_addon_login_feishu_addon_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Code */
+                    code: string;
+                    /** Redirect Uri */
+                    redirect_uri?: string;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSession"];
                 };
             };
             /** @description Validation Error */

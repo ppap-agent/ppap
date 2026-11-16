@@ -74,6 +74,10 @@ class PrincipalPublic(TypedDict):
     identity: IdentityPublic
 
 
+class AddonSession(PrincipalPublic):
+    session_token: str
+
+
 class WritebackTarget(TypedDict):
     available: bool
     provider: NotRequired[str]

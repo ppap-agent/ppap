@@ -66,7 +66,7 @@ from product.files import (
     safe_content_type,
 )
 from product.fixtures import SUBJECTS
-from product.identity import EDITION_COOKIE, SESSION_COOKIE, ProviderAuthError, can_read, can_review, new_token, safe_return_to
+from product.identity import DOCS_SESSION_SECONDS, DOCS_TOKEN_PREFIX, EDITION_COOKIE, SESSION_COOKIE, ProviderAuthError, can_read, can_review, new_token, safe_return_to
 from product.logs import QUIET_PATHS, bind, emit, new_request_id, reset, round_id_from_path
 from product.logs import configure as configure_logs
 from product.mcp import McpError
@@ -105,11 +105,11 @@ def _cookie_kwargs(settings: Settings) -> dict:
     }
 
 
-def _start_feishu_session(store, settings: Settings, info: dict, tokens):
+def _start_feishu_session(store, settings: Settings, info: dict, tokens, *, channel: str = "web", ttl_seconds: int = 43200):
     if not settings.tenant_allowed(str(info.get("tenant_key") or "")):
         return None
     principal = store.upsert_feishu_identity(info["tenant_key"], info["subject"], info["display_name"])
-    return principal, store.create_session(principal, tokens)
+    return principal, store.create_session(principal, tokens, ttl_seconds, channel)
 
 
 def _edition_cookie_kwargs(settings: Settings) -> dict:
@@ -179,10 +179,15 @@ def create_app(
         from product.mcp import Delegation, McpError
 
         delegated = request.scope.get("ppap.delegation")
-        host_token = ""
+        host_token = docs_token = ""
         authorization = request.headers.get("authorization", "")
-        if not isinstance(delegated, Delegation) and authorization[:7].lower() == "bearer " and settings.meego_enabled():
-            host_token = authorization[7:].strip()
+        if not isinstance(delegated, Delegation) and authorization[:7].lower() == "bearer ":
+            bearer = authorization[7:].strip()
+            if bearer.startswith(DOCS_TOKEN_PREFIX):
+                docs_token = bearer
+            elif settings.meego_enabled():
+                host_token = bearer
+        channel = "docs" if docs_token else "web"
         if isinstance(delegated, Delegation):
             try:
                 current = app.state.mcp_store.delegation(delegated.id)
@@ -198,10 +203,11 @@ def create_app(
             session, request.state.meego_binding = loaded
             raw = ""
         else:
-            raw = request.cookies.get(SESSION_COOKIE, "")
+            # A Docs add-on session is a Bearer token only; a web session is a cookie only.
+            raw = docs_token or request.cookies.get(SESSION_COOKIE, "")
             if not raw:
                 return None
-            session = store.load_session(raw)
+            session = store.load_session(raw, channel)
             if not session:
                 return None
         refresh_possible = session.needs_refresh(datetime.now(timezone.utc))
@@ -215,7 +221,7 @@ def create_app(
             return None
         if raw and refresh_possible:
             # A concurrent logout or membership removal must not resurrect it.
-            session = store.load_session(raw)
+            session = store.load_session(raw, channel)
         elif isinstance(delegated, Delegation) and refresh_possible:
             try:
                 session = app.state.mcp_store.delegation(delegated.id).session
@@ -412,8 +418,8 @@ def create_app(
         response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
         return response
 
-    @app.post("/login/feishu/host", response_model=wc.PrincipalPublic, openapi_extra=wc.openapi_body(wc.HostLoginRequest))
-    def login_feishu_host(body: dict) -> JSONResponse:
+    def _host_code_session(body: dict, *, channel: str, ttl_seconds: int):
+        """Exchange a Feishu host code for a session on one channel; returns (principal, raw) or an error response."""
         code = str(body.get("code") or "").strip()
         if not code:
             return JSONResponse({"error": "invalid_host_code"}, status_code=400)
@@ -432,25 +438,38 @@ def create_app(
                 now + timedelta(hours=1),
                 now + timedelta(days=7),
             )
-            raw = store.create_session(principal, tokens)
-            response = JSONResponse(principal.public())
-            response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
-            return response
+            return principal, store.create_session(principal, tokens, ttl_seconds, channel)
         if not settings.feishu_app_id or not settings.feishu_app_secret:
             return JSONResponse({"error": "feishu_disabled"}, status_code=409)
         redirect_uri = str(body.get("redirect_uri") or "").strip() or None
         try:
             tokens = exchange_host_code(http, settings, code, redirect_uri)
             info = user_info(http, tokens.access_token)
-            started = _start_feishu_session(store, settings, info, tokens)
+            started = _start_feishu_session(store, settings, info, tokens, channel=channel, ttl_seconds=ttl_seconds)
             if started is None:
                 return JSONResponse({"error": "tenant_not_allowed"}, status_code=403)
-            principal, raw = started
+            return started
         except FeishuError:
             return JSONResponse({"error": "feishu_host_login_failed"}, status_code=502)
+
+    @app.post("/login/feishu/host", response_model=wc.PrincipalPublic, openapi_extra=wc.openapi_body(wc.HostLoginRequest))
+    def login_feishu_host(body: dict) -> JSONResponse:
+        started = _host_code_session(body, channel="web", ttl_seconds=43200)
+        if isinstance(started, JSONResponse):
+            return started
+        principal, raw = started
         response = JSONResponse(principal.public())
         response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
         return response
+
+    @app.post("/login/feishu/addon", response_model=wc.AddonSession, openapi_extra=wc.openapi_body(wc.HostLoginRequest))
+    def login_feishu_addon(body: dict) -> JSONResponse:
+        """Sign the Docs add-on in. It runs in a frame inside Feishu, so it gets a short Bearer session and no cookie."""
+        started = _host_code_session(body, channel="docs", ttl_seconds=DOCS_SESSION_SECONDS)
+        if isinstance(started, JSONResponse):
+            return started
+        principal, raw = started
+        return JSONResponse({**principal.public(), "session_token": raw}, headers={"Cache-Control": "no-store"})
 
     @app.post("/logout")
     def logout(request: Request) -> JSONResponse:

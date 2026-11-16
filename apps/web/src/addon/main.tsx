@@ -53,8 +53,11 @@ const tones: Record<string, string> = {
 const tag = (tone: string) => 'shrink-0 rounded px-2 text-xs leading-5 whitespace-nowrap ' + (tones[tone] ?? 'bg-warning/10 text-warning')
 const moving = (task: Task) => task.state === 'matching' || task.state === 'reviewing'
 
+// The panel runs in a frame inside Feishu, where the browser sends no cookie of ours: its
+// session is a Bearer token held in memory and renewed from a fresh host code.
+let sessionToken = ''
 async function readJson(url: string, init: RequestInit = {}) {
-  const response = await fetch(url, {credentials: 'include', ...init, headers: {Accept: 'application/json', ...(init.body ? {'Content-Type': 'application/json'} : {})}})
+  const response = await fetch(url, {credentials: 'omit', ...init, headers: {Accept: 'application/json', ...(sessionToken ? {Authorization: `Bearer ${sessionToken}`} : {}), ...(init.body ? {'Content-Type': 'application/json'} : {})}})
   return {status: response.status, ok: response.ok, body: await response.json().catch(() => ({}))}
 }
 
@@ -62,9 +65,11 @@ async function hostLogin(api: string, host: AddonHost) {
   const timeout = new Promise<never>((_, reject) => window.setTimeout(() => reject(Object.assign(new Error('获取飞书登录状态超时，请重新打开面板。'), {reason: 'host-timeout'})), 31_000))
   const code = await Promise.race([host.login(), timeout])
   if (typeof code !== 'string' || !code.trim()) throw Object.assign(new Error('没有取得飞书登录状态，请重新打开面板。'), {reason: 'host-code'})
-  const logged = await readJson(`${api}/login/feishu/host`, {method: 'POST', body: JSON.stringify({code: code.trim()})})
+  sessionToken = ''
+  const logged = await readJson(`${api}/login/feishu/addon`, {method: 'POST', body: JSON.stringify({code: code.trim()})})
   if (!logged.ok) throw new ApiError(String(logged.body.error || 'login_failed'), logged.status)
-  return logged.body as components['schemas']['PrincipalPublic']
+  sessionToken = String(logged.body.session_token || '')
+  return logged.body as components['schemas']['AddonSession']
 }
 
 function AddonApp() {
@@ -122,12 +127,11 @@ function AddonApp() {
   const boot = useCallback(async () => {
     setStage({kind: 'loading', text: '正在连接飞书…'})
     try {
-      const runtime = (await readJson('/runtime-config.json')).body as {api_url: string}
+      const runtime = (await readJson('/addon/runtime-config.json')).body as {api_url: string}
       const api = ((await readJson(`${runtime.api_url}/public-config`)).body as components['schemas']['PublicConfig']).api_url
       const host = await resolveHost()
       host.watchDarkMode?.(dark => { document.documentElement.classList.toggle('dark', dark) })
-      const me = await readJson(`${api}/me`)
-      const principal = me.ok && me.body.identity ? me.body as components['schemas']['PrincipalPublic'] : await hostLogin(api, host)
+      const principal = await hostLogin(api, host)
       const doc = await host.documentToken()
       if (!doc) throw Object.assign(new Error('没有读到当前文档，请重新打开面板。'), {reason: 'no-document'})
       session.current = {api, host, doc}

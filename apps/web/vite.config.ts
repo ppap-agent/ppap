@@ -62,7 +62,7 @@ export default defineConfig({
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
           const url = new URL(req.url || '/', 'http://127.0.0.1')
-          if (url.pathname !== '/runtime-config.json') {
+          if (url.pathname !== '/runtime-config.json' && url.pathname !== '/addon/runtime-config.json') {
             next()
             return
           }
@@ -74,6 +74,15 @@ export default defineConfig({
     },
   ],
   base: '/',
+  experimental: {
+    // The Docs add-on runs in a frame inside Feishu, where no edition cookie is sent, and the
+    // production proxy only routes /addon without one. Its page therefore loads everything
+    // from /addon/…; scripts and styles then find their siblings relatively.
+    renderBuiltUrl(filename, {hostType, hostId}) {
+      if (hostType === 'html') return (hostId.endsWith('addon.html') ? '/addon/' : '/') + filename
+      return {relative: true}
+    },
+  },
   resolve: {alias: {'@': path.resolve(__dirname, './src')}},
   build: {
     rollupOptions: {

@@ -25,6 +25,8 @@ DocumentServer 仅绑定本机 8082；生产需使用受信任的 DocumentServer
 
 普通登录请求 `offline_access`；需要创建报告文档时显式请求 `docx:document:create` 与 `docx:document:write_only`，普通登录不请求写权限。Cookie 与数据库会话上限 12 小时；会话内的飞书 access token 由 API 刷新，日志不输出凭据。
 
+云文档插件（`/addon`）运行在飞书文档的内嵌框架里，浏览器不会带上本站 Cookie：它用 `POST /login/feishu/addon` 换取 2 小时的 Bearer 会话（只存在内存里，不能当作 Cookie 使用），页面的脚本、样式和 `runtime-config.json` 都从 `/addon/` 下加载。
+
 ## Boundary
 
 Web 只调用 Product API。它不能调用 Worker、直接访问数据库、持有对象存储管理凭据、建立第二套业务台账，或嵌入服务端 Feishu / Partner AI Secret。

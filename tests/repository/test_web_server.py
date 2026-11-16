@@ -27,6 +27,10 @@ class WebAliasTests(unittest.TestCase):
             (html / "index.html").write_text("native-audit")
             (html / "addon.html").write_text("addon-page")
             (html / "pdf.worker.mjs").write_text("export const worker = true;")
+            (html / "runtime-config.json").write_text('{"api_url": "/api"}')
+            (html / "assets").mkdir()
+            (html / "assets").chmod(0o755)
+            (html / "assets" / "addon-1.js").write_text("addon-script")
             started = _run(
                 [
                     "docker",
@@ -61,6 +65,12 @@ class WebAliasTests(unittest.TestCase):
                 self.assertEqual(_fetch(name, "/missing-worker.mjs")[0], 404)
                 self.assertEqual(_redirect(name, "/audit/?task=frozen-task"), "/audit?task=frozen-task")
                 self.assertEqual(_redirect(name, "/addon/"), "/addon")
+                # Inside Feishu no edition cookie is sent, so everything the add-on page loads is reachable under /addon.
+                self.assertEqual(_fetch(name, "/addon/assets/addon-1.js"), (200, "addon-script"))
+                self.assertEqual(_fetch(name, "/addon/assets/missing.js")[0], 404)
+                status, body, headers = _request(name, "/addon/runtime-config.json")
+                self.assertEqual((status, body), (200, '{"api_url": "/api"}'))
+                self.assertEqual(headers.get("cache-control"), "no-store")
                 self.assertEqual(_fetch(name, "/missing-customer-path")[0], 404)
             finally:
                 _run(["docker", "rm", "-f", name])

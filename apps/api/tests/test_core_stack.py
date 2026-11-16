@@ -85,6 +85,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code, 404)
         self.assertEqual(client.post("/isolated-dev/reap-staging", json={}).status_code, 404)
         self.assertEqual(client.post("/login/feishu/host", json={"code": "isolated-dev:alice"}).status_code, 400)
+        self.assertEqual(client.post("/login/feishu/addon", json={"code": "isolated-dev:alice"}).status_code, 400)
 
     def test_production_api_does_not_need_bootstrap_or_peer_db_secrets(self):
         with _clean_env(

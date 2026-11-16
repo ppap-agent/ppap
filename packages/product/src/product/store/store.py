@@ -75,6 +75,7 @@ from product.fixtures import (
     USER_CAROL,
 )
 from product.identity import (
+    DOCS_TOKEN_PREFIX,
     PROVIDER_FEISHU,
     Principal,
     Resource,
@@ -315,8 +316,9 @@ class AuthStore:
                 install_customer_presets(conn, str(tenant_id))
                 return Principal(str(user_id), str(tenant_id), provider, app_id, tenant_key, subject, "member", display_name)
 
-    def create_session(self, principal: Principal, tokens: UserTokens | None = None, ttl_seconds: int = 43200) -> str:
-        raw = new_token()
+    def create_session(self, principal: Principal, tokens: UserTokens | None = None, ttl_seconds: int = 43200, channel: str = "web") -> str:
+        # A Docs add-on token names its channel, so a request never has to look it up in two places.
+        raw = (DOCS_TOKEN_PREFIX if channel == "docs" else "") + new_token()
         now = _now()
         expires_at = now + timedelta(seconds=ttl_seconds)
         if tokens is not None:
@@ -328,9 +330,9 @@ class AuthStore:
             conn.execute(
                 """
                 INSERT INTO product.sessions (
-                    token_hash, user_id, tenant_id, expires_at, provider_authorization_id
+                    token_hash, user_id, tenant_id, expires_at, provider_authorization_id, channel
                 )
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     token_hash(raw),
@@ -338,11 +340,12 @@ class AuthStore:
                     principal.tenant_id,
                     expires_at,
                     authorization_id,
+                    channel,
                 ),
             )
         return raw
 
-    def load_session(self, raw: str) -> Session | None:
+    def load_session(self, raw: str, channel: str = "web") -> Session | None:
         with self._conn() as conn:
             conn.row_factory = cast(Any, dict_row)
             session_row = cast(
@@ -360,10 +363,10 @@ class AuthStore:
                     AND i.provider = t.provider AND i.tenant_key = t.external_key
                     AND i.provider=a.provider AND i.app_id=a.app_id AND i.subject=a.subject
                 JOIN product.memberships m ON m.user_id = s.user_id AND m.tenant_id = s.tenant_id
-                WHERE s.token_hash = %s AND s.channel = 'web' AND s.revoked_at IS NULL AND s.expires_at > now()
+                WHERE s.token_hash = %s AND s.channel = %s AND s.revoked_at IS NULL AND s.expires_at > now()
                 LIMIT 1
                 """,
-                    (token_hash(raw),),
+                    (token_hash(raw), channel),
                 ).fetchone(),
             )
         if not session_row:
