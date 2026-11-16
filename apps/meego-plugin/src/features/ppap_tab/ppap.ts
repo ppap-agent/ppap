@@ -126,6 +126,7 @@ const errorText: Record<string, string> = {
   invalid_review: '复核内容不完整或过长，请检查后再保存。',
   validation_failed: '有附件无法读取，请检查文件后重试。',
   task_revision_conflict: '审核内容刚发生变化，请核对后再确认。',
+  task_not_zero_match: '还有可以审核的资料，不能直接结束。',
 };
 
 export const say = (failure: unknown) => (failure instanceof PpapError && errorText[failure.code]) || '操作没有完成，请稍后重试。';

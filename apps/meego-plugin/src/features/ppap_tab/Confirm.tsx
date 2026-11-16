@@ -132,7 +132,19 @@ export function Confirm({ task, revise, refresh, onReselect }: { task: Task; rev
   const confirm = () => act(() => call(`/audit-tasks/${task.id}/confirm`, { method: 'POST', body: { request_id: newId(), expected_revision: task.input_revision, expected_confirmation_basis_digest: task.confirmation_basis_digest } }));
   const deep = (on: boolean) => act(() => call(`/audit-tasks/${task.id}/deep-mode`, { method: 'PUT', body: { deep_mode: on, expected_revision: task.input_revision } }));
   // Nothing left to audit: end the task without a round, charge or report, saying why for each file.
-  const end = () => act(() => call(`/audit-tasks/${task.id}/end`, { method: 'POST', body: { expected_revision: task.input_revision, removals: unmatched.map(row => ({ file_version_id: row.file.id, removal_reason: '没有可用规则' })) } }));
+  // A file that has a rule but no checker program yet (暂不能审核) is left out of the task, not marked as rule-less.
+  const unauditable = task.files.filter(row => row.selection === 'selected' && !['unmatched', 'reference'].includes(row.match?.state ?? ''));
+  const end = () =>
+    act(() =>
+      call(`/audit-tasks/${task.id}/end`, {
+        method: 'POST',
+        body: {
+          expected_revision: task.input_revision,
+          removals: unmatched.map(row => ({ file_version_id: row.file.id, removal_reason: '没有可用规则' })),
+          unselected_file_version_ids: unauditable.map(row => row.file.id),
+        },
+      }),
+    );
 
   const blocks = precheck && precheck !== 'unavailable' ? precheck.blocks : [];
   const warnings = precheck && precheck !== 'unavailable' ? precheck.warnings : [];
