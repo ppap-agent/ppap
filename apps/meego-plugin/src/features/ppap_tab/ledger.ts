@@ -30,11 +30,12 @@ export type Package = {
   stale: boolean;
 };
 
-export const uidOf = (row: TaskFile) => (row.file.origin?.provider === 'meego' ? row.file.origin.object_ref.split('/').slice(3).join('/') : '');
 const judged = (task: Task) => task.state === 'completed' && Boolean(task.round_id) && task.completion_reason !== 'no_matching_rules';
 
 /** `tasks` are this work item's audits, newest first. */
-export function buildPackage(attachments: Attachment[], tasks: Task[]): Package {
+/** `sources` says which attachment each audited file version was imported from. */
+export function buildPackage(attachments: Attachment[], tasks: Task[], sources: Record<string, string>): Package {
+  const uidOf = (row: TaskFile) => sources[row.file.id] ?? '';
   const flight = tasks[0] && tasks[0].state !== 'completed' ? tasks[0] : null;
   const finished = tasks.filter(judged);
   const latest = finished[0] ?? null;

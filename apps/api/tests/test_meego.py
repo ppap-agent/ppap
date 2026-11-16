@@ -274,7 +274,7 @@ def test_work_item_audits_are_this_persons_tasks_for_that_item_with_readback_sta
     def listed(who, limit, offset, target=None):
         seen.append({"user": who.user_id, "target": target})
         return [
-            {"id": "older", "round_id": written_round, "created_at": "2026-11-15T01:00:00+00:00"},
+            {"id": "older", "round_id": written_round, "created_at": "2026-11-15T01:00:00+00:00", "files": [{"file": {"id": "v-mine"}}, {"file": {"id": "v-other"}}]},
             {"id": "draft", "round_id": None, "created_at": "2026-11-16T03:00:00+00:00"},
             {"id": "newer", "round_id": open_round, "created_at": "2026-11-16T02:00:00+00:00"},
         ]
@@ -282,6 +282,7 @@ def test_work_item_audits_are_this_persons_tasks_for_that_item_with_readback_sta
     # The real query accepts the target filter; a person with no tasks for the item gets none.
     assert store.list_audit_tasks(principal, target={"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"}) == []
     monkeypatch.setattr(store, "list_audit_tasks", listed)
+    monkeypatch.setattr(store, "file_sources", lambda ids, provider: {"v-mine": "proj_1/story/42/" + FILE_UID, "v-other": "proj_1/story/43/x"} if provider == "meego" else {})
     fake.comments.append(f"PPAP 审核结果（PPAP 审核轮次 {written_round}）")
     with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
         bearer = {"Authorization": "Bearer " + connect(client, browser)}
@@ -289,6 +290,8 @@ def test_work_item_audits_are_this_persons_tasks_for_that_item_with_readback_sta
         assert reply.status_code == 200, reply.text
         assert [row["id"] for row in reply.json()["audits"]] == ["draft", "newer", "older"]
         assert reply.json()["written_round_ids"] == [written_round]
+        # Each audited file is tied to the attachment of this work item it came from; other items' files are not.
+        assert reply.json()["sources"] == {"v-mine": FILE_UID}
         assert seen == [{"user": principal.user_id, "target": {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"}}]
         assert client.get("/integrations/meego/work-items/proj_1/story/..%2Fx/audits", headers=bearer).status_code in {400, 404}
         assert client.get("/integrations/meego/work-items/proj_1/story/42/audits").status_code == 401

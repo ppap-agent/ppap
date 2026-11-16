@@ -35,7 +35,7 @@ export async function startSession(): Promise<SessionReply> {
   return body as SessionReply;
 }
 
-async function send(path: string, init: { method?: string; body?: unknown }, retried = false): Promise<Response> {
+async function send(path: string, init: { method?: string; body?: unknown }, retried = false, waited = 0): Promise<Response> {
   const response = await fetch(`${PPAP_API_URL}${path}`, {
     method: init.method || 'GET',
     headers: { Authorization: `Bearer ${token}`, ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }) },
@@ -44,7 +44,18 @@ async function send(path: string, init: { method?: string; body?: unknown }, ret
   if (response.status === 401 && !retried) {
     const renewed = await startSession();
     if (renewed.state !== 'connected') throw new PpapError('connect_required', 401);
-    return send(path, init, true);
+    return send(path, init, true, waited);
+  }
+  // 503 with Retry-After means the request was not handled yet (for example another request is
+  // renewing the same Feishu authorization). Waiting and sending the same request again is safe;
+  // requests that change data carry their own request id.
+  // The browser cannot read Retry-After across origins, so the error code says it.
+  if (response.status === 503 && waited < 3) {
+    const body = await response.clone().json().catch(() => ({}));
+    if (['provider_refresh_in_progress', 'provider_temporarily_unavailable'].includes(String(body.detail || body.error))) {
+      await new Promise(resolve => setTimeout(resolve, 1500 * (waited + 1)));
+      return send(path, init, retried, waited + 1);
+    }
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));

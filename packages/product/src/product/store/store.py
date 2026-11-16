@@ -5070,6 +5070,18 @@ class AuthStore:
         with self._conn() as conn:
             return self._target_row(conn, "file_version_sources", "file_version_id", vid)
 
+    def file_sources(self, file_version_ids: list[str], provider: str) -> dict[str, str]:
+        """Where each version was imported from, for one provider: ``{file_version_id: object_ref}``."""
+        ids = [vid for vid in (_as_uuid(raw) for raw in file_version_ids) if vid]
+        if not ids:
+            return {}
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT file_version_id, object_ref FROM product.file_version_sources WHERE file_version_id = ANY(%s::uuid[]) AND provider = %s",
+                (ids, provider),
+            ).fetchall()
+        return {str(row[0]): row[1] for row in rows}
+
     def save_file_source(self, file_version_id: str, object_kind: str, object_ref: str) -> None:
         vid = _as_uuid(file_version_id)
         if not vid:

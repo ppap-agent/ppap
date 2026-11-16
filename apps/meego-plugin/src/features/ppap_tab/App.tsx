@@ -11,7 +11,7 @@ import { Workspace } from './Workspace';
 
 type Context = { spaceId: string; workObjectId: string; workItemId: number };
 export type Item = { project_key: string; work_item_type_key: string; work_item_id: string };
-export type Data = { attachments: Attachment[]; fields: Record<string, string>; tasks: Task[]; written: string[] | null; rules: Rule[]; defaultCustomer: string | null };
+export type Data = { attachments: Attachment[]; fields: Record<string, string>; tasks: Task[]; written: string[] | null; sources: Record<string, string>; rules: Rule[]; defaultCustomer: string | null };
 type Screen = { kind: 'loading'; text: string } | { kind: 'connect'; url: string } | { kind: 'error'; text: string } | { kind: 'ready' };
 
 // A work item rarely has more audits than this; older ones remain in PPAP.
@@ -48,7 +48,7 @@ export default function App() {
     // the page still works when either cannot be read.
     const [files, audits, rules, customer] = await Promise.all([
       call<{ files: Attachment[] }>(`${itemPath(item)}/files`),
-      call<{ audits: AuditSummary[]; written_round_ids: string[] | null }>(`${itemPath(item)}/audits`),
+      call<{ audits: AuditSummary[]; written_round_ids: string[] | null; sources: Record<string, string> }>(`${itemPath(item)}/audits`),
       call<{ rules: Rule[] }>('/rules').catch(() => ({ rules: [] as Rule[] })),
       call<{ customer_preference: string | null }>('/audit-customers/default').catch(() => ({ customer_preference: null })),
     ]);
@@ -61,7 +61,7 @@ export default function App() {
         names.current[key] = await window.JSSDK.Field.load({ spaceId: item.project_key, workObjectId: item.work_item_type_key, fieldId: key }).then(field => field.name, () => '');
       }
     }
-    setData({ attachments: files.files, fields: { ...names.current }, tasks, written: audits.written_round_ids, rules: rules.rules, defaultCustomer: customer.customer_preference });
+    setData({ attachments: files.files, fields: { ...names.current }, tasks, written: audits.written_round_ids, sources: audits.sources ?? {}, rules: rules.rules, defaultCustomer: customer.customer_preference });
   }, [item]);
 
   useEffect(() => {

@@ -209,7 +209,12 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         tasks.sort(key=lambda task: task["created_at"], reverse=True)
         # None means the comments could not be read; the plugin must not show that as "not written".
         written = None if texts is None else [task["round_id"] for task in tasks if task.get("round_id") and any(marker(task["round_id"]) in text for text in texts)]
-        return JSONResponse({"audits": tasks, "written_round_ids": written})
+        # Which attachment of this work item each audited file was imported from, so the plugin can
+        # place every result next to the attachment it judged. Only this person's own tasks are read.
+        prefix = item.object_ref() + "/"
+        versions = [row["file"]["id"] for task in tasks for row in task.get("files") or []]
+        sources = {vid: ref[len(prefix) :] for vid, ref in store.file_sources(versions, "meego").items() if ref.startswith(prefix)}
+        return JSONResponse({"audits": tasks, "written_round_ids": written, "sources": sources})
 
     @app.post("/integrations/meego/files/import", status_code=201, include_in_schema=False)
     def meego_import(body: dict, request: Request) -> JSONResponse:

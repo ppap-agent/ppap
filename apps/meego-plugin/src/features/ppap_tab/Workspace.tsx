@@ -26,7 +26,7 @@ const reportPath = (task: Task, row: TaskFile) => {
 };
 
 export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
-  const pack = useMemo(() => buildPackage(data.attachments, data.tasks), [data]);
+  const pack = useMemo(() => buildPackage(data.attachments, data.tasks, data.sources), [data]);
   const { docs, flight, latest } = pack;
   const view = useMemo(() => standing(latest, pack.previous), [latest, pack.previous]);
   const total = verdict(latest);

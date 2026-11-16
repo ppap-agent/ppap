@@ -2,7 +2,7 @@
 // (apps/web/src/audit/status-labels.ts). Only the fields this plugin renders are typed.
 
 export type Attachment = { uid: string; name: string; size: string; content_type: string; field_key: string };
-export type FileVersion = { id: string; file_id: string; original_filename: string; origin?: { provider: string; object_kind: string; object_ref: string } | null };
+export type FileVersion = { id: string; file_id: string; original_filename: string };
 export type Job = { id: string; status: string; result: { state?: string; reasons?: string[] } | null };
 
 export type Locator =
