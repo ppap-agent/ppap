@@ -193,6 +193,20 @@ def test_attachment_import_binds_source_before_download_and_replays_one_version(
         assert client.put(f"/integrations/meego/tasks/{uuid.uuid4()}/work-item", json=command, headers=bearer).status_code == 403
 
 
+def finished_task(task_id: str) -> dict:
+    """The web Task view of a finished round (shape of store.get_audit_task)."""
+    counts = {"pass_count": 1, "ng_count": 2, "unknown_count": 0, "not_covered_count": 0, "error_count": 0}
+    return {
+        "id": task_id,
+        "round_id": task_id[2:],
+        "state": "completed",
+        "execution": "completed",
+        "has_execution_error": False,
+        "round_started_at": "2026-11-16T07:30:00Z",
+        "files": [{"file": {"original_filename": "PFMEA.xlsx"}, "selection": "selected", "match": {"state": "matched"}, "audit": {"execution": "completed", "conclusion": "NG", "counts": counts}}],
+    }
+
+
 def test_writeback_reads_back_before_writing_and_never_rewrites_after_unknown(auth_store_factory, monkeypatch):
     tenant = "meego-feishu-" + uuid.uuid4().hex
     fake = FakeMeego()
@@ -201,14 +215,15 @@ def test_writeback_reads_back_before_writing_and_never_rewrites_after_unknown(au
     round_id = str(uuid.uuid4())
     monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
     monkeypatch.setattr(store, "grants", lambda rid, uid: {"read"})
-    monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "task-1"})
+    monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
     monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
-    monkeypatch.setattr("api.meego_routes.summary", lambda body, web: ["PPAP 审核结果（PPAP 审核轮次 " + body["id"] + "）", "总体：存在问题"])
+    monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: finished_task(task_id))
     with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
         bearer = {"Authorization": "Bearer " + connect(client, browser)}
         written = client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer)
         assert written.status_code == 200 and written.json()["state"] == "written"
         assert "enter-current" in written.json()["link"]
+        assert "PFMEA.xlsx：不符合" in fake.comments[0] and f"PPAP 审核轮次 {round_id}" in fake.comments[0]
         repeat = client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer)
         assert repeat.json()["state"] == "already_written"
         assert len(fake.comments) == 1
@@ -238,7 +253,8 @@ def test_writeback_refuses_feishu_or_missing_targets(auth_store_factory, monkeyp
     principal, browser = feishu_login(store, tenant)
     monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
     monkeypatch.setattr(store, "grants", lambda rid, uid: {"read"})
-    monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "execution": "running"})
+    monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
+    monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: {**finished_task(task_id), "state": "reviewing", "execution": "running"})
     monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "feishu", "object_kind": "docx", "object_ref": "doc-token"})
     with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
         bearer = {"Authorization": "Bearer " + connect(client, browser)}

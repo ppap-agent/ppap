@@ -4,7 +4,7 @@ import { call, newId, PpapError, startSession, taskLink, waitFor } from './ppap'
 
 type Attachment = { uid: string; name: string; size: string; content_type: string };
 type FileVersion = { id: string; file_id: string; original_filename: string };
-type Job = { id: string; status: string };
+type Job = { id: string; status: string; result: { state?: string; reasons?: string[] } | null };
 type TaskFile = {
   file: FileVersion;
   selection: 'selected' | 'unselected' | 'removed';
@@ -48,6 +48,8 @@ const errorText: Record<string, string> = {
   round_incomplete: '审核尚未全部完成，暂时不能写回。',
   round_has_errors: '审核出现技术错误，不能写回，请在 PPAP 中查看。',
   wait_timeout: '处理时间较长，请稍后回来查看。',
+  writeback_target_missing: '这一轮审核不是从这个工作项发起的，不能写回。',
+  access_denied: '你没有权限查看这项审核。',
 };
 const say = (failure: unknown) => (failure instanceof PpapError && errorText[failure.code]) || '操作没有完成，请稍后重试。';
 const storageKey = (ctx: Context) => `ppap.task.${ctx.spaceId}.${ctx.workItemId}`;
@@ -115,14 +117,22 @@ export default function App() {
     try {
       const picked = files.filter(f => chosen.has(f.uid));
       const inputs: { file_version_id: string; validation_id: string; selection: 'selected'; removal_reason: null }[] = [];
+      const skipped: string[] = [];
       for (const [index, attachment] of picked.entries()) {
         setBusy(`正在读取附件 ${index + 1}/${picked.length}…`);
         const version = await call<FileVersion>('/integrations/meego/files/import', { method: 'POST', body: { request_id: newId(), ...item, uid: attachment.uid } });
         const job = await call<Job>('/file-validations', { method: 'POST', body: { request_id: newId(), source_file_id: version.file_id, source_file_version_id: version.id } });
         const checked = await waitFor(() => call<Job>(`/file-validations/${job.id}`), j => !['queued', 'leased', 'running'].includes(j.status));
         if (checked.status !== 'succeeded') throw new PpapError('validation_failed', 0);
+        // Same rule as the web intake: a file that cannot be audited is left out, with its reason shown.
+        if (checked.result?.state !== 'valid') {
+          skipped.push(`${attachment.name}（${(checked.result?.reasons ?? []).join('；') || '无法审核'}）`);
+          continue;
+        }
         inputs.push({ file_version_id: version.id, validation_id: checked.id, selection: 'selected', removal_reason: null });
       }
+      if (skipped.length) setNotice(`以下附件无法审核，已跳过：${skipped.join('、')}`);
+      if (!inputs.length) return;
       setBusy('正在识别文件类型和规则…');
       const taskId = newId();
       await call<Task>('/audit-tasks', { method: 'POST', body: { request_id: taskId, customer_preference: null, files: inputs } });
@@ -266,7 +276,13 @@ export default function App() {
               <li key={f.file.id}>
                 <span className="name" title={f.file.original_filename}>{f.file.original_filename}</span>
                 <span className={`badge ${f.audit?.conclusion ?? 'pending'}`}>
-                  {f.audit?.conclusion ? conclusionLabel[f.audit.conclusion] : f.audit?.execution === 'review_failed' ? '审核异常' : '审核中'}
+                  {f.audit?.conclusion
+                    ? conclusionLabel[f.audit.conclusion]
+                    : f.audit?.execution === 'review_failed'
+                      ? '审核异常'
+                      : !f.audit && task.state === 'completed'
+                        ? matchLabel[f.match?.state ?? 'reference']
+                        : '审核中'}
                 </span>
               </li>
             ))}

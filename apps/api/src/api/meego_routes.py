@@ -242,16 +242,24 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         if resource is None or not can_read(session.principal, resource, grants):
             return JSONResponse({"error": "access_denied"}, status_code=403)
         round_body = store.get_round(round_id)
-        target = store.round_writeback(round_id) or {}
         if round_body is None:
             return JSONResponse({"error": "access_denied"}, status_code=403)
-        if target.get("provider") != "meego":
+        target = store.round_writeback(round_id) or {}
+        if target.get("provider") != "meego" or not round_body.get("source_draft_id"):
+            return JSONResponse({"error": "writeback_target_missing"}, status_code=409)
+        try:
+            # The comment states the conclusions the web task page shows.
+            task = store.get_audit_task(session.principal, str(round_body["source_draft_id"]))
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        if str(task.get("round_id") or "") != str(round_body["id"]):
             return JSONResponse({"error": "writeback_target_missing"}, status_code=409)
         try:
             item = WorkItemRef.parse(str(target.get("object_ref") or ""))
-            lines = summary(round_body, web_base)
+            lines = summary(task, web_base)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
+        link = task_link(web_base, str(task["id"]))
         mark = marker(str(round_body["id"]))
         with store._conn() as guard:
             row = guard.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", ("meego-writeback:" + str(round_body["id"]),)).fetchone()
@@ -260,7 +268,7 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             try:
                 # Read before writing: an earlier attempt may already have landed.
                 if any(mark in text for text in client.comment_texts(binding["user_key"], item)):
-                    return JSONResponse({"state": "already_written", "round_id": round_body["id"], "link": task_link(web_base, round_body)})
+                    return JSONResponse({"state": "already_written", "round_id": round_body["id"], "link": link})
                 try:
                     client.add_comment(binding["user_key"], item, lines)
                 except MeegoError as exc:
@@ -268,10 +276,10 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
                         return meego_failure(exc)
                     # Unknown outcome: read back once, never write blindly again.
                     if any(mark in text for text in client.comment_texts(binding["user_key"], item)):
-                        return JSONResponse({"state": "written", "round_id": round_body["id"], "link": task_link(web_base, round_body)})
+                        return JSONResponse({"state": "written", "round_id": round_body["id"], "link": link})
                     return JSONResponse({"error": "meego_writeback_unknown"}, status_code=502)
             except MeegoError as exc:
                 return meego_failure(exc)
             finally:
                 guard.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", ("meego-writeback:" + str(round_body["id"]),))
-        return JSONResponse({"state": "written", "round_id": round_body["id"], "link": task_link(web_base, round_body)})
+        return JSONResponse({"state": "written", "round_id": round_body["id"], "link": link})

@@ -1,57 +1,92 @@
-"""Summarize a finished Round as one Meego work-item comment.
+"""Summarize a finished audit Task as one Meego work-item comment.
 
-The comment carries the Round id as its marker, so a reader can tell whether
-this Round was already written back before writing again. Only rounds that the
-Feishu doc writeback would also accept are written: an unfinished, failed or
-unknown result is never presented as passed.
+The comment states the same per-file conclusions the PPAP web page shows (the
+Task's ``audit.conclusion``), so one concept has one definition. It carries the
+Round id as its marker, so a reader can tell whether this Round was already
+written back before writing again. An unfinished, failed or unknown result is
+never presented as passed.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from urllib.parse import quote, urlencode
 
-from audit.audits import NA, NG, PASS, UNABLE
-
-from product.feishu_writeback import _audit_clock, _group_findings, writeback_state
+# One vocabulary with the PPAP web app (apps/web/src/audit/status-labels.ts).
+CONCLUSION_LABEL = {"PASS": "符合", "NG": "不符合", "UNKNOWN": "尚有未确定项"}
+REFERENCE_LABEL = "作为参考资料，未单独审核"
 
 
 def marker(round_id: str) -> str:
     return f"PPAP 审核轮次 {round_id}"
 
 
-def task_link(web_url: str, round_body: dict) -> str:
+def task_link(web_url: str, task_id: str) -> str:
     """Open the task in the current edition; the bare site root serves the legacy edition."""
     base = (web_url or "").rstrip("/")
-    task_id = str(round_body.get("source_draft_id") or "")
-    target = base + ("/tasks/" + quote(task_id, safe="") if task_id else "/?round=" + quote(str(round_body["id"]), safe=""))
+    target = base + "/tasks/" + quote(task_id, safe="")
     return base + "/enter-current?" + urlencode({"return_to": target})
 
 
-def file_conclusion(rows: list[dict]) -> str:
-    statuses = {row.get("status") for row in rows}
-    if NG in statuses:
-        return "不符合"
-    if UNABLE in statuses or not statuses:
-        return "尚有未确定项"
-    if statuses == {NA}:
-        return "不适用"
-    if statuses <= {PASS, NA}:
-        return "符合"
-    return "尚有未确定项"
+def _selected(task: dict) -> list[dict]:
+    return [row for row in task.get("files") or [] if isinstance(row, dict) and row.get("selection") == "selected"]
 
 
-def summary(round_body: dict, web_url: str) -> list[str]:
-    state = writeback_state(round_body)
+def writeback_state(task: dict) -> str:
+    """``ready`` only when every audited file has a terminal web conclusion."""
+    if not isinstance(task, dict) or task.get("state") != "completed" or not task.get("round_id"):
+        return "round_incomplete"
+    if task.get("execution") == "failed" or task.get("has_execution_error"):
+        return "round_has_errors"
+    if task.get("execution") != "completed":
+        return "round_incomplete"
+    audited = 0
+    for row in _selected(task):
+        audit = row.get("audit")
+        if audit is None:
+            if not row.get("reference_only") and (row.get("match") or {}).get("state") != "reference":
+                return "round_incomplete"
+            continue
+        if audit.get("execution") == "review_failed":
+            return "round_has_errors"
+        if audit.get("execution") != "completed" or audit.get("conclusion") not in CONCLUSION_LABEL:
+            return "round_incomplete"
+        audited += 1
+    return "ready" if audited else "round_incomplete"
+
+
+def _clock(raw) -> str:
+    stamp = datetime.now(timezone.utc)
+    if isinstance(raw, str) and raw:
+        try:
+            stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    if stamp.tzinfo is not None:
+        stamp = stamp.astimezone(timezone.utc)
+    return stamp.strftime("%Y 年 %m 月 %d 日 %H:%M")
+
+
+def summary(task: dict, web_url: str) -> list[str]:
+    state = writeback_state(task)
     if state != "ready":
         raise ValueError(state)
-    groups = _group_findings(round_body)
-    lines = [f"PPAP 审核结果（{marker(str(round_body['id']))}）", "审核时间：" + _audit_clock(round_body)]
-    ng = unable = 0
-    for name, rows in groups:
-        lines.append(f"{name}：{file_conclusion(rows)}")
-        ng += sum(1 for row in rows if row.get("status") == NG)
-        unable += sum(1 for row in rows if row.get("status") == UNABLE)
-    passed = all(file_conclusion(rows) in {"符合", "不适用"} for _, rows in groups)
-    lines.append(f"总体：{'全部符合' if passed else '存在问题'}；不符合 {ng} 项，无法判断 {unable} 项")
-    lines.append("查看详情：" + task_link(web_url, round_body))
+    lines = [f"PPAP 审核结果（{marker(str(task['round_id']))}）", "审核时间：" + _clock(task.get("round_started_at"))]
+    conclusions: set[str] = set()
+    ng = unsure = 0
+    for row in _selected(task):
+        name = str((row.get("file") or {}).get("original_filename") or "未命名资料")
+        audit = row.get("audit")
+        if audit is None:
+            lines.append(f"{name}：{REFERENCE_LABEL}")
+            continue
+        conclusion = audit["conclusion"]
+        conclusions.add(conclusion)
+        counts = audit.get("counts") or {}
+        ng += int(counts.get("ng_count") or 0)
+        unsure += sum(int(counts.get(key) or 0) for key in ("unknown_count", "not_covered_count", "error_count"))
+        lines.append(f"{name}：{CONCLUSION_LABEL[conclusion]}")
+    overall = "NG" if "NG" in conclusions else "UNKNOWN" if "UNKNOWN" in conclusions else "PASS"
+    lines.append(f"总体：{CONCLUSION_LABEL[overall]}；不符合 {ng} 项，尚未确定 {unsure} 项")
+    lines.append("查看详情：" + task_link(web_url, str(task["id"])))
     return lines
