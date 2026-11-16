@@ -338,13 +338,14 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             if found is None:
                 return "not_configured"
             field_key, options = found
-            option = options.get(CONCLUSION_LABEL[overall(task)])
+            label = CONCLUSION_LABEL[overall(task)]
+            option = options.get(label)
             if not option:
                 return "not_configured"
             if client.field_option(user_key, item, field_key) == option:
                 return "unchanged"
             try:
-                client.set_field(user_key, item, field_key, option)
+                client.set_field(user_key, item, field_key, option, label)
             except MeegoError as exc:
                 if not exc.unknown:
                     raise

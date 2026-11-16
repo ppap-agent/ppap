@@ -85,7 +85,8 @@ class FakeMeego:
             update = json.loads(request.content)["update_fields"][0]
             assert update["field_key"] == "field_ppap"
             self.field_updates += 1
-            self.conclusion = update["field_value"]
+            assert set(update["field_value"]) == {"label", "value"}
+            self.conclusion = update["field_value"]["value"]
             if self.fail_field_unknown:
                 raise httpx.ReadTimeout("lost reply", request=request)
             return httpx.Response(200, json={"err_code": 0, "err": {}})

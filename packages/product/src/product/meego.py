@@ -253,10 +253,11 @@ class MeegoClient:
                 return str(value) if value not in (None, "") else None
         return None
 
-    def set_field(self, user_key: str, item: WorkItemRef, field_key: str, value: str) -> None:
+    def set_field(self, user_key: str, item: WorkItemRef, field_key: str, value: str, label: str) -> None:
+        # Verified on a real space: a bare option id is rejected (20006 "field is illegal"); the option object is accepted.
         self._put(
             f"/open_api/{item.project_key}/work_item/{item.work_item_type_key}/{item.work_item_id}",
-            {"update_fields": [{"field_key": field_key, "field_value": value}]},
+            {"update_fields": [{"field_key": field_key, "field_value": {"label": label, "value": value}}]},
             user_key,
             "field_update",
         )
