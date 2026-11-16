@@ -1,0 +1,11 @@
+{
+  "siteDomain": "https://project.feishu.cn",
+  "pluginId": "MII_REPLACE_WITH_PLUGIN_ID",
+  "pluginSecret": "",
+  "resources": [
+    {
+      "id": "REPLACE_WITH_DETAIL_TAB_RESOURCE_ID",
+      "entry": "./src/features/ppap_tab/index.tsx"
+    }
+  ]
+}

@@ -73,11 +73,13 @@ from product.mcp import McpError
 from product.settings import Settings, load_settings
 from product.storage import object_store_ready
 from product.store import AuthStore
+from product.store.meego import MeegoStore
 from product.writeback_targets import public_target
 
 from api import web_contract as wc
 from api.audit_routes import register_audit_routes
 from api.mcp_confirmation import require_approved_source
+from api.meego_routes import register_meego_routes
 from api.notifications import run_task_notifications
 from api.office_routes import register_office_routes
 from api.precheck_routes import register_precheck_routes
@@ -131,6 +133,7 @@ def create_app(
     postgres_probe = postgres_probe or postgres_ready
     object_store_probe = object_store_probe or object_store_ready
     store = auth_store or build_product_store(settings)
+    meego_store = MeegoStore(store)
     http = http or httpx.Client()
     mcp_server = None
 
@@ -160,25 +163,39 @@ def create_app(
     app = FastAPI(title="PPAP Product API", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.web_origins(),
+        # Meego plugin pages run on their own origin and authenticate with a
+        # Bearer host session; SameSite=Lax cookies are never sent to them.
+        allow_origins=settings.web_origins() + (settings.meego_plugin_origins if settings.meego_enabled() else []),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Accept", "Content-Type"],
+        allow_headers=["Accept", "Content-Type", "Authorization"],
         expose_headers=["Content-Disposition", "X-Content-SHA256", "X-Request-ID"],
     )
     configure_logs(settings)
 
     def session_of(request: Request):
         request.state.authenticated_principal = None
+        request.state.meego_binding = None
         from product.mcp import Delegation, McpError
 
         delegated = request.scope.get("ppap.delegation")
+        host_token = ""
+        authorization = request.headers.get("authorization", "")
+        if not isinstance(delegated, Delegation) and authorization[:7].lower() == "bearer " and settings.meego_enabled():
+            host_token = authorization[7:].strip()
         if isinstance(delegated, Delegation):
             try:
                 current = app.state.mcp_store.delegation(delegated.id)
             except McpError:
                 return None
             session = current.session
+            raw = ""
+        elif host_token:
+            # Meego plugin host session: Bearer only, never a browser cookie.
+            loaded = meego_store.load_host_session(host_token)
+            if loaded is None:
+                return None
+            session, request.state.meego_binding = loaded
             raw = ""
         else:
             raw = request.cookies.get(SESSION_COOKIE, "")
@@ -204,6 +221,11 @@ def create_app(
                 session = app.state.mcp_store.delegation(delegated.id).session
             except McpError:
                 return None
+        elif host_token and refresh_possible:
+            reloaded = meego_store.load_host_session(host_token)
+            if reloaded is None:
+                return None
+            session, request.state.meego_binding = reloaded
         if session:
             request.state.authenticated_principal = session.principal
         return session
@@ -885,7 +907,7 @@ def create_app(
         if round_body is None:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         stored = store.round_writeback(round_id) or {}
-        file_token = str(stored.get("object_ref") or "").strip()
+        file_token = str(stored.get("object_ref") or "").strip() if stored.get("provider") == "feishu" else ""
         if not file_token:
             return JSONResponse({"error": "writeback_target_missing"}, status_code=409)
         return_url = round_return_url(settings.canonical_web_url(), round_body)
@@ -948,6 +970,7 @@ def create_app(
     register_suite_routes(app, store, principal_of)
     register_support_routes(app, principal_of, settings)
     register_template_routes(app, store, session_of, http, settings)
+    register_meego_routes(app, store, meego_store, session_of, http, settings)
     register_sharing_routes(app, store, session_of, http, settings)
     wc.add_ui_contract(app)
     if settings.mcp_enabled:

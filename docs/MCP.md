@@ -128,6 +128,20 @@ codex mcp login ppap --oauth-client-registration dcr
 
 停止使用时，先在 PPAP 连接管理页撤销对应委托。原生 HTTP 连接随后可执行 `codex mcp logout ppap` 清除 Codex 保存的凭据；适配器的凭据由其独立 profile 管理。仅退出客户端或删除配置不会撤销服务端委托。续期或访问失败时，先读取错误与原业务回执，按上节恢复步骤处理，不改变原请求 ID。
 
+### 豆包工作配置
+
+豆包工作通过 MCP 连接器接入，形态与本服务一致：Streamable HTTP 加 MCP OAuth 2.1，并用飞书登录。管理员在豆包工作管理后台新建连接器：
+
+| 配置项 | 值 |
+| --- | --- |
+| 连接器类型 | MCP 连接器 |
+| 认证类型 | MCP OAuth 2.1 |
+| 传输类型 | streamableHttp |
+| MCP Server URL | `https://ppap.icoastline.com/ppap/mcp` |
+| 请求头 | `Authorization: Bearer ${access_token}` |
+
+再把 [`deploy/doubao/ppap-audit`](../deploy/doubao/ppap-audit/SKILL.md) 打包成 zip 上传为技能，并在连接器中关联。用户在豆包里点“连接”后，按本页“服务与授权”完成飞书登录和授权。授权和令牌请求中的 `resource` 必须精确等于 MCP 地址；豆包工作是否按此发送，以真实联调读回为准，不为迁就客户端放宽校验。受理、发布、人工复核和发送仍要在浏览器确认页完成。
+
 ## Resources 与 Prompts
 
 Resources 包括固定文件版本、规则版本、轮次结果、报告包和已分享报告。每次读取都重新授权，不把 URI 当作权限。模板支持 `pointer`、`offset`、`limit` 查询参数；`pointer` 是 JSON Pointer，`limit` 上限为 100。返回正文上限为 96 KiB，过大时应选择具体字段或缩小分页，不能截断并声称结果完整。

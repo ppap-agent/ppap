@@ -477,6 +477,12 @@ spec:
                   name: ppap-current
                   key: FEISHU_VERIFICATION_TOKEN
                   optional: true
+            - name: PPAP_MEEGO_PLUGIN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_MEEGO_PLUGIN_SECRET
+                  optional: true
             - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:

@@ -88,6 +88,13 @@ class Settings(BaseSettings):
     # Rules are delivered by developers; users neither upload rules nor publish new versions unless enabled.
     rule_upload_enabled: bool = Field(default=False, alias="PPAP_RULE_UPLOAD_ENABLED")
     mcp_allowed_origins: list[str] = Field(default_factory=list, alias="PPAP_MCP_ALLOWED_ORIGINS")
+    # Feishu Project (Meego) plugin host. Off unless the plugin credential and
+    # an explicit Meego tenant -> Feishu tenant mapping are configured.
+    meego_plugin_id: str = Field(default="", alias="PPAP_MEEGO_PLUGIN_ID")
+    meego_plugin_secret: str = Field(default="", alias="PPAP_MEEGO_PLUGIN_SECRET")
+    meego_base_url: str = Field(default="https://project.feishu.cn", alias="PPAP_MEEGO_BASE_URL")
+    meego_plugin_origins: list[str] = Field(default_factory=lambda: ["https://projectplg.feishupkg.com"], alias="PPAP_MEEGO_PLUGIN_ORIGINS")
+    meego_tenant_map: dict[str, str] = Field(default_factory=dict, alias="PPAP_MEEGO_TENANT_MAP")
     support_phone: str = Field(default="", alias="PPAP_SUPPORT_PHONE", max_length=200)
     support_email: str = Field(default="", alias="PPAP_SUPPORT_EMAIL", max_length=320)
     support_service_hours: str = Field(default="", alias="PPAP_SUPPORT_SERVICE_HOURS", max_length=200)
@@ -123,6 +130,10 @@ class Settings(BaseSettings):
                     or (parsed.scheme != "https" and not (self.profile != "production" and parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}))
                 ):
                     raise ValueError("MCP browser origins must be explicit HTTPS origins, or development loopback origins")
+        for origin in self.meego_plugin_origins:
+            parsed = urlsplit(origin)
+            if not parsed.hostname or parsed.scheme != "https" or "*" in origin or origin != f"{parsed.scheme}://{parsed.netloc}":
+                raise ValueError("Meego plugin origins must be explicit HTTPS origins")
         if self.profile == "isolated-dev":
             if not self.model_text_base_url.strip():
                 self.model_text_base_url = ISOLATED_DEV_LLM_BASE_URL
@@ -216,6 +227,12 @@ class Settings(BaseSettings):
                 if extra not in origins:
                     origins.append(extra)
         return origins
+
+    def meego_enabled(self) -> bool:
+        return bool(self.meego_plugin_id.strip() and self.meego_plugin_secret.strip() and self.meego_tenant_map)
+
+    def meego_feishu_tenant(self, meego_tenant_key: str) -> str:
+        return str(self.meego_tenant_map.get(meego_tenant_key.strip()) or "").strip()
 
     def allowed_tenant_keys(self) -> frozenset[str]:
         return frozenset(part.strip() for part in self.current_tenant_allowlist.split(",") if part.strip())

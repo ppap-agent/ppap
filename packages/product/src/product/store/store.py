@@ -360,7 +360,7 @@ class AuthStore:
                     AND i.provider = t.provider AND i.tenant_key = t.external_key
                     AND i.provider=a.provider AND i.app_id=a.app_id AND i.subject=a.subject
                 JOIN product.memberships m ON m.user_id = s.user_id AND m.tenant_id = s.tenant_id
-                WHERE s.token_hash = %s AND s.revoked_at IS NULL AND s.expires_at > now()
+                WHERE s.token_hash = %s AND s.channel = 'web' AND s.revoked_at IS NULL AND s.expires_at > now()
                 LIMIT 1
                 """,
                     (token_hash(raw),),
@@ -713,6 +713,15 @@ class AuthStore:
 
         return self._receive_import_upload(principal, request_id, {"provider": "url", "url": url}, captured)
 
+    def receive_meego_upload(self, principal, request_id, object_ref: str, uid: str, name: str, load) -> FileVersion:
+        """Import one Meego work-item attachment; the source is bound before any bytes are read."""
+
+        def captured():
+            data, content_type = load()
+            return ImportedFile(data, name, content_type, {"provider": "meego", "object_kind": "work_item_file", "object_ref": f"{object_ref}/{uid}"})
+
+        return self._receive_import_upload(principal, request_id, {"provider": "meego", "work_item": object_ref, "uid": uid}, captured)
+
     def resume_url_upload(self, principal, request_id, load) -> FileVersion:
         # Receipt ownership is stricter than a grant to read the imported file.
         receipt = self.get_upload_request(principal, request_id)
@@ -734,7 +743,7 @@ class AuthStore:
         # This lock spans provider I/O, but no database transaction does. A second
         # handler observes the original request instead of exporting again.
         with self._conn() as guard:
-            key = ("drive-import:" if source["provider"] == "feishu" else "url-import:") + version_id
+            key = {"feishu": "drive-import:", "meego": "meego-import:"}.get(source["provider"], "url-import:") + version_id
             lock_row = guard.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (key,)).fetchone()
             locked = bool(lock_row and lock_row[0])
             if not locked:
