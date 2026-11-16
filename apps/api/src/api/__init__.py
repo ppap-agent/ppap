@@ -857,6 +857,45 @@ def create_app(
             }
         )
 
+    def _document_target(file_token: str) -> dict | None:
+        token = file_token.strip()
+        if not token or len(token) > 200 or "/" in token or ".." in token:
+            return None
+        return {"provider": "feishu", "object_kind": "docx", "object_ref": token}
+
+    @app.put("/integrations/feishu/tasks/{task_id}/document", response_model=wc.TaskDocumentResponse, openapi_extra=wc.openapi_body(wc.TaskDocumentRequest))
+    def feishu_task_document(task_id: str, body: dict, request: Request) -> JSONResponse:
+        """Record the Feishu document a task was started from, before the task is accepted."""
+        principal = principal_of(request)
+        if principal is None:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        target = _document_target(str(body.get("file_token") or ""))
+        if target is None:
+            return JSONResponse({"error": "invalid_file_token"}, status_code=400)
+        try:
+            store.set_task_writeback(principal, task_id, target)
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        return JSONResponse({"task_id": task_id})
+
+    @app.get("/integrations/feishu/docs/audits", response_model=wc.AuditRecognitionTasks)
+    def feishu_doc_audits(request: Request, file_token: str = "") -> JSONResponse:
+        """This person's audits started from one Feishu document, newest first."""
+        principal = principal_of(request)
+        if principal is None:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        target = _document_target(file_token)
+        if target is None:
+            return JSONResponse({"error": "invalid_file_token"}, status_code=400)
+        try:
+            tasks = store.list_audit_tasks(principal, 20, 0, target=target)
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        tasks.sort(key=lambda task: task["created_at"], reverse=True)
+        return JSONResponse({"tasks": tasks, "next_offset": None})
+
     @app.get("/integrations/feishu/usage/quota", response_model=wc.QuotaEstimate)
     def feishu_usage_quota(request: Request, ai_item_id: str = "", target_count: int | None = Query(None, ge=0, le=200), deep_mode: bool = False) -> JSONResponse:
         from product.feishu_usage import estimate_audit

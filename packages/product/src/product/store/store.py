@@ -2748,10 +2748,12 @@ class AuthStore:
             )
         return task
 
-    def list_audit_tasks(self, principal: Principal, limit: int = 20, offset: int = 0, q: str = "", state: str = "") -> list[dict]:
+    def list_audit_tasks(self, principal: Principal, limit: int = 20, offset: int = 0, q: str = "", state: str = "", target: dict | None = None) -> list[dict]:
+        """``target`` narrows the list to tasks started for one external object, such as a Meego work item."""
         if state not in {"", "matching", "pending_confirm", "reviewing", "completed"}:
             raise ValueError("invalid_task_state")
         needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        target_filter = [str((target or {}).get(key) or "") for key in ("provider", "provider", "object_kind", "object_ref")]
         with self._conn() as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             rows = conn.execute(
@@ -2776,8 +2778,9 @@ class AuthStore:
                 AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = %s AND g.capability IN ('read', 'review'))
                 AND (r.id IS NULL OR EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = d.created_by AND g.capability IN ('read', 'review')))
                 AND (%s = '' OR EXISTS (SELECT 1 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id WHERE i.draft_id = d.id AND f.original_filename ILIKE %s))
+                AND (%s = '' OR EXISTS (SELECT 1 FROM product.draft_writeback_targets w WHERE w.draft_id = d.id AND w.provider = %s AND w.object_kind = %s AND w.object_ref = %s))
                 ) SELECT * FROM visible WHERE (%s = '' OR state = %s) ORDER BY updated_at DESC, id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, principal.user_id, principal.user_id, q, needle, state, state, limit, offset),
+                (principal.tenant_id, principal.user_id, principal.user_id, q, needle, *target_filter, state, state, limit, offset),
             ).fetchall()
             if not rows:
                 return []
@@ -5094,6 +5097,22 @@ class AuthStore:
         if not row:
             return None
         return {"provider": row[0], "object_kind": row[1], "object_ref": row[2]}
+
+    def set_task_writeback(self, principal: Principal, task_id: str, target: dict) -> None:
+        """Attach an external object as the task's writeback target; acceptance copies it to the round.
+
+        The target is fixed once: it cannot change after acceptance, and a task
+        started for one object is never re-pointed at another.
+        """
+        with self._conn() as conn, conn.transaction():
+            draft = self._recognition_owner(conn, principal, task_id, lock=True)
+            if conn.execute("SELECT 1 FROM product.audit_rounds WHERE source_draft_id=%s", (draft["id"],)).fetchone():
+                raise ValueError("task_input_locked")
+            current = self.draft_writeback(conn, str(draft["id"]))
+            if current and current != target:
+                raise ValueError("writeback_target_conflict")
+            if not current:
+                self.save_draft_writeback(conn, str(draft["id"]), target)
 
     def draft_writeback(self, conn, draft_id: str) -> dict | None:
         return self._target_row(conn, "draft_writeback_targets", "draft_id", draft_id)

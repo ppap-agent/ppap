@@ -281,3 +281,25 @@ class FeishuDocLinksTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_document_audits_and_task_document_target_are_scoped_to_the_signed_in_person(auth_store_factory):
+    import uuid
+
+    tenant = "docs-audits-" + uuid.uuid4().hex
+    store = auth_store_factory(Settings(feishu_app_id="docs-audits-app"), reset=False, role="api")
+    principal = store.upsert_feishu_identity(tenant, "owner-" + uuid.uuid4().hex[:6], "owner")
+    now = datetime.now(timezone.utc)
+    browser = store.create_session(principal, UserTokens("access", "refresh", now + timedelta(hours=1), now + timedelta(days=1)))
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(404))) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
+        assert client.get("/integrations/feishu/docs/audits?file_token=DocTokenA").status_code == 401
+        assert client.put(f"/integrations/feishu/tasks/{uuid.uuid4()}/document", json={"file_token": "DocTokenA"}).status_code == 401
+        client.cookies.set(SESSION_COOKIE, browser)
+        # A document nobody audited yet lists nothing; the query runs against the real store.
+        listed = client.get("/integrations/feishu/docs/audits?file_token=DocTokenA")
+        assert listed.status_code == 200 and listed.json() == {"tasks": [], "next_offset": None}
+        for bad in ("", "a/b", "..", "x" * 201):
+            assert client.get("/integrations/feishu/docs/audits", params={"file_token": bad}).status_code == 400
+            assert client.put(f"/integrations/feishu/tasks/{uuid.uuid4()}/document", json={"file_token": bad}).status_code == 400
+        # A task that is not this person's cannot be pointed at a document.
+        assert client.put(f"/integrations/feishu/tasks/{uuid.uuid4()}/document", json={"file_token": "DocTokenA"}).status_code == 403

@@ -1340,6 +1340,14 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("bob")), [])
         self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("carol")), [])
         self.assertEqual(self.store.get_audit_task(self.alice, task["id"]), expected)
+        # A target narrows the list to tasks started for that one external object.
+        work_item = {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"}
+        self.assertEqual(self.store.list_audit_tasks(self.alice, target=work_item), [])
+        with connect(self.settings, "migrator") as conn:
+            self.store.save_draft_writeback(conn, task["id"], work_item)
+        self.assertEqual([row["id"] for row in self.store.list_audit_tasks(self.alice, target=work_item)], [task["id"]])
+        self.assertEqual(self.store.list_audit_tasks(self.alice, target={**work_item, "object_ref": "proj_1/story/43"}), [])
+        self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("bob"), target=work_item), [])
         with connect(self.settings, "migrator") as conn:
             # The first file is also the rule source, which the tenant shares; revoke a plain upload.
             conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (files[1].file_id, self.alice.user_id))

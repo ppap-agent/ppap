@@ -771,6 +771,14 @@ class DocLinksResponse(TypedDict):
     doc_links: list[DocLink]
 
 
+class TaskDocumentRequest(TypedDict):
+    file_token: str
+
+
+class TaskDocumentResponse(TypedDict):
+    task_id: str
+
+
 class FeishuFileImportRequest(TypedDict):
     file_token: str
     doc_type: str

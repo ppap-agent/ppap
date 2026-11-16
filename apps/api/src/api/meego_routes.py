@@ -185,6 +185,32 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         except MeegoError as exc:
             return meego_failure(exc)
 
+    @app.get("/integrations/meego/work-items/{project_key}/{work_item_type_key}/{work_item_id}/audits", include_in_schema=False)
+    def meego_audits(project_key: str, work_item_type_key: str, work_item_id: str, request: Request) -> JSONResponse:
+        """This person's audits of one work item, newest first, and which of them the work item already shows."""
+        session, binding, denied = host(request)
+        if denied:
+            return denied
+        try:
+            item = work_item(project_key, work_item_type_key, work_item_id)
+        except ValueError:
+            return JSONResponse({"error": "invalid_work_item"}, status_code=400)
+        # Reading the comments is also the Meego access check for this person.
+        texts: list[str] | None = None
+        try:
+            texts = client.comment_texts(binding["user_key"], item)
+        except MeegoError as exc:
+            if exc.code in {"meego_access_denied", "meego_user_inactive"}:
+                return meego_failure(exc)
+        try:
+            tasks = store.list_audit_tasks(session.principal, 20, 0, target={"provider": "meego", "object_kind": "work_item", "object_ref": item.object_ref()})
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        tasks.sort(key=lambda task: task["created_at"], reverse=True)
+        # None means the comments could not be read; the plugin must not show that as "not written".
+        written = None if texts is None else [task["round_id"] for task in tasks if task.get("round_id") and any(marker(task["round_id"]) in text for text in texts)]
+        return JSONResponse({"audits": tasks, "written_round_ids": written})
+
     @app.post("/integrations/meego/files/import", status_code=201, include_in_schema=False)
     def meego_import(body: dict, request: Request) -> JSONResponse:
         session, binding, denied = host(request)

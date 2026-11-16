@@ -196,14 +196,4 @@ class MeegoStore:
 
     def set_task_target(self, principal: Principal, task_id: str, item: WorkItemRef) -> None:
         """Attach the work item as the task's writeback target; acceptance copies it to the round."""
-        product = self.product
-        with product._conn() as conn, conn.transaction():
-            draft = product._recognition_owner(conn, principal, task_id, lock=True)
-            if conn.execute("SELECT 1 FROM product.audit_rounds WHERE source_draft_id=%s", (draft["id"],)).fetchone():
-                raise ValueError("task_input_locked")
-            current = product.draft_writeback(conn, str(draft["id"]))
-            target = {"provider": "meego", "object_kind": "work_item", "object_ref": item.object_ref()}
-            if current and current != target:
-                raise ValueError("writeback_target_conflict")
-            if not current:
-                product.save_draft_writeback(conn, str(draft["id"]), target)
+        self.product.set_task_writeback(principal, task_id, {"provider": "meego", "object_kind": "work_item", "object_ref": item.object_ref()})

@@ -1033,6 +1033,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integrations/feishu/docs/audits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Feishu Doc Audits
+         * @description This person's audits started from one Feishu document, newest first.
+         */
+        get: operations["feishu_doc_audits_integrations_feishu_docs_audits_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/integrations/feishu/docs/links": {
         parameters: {
             query?: never;
@@ -1147,6 +1167,26 @@ export interface paths {
         put?: never;
         /** Feishu Round Writeback */
         post: operations["feishu_round_writeback_integrations_feishu_rounds__round_id__writeback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/feishu/tasks/{task_id}/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Feishu Task Document
+         * @description Record the Feishu document a task was started from, before the task is accepted.
+         */
+        put: operations["feishu_task_document_integrations_feishu_tasks__task_id__document_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4737,6 +4777,11 @@ export interface components {
             /** Part Number */
             part_number?: string;
         };
+        /** TaskDocumentResponse */
+        TaskDocumentResponse: {
+            /** Task Id */
+            task_id: string;
+        };
         /** TemplateLibrary */
         TemplateLibrary: {
             /** Customers */
@@ -7499,6 +7544,37 @@ export interface operations {
             };
         };
     };
+    feishu_doc_audits_integrations_feishu_docs_audits_get: {
+        parameters: {
+            query?: {
+                file_token?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditRecognitionTasks"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     feishu_doc_links_integrations_feishu_docs_links_get: {
         parameters: {
             query?: {
@@ -7739,6 +7815,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WritebackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    feishu_task_document_integrations_feishu_tasks__task_id__document_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** File Token */
+                    file_token: string;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDocumentResponse"];
                 };
             };
             /** @description Validation Error */

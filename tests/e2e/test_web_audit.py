@@ -24,7 +24,7 @@ class DocsAddonEntryTests(unittest.TestCase):
             page = browser.new_page()
             page.set_viewport_size({"width": 560, "height": 600})
             page.goto(f"{WEB}/addon")
-            page.wait_for_selector("text=当前环境不支持 docs-addon 登录")
+            page.wait_for_selector("text=请在飞书云文档中打开 PPAP Audit。")
             expect(page.get_by_test_id("addon-history")).to_be_visible()
             href = page.get_by_test_id("addon-history").get_attribute("href")
             # History opens the file archive page of the audit app.

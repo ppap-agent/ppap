@@ -261,3 +261,51 @@ def test_writeback_refuses_feishu_or_missing_targets(auth_store_factory, monkeyp
         assert client.post(f"/integrations/meego/rounds/{uuid.uuid4()}/writeback", headers=bearer).json()["error"] == "writeback_target_missing"
         monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
         assert client.post(f"/integrations/meego/rounds/{uuid.uuid4()}/writeback", headers=bearer).json()["error"] == "round_incomplete"
+
+
+def test_work_item_audits_are_this_persons_tasks_for_that_item_with_readback_state(auth_store_factory, monkeypatch):
+    tenant = "meego-feishu-" + uuid.uuid4().hex
+    fake = FakeMeego()
+    store = auth_store_factory(settings_for(tenant, fake.tenant), reset=False, role="api")
+    principal, browser = feishu_login(store, tenant)
+    written_round, open_round = str(uuid.uuid4()), str(uuid.uuid4())
+    seen: list[dict] = []
+
+    def listed(who, limit, offset, target=None):
+        seen.append({"user": who.user_id, "target": target})
+        return [
+            {"id": "older", "round_id": written_round, "created_at": "2026-11-15T01:00:00+00:00"},
+            {"id": "draft", "round_id": None, "created_at": "2026-11-16T03:00:00+00:00"},
+            {"id": "newer", "round_id": open_round, "created_at": "2026-11-16T02:00:00+00:00"},
+        ]
+
+    # The real query accepts the target filter; a person with no tasks for the item gets none.
+    assert store.list_audit_tasks(principal, target={"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"}) == []
+    monkeypatch.setattr(store, "list_audit_tasks", listed)
+    fake.comments.append(f"PPAP 审核结果（PPAP 审核轮次 {written_round}）")
+    with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
+        bearer = {"Authorization": "Bearer " + connect(client, browser)}
+        reply = client.get("/integrations/meego/work-items/proj_1/story/42/audits", headers=bearer)
+        assert reply.status_code == 200, reply.text
+        assert [row["id"] for row in reply.json()["audits"]] == ["draft", "newer", "older"]
+        assert reply.json()["written_round_ids"] == [written_round]
+        assert seen == [{"user": principal.user_id, "target": {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"}}]
+        assert client.get("/integrations/meego/work-items/proj_1/story/..%2Fx/audits", headers=bearer).status_code in {400, 404}
+        assert client.get("/integrations/meego/work-items/proj_1/story/42/audits").status_code == 401
+
+        # Comments that cannot be read leave the written state unknown, never "not written".
+        def no_comments(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/open_api/comment/query":
+                return httpx.Response(503, json={"err_code": 503})
+            return fake(request)
+
+        def denied(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/open_api/comment/query":
+                return httpx.Response(200, json={"err_code": 30005})
+            return fake(request)
+
+        with httpx.Client(transport=httpx.MockTransport(no_comments)) as down, TestClient(create_app(store.settings, auth_store=store, http=down)) as down_client:
+            unknown = down_client.get("/integrations/meego/work-items/proj_1/story/42/audits", headers=bearer)
+            assert unknown.status_code == 200 and unknown.json()["written_round_ids"] is None
+        with httpx.Client(transport=httpx.MockTransport(denied)) as shut, TestClient(create_app(store.settings, auth_store=store, http=shut)) as shut_client:
+            assert shut_client.get("/integrations/meego/work-items/proj_1/story/42/audits", headers=bearer).status_code == 403
