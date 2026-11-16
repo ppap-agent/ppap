@@ -47,3 +47,13 @@ def test_environment_still_wins_over_dotenv_when_no_explicit_value_is_given(tmp_
 
     observed = settings.usage_charge_enabled
     assert observed is False
+
+
+def test_a_tenant_can_have_its_own_trial_amount(monkeypatch):
+    from product.settings import Settings
+
+    monkeypatch.setenv("FEISHU_FREE_TRIAL_QUOTA_POINTS", "10000")
+    monkeypatch.setenv("FEISHU_TRIAL_QUOTA_OVERRIDES", '{"2caeb428f08e175d": 200000}')
+    settings = Settings()
+    assert settings.trial_quota_points("2caeb428f08e175d") == 200000
+    assert settings.trial_quota_points("other") == 10000

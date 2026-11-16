@@ -928,7 +928,7 @@ def create_app(
         if not item_id:
             return JSONResponse({"error": "feishu_ai_item_missing"}, status_code=409)
         consumed = store.trial_consumed_points(session.principal.tenant_id, item_id)
-        remaining = remaining_trial_points(settings.feishu_free_trial_quota_points, consumed)
+        remaining = remaining_trial_points(store.trial_quota(session.principal.tenant_id), consumed)
         partner = None
         try:
             partner = query_tenant_ai_item(http, session.access_token, item_id)

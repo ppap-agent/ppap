@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     feishu_verification_token: str = Field(default="", alias="FEISHU_VERIFICATION_TOKEN")
     feishu_ai_item_id: str = Field(default="", alias="FEISHU_AI_ITEM_ID")
     feishu_free_trial_quota_points: int = Field(default=10000, alias="FEISHU_FREE_TRIAL_QUOTA_POINTS")
+    # Feishu tenant key -> trial points for that tenant; tenants not listed get the shared amount above.
+    feishu_trial_quota_overrides: dict[str, int] = Field(default_factory=dict, alias="FEISHU_TRIAL_QUOTA_OVERRIDES")
     onlyoffice_url: str = Field(default="", alias="PPAP_ONLYOFFICE_URL")
     onlyoffice_api_url: str = Field(default="", alias="PPAP_ONLYOFFICE_API_URL")
     onlyoffice_secret: str = Field(default="", alias="PPAP_ONLYOFFICE_SECRET")
@@ -233,6 +235,10 @@ class Settings(BaseSettings):
 
     def meego_feishu_tenant(self, meego_tenant_key: str) -> str:
         return str(self.meego_tenant_map.get(meego_tenant_key.strip()) or "").strip()
+
+    def trial_quota_points(self, tenant_key: str) -> int:
+        """The free trial points of one Feishu tenant."""
+        return max(0, int(self.feishu_trial_quota_overrides.get(tenant_key.strip(), self.feishu_free_trial_quota_points)))
 
     def allowed_tenant_keys(self) -> frozenset[str]:
         return frozenset(part.strip() for part in self.current_tenant_allowlist.split(",") if part.strip())

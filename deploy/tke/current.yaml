@@ -31,6 +31,8 @@ data:
   FEISHU_APP_ID: cli_a961a27719b81cc9
   FEISHU_AI_ITEM_ID: OpenApp_Lcoastline_PPAPAuditAgent
   FEISHU_FREE_TRIAL_QUOTA_POINTS: "10000"
+  # 海岸线 (PPAP's own developer tenant) gets a larger trial for acceptance runs with charging on.
+  FEISHU_TRIAL_QUOTA_OVERRIDES: '{"2caeb428f08e175d": 200000}'
   PPAP_CURRENT_TENANT_ALLOWLIST: 2caeb428f08e175d,16e7179eb1abd75d,16fad24b7282175e,175b8362d5ce575f
   PPAP_USAGE_CHARGE_ENABLED: "false"
   PPAP_MCP_ENABLED: "true"

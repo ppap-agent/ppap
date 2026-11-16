@@ -888,6 +888,26 @@ def test_charged_confirmation_records_a_split_file_once_and_replay_needs_no_quot
         http.close()
 
 
+def test_a_tenant_with_its_own_trial_amount_is_charged_from_it(matched_task):
+    _client, worker, path, _body, _rule = matched_task
+    # The shared trial is empty; this tenant has its own 500 points.
+    worker.settings.feishu_free_trial_quota_points = 0
+    with worker._conn() as conn:
+        keys = [str(row[0]) for row in conn.execute("SELECT external_key FROM product.tenants WHERE provider = 'feishu'").fetchall()]
+    worker.settings.feishu_trial_quota_overrides = dict.fromkeys(keys, 500)
+    item = {"enabled": True, "user_quota": 0, "ai_package_purchased": False}
+    client, http, _calls = billing_client(worker, item)
+    try:
+        accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
+        assert accepted.status_code == 201, accepted.text
+        usage = client.get("/usage").json()
+        assert [(row["consumed_points"], row["is_free_trial"]) for row in usage["events"]] == [(500, True)]
+    finally:
+        worker.settings.feishu_trial_quota_overrides = {}
+        client.close()
+        http.close()
+
+
 @pytest.mark.parametrize("item", [{"enabled": False, "user_quota": 1000, "ai_package_purchased": True}, {"enabled": True, "user_quota": 0, "ai_package_purchased": True}])
 def test_charging_policy_is_not_client_authority_and_rejection_preserves_task(matched_task, item):
     _client, worker, path, body, _rule = matched_task

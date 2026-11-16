@@ -3827,7 +3827,7 @@ class AuthStore:
                 "SELECT 1 FROM product.usage_events WHERE tenant_id = %s AND round_id = %s AND file_version_id = %s AND charge = 'deep_surcharge'", (tenant_id, round_id, version)
             ).fetchone():
                 continue
-            remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, self._trial_ledger_consumed(conn, tenant_id, item_id))
+            remaining = remaining_trial_points(self._trial_quota(conn, tenant_id), self._trial_ledger_consumed(conn, tenant_id, item_id))
             for amount, trial in split_trial_and_partner(remaining, DEEP_SURCHARGE_PER_FILE):
                 conn.execute(
                     """INSERT INTO product.usage_events
@@ -4704,7 +4704,7 @@ class AuthStore:
             raise ValueError("usage_quota_unavailable")
         if not partner.enabled:
             raise ValueError("usage_ai_disabled")
-        remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, self._trial_ledger_consumed(conn, principal.tenant_id, item_id))
+        remaining = remaining_trial_points(self._trial_quota(conn, principal.tenant_id), self._trial_ledger_consumed(conn, principal.tenant_id, item_id))
         if remaining <= 0 and partner.user_quota <= 0:
             raise ValueError("usage_balance_empty")
 
@@ -4716,7 +4716,7 @@ class AuthStore:
             raise ValueError("usage_quota_unavailable")
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("usage:" + principal.tenant_id + ":" + item_id,))
         consumed = self._trial_ledger_consumed(conn, principal.tenant_id, item_id)
-        remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, consumed)
+        remaining = remaining_trial_points(self._trial_quota(conn, principal.tenant_id), consumed)
         for row in prepared:
             if row["role"] != "target":
                 continue
@@ -5042,6 +5042,15 @@ class AuthStore:
         with self._conn() as conn:
             return self._trial_ledger_consumed(conn, tenant_id, ai_item_id)
 
+    def trial_quota(self, tenant_id: str) -> int:
+        with self._conn() as conn:
+            return self._trial_quota(conn, tenant_id)
+
+    def _trial_quota(self, conn, tenant_id: str) -> int:
+        """The tenant's free trial points: its own configured amount, else the shared one."""
+        row = conn.execute("SELECT external_key FROM product.tenants WHERE id = %s AND provider = 'feishu'", (tenant_id,)).fetchone()
+        return self.settings.trial_quota_points(str(row[0]) if row else "")
+
     def _trial_baseline_consumed(self, conn, tenant_id: str, ai_item_id: str) -> int:
         row = conn.execute(
             """SELECT b.consumed_points
@@ -5213,7 +5222,7 @@ class AuthStore:
                 rows = [{**row, **self.usage_event_public(row)} for row in cur.fetchall()]
             item_id = self.settings.feishu_ai_item_id.strip()
             if item_id:
-                total = max(0, self.settings.feishu_free_trial_quota_points)
+                total = self._trial_quota(conn, principal.tenant_id)
                 free: dict = {
                     "free_total": {"value": total, "reason": None},
                     "free_remaining": {"value": remaining_trial_points(total, self._trial_ledger_consumed(conn, principal.tenant_id, item_id)), "reason": None},
