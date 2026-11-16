@@ -100,21 +100,23 @@ def _sandboxed_command(command: Sequence[str]) -> tuple[str, ...]:
     )
 
 
+def _tighten(kind: int, value: int) -> None:
+    """Lower a limit to `value`; an inherited stricter hard limit (a sandboxed guest) stays as it is."""
+    _, hard = resource.getrlimit(kind)
+    if hard != resource.RLIM_INFINITY:
+        value = min(value, hard)
+    resource.setrlimit(kind, (value, value))
+
+
 def _resource_limiter(limits: LegacyDocConversionLimits) -> Callable[[], None]:
     def apply_limits() -> None:
-        resource.setrlimit(resource.RLIMIT_CPU, (limits.cpu_seconds, limits.cpu_seconds))
+        _tighten(resource.RLIMIT_CPU, limits.cpu_seconds)
         # macOS reports RLIMIT_AS but rejects practical finite values. The
         # production optional runtime is Linux, where this is enforced.
         if sys.platform != "darwin":
-            resource.setrlimit(
-                resource.RLIMIT_AS,
-                (limits.address_space_bytes, limits.address_space_bytes),
-            )
-        resource.setrlimit(
-            resource.RLIMIT_FSIZE,
-            (limits.max_output_bytes, limits.max_output_bytes),
-        )
-        resource.setrlimit(resource.RLIMIT_NOFILE, (limits.max_open_files, limits.max_open_files))
+            _tighten(resource.RLIMIT_AS, limits.address_space_bytes)
+        _tighten(resource.RLIMIT_FSIZE, limits.max_output_bytes)
+        _tighten(resource.RLIMIT_NOFILE, limits.max_open_files)
 
     return apply_limits
 

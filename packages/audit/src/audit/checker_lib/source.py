@@ -575,8 +575,8 @@ class SourceAudit:
                 status, message = "UNABLE", "当前模型不可用，所需原件事实尚未核实。"
             else:
                 status, message = "ERR", "原件模型请求失败或结果尚未确认，尚未取得业务结论。"
-        except Exception as exc:
-            status, message = "ERR", f"原件读取或检查执行失败（{type(exc).__name__}），尚未取得业务结论。"
+        except Exception:
+            status, message = "ERR", "原件读取或检查执行失败，尚未取得业务结论。"
         suffix = Path(self.audit_file.file_url).suffix.lower().lstrip(".")
         evidence = None
         if suffix in {"xlsx", "xlsm", "xls", "docx", "doc", "pdf", "png", "jpg", "jpeg", "webp"}:

@@ -30,6 +30,8 @@ REVIEW_EFFORT = "medium"
 REVIEW_ATTEMPTS = 2
 MAX_EVIDENCE = 12
 CORRECTED_PREFIX = "深度复核订正"
+# One vocabulary with the web app (apps/web/src/audit/status-labels.ts).
+PROGRAM_STATUS_LABEL = {"PASS": "符合", "NG": "不符合", "UNABLE": "无法判断", "ERR": "技术错误", "NA": "不适用"}
 _IMAGES = frozenset({"png", "jpg", "jpeg", "webp"})
 _WORKBOOKS = frozenset({"xlsx", "xls", "xlsm"})
 _LOCATOR_KINDS: dict[str, dict[str, type]] = {
@@ -424,8 +426,10 @@ def _corrected_item(finding: Mapping[str, Any], record: Mapping[str, Any], filen
     for source in record["evidence"]:
         versions.add(json.loads(source["locator"])["file_version_id"])
     kinds = {source["kind"] for source in record["evidence"]}
-    program = str(finding.get("suggestions") or "").strip()
-    text = f"{CORRECTED_PREFIX}（程序原结论 {record['program_status']}{'：' + program[:300] if program else ''}）：{record['reason']}"
+    # The program's verdict in the site's own words; a technical failure carries no business text worth showing.
+    status = str(record["program_status"])
+    program = "" if status == "ERR" else str(finding.get("suggestions") or "").strip()
+    text = f"{CORRECTED_PREFIX}（程序原结论 {PROGRAM_STATUS_LABEL.get(status, status)}{'：' + program[:300] if program else ''}）：{record['reason']}"
     item = {
         "clause_id": finding["clause_id"],
         "classification": finding.get("classification") or "",

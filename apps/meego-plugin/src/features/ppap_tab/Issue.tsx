@@ -49,7 +49,7 @@ export function Issue({ task, row, check, position, stale, onBack, onChanged }: 
         )}
       </div>
       <div className="issue-original">
-        <OriginalView source={{ roundId: task.round_id!, file: viewed }} page={page} />
+        <OriginalView source={{ roundId: task.round_id!, file: viewed }} page={page} locator={current?.locator ?? null} />
       </div>
       {check.review_item_key && task.round_id && (
         <div className="issue-review">

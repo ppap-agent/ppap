@@ -895,6 +895,9 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     setTemplateChoice(key)
     try {localStorage.setItem(lastTemplateKey, key)} catch { /* The choice still applies; it is only not remembered. */ }
     const byType = new Map(ruleChoices.filter(rule => rule.template === key && rule.type).map(rule => [rule.type!, rule.id]))
+    // A customer's rules make that customer the task's customer, so the page names it and counts its required files.
+    const owner = /^(?:system|customer):(.+)$/.exec(key)?.[1]
+    if (owner && adapter.customers?.some(option => option.value === owner)) setCustomer(owner)
     setFiles(rows => rows.map(row => {
       const id = row.match?.document_type ? byType.get(row.match.document_type) : undefined
       return id ? {...row, preferred_rule_version_id: id} : row

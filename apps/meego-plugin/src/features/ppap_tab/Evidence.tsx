@@ -4,7 +4,7 @@ import { Banner, Button, Image, Space, Spin, Typography } from '@douyinfe/semi-u
 
 const { Text } = Typography;
 import { useEffect, useId, useRef, useState } from 'react';
-import type { FileVersion } from './model';
+import type { FileVersion, Locator } from './model';
 import { bytes, call, PpapError, save, say, webBase } from './ppap';
 
 type Source = { roundId: string; file: FileVersion };
@@ -12,7 +12,7 @@ const base = (source: Source) => `/rounds/${source.roundId}/files/${source.file.
 const extension = (name: string) => name.slice(name.lastIndexOf('.') + 1).toLowerCase();
 const images = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
 
-export function OriginalView({ source, page = 1 }: { source: Source; page?: number }) {
+export function OriginalView({ source, page = 1, locator = null }: { source: Source; page?: number; locator?: Locator | null }) {
   const kind = extension(source.file.original_filename);
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState('');
@@ -39,7 +39,7 @@ export function OriginalView({ source, page = 1 }: { source: Source; page?: numb
       ) : images.includes(kind) ? (
         <Picture key={source.file.id} source={source} />
       ) : (
-        <OfficeView key={source.file.id} source={source} />
+        <OfficeView key={source.file.id + ':' + target(locator)} source={source} at={locator} />
       )}
     </section>
   );
@@ -78,8 +78,15 @@ function loadEditor(src: string): Promise<void> {
   return script;
 }
 
-function OfficeView({ source }: { source: Source }) {
+// The spreadsheet viewer opens on the cited cell; the document server takes it from the signed config.
+const target = (locator: Locator | null) =>
+  locator?.kind === 'xlsx_cell' ? `sheet=${encodeURIComponent(locator.sheet)}&cell=${encodeURIComponent(locator.cell)}`
+  : locator?.kind === 'xlsx_range' ? `sheet=${encodeURIComponent(locator.sheet)}&cell=${encodeURIComponent(`${locator.start}:${locator.end}`)}`
+  : '';
+
+function OfficeView({ source, at }: { source: Source; at: Locator | null }) {
   const id = 'office-' + useId().replace(/:/g, '');
+  const jump = target(at);
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [notice, setNotice] = useState('');
   useEffect(() => {
@@ -92,7 +99,7 @@ function OfficeView({ source }: { source: Source }) {
     };
     void (async () => {
       try {
-        const reply = await call<OfficeReply>(`/files/${source.file.file_id}/versions/${source.file.id}/office?round_id=${encodeURIComponent(source.roundId)}`);
+        const reply = await call<OfficeReply>(`/files/${source.file.file_id}/versions/${source.file.id}/office?round_id=${encodeURIComponent(source.roundId)}${jump ? '&' + jump : ''}`);
         if (!live) return;
         if (!reply.available || !reply.script_url || !reply.config) return failed(reply.notice || '这份文件不能在这里显示，请下载原件核对。');
         await loadEditor(reply.script_url);
@@ -108,7 +115,7 @@ function OfficeView({ source }: { source: Source }) {
       live = false;
       editor?.destroyEditor();
     };
-  }, [source.file.id, source.file.file_id, source.roundId, id]);
+  }, [source.file.id, source.file.file_id, source.roundId, id, jump]);
   if (state === 'failed') return <Text type="tertiary">{notice}</Text>;
   return (
     <div className="office">

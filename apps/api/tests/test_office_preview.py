@@ -36,6 +36,13 @@ class OfficePreviewTests(unittest.TestCase):
         self.assertEqual(claims["tenant_id"], "tenant1")
         self.assertNotIn("callbackUrl", config["config"]["editorConfig"])
 
+    def test_the_viewer_opens_on_the_evidence_cell_and_ignores_a_malformed_target(self):
+        config = preview_config(self.settings, self.version, sheet="Table 1", cell="A2")["config"]
+        self.assertEqual(config["editorConfig"]["actionLink"], {"action": {"type": "internallink", "data": "'Table 1'!A2"}})
+        self.assertEqual(preview_config(self.settings, self.version, sheet="O'Neil", cell="B3:C4")["config"]["editorConfig"]["actionLink"]["action"]["data"], "'O''Neil'!B3:C4")
+        for sheet, cell in (("Table 1", "A0"), ("Table 1", "=HYPERLINK()"), ("a:b", "A2"), (None, "A2")):
+            self.assertNotIn("actionLink", preview_config(self.settings, self.version, sheet=sheet, cell=cell)["config"]["editorConfig"])
+
     def test_expired_tampered_and_editor_tokens_are_not_file_tickets(self):
         with patch("product.office_preview.time.time", return_value=1000):
             ticket = self.ticket()

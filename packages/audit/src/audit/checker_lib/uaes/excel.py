@@ -169,9 +169,9 @@ class UaesExcelAgent(ExcelAgent):
             raise GuardStop(Decision.ERR, "原件模型请求失败或结果尚未确认，尚未取得业务结论。") from None
         except GuardStop:
             raise
-        except Exception as exc:
-            # A provider's own text never reaches the finding.
-            raise GuardStop(Decision.ERR, f"原件读取失败（{type(exc).__name__}），尚未取得业务结论。") from None
+        except Exception:
+            # Neither a provider's text nor an exception name reaches the finding.
+            raise GuardStop(Decision.ERR, "原件读取失败，尚未取得业务结论。") from None
 
     def _finalize_audit_result(self, result: Any, *, rule_no: int, phase: Any, ctx: RuleContext | None = None) -> Any:
         result = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)

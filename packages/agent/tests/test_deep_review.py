@@ -159,7 +159,7 @@ def test_a_checked_correction_replaces_the_verdict_and_keeps_the_program_one(tmp
     assert seen == [("file-a", ["UNABLE", "UNABLE"]), ("file-b", ["UNABLE", "UNABLE"])]
     found = by_clause(result)
     corrected = found[("file-a", "A")]
-    assert corrected.status == "PASS" and corrected.suggestions.startswith(CORRECTED_PREFIX + "（程序原结论 UNABLE：No evidence）")
+    assert corrected.status == "PASS" and corrected.suggestions.startswith(CORRECTED_PREFIX + "（程序原结论 无法判断：No evidence）")
     semantic = corrected.locator["semantic"]
     assert semantic["deep_review"] == {"decision": "corrected", "program_status": "UNABLE", "status": "PASS", "reason": "B2 标有特殊特性，参考文件有签字"}
     assert [(source["file_version_id"], source["locator"]) for source in semantic["sources"]] == [
@@ -301,3 +301,13 @@ def test_images_carry_visual_evidence_and_word_documents_carry_text(tmp_path):
     word = reader_for("psw.docx", output.getvalue(), tmp_path)
     assert check_evidence(cite({"kind": "docx_paragraph", "paragraph": 1}, "李四"), word, frozenset())[1] == ""
     assert check_evidence(cite({"kind": "docx_paragraph", "paragraph": 1}, "王五"), word, frozenset())[1] == "excerpt_not_in_original"
+
+
+def test_a_corrected_technical_failure_shows_no_diagnostic_text():
+    from agent.deep_review import _corrected_item
+
+    finding = {"clause_id": "A", "file_version_id": "file-a", "status": "ERR", "suggestions": "原件读取失败（SubprocessError），尚未取得业务结论。"}
+    evidence = [{"kind": "structure", "locator": json.dumps({"file_version_id": "file-a", "kind": "xlsx_cell", "sheet": "CP", "cell": "A2"}), "excerpt": "生产"}]
+    record = {"program_status": "ERR", "status": "NG", "reason": "A2 勾选量产，原件无受控章", "evidence": evidence}
+    item = _corrected_item(finding, record, "cp.xlsx")
+    assert item["suggestions"] == CORRECTED_PREFIX + "（程序原结论 技术错误）：A2 勾选量产，原件无受控章"

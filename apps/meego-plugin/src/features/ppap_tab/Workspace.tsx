@@ -425,16 +425,15 @@ function IssueList({ issues, current, onOpen }: { issues: OpenIssue[]; current: 
                   className={on ? 'issue-row on' : 'issue-row'}
                   onClick={openIt}
                   main={
-                    <span role="button" tabIndex={0} aria-current={on ? 'true' : undefined} onKeyDown={event => (event.key === 'Enter' || event.key === ' ') && (event.preventDefault(), openIt())}>
-                      <Text ellipsis={{ showTooltip: true, rows: 2 }}>{issue.check.rule_item.rule_to_check}</Text>
+                    // The clause gets the row's full width; its state sits under it, not in a column beside it.
+                    <span className="issue-text" role="button" tabIndex={0} aria-current={on ? 'true' : undefined} onKeyDown={event => (event.key === 'Enter' || event.key === ' ') && (event.preventDefault(), openIt())}>
+                      <Text ellipsis={{ showTooltip: true, rows: 3 }}>{issue.check.rule_item.rule_to_check}</Text>
+                      <Space spacing={4} wrap>
+                        <Tag size="small" color={bucketColor(kind)} type="light">{bucketLabel(kind)}</Tag>
+                        {issue.change && <Tag size="small" color={issue.change === 'added' ? 'red' : 'grey'} type="ghost">{issue.change === 'added' ? '新出现' : '仍存在'}</Tag>}
+                        {reviewOf(issue.check) && <Tag size="small" color="blue" type="ghost">已复核</Tag>}
+                      </Space>
                     </span>
-                  }
-                  extra={
-                    <Space vertical align="end" spacing={4}>
-                      <Tag size="small" color={bucketColor(kind)} type="light">{bucketLabel(kind)}</Tag>
-                      {issue.change && <Tag size="small" color={issue.change === 'added' ? 'red' : 'grey'} type="ghost">{issue.change === 'added' ? '新出现' : '仍存在'}</Tag>}
-                      {reviewOf(issue.check) && <Tag size="small" color="blue" type="ghost">已复核</Tag>}
-                    </Space>
                   }
                 />
               );

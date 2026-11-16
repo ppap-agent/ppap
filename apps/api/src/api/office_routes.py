@@ -8,7 +8,7 @@ from api import web_contract as wc
 
 def register_office_routes(app, store, principal_of, settings):
     @app.get("/files/{file_id}/versions/{version_id}/office", response_model=wc.OfficePreviewResponse)
-    def office_config(file_id: str, version_id: str, request: Request, round_id: str | None = None):
+    def office_config(file_id: str, version_id: str, request: Request, round_id: str | None = None, sheet: str | None = None, cell: str | None = None):
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
@@ -19,7 +19,7 @@ def register_office_routes(app, store, principal_of, settings):
         if version.status != "ready":
             return JSONResponse({"error": "file_not_ready"}, status_code=409)
         try:
-            return JSONResponse(preview_config(settings, version), headers={"Cache-Control": "no-store"})
+            return JSONResponse(preview_config(settings, version, sheet=sheet, cell=cell), headers={"Cache-Control": "no-store"})
         except ValueError:
             return JSONResponse({"error": "invalid_onlyoffice_configuration"}, status_code=503)
 

@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import time
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
@@ -40,7 +41,17 @@ def read_ticket(token: str, secret: str) -> dict:
         raise ValueError("invalid_preview_ticket") from exc
 
 
-def preview_config(settings, version) -> dict:
+_CELL = re.compile(r"[A-Z]{1,3}[1-9][0-9]{0,6}(:[A-Z]{1,3}[1-9][0-9]{0,6})?")
+
+
+def jump_link(sheet: str | None, cell: str | None) -> dict | None:
+    """The spreadsheet viewer's own "link to this range": it opens on that sheet and cell."""
+    if not sheet or not cell or len(sheet) > 31 or any(char in sheet for char in "[]*?/\\:") or not _CELL.fullmatch(cell):
+        return None
+    return {"action": {"type": "internallink", "data": "'" + sheet.replace("'", "''") + "'!" + cell}}
+
+
+def preview_config(settings, version, *, sheet: str | None = None, cell: str | None = None) -> dict:
     extension = Path(version.original_filename).suffix.lower().lstrip(".")
     if extension not in OFFICE_TYPES:
         return {"available": False, "notice": "此格式暂不支持在线原件预览，请下载原件核对。"}
@@ -54,6 +65,18 @@ def preview_config(settings, version) -> dict:
     ticket = _sign({"purpose": "ppap-office-file", "exp": expires, "file_id": version.file_id, "version_id": version.id, "tenant_id": version.tenant_id}, settings.onlyoffice_secret)
     download = settings.onlyoffice_api_url.rstrip("/") + "/office/content?" + urlencode({"ticket": ticket})
     key = hashlib.sha256((settings.public_api_url + "|" + version.tenant_id + "|" + version.id).encode()).hexdigest()
+    editor: dict = {
+        "mode": "view",
+        "lang": "zh",
+        "customization": {
+            "compactHeader": True,
+            "anonymous": {"request": False},
+            "macros": False,
+            "macrosMode": "disable",
+        },
+    }
+    if OFFICE_TYPES[extension] == "cell" and (link := jump_link(sheet, cell)):
+        editor["actionLink"] = link
     config = {
         "documentType": OFFICE_TYPES[extension],
         "width": "100%",
@@ -65,16 +88,7 @@ def preview_config(settings, version) -> dict:
             "url": download,
             "permissions": {"edit": False, "review": False, "comment": False, "chat": False, "fillForms": False, "download": False, "print": False},
         },
-        "editorConfig": {
-            "mode": "view",
-            "lang": "zh",
-            "customization": {
-                "compactHeader": True,
-                "anonymous": {"request": False},
-                "macros": False,
-                "macrosMode": "disable",
-            },
-        },
+        "editorConfig": editor,
         "exp": expires,
     }
     config["token"] = _sign(config, settings.onlyoffice_secret)
