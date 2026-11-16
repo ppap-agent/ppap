@@ -1,20 +1,63 @@
-body { margin: 0; font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2329; }
-.panel { padding: 16px 20px; max-width: 880px; }
-.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-h2 { font-size: 16px; margin: 16px 0 8px; }
-.muted { color: #646a73; }
-.notice { color: #b25f00; background: #fff7e8; padding: 8px 12px; border-radius: 6px; }
-.list { list-style: none; padding: 0; margin: 0 0 12px; border-top: 1px solid #eff0f1; }
-.list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #eff0f1; }
-.list label { display: flex; align-items: center; gap: 8px; width: 100%; }
-.name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 12px; }
-button { font: inherit; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
-button:disabled { cursor: not-allowed; opacity: .5; }
-.primary { background: #3370ff; color: #fff; border: 1px solid #3370ff; }
-.secondary { background: #fff; color: #1f2329; border: 1px solid #d0d3d6; }
-.link { background: none; border: none; padding: 0; color: #3370ff; cursor: pointer; }
-.badge { padding: 0 8px; border-radius: 10px; font-size: 12px; background: #eff0f1; white-space: nowrap; }
-.badge.PASS { background: #e8f7ed; color: #1f7a3d; }
-.badge.NG { background: #fde9e7; color: #c0362c; }
-.badge.UNKNOWN { background: #fff3e0; color: #b25f00; }
+/* Layout only. Components, colors and type come from Feishu Project's own Semi theme. */
+body { margin: 0; background: transparent; }
+#app { container-type: inline-size; container-name: ppap; }
+.ppap { padding: 12px 16px 8px; display: flex; flex-direction: column; gap: 12px; min-width: 0; color: var(--semi-color-text-0); font-size: 14px; }
+.ppap h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.narrow { max-width: 720px; }
+.muted { color: var(--semi-color-text-2); }
+.small { font-size: 12px; }
+.pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.link { background: none; border: none; padding: 0; font: inherit; color: var(--semi-color-link); cursor: pointer; }
+.account { display: flex; flex-wrap: wrap; gap: 4px 16px; padding-top: 8px; border-top: 1px solid var(--semi-color-border); }
+
+.workspace { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.confirm { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border: 1px solid var(--semi-color-border); border-radius: 8px; background: var(--semi-color-fill-0); }
+.doc-name { display: flex; flex-direction: column; min-width: 0; max-width: 46cqw; }
+.progress { display: flex; align-items: center; gap: 8px; min-width: 140px; }
+.progress .semi-progress { flex: 1; }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
+.issues { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.issues > .semi-button { align-self: flex-start; }
+.detail { min-width: 0; }
+.issue-row { cursor: pointer; }
+.issue-row.on { background: var(--semi-color-primary-light-default); }
+
+.issue { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "original" "review"; gap: 16px; min-width: 0; }
+.issue-main { grid-area: main; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.issue-original { grid-area: original; min-width: 0; }
+.issue-review { grid-area: review; min-width: 0; }
+.issue-main .semi-radioGroup, .issue-main .semi-radio { max-width: 100%; }
+.clause { overflow-wrap: anywhere; }
+.label { margin-top: 8px; }
+.review { display: flex; flex-direction: column; gap: 6px; }
+.review label { font-size: 12px; color: var(--semi-color-text-2); margin-top: 4px; }
+.back { align-self: flex-start; margin-left: -8px; }
+
+.original { display: flex; flex-direction: column; gap: 8px; min-width: 0; border: 1px solid var(--semi-color-border); border-radius: 8px; padding: 8px 12px 12px; }
+.original-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.office { position: relative; height: min(78vh, 680px); min-height: 360px; border: 1px solid var(--semi-color-border); border-radius: 4px; overflow: hidden; }
+.office > div, .office iframe { width: 100%; height: 100%; }
+.office-wait { position: absolute; inset: 0; padding: 12px; background: var(--semi-color-bg-0); z-index: 1; }
+.pdf { min-width: 0; }
+.pager { display: flex; justify-content: center; margin-bottom: 8px; }
+.paper { overflow: auto; }
+.paper canvas { display: block; }
+
+/* Narrow panes (a phone, or a slim detail tab): one thing at a time. */
+@container ppap (max-width: 679px) {
+  .split.has-detail .issues { display: none; }
+  .placeholder { display: none; }
+}
+/* Medium: the list beside the item. */
+@container ppap (min-width: 680px) {
+  .split { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); align-items: start; }
+  .issue .back { display: none; }
+}
+/* Wide: list, item and original side by side. */
+@container ppap (min-width: 1100px) {
+  .split { grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); }
+  .issue { grid-template-columns: minmax(280px, 2fr) minmax(0, 3fr); grid-template-areas: "main original" "review original"; grid-template-rows: auto 1fr; align-items: start; }
+}

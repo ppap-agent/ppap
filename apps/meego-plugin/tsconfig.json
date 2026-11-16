@@ -3,9 +3,9 @@
     "module": "esnext",
     "target": "es6",
     "lib": [
-      "es6",
+      "es2020",
       "dom",
-      "es7"
+      "dom.iterable"
     ],
     "sourceMap": true,
     "allowJs": true,
