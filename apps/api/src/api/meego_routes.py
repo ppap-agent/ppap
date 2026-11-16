@@ -192,7 +192,7 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             return denied
         request_id = _as_uuid(str(body.get("request_id") or ""))
         uid = str(body.get("uid") or "").strip()
-        if not request_id or not uid or len(uid) > 128:
+        if not request_id or not uid or len(uid) > 1024:
             return JSONResponse({"error": "invalid_import_request"}, status_code=400)
         try:
             item = item_of(body)

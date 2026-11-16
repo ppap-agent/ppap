@@ -37,6 +37,10 @@ def settings_for(feishu_tenant: str, meego_tenant: str, **extra) -> Settings:
     )
 
 
+# Real Meego attachment uids are ~150 characters of base64url with padding.
+FILE_UID = ("bCJAK4e1-x_Q=" * 12)[:152]
+
+
 class FakeMeego:
     """Only the Meego OpenAPI boundary is fake; PostgreSQL and the Product API are real."""
 
@@ -46,7 +50,7 @@ class FakeMeego:
         self.comments: list[str] = []
         self.downloads = 0
         self.fail_comment_unknown = False
-        self.files = [{"uid": "file-uid-1", "name": "PFMEA.xlsx", "size": "12KB", "type": "application/vnd.ms-excel"}]
+        self.files = [{"uid": FILE_UID, "name": "PFMEA.xlsx", "size": "12KB", "type": "application/vnd.ms-excel"}]
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -173,7 +177,7 @@ def test_attachment_import_binds_source_before_download_and_replays_one_version(
         assert listed.status_code == 200
         assert listed.json()["files"][0]["name"] == "PFMEA.xlsx"
         request_id = str(uuid.uuid4())
-        command = {"request_id": request_id, "project_key": "proj_1", "work_item_type_key": "story", "work_item_id": "42", "uid": "file-uid-1"}
+        command = {"request_id": request_id, "project_key": "proj_1", "work_item_type_key": "story", "work_item_id": "42", "uid": FILE_UID}
         first = client.post("/integrations/meego/files/import", json=command, headers=bearer)
         assert first.status_code == 201, first.text
         assert first.json()["id"] == request_id
