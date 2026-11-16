@@ -1,7 +1,7 @@
 // One surface for a work item's PPAP package: what is attached, what the latest round
 // concluded about it, what is still missing, and what needs a person. Starting, confirming and
 // following an audit all happen on the document list itself.
-import { Banner, Button, Collapse, Empty, List, Progress, Radio, RadioGroup, Space, Spin, Table, TabPane, Tabs, Tag, Typography } from '@douyinfe/semi-ui';
+import { Banner, Button, Collapse, Empty, List, Progress, Radio, RadioGroup, Select, Space, Spin, Table, TabPane, Tabs, Tag, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Data, Item } from './data';
 import { Confirm, ConfirmRow, useRevise } from './Confirm';
@@ -32,7 +32,13 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
   const { docs, flight, latest } = pack;
   const view = useMemo(() => standing(latest, pack.previous), [latest, pack.previous]);
   const total = verdict(latest);
-  const customer = (flight ?? latest)?.customer_preference ?? data.defaultCustomer;
+  // Before the first audit the person may pick the customer; after that each round keeps its own.
+  const [chosenCustomer, setChosenCustomer] = useState<string | null>(null);
+  const [customers, setCustomers] = useState<string[]>([]);
+  useEffect(() => {
+    call<{ customers: { name: string }[] }>('/audit-customers').then(reply => setCustomers(reply.customers.map(row => row.name)), () => setCustomers([]));
+  }, []);
+  const customer = (flight ?? latest)?.customer_preference ?? chosenCustomer ?? data.defaultCustomer;
   const missing = useMemo(() => {
     const have = new Set(docs.map(doc => doc.type).filter(Boolean));
     return requiredTypes(data.rules, customer).filter(type => !have.has(type));
@@ -107,7 +113,7 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       setBusy('正在提交…');
       const taskId = newId();
       // Rules are matched for one customer. Without it the match falls on rules that have no checker program.
-      const audited = earlier?.customer_preference ?? data.defaultCustomer;
+      const audited = earlier?.customer_preference ?? customer;
       await call<Task>('/audit-tasks', { method: 'POST', body: { request_id: taskId, customer_preference: audited, files: inputs, ...(earlier ? { predecessor_id: latest!.round_id } : {}) } });
       await call(`/integrations/meego/tasks/${taskId}/work-item`, { method: 'PUT', body: item });
       setReselect(false);
@@ -190,6 +196,17 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
           {latest && <Text type="tertiary" size="small">{when(latest.round_started_at ?? latest.created_at)} 的审核</Text>}
         </Space>
         <Space wrap>
+          {choosing && !latest && customers.length > 1 && (
+            <Select
+              size="default"
+              aria-label="审核客户"
+              prefix="审核客户"
+              disabled={Boolean(busy)}
+              value={customer ?? undefined}
+              optionList={customers.map(name => ({ value: name, label: name }))}
+              onChange={value => setChosenCustomer(String(value))}
+            />
+          )}
           {choosing && chosen.length > 0 && <Button theme={startFirst ? 'solid' : 'light'} type="primary" loading={Boolean(busy)} onClick={() => void start()}>{startLabel}</Button>}
           {writable && written !== true && <Button theme={startFirst && choosing && chosen.length > 0 ? 'light' : 'solid'} type="primary" disabled={Boolean(busy)} onClick={() => void writeBack()}>写回工作项</Button>}
           {writable && written === true && (
