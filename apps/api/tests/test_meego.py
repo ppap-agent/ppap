@@ -435,3 +435,19 @@ def test_writeback_attaches_each_report_once_per_round_outside_the_audited_attac
         fake.reports, fake.fail_upload_unknown = [], True
         landed = client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer).json()["reports"]
         assert landed["state"] == "written" and fake.uploads == 2
+
+
+@pytest.mark.parametrize("code", [1000052062, 1000052063, 30005])
+def test_another_or_unknown_space_reads_as_no_access_not_a_service_fault(code):
+    from product.meego import MeegoError, work_item
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/open_api/authen/plugin_token":
+            return httpx.Response(200, json={"data": {"token": "p-token", "expire_time": 7200}, "error": {"code": 0}})
+        return httpx.Response(400, json={"err_code": code, "err_msg": "no"})
+
+    with httpx.Client(transport=httpx.MockTransport(reply)) as http:
+        client = MeegoClient(http, settings_for("t", "m"))
+        with pytest.raises(MeegoError) as caught:
+            client.work_item_files("u1", work_item("other_space", "story", "42"))
+    assert caught.value.code == "meego_access_denied"

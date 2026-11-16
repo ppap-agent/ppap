@@ -104,7 +104,8 @@ class MeegoClient:
             raise MeegoError(f"meego_{stage}_failed", unknown=True)
         code = _error_code(payload)
         if response.status_code >= 400 or (code not in (None, 0)):
-            if code in (10001, 30005, 1000052063, 1000050255):
+            # Another space, a wrong space key or no rights all read as no access, never as a service fault.
+            if code in (10001, 30005, 1000052062, 1000052063, 1000050255):
                 raise MeegoError("meego_access_denied")
             raise MeegoError(f"meego_{stage}_failed")
         return payload
