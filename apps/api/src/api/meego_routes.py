@@ -40,6 +40,7 @@ CONNECT_MESSAGES = {
 
 def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, http, settings) -> None:
     client = MeegoClient(http, settings)
+    ai_client = MeegoClient(http, settings, ai_node=True)
     api_base = settings.public_api_url.rstrip("/")
     web_base = settings.canonical_web_url()
 
@@ -217,7 +218,12 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         prefix = item.object_ref() + "/"
         versions = [row["file"]["id"] for task in tasks for row in task.get("files") or []]
         sources = {vid: ref[len(prefix) :] for vid, ref in store.file_sources(versions, "meego").items() if ref.startswith(prefix)}
-        return JSONResponse({"audits": tasks, "written_round_ids": written, "sources": sources})
+        # The work item's PPAP AI node, when its flow has one: the plugin starts the audit on its own
+        # while the node waits, and tells the person the node completes once a conforming round is written back.
+        nodes = meego.ai_nodes(item)
+        node = next((row for row in nodes if row["status"] in {"running", "done"}), nodes[0] if nodes else None)
+        ai_node = {"status": node["status"]} if node else None
+        return JSONResponse({"audits": tasks, "written_round_ids": written, "sources": sources, "ai_node": ai_node})
 
     @app.post("/integrations/meego/files/import", status_code=201, include_in_schema=False)
     def meego_import(body: dict, request: Request) -> JSONResponse:
@@ -268,7 +274,13 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
 
     @app.post("/integrations/meego/ai-node/events", include_in_schema=False)
     async def meego_ai_node_event(request: Request) -> JSONResponse:
-        """AI node lifecycle events (8001-8006): verified and recorded; no product data changes yet."""
+        """AI node lifecycle events (8001-8006), signed by the AI node app.
+
+        They only keep the node's status. Nothing is imported, accepted or charged here: the
+        audit starts when a person opens the work item's PPAP tab, and is charged when that
+        person confirms it. Events PPAP caused itself (source ``openapi``) are kept the same way.
+        Meego expects a reply within one second, so nothing here calls out.
+        """
         plugin_id, token = settings.meego_ai_node_plugin_id.strip(), settings.meego_ai_node_token.strip()
         if not plugin_id or not token:
             return JSONResponse({"error": "meego_ai_node_disabled"}, status_code=409)
@@ -281,6 +293,8 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         expected = hashlib.sha256((plugin_id + str(body.get("request_time") or "") + token).encode()).hexdigest()
         if not hmac.compare_digest(expected, str(body.get("signature") or "")):
             return JSONResponse({"error": "invalid_signature"}, status_code=401)
+        if body.get("source_plugin_id") not in (None, "", plugin_id):
+            return JSONResponse({"error": "invalid_event"}, status_code=400)
 
         def obj(value) -> dict:
             return value if isinstance(value, dict) else {}
@@ -289,17 +303,34 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         change, node = obj(data.get("change_ai_node_info")), obj(data.get("ai_node_info"))
         items = data.get("work_item_info")
         first = obj(items[0]) if isinstance(items, list) and items else {}
+        event_type, after = data.get("event_type"), str(obj(change.get("after")).get("status") or "")
         emit(
             "meego_ai_node_event",
-            event_type=data.get("event_type"),
+            event_type=event_type,
             source=body.get("source"),
             project_key=data.get("project_key"),
             work_item_id=first.get("work_item_id"),
             state_key=node.get("state_key"),
             node_state=node.get("node_state"),
             before=obj(change.get("before")).get("status"),
-            after=obj(change.get("after")).get("status"),
+            after=after,
         )
+        # 8001/8002 carry the new AI status; 8003 completes the node; 8004 rolls it back to an earlier
+        # status; 8005 removes it. A frozen node (8006) keeps its last status.
+        status = "completed" if event_type == 8003 else "removed" if event_type == 8005 else after or str(obj(node.get("ai_info")).get("status") or "")
+        if event_type == 8006 or status not in {"idle", "running", "done", "stopped", "completed", "removed"}:
+            return JSONResponse({})
+        state_key = str(node.get("state_key") or "")
+        if not state_key:
+            # A removed node may arrive without its node key; there is nothing of ours to update.
+            return JSONResponse({})
+        try:
+            item = work_item(str(data.get("project_key") or ""), str(data.get("work_item_type_key") or first.get("work_item_type_key") or ""), str(first.get("work_item_id") or ""))
+            if len(state_key) > 128:
+                raise ValueError("invalid_event")
+        except ValueError:
+            return JSONResponse({"error": "invalid_event"}, status_code=400)
+        await asyncio.to_thread(meego.record_ai_node, item, state_key, status)
         return JSONResponse({})
 
     @app.post("/integrations/meego/rounds/{round_id}/writeback", include_in_schema=False)
@@ -342,11 +373,56 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
                     return state
                 field = write_field(session.principal, binding["user_key"], item, task)
                 reports = write_reports(session.principal, binding["user_key"], item, task)
+                node = complete_ai_nodes(binding["user_key"], item, task, latest=field != "older_round")
             except MeegoError as exc:
                 return meego_failure(exc)
             finally:
                 guard.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (lock_key,))
-        return JSONResponse({"state": state, "field": field, "reports": reports, "round_id": round_body["id"], "link": link})
+        return JSONResponse({"state": state, "field": field, "reports": reports, "node": node, "round_id": round_body["id"], "link": link})
+
+    def complete_ai_nodes(user_key: str, item: WorkItemRef, task: dict, *, latest: bool) -> str:
+        """Complete the work item's waiting PPAP AI nodes once its latest round conforms and is written back.
+
+        Any other conclusion leaves the node waiting for a re-audit. Each step reads the node first,
+        so a step that already landed is not sent again, and an unknown result is read back once.
+        """
+        waiting = [row["state_key"] for row in meego.ai_nodes(item) if row["status"] in {"running", "done"}]
+        if not waiting:
+            return "none"
+        if not latest:
+            return "older_round"
+        if overall(task) != "PASS":
+            return "not_passed"
+        if not settings.meego_ai_node_enabled():
+            return "not_configured"
+        outcomes = {complete_ai_node(user_key, item, key) for key in waiting}
+        return next((state for state in ("unknown", "failed") if state in outcomes), "completed")
+
+    def complete_ai_node(user_key: str, item: WorkItemRef, state_key: str) -> str:
+        try:
+            node_state, status = ai_client.ai_node_state(user_key, item, state_key)
+            if node_state != "PASSED":
+                if status == "running":
+                    try:
+                        ai_client.ai_node_done(user_key, item, state_key)
+                    except MeegoError as exc:
+                        if not exc.unknown:
+                            raise
+                    node_state, status = ai_client.ai_node_state(user_key, item, state_key)
+                if status != "done":
+                    # Stopped by a person, or no longer this app's node: leave it to them.
+                    emit("meego_ai_node_not_completed", level=logging.WARNING, status=status, node_state=node_state)
+                    return "failed"
+                try:
+                    ai_client.ai_node_complete(user_key, item, state_key)
+                except MeegoError as exc:
+                    if not exc.unknown or ai_client.ai_node_state(user_key, item, state_key)[0] != "PASSED":
+                        return "unknown" if exc.unknown else "failed"
+        except MeegoError as exc:
+            emit("meego_ai_node_complete_failed", level=logging.WARNING, code=exc.code)
+            return "failed"
+        meego.record_ai_node(item, state_key, "completed")
+        return "completed"
 
     def write_comment(user_key: str, item: WorkItemRef, lines: list[str], mark: str):
         # Read before writing: an earlier attempt may already have landed.

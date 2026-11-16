@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     # The AI node app is its own Feishu Project plugin; its webhook events are signed with this token.
     meego_ai_node_plugin_id: str = Field(default="", alias="PPAP_MEEGO_AI_NODE_PLUGIN_ID")
     meego_ai_node_token: str = Field(default="", alias="PPAP_MEEGO_AI_NODE_TOKEN")
+    # The AI node app's own secret: only it may set the node's AI status and complete the node.
+    meego_ai_node_plugin_secret: str = Field(default="", alias="PPAP_MEEGO_AI_NODE_PLUGIN_SECRET")
     meego_base_url: str = Field(default="https://project.feishu.cn", alias="PPAP_MEEGO_BASE_URL")
     meego_plugin_origins: list[str] = Field(default_factory=lambda: ["https://projectplg.feishupkg.com"], alias="PPAP_MEEGO_PLUGIN_ORIGINS")
     meego_tenant_map: dict[str, str] = Field(default_factory=dict, alias="PPAP_MEEGO_TENANT_MAP")
@@ -235,6 +237,9 @@ class Settings(BaseSettings):
 
     def meego_enabled(self) -> bool:
         return bool(self.meego_plugin_id.strip() and self.meego_plugin_secret.strip() and self.meego_tenant_map)
+
+    def meego_ai_node_enabled(self) -> bool:
+        return bool(self.meego_enabled() and self.meego_ai_node_plugin_id.strip() and self.meego_ai_node_token.strip() and self.meego_ai_node_plugin_secret.strip())
 
     def meego_feishu_tenant(self, meego_tenant_key: str) -> str:
         return str(self.meego_tenant_map.get(meego_tenant_key.strip()) or "").strip()

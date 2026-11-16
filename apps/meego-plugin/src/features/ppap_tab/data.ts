@@ -5,7 +5,9 @@ import type { Attachment, AuditSummary, Task } from './model';
 import { call } from './ppap';
 
 export type Item = { project_key: string; work_item_type_key: string; work_item_id: string };
-export type Data = { attachments: Attachment[]; fields: Record<string, string>; tasks: Task[]; written: string[] | null; sources: Record<string, string>; rules: Rule[]; defaultCustomer: string | null };
+// The work item's PPAP AI node, when its flow has one; null when it has none.
+export type AiNode = { status: 'idle' | 'running' | 'done' | 'stopped' | 'completed' | 'removed' } | null;
+export type Data = { attachments: Attachment[]; fields: Record<string, string>; tasks: Task[]; written: string[] | null; sources: Record<string, string>; rules: Rule[]; defaultCustomer: string | null; aiNode: AiNode };
 
 // A work item rarely has more audits than this; older ones remain in PPAP.
 const RECENT = 8;
@@ -16,7 +18,7 @@ export async function loadWorkItem(item: Item, names: Record<string, string>): P
   // the page still works when either cannot be read.
   const [files, audits, rules, customer] = await Promise.all([
     call<{ files: Attachment[] }>(`${itemPath(item)}/files`),
-    call<{ audits: AuditSummary[]; written_round_ids: string[] | null; sources: Record<string, string> }>(`${itemPath(item)}/audits`),
+    call<{ audits: AuditSummary[]; written_round_ids: string[] | null; sources: Record<string, string>; ai_node?: AiNode }>(`${itemPath(item)}/audits`),
     call<{ rules: Rule[] }>('/rules').catch(() => ({ rules: [] as Rule[] })),
     call<{ customer_preference: string | null }>('/audit-customers/default').catch(() => ({ customer_preference: null })),
   ]);
@@ -29,5 +31,5 @@ export async function loadWorkItem(item: Item, names: Record<string, string>): P
       names[key] = await window.JSSDK.Field.load({ spaceId: item.project_key, workObjectId: item.work_item_type_key, fieldId: key }).then(field => field.name, () => '');
     }
   }
-  return { attachments: files.files, fields: { ...names }, tasks, written: audits.written_round_ids, sources: audits.sources ?? {}, rules: rules.rules, defaultCustomer: customer.customer_preference };
+  return { attachments: files.files, fields: { ...names }, tasks, written: audits.written_round_ids, sources: audits.sources ?? {}, rules: rules.rules, defaultCustomer: customer.customer_preference, aiNode: audits.ai_node ?? null };
 }

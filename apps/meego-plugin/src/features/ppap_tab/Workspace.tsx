@@ -73,6 +73,17 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
 
   const choosing = !flight || (flight.state === 'pending_confirm' && reselect);
   const chosen = docs.filter(doc => picked.has(doc.attachment.uid));
+  const nodeWaiting = data.aiNode?.status === 'running';
+
+  // When the flow is waiting on PPAP, the first audit is prepared without a click: the whole
+  // package is read and matched, and stops at confirmation. Nothing is accepted or charged
+  // until the person confirms. Re-audits stay the person's choice.
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (!nodeWaiting || autoStarted.current || latest || flight || busy || !chosen.length) return;
+    autoStarted.current = true;
+    void start();
+  });
 
   async function validated(version: FileVersion, name: string, skipped: string[]): Promise<string | null> {
     const job = await call<Job>('/file-validations', { method: 'POST', body: { request_id: newId(), source_file_id: version.file_id, source_file_version_id: version.id } });
@@ -130,11 +141,11 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
     setBusy('写回中…');
     setNotice('');
     try {
-      const reply = await call<{ field: string; reports?: { state: string; written: number; total: number } }>(`/integrations/meego/rounds/${latest.round_id}/writeback`, { method: 'POST' });
+      const reply = await call<{ field: string; reports?: { state: string; written: number; total: number }; node?: string }>(`/integrations/meego/rounds/${latest.round_id}/writeback`, { method: 'POST' });
       onWritten(latest.round_id);
       const field = { written: '，并更新了“PPAP 审核结论”字段', unchanged: '，“PPAP 审核结论”字段已是该结论', not_configured: '' }[reply.field] ?? '';
       const reports = reply.reports?.state === 'written' && reply.reports.written > 0 ? `，${reply.reports.written} 份审核报告已在“PPAP 审核报告”字段` : '';
-      void window.JSSDK.toast.success('已写入工作项评论区' + field + reports);
+      void window.JSSDK.toast.success('已写入工作项评论区' + field + reports + (reply.node === 'completed' ? '，流程节点已完成' : ''));
       // One notice at a time, the one the person can act on first.
       const notes: string[] = [];
       if (reply.field === 'not_configured') notes.push('这个空间还没有“PPAP 审核结论”字段，管理员添加后，结论会同时写入字段，可用于流转条件和视图筛选。');
@@ -142,7 +153,11 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       if (reply.reports?.state === 'not_configured') notes.push('这个空间还没有“PPAP 审核报告”附件字段，管理员添加后，逐文件审核报告会一并写回。');
       else if (reply.reports?.state === 'pending') notes.push('有审核报告还在生成，生成后再写回一次即可补上。');
       else if (reply.reports?.state === 'failed' || reply.reports?.state === 'unknown') notes.push('审核报告没有全部附上，请稍后再写回一次；已附上的不会重复。');
+      if (reply.node === 'not_passed') notes.push('结论不是“符合”，流程节点继续等待，整改后重新审核整包。');
+      else if (reply.node === 'failed' || reply.node === 'unknown') notes.push('流程节点没有自动完成，请稍后再写回一次。');
+      else if (reply.node === 'not_configured') notes.push('流程里的 PPAP 节点尚未配置完成，请联系管理员。');
       if (notes.length) setNotice('结论已写入评论区。' + notes.join(''));
+      await refresh();
     } catch (failure) {
       setNotice(say(failure));
     } finally {
@@ -233,6 +248,7 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       </header>
       {busy && <Text type="tertiary" role="status"><Spin size="small" /> {busy}</Text>}
       {notice && <Banner type="warning" fullMode={false} description={notice} onClose={() => setNotice('')} />}
+      {nodeWaiting && <Banner type="info" fullMode={false} closeIcon={null} description="流程正在等待 PPAP 审核：核对资料并确认后开始审核；结论为“符合”并写回后，流程自动进入下一步。" />}
       {stalled && <Banner type="info" fullMode={false} closeIcon={null} description={<>处理时间较长。<Text link onClick={() => void refresh()}>刷新</Text></>} />}
       {pack.stale && !flight && <Banner type="warning" fullMode={false} closeIcon={null} description={`资料在上次审核后有变化${staleWords(pack)}。当前结论针对的是变化前的资料，重新审核整包后才反映现状。`} />}
       {total === 'ERROR' && <Banner type="warning" fullMode={false} closeIcon={null} description="上次审核出现技术错误，结果不完整，不能写回。请重新审核。" />}

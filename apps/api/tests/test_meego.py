@@ -18,6 +18,7 @@ from product.meego import MeegoClient
 from product.settings import Settings
 
 PLUGIN = "MII_TEST"
+AI_APP = "MII_AI"
 
 
 @pytest.fixture(autouse=True)
@@ -61,12 +62,34 @@ class FakeMeego:
         self.reports: list[dict] | None = None
         self.uploads = 0
         self.fail_upload_unknown = False
+        # The AI node of work item 42: flow state and AI status, changed only with the AI app's token.
+        self.node_state, self.ai_status = "DOING", "running"
+        self.node_calls: list[str] = []
+        self.fail_confirm_unknown = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         body = json.loads(request.content or b"{}") if request.method == "POST" and "json" in request.headers.get("content-type", "") else {}
         if path == "/open_api/authen/plugin_token":
-            return httpx.Response(200, json={"data": {"token": "p-token", "expire_time": 7200}, "error": {"code": 0}})
+            token = "ai-token" if body.get("plugin_id") == AI_APP else "p-token"
+            return httpx.Response(200, json={"data": {"token": token, "expire_time": 7200}, "error": {"code": 0}})
+        if path.startswith("/open_api/ai_node/"):
+            assert request.headers.get("X-Plugin-Token") == "ai-token" and request.headers.get("X-User-Key") == self.user_key
+            assert (body["project_key"], body["work_item_id"], body["state_key"]) == ("proj_1", 42, "node_ppap")
+            self.node_calls.append(path.rsplit("/", 1)[1])
+            if path.endswith("/query"):
+                return httpx.Response(200, json={"err_code": 0, "data": {"node_state": self.node_state, "ai_info": {"status": self.ai_status}}})
+            if path.endswith("/edit"):
+                if self.ai_status != "running":
+                    return httpx.Response(500, json={"err_code": 50006, "err_msg": "AI node status error"})
+                self.ai_status = body["status"]
+                return httpx.Response(200, json={"err_code": 0, "data": {}})
+            if self.ai_status != "done":
+                return httpx.Response(500, json={"err_code": 50006, "err_msg": "AI node status error, need done"})
+            self.node_state = "PASSED"
+            if self.fail_confirm_unknown:
+                raise httpx.ReadTimeout("lost reply", request=request)
+            return httpx.Response(200, json={"err_code": 0, "data": {}})
         if path == "/open_api/authen/user_plugin_token":
             if body.get("code") != "good-code":
                 return httpx.Response(200, json={"data": {}, "error": {"code": 20006, "msg": "bad code"}})
@@ -453,20 +476,113 @@ def test_another_or_unknown_space_reads_as_no_access_not_a_service_fault(code):
     assert caught.value.code == "meego_access_denied"
 
 
-def test_ai_node_events_are_accepted_only_with_the_app_signature(auth_store_factory):
+AI_NODE = {"meego_ai_node_plugin_id": AI_APP, "meego_ai_node_token": "node-token", "meego_ai_node_plugin_secret": "ai-secret"}
+
+
+def node_event(event_type: int, after: str = "", *, source: str = "normal", work_item_id: int = 42, state_key: str = "node_ppap", app: str = AI_APP) -> dict:
+    """A signed AI node lifecycle event in Meego's shape."""
     import hashlib
 
+    request_time = 1767872405616 + event_type
+    data = {
+        "event_type": event_type,
+        "project_key": "proj_1",
+        "work_item_type_key": "story",
+        "work_item_info": [{"work_item_id": work_item_id, "work_item_type_key": "story"}],
+        "user_info": {"user_key": "someone"},
+        "ai_node_info": {"state_key": state_key, "node_state": "REACHED"} if state_key else {},
+        "change_ai_node_info": {"before": {"status": "idle"}, "after": {"status": after}} if after else {},
+    }
+    signature = hashlib.sha256(f"{AI_APP}{request_time}node-token".encode()).hexdigest()
+    return {"request_time": request_time, "signature": signature, "source": source, "source_plugin_id": app, "data": data}
+
+
+def test_ai_node_events_only_keep_the_signed_nodes_status(auth_store_factory):
     tenant = "meego-feishu-" + uuid.uuid4().hex
     fake = FakeMeego()
     store = auth_store_factory(settings_for(tenant, fake.tenant), reset=False, role="api")
-    change = {"before": {"status": "idle"}, "after": {"status": "running"}}
-    event = {"request_time": 1767872405616, "source": "normal", "data": {"event_type": 8001, "project_key": "proj_1", "work_item_info": [{"work_item_id": 42}], "change_ai_node_info": change}}
-    with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
-        assert client.post("/integrations/meego/ai-node/events", json=event).status_code == 409
-        store.settings.meego_ai_node_plugin_id, store.settings.meego_ai_node_token = "MII_AI", "node-token"
+    principal, browser = feishu_login(store, tenant)
+    work_item_id = int(str(uuid.uuid4().int)[:12])
+    path = f"/integrations/meego/work-items/proj_1/story/{work_item_id}/audits"
+
+    def post(client, event_type, after="", **extra):
+        return client.post("/integrations/meego/ai-node/events", json=node_event(event_type, after, work_item_id=work_item_id, **extra))
+
+    with httpx.Client(transport=httpx.MockTransport(fake)) as http:
+        with TestClient(create_app(store.settings, auth_store=store, http=http)) as off:
+            assert post(off, 8001, "running").status_code == 409
+        store.settings.meego_ai_node_plugin_id, store.settings.meego_ai_node_token = AI_APP, "node-token"
         try:
-            signed = {**event, "signature": hashlib.sha256(b"MII_AI1767872405616node-token").hexdigest()}
-            assert client.post("/integrations/meego/ai-node/events", json=signed).status_code == 200
-            assert client.post("/integrations/meego/ai-node/events", json={**event, "signature": "0" * 64}).status_code == 401
+            with TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
+                bearer = {"Authorization": "Bearer " + connect(client, browser)}
+                assert client.get(path, headers=bearer).json()["ai_node"] is None
+                forged = {**node_event(8001, "running", work_item_id=work_item_id), "signature": "0" * 64}
+                assert client.post("/integrations/meego/ai-node/events", json=forged).status_code == 401
+                assert post(client, 8001, "running", app="MII_OTHER").status_code == 400
+                assert client.get(path, headers=bearer).json()["ai_node"] is None
+                # Reaching the node only records it; Meego's retries write the same row again.
+                assert post(client, 8001, "running").status_code == 200
+                assert post(client, 8001, "running").status_code == 200
+                assert client.get(path, headers=bearer).json()["ai_node"] == {"status": "running"}
+                assert fake.downloads == 0 and fake.node_calls == []
+                # PPAP's own completion reports back as openapi events; a late "done" never reopens a completed node.
+                assert post(client, 8003, source="openapi").status_code == 200
+                assert post(client, 8001, "done", source="openapi").status_code == 200
+                assert client.get(path, headers=bearer).json()["ai_node"] == {"status": "completed"}
+                # A rollback reaching the node again waits again; a removal without a node key changes nothing.
+                assert post(client, 8001, "running").status_code == 200
+                assert post(client, 8005, state_key="").status_code == 200
+                assert client.get(path, headers=bearer).json()["ai_node"] == {"status": "running"}
+                assert post(client, 8001, "stopped").status_code == 200
+                assert client.get(path, headers=bearer).json()["ai_node"] == {"status": "stopped"}
         finally:
             store.settings.meego_ai_node_plugin_id, store.settings.meego_ai_node_token = "", ""
+
+
+def test_writeback_completes_the_waiting_ai_node_only_for_a_conforming_latest_round(auth_store_factory, monkeypatch):
+    tenant = "meego-feishu-" + uuid.uuid4().hex
+    fake = FakeMeego()
+    store = auth_store_factory(settings_for(tenant, fake.tenant, **AI_NODE), reset=False, role="api")
+    principal, browser = feishu_login(store, tenant)
+    round_id = str(uuid.uuid4())
+    conclusion = {"value": "NG"}
+
+    def task_of(task_id):
+        task = finished_task(task_id)
+        task["files"][0]["audit"]["conclusion"] = conclusion["value"]
+        return task
+
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
+    monkeypatch.setattr(store, "grants", lambda rid, uid: {"read"})
+    monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
+    monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
+    monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: task_of(task_id))
+    latest = [{"id": "t-" + round_id, "round_id": round_id, "state": "completed", "created_at": "2026-11-16T02:00:00+00:00"}]
+    monkeypatch.setattr(store, "list_audit_tasks", lambda who, limit, offset, target=None: latest)
+    writeback = f"/integrations/meego/rounds/{round_id}/writeback"
+    with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
+        bearer = {"Authorization": "Bearer " + connect(client, browser)}
+        # No waiting PPAP node on this work item (the shared test database may hold an earlier run's row).
+        assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "stopped")).status_code == 200
+        assert client.post(writeback, headers=bearer).json()["node"] == "none" and fake.node_calls == []
+        assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "running")).status_code == 200
+        # Not conforming: the node keeps waiting for a re-audit.
+        assert client.post(writeback, headers=bearer).json()["node"] == "not_passed"
+        assert fake.node_calls == [] and fake.ai_status == "running"
+        # Conforming: the AI status is set done, then the node is completed, each read first.
+        conclusion["value"] = "PASS"
+        assert client.post(writeback, headers=bearer).json()["node"] == "completed"
+        assert fake.node_calls == ["query", "edit", "query", "confirm"] and fake.node_state == "PASSED"
+        # Written back again: the node is already completed and is not sent again.
+        assert client.post(writeback, headers=bearer).json()["node"] == "none"
+        assert len(fake.node_calls) == 4
+        # Reached again and a lost confirm reply: read back once, never confirmed twice.
+        fake.node_state, fake.ai_status, fake.fail_confirm_unknown = "DOING", "running", True
+        assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "running")).status_code == 200
+        assert client.post(writeback, headers=bearer).json()["node"] == "completed"
+        assert fake.node_calls[4:] == ["query", "edit", "query", "confirm", "query"]
+        # A person stopped the node: it is left to them.
+        fake.node_state, fake.ai_status, fake.fail_confirm_unknown = "DOING", "stopped", False
+        assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "running")).status_code == 200
+        assert client.post(writeback, headers=bearer).json()["node"] == "failed"
+        assert fake.node_calls[-1] == "query"

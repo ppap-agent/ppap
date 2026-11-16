@@ -509,6 +509,12 @@ spec:
                   name: ppap-current
                   key: PPAP_MEEGO_AI_NODE_TOKEN
                   optional: true
+            - name: PPAP_MEEGO_AI_NODE_PLUGIN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_MEEGO_AI_NODE_PLUGIN_SECRET
+                  optional: true
             - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:

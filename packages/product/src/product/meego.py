@@ -88,10 +88,13 @@ class MeegoClient:
     _lock = threading.Lock()
     _tokens: dict[tuple[str, str], tuple[str, float]] = {}
 
-    def __init__(self, http: httpx.Client, settings: Settings):
+    def __init__(self, http: httpx.Client, settings: Settings, *, ai_node: bool = False):
         self.http = http
         self.settings = settings
         self.base = settings.meego_base_url.rstrip("/")
+        # The AI node app is a separate plugin; only its own token may change its nodes.
+        self.plugin_id = settings.meego_ai_node_plugin_id if ai_node else settings.meego_plugin_id
+        self.plugin_secret = settings.meego_ai_node_plugin_secret if ai_node else settings.meego_plugin_secret
 
     def _json(self, response: httpx.Response, stage: str) -> dict:
         try:
@@ -111,7 +114,7 @@ class MeegoClient:
         return payload
 
     def plugin_token(self) -> str:
-        key = (self.base, self.settings.meego_plugin_id)
+        key = (self.base, self.plugin_id)
         with self._lock:
             cached = self._tokens.get(key)
             if cached and cached[1] > time.monotonic() + 60:
@@ -119,7 +122,7 @@ class MeegoClient:
         try:
             response = self.http.post(
                 self.base + "/open_api/authen/plugin_token",
-                json={"plugin_id": self.settings.meego_plugin_id, "plugin_secret": self.settings.meego_plugin_secret, "type": 0},
+                json={"plugin_id": self.plugin_id, "plugin_secret": self.plugin_secret, "type": 0},
                 timeout=TIMEOUT,
             )
         except httpx.HTTPError:
@@ -307,6 +310,26 @@ class MeegoClient:
         except httpx.HTTPError:
             raise MeegoError("meego_upload_failed", unknown=True) from None
         self._json(response, "upload")
+
+    # AI node (only with the AI node app's client) ------------------------
+
+    def ai_node_state(self, user_key: str, item: WorkItemRef, state_key: str) -> tuple[str, str]:
+        """The node's flow state (e.g. DOING, PASSED) and its AI status (idle, running, done, stopped)."""
+        body = {"project_key": item.project_key, "work_item_id": int(item.work_item_id), "state_key": state_key}
+        data = self._post("/open_api/ai_node/query", body, user_key, "ai_node_query").get("data") or {}
+        info = data.get("ai_info")
+        status = info.get("status") if isinstance(info, dict) else ""
+        return str(data.get("node_state") or ""), str(status or "")
+
+    def ai_node_done(self, user_key: str, item: WorkItemRef, state_key: str) -> None:
+        """Mark the node's AI work done; Meego accepts this only while it is running."""
+        body = {"project_key": item.project_key, "work_item_id": int(item.work_item_id), "state_key": state_key, "status": "done"}
+        self._post("/open_api/ai_node/edit", body, user_key, "ai_node_edit")
+
+    def ai_node_complete(self, user_key: str, item: WorkItemRef, state_key: str) -> None:
+        """Complete the node so the flow moves on; Meego accepts this only after the AI status is done."""
+        body = {"project_key": item.project_key, "work_item_id": int(item.work_item_id), "state_key": state_key}
+        self._post("/open_api/ai_node/confirm", body, user_key, "ai_node_confirm")
 
     def _comment_object(self, item: WorkItemRef) -> dict:
         return {"type": "WORKITEM", "work_item_type_key": item.work_item_type_key, "work_item_id": item.work_item_id}

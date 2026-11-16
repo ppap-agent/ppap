@@ -192,6 +192,34 @@ class MeegoStore:
             conn.execute("UPDATE product.sessions SET revoked_at=now() WHERE meego_binding_id=%s AND revoked_at IS NULL", (binding_id,))
         return row is not None
 
+    # AI nodes ------------------------------------------------------------
+
+    def record_ai_node(self, item: WorkItemRef, state_key: str, status: str) -> None:
+        """Keep one AI node's latest status. A repeated event writes the same row again.
+
+        Completing a node also reports its AI status turning done; arriving late, that report
+        never takes a completed node back to done.
+        """
+        with self.connection() as conn:
+            conn.execute(
+                """INSERT INTO product.meego_ai_nodes (project_key, work_item_id, state_key, work_item_type_key, status)
+                   VALUES (%s,%s,%s,%s,%s)
+                   ON CONFLICT (project_key, work_item_id, state_key)
+                   DO UPDATE SET status=CASE WHEN product.meego_ai_nodes.status='completed' AND EXCLUDED.status='done'
+                                             THEN 'completed' ELSE EXCLUDED.status END,
+                                 work_item_type_key=EXCLUDED.work_item_type_key, updated_at=now()""",
+                (item.project_key, int(item.work_item_id), state_key, item.work_item_type_key, status),
+            )
+
+    def ai_nodes(self, item: WorkItemRef) -> list[dict]:
+        """The PPAP AI nodes of one work item, most recently changed first."""
+        with self.connection() as conn:
+            return conn.execute(
+                """SELECT state_key, status, updated_at FROM product.meego_ai_nodes
+                   WHERE project_key=%s AND work_item_id=%s ORDER BY updated_at DESC""",
+                (item.project_key, int(item.work_item_id)),
+            ).fetchall()
+
     # Work-item targets ---------------------------------------------------
 
     def set_task_target(self, principal: Principal, task_id: str, item: WorkItemRef) -> None:

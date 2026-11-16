@@ -1,0 +1,10 @@
+.DS_Store
+node_modules
+yarn-debug.log*
+yarn-error.log*
+dist
+.lpm
+.log
+.lpm-cache
+# Holds the app secret; copy plugin.config.example.json and fill it locally.
+plugin.config.json
