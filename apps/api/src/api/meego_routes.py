@@ -9,6 +9,8 @@ then use the ordinary Product API with that Bearer session.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 from html import escape
 from urllib.parse import quote
@@ -263,6 +265,42 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         except ValueError as exc:
             return JSONResponse({"error": str(exc) or "invalid_work_item"}, status_code=409 if str(exc) in {"task_input_locked", "writeback_target_conflict"} else 400)
         return JSONResponse({"work_item": item.object_ref()})
+
+    @app.post("/integrations/meego/ai-node/events", include_in_schema=False)
+    async def meego_ai_node_event(request: Request) -> JSONResponse:
+        """AI node lifecycle events (8001-8006): verified and recorded; no product data changes yet."""
+        plugin_id, token = settings.meego_ai_node_plugin_id.strip(), settings.meego_ai_node_token.strip()
+        if not plugin_id or not token:
+            return JSONResponse({"error": "meego_ai_node_disabled"}, status_code=409)
+        try:
+            body = await request.json()
+        except ValueError:
+            return JSONResponse({"error": "invalid_event"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "invalid_event"}, status_code=400)
+        expected = hashlib.sha256((plugin_id + str(body.get("request_time") or "") + token).encode()).hexdigest()
+        if not hmac.compare_digest(expected, str(body.get("signature") or "")):
+            return JSONResponse({"error": "invalid_signature"}, status_code=401)
+
+        def obj(value) -> dict:
+            return value if isinstance(value, dict) else {}
+
+        data = obj(body.get("data"))
+        change, node = obj(data.get("change_ai_node_info")), obj(data.get("ai_node_info"))
+        items = data.get("work_item_info")
+        first = obj(items[0]) if isinstance(items, list) and items else {}
+        emit(
+            "meego_ai_node_event",
+            event_type=data.get("event_type"),
+            source=body.get("source"),
+            project_key=data.get("project_key"),
+            work_item_id=first.get("work_item_id"),
+            state_key=node.get("state_key"),
+            node_state=node.get("node_state"),
+            before=obj(change.get("before")).get("status"),
+            after=obj(change.get("after")).get("status"),
+        )
+        return JSONResponse({})
 
     @app.post("/integrations/meego/rounds/{round_id}/writeback", include_in_schema=False)
     def meego_writeback(round_id: str, request: Request) -> JSONResponse:

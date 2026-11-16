@@ -451,3 +451,22 @@ def test_another_or_unknown_space_reads_as_no_access_not_a_service_fault(code):
         with pytest.raises(MeegoError) as caught:
             client.work_item_files("u1", work_item("other_space", "story", "42"))
     assert caught.value.code == "meego_access_denied"
+
+
+def test_ai_node_events_are_accepted_only_with_the_app_signature(auth_store_factory):
+    import hashlib
+
+    tenant = "meego-feishu-" + uuid.uuid4().hex
+    fake = FakeMeego()
+    store = auth_store_factory(settings_for(tenant, fake.tenant), reset=False, role="api")
+    change = {"before": {"status": "idle"}, "after": {"status": "running"}}
+    event = {"request_time": 1767872405616, "source": "normal", "data": {"event_type": 8001, "project_key": "proj_1", "work_item_info": [{"work_item_id": 42}], "change_ai_node_info": change}}
+    with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
+        assert client.post("/integrations/meego/ai-node/events", json=event).status_code == 409
+        store.settings.meego_ai_node_plugin_id, store.settings.meego_ai_node_token = "MII_AI", "node-token"
+        try:
+            signed = {**event, "signature": hashlib.sha256(b"MII_AI1767872405616node-token").hexdigest()}
+            assert client.post("/integrations/meego/ai-node/events", json=signed).status_code == 200
+            assert client.post("/integrations/meego/ai-node/events", json={**event, "signature": "0" * 64}).status_code == 401
+        finally:
+            store.settings.meego_ai_node_plugin_id, store.settings.meego_ai_node_token = "", ""

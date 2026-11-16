@@ -497,6 +497,18 @@ spec:
                   name: ppap-current
                   key: PPAP_MEEGO_TENANT_MAP
                   optional: true
+            - name: PPAP_MEEGO_AI_NODE_PLUGIN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_MEEGO_AI_NODE_PLUGIN_ID
+                  optional: true
+            - name: PPAP_MEEGO_AI_NODE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_MEEGO_AI_NODE_TOKEN
+                  optional: true
             - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:

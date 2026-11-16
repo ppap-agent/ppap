@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     # an explicit Meego tenant -> Feishu tenant mapping are configured.
     meego_plugin_id: str = Field(default="", alias="PPAP_MEEGO_PLUGIN_ID")
     meego_plugin_secret: str = Field(default="", alias="PPAP_MEEGO_PLUGIN_SECRET")
+    # The AI node app is its own Feishu Project plugin; its webhook events are signed with this token.
+    meego_ai_node_plugin_id: str = Field(default="", alias="PPAP_MEEGO_AI_NODE_PLUGIN_ID")
+    meego_ai_node_token: str = Field(default="", alias="PPAP_MEEGO_AI_NODE_TOKEN")
     meego_base_url: str = Field(default="https://project.feishu.cn", alias="PPAP_MEEGO_BASE_URL")
     meego_plugin_origins: list[str] = Field(default_factory=lambda: ["https://projectplg.feishupkg.com"], alias="PPAP_MEEGO_PLUGIN_ORIGINS")
     meego_tenant_map: dict[str, str] = Field(default_factory=dict, alias="PPAP_MEEGO_TENANT_MAP")
