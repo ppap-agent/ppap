@@ -122,7 +122,7 @@ async function readFrozenBlob(path: string, expected: Pick<components['schemas']
   }, `读取${label}超时，请重新读取。`)
 }
 
-export const nativeCustomerDefaultAdapter = {
+const nativeCustomerDefaultAdapter = {
   read: () => request<components['schemas']['AuditCustomerDefault']>('/audit-customers/default'),
   save: (customer: components['schemas']['AuditCustomerDefault']['customer_preference'], revision: number) => request<components['schemas']['AuditCustomerDefault']>('/audit-customers/default', 'PUT', {customer_preference: customer, expected_revision: revision, confirmed: true}),
 }

@@ -33,12 +33,12 @@ export type TemplateLibraryAdapter = {
 }
 
 const saveStates: Record<TemplateSaveResult['state'], string> = {saved: '已保存', exists: '目录中已有同名文件，未覆盖，也未重复保存', failed: '未保存', unknown: '待确认'}
-export const submissionAccept = '.zip,.rar,.7z,.xlsx,.xls,.xlsm,.doc,.docx,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff'
+const submissionAccept = '.zip,.rar,.7z,.xlsx,.xls,.xlsm,.doc,.docx,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff'
 const submissionExtensions = new Set(submissionAccept.split(','))
-export const acceptedSubmission = (name: string) => submissionExtensions.has(name.match(/\.[^.]+$/)?.[0]?.toLowerCase() || '')
+const acceptedSubmission = (name: string) => submissionExtensions.has(name.match(/\.[^.]+$/)?.[0]?.toLowerCase() || '')
 /** Standard PPAP types (T01–T17) the customer's templates cover, and types only this customer has (E codes). An undecided type counts for neither. */
 /** Coverage against the customer's own rule types, as the template library service reports them. */
-export function templateCoverage(customer: LibraryCustomer) {
+function templateCoverage(customer: LibraryCustomer) {
   const codes = new Set(customer.templates.map(template => template.type_code).filter((code): code is string => Boolean(code)))
   return {covered: customer.standard_type_codes.filter(code => codes.has(code)).length, total: customer.standard_type_codes.length}
 }
@@ -149,7 +149,7 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
   </section>
 }
 
-export function TemplateSubmissionDialog({adapter, customer = null, onClose}: {adapter: Pick<TemplateLibraryAdapter, 'submit'>; customer?: string | null; onClose: () => void}) {
+function TemplateSubmissionDialog({adapter, customer = null, onClose}: {adapter: Pick<TemplateLibraryAdapter, 'submit'>; customer?: string | null; onClose: () => void}) {
   const [files, setFiles] = useState<File[]>([]), [dragging, setDragging] = useState(false), [sending, setSending] = useState(false), [error, setError] = useState(''), [rejected, setRejected] = useState<string[]>([])
   const requestId = useRef(crypto.randomUUID())
   const id = useId()

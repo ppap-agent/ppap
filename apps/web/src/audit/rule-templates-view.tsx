@@ -13,7 +13,7 @@ import {cn} from '../lib/utils'
 import {message} from '../journey/remote'
 import {rulesAddressKeys, writeAuditAddress} from './routes'
 import {CustomerAvatar} from './customer-avatar'
-import {automationLabel, coverage, effective, pendingRows, typeCode, typeGroups, type Automation, type RuleTemplate, type TemplateRow} from './rule-templates'
+import {automationLabel, coverage, effective, pendingRows, typeGroups, type Automation, type RuleTemplate, type TemplateRow} from './rule-templates'
 
 /** Rules-page addresses: a template, a preset rule or an uploaded rule. Every other rules key is dropped. */
 export function rulesAddress(params: Record<string, string>): string {
@@ -23,7 +23,7 @@ export function rulesAddress(params: Record<string, string>): string {
   return `${url.pathname}${url.search}${url.hash}`
 }
 
-export function followRulesLink(event: MouseEvent<HTMLAnchorElement>, href: string) {
+function followRulesLink(event: MouseEvent<HTMLAnchorElement>, href: string) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   event.preventDefault()
   writeAuditAddress(href, 'push')
@@ -33,7 +33,7 @@ export function followRulesLink(event: MouseEvent<HTMLAnchorElement>, href: stri
 // Ready reads as done, an update or an unverified program as needing a look, anything else as not yet automated.
 const automationDot = (state: Automation['state']) => state === 'auto' ? 'bg-success' : state === 'stale' || state === 'unverified' ? 'bg-warning' : 'bg-muted-foreground/50'
 
-export function AutomationBadge({automation}: {automation: Automation}) {
+function AutomationBadge({automation}: {automation: Automation}) {
   return <span className="inline-flex flex-col items-start gap-0.5"><span className="inline-flex items-center gap-1.5 text-sm whitespace-nowrap"><span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', automationDot(automation.state))}/>{automationLabel[automation.state]}</span>{automation.note && <span className="text-xs text-muted-foreground">{automation.note}</span>}</span>
 }
 

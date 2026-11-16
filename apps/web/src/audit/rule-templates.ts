@@ -21,8 +21,8 @@ export type TemplateRow = {
 }
 export type RuleTemplate = {key: string; name: string; source: 'system' | 'enterprise'; rows: TemplateRow[]; missing: string[]}
 
-export const SHARED_TEMPLATE = 'shared'
-export const PENDING_TEMPLATE = 'pending'
+const SHARED_TEMPLATE = 'shared'
+const PENDING_TEMPLATE = 'pending'
 export const automationLabel: Record<Automation['state'], string> = {
   auto: '可用于审核', partial: '部分条款由人判断', manual: '尚无检查程序', stale: '规则已更新', unverified: '未经验证', inactive: '未启用', unknown: '正在读取…', unreadable: '暂时读不到',
 }
@@ -48,14 +48,6 @@ export function templateName(key: string): string {
   if (key.startsWith('system:')) return `${key.slice('system:'.length)} 规则`
   return key.replace(/^customer:/, '')
 }
-
-// The product's preset codes for the standard types (audit/presets.py); UAES source types are stored as their E code.
-const standardCodes: Record<string, string> = {
-  全功能检验报告: 'T01', 零部件设计验证计划和报告: 'T02', DV报告_PV报告_试验报告: 'T03', 材料产品及分供清单: 'T04', 检具验收报告: 'T05', 模具验收报告: 'T06',
-  测量系统分析评价: 'T07', 过程能力研究: 'T08', 过程流程图: 'T09', 潜在过程失效模式及后果分析: 'T10', 控制计划: 'T11', 过程特殊特性清单: 'T12',
-  设备清单: 'T13', 生产系统产能评估报告: 'T14', 项目问题清单: 'T15', 零部件年度试验要求: 'T16', 零件提交保证书: 'T17',
-}
-export const typeCode = (type: string) => standardCodes[type] ?? (/^E\d{2}$/.test(type) ? type : '')
 
 export const typeLabel = (type: string, title: string, standard: string[]) => standard.includes(type) || !type ? type || title : title.replace(/(?:审核)?规则$/, '').replace(/^[\d-]+\s*规则-?/, '').trim() || type
 

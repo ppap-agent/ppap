@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
 import type {RequirementDirectoryCollection, RequirementDirectoryVersion} from '../journey/requirement-directory'
-import {buildTemplates, coverage, enterpriseTemplateKey, pendingRows, ruleTemplateKey, templateName, typeCode, typeGroups} from './rule-templates.ts'
+import {buildTemplates, coverage, enterpriseTemplateKey, pendingRows, ruleTemplateKey, templateName, typeGroups} from './rule-templates.ts'
 
 type Rule = components['schemas']['Rule']
 type Catalog = components['schemas']['SuiteCatalog']
@@ -69,7 +69,6 @@ test('rules of one file type share a group; the group counts once and carries th
   assert.deepEqual(typeGroups(template).map(group => [group.type, group.rows.length]), [['控制计划', 2], ['PFMEA', 1]])
   assert.deepEqual(coverage(template), {effective: 1, total: 2, known: true})
   assert.equal(template.rows[0].updatedAt, '2026-11-01')
-  assert.deepEqual([typeCode('控制计划'), typeCode('全功能检验报告'), typeCode('E07'), typeCode('设计失效模式及后果分析')], ['T11', 'T01', 'E07', ''])
 })
 
 test('template keys and names follow the customer field', () => {

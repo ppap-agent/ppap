@@ -18,7 +18,7 @@ test('a file not yet recognized waits for the person; it is "识别中" only whi
   assert.equal(uploadFileStatus(file('a', {validation: {state: 'invalid', reasons: ['空文件']}}), false).label, '无法审核')
   assert.equal(uploadFileStatus(file('a', {selection: 'unselected'}), false).label, '未选择')
   assert.equal(uploadFileStatus(file('a', {reference_only: true}), false).label, '比对资料')
-  assert.equal(uploadFileStatus(file('a', {match: match('matched', {rule: {id: 'r'} as Match['rule']})}), false).label, '可审核')
+  assert.equal(uploadFileStatus(file('a', {match: match('matched', {rule: {id: 'r'} as Match['rule']})}), false).label, '已匹配')
   assert.equal(uploadFileStatus(file('a', {match: match('unmatched')}), false).label, '未匹配')
   assert.equal(uploadFileStatus(file('a', {match: match('failed', {gaps: ['checker_suite_unavailable']})}), false).label, '暂不能审核')
 })

@@ -12,16 +12,22 @@ export function uploadFileStatus(row: File, recognizing: boolean): UploadFileSta
   if (row.validation.state === 'pending' || row.validation.state === 'checking') return {label: '检查中', tone: 'outline'}
   if (row.selection !== 'selected') return {label: '未选择', tone: 'outline'}
   if (row.reference_only || row.match?.state === 'reference') return {label: '比对资料', tone: 'outline'}
-  if (!row.match || row.match.state === 'pending' || row.match.state === 'matching') return recognizing ? {label: '识别中', tone: 'outline'} : {label: '待识别', tone: 'outline'}
-  if (row.match.state === 'matched' && row.match.rule) return {label: '可审核', tone: 'success'}
-  if (row.match.state === 'unmatched') return {label: '未匹配', tone: 'warning'}
-  if (checkerSuiteUnavailable(row.match)) return {label: '暂不能审核', tone: 'warning'}
+  return matchStatus(row.match, recognizing)
+}
+
+/** A file's recognition result in one vocabulary, on the upload board and the confirm-rules page alike. */
+export function matchStatus(match: File['match'], recognizing: boolean): UploadFileStatus {
+  if (match?.state === 'matched' && match.rule) return {label: '已匹配', tone: 'success'}
+  if (match?.state === 'reference') return {label: '比对资料', tone: 'outline'}
+  if (match?.state === 'unmatched') return {label: '未匹配', tone: 'warning'}
+  if (!match || match.state === 'pending' || match.state === 'matching') return recognizing || match?.state === 'matching' ? {label: '识别中', tone: 'outline'} : {label: '待识别', tone: 'outline'}
+  if (checkerSuiteUnavailable(match)) return {label: '暂不能审核', tone: 'warning'}
   return {label: '识别异常', tone: 'warning'}
 }
 
 const recognized = (row: File) => Boolean(row.match && row.match.state !== 'pending' && row.match.state !== 'matching')
 
-export type UploadBoard = {
+type UploadBoard = {
   /** Types that have files, in the customer's order, then types recognition found outside that list. */
   cards: {slot: FileSlot; rows: File[]}[]
   /** The customer's types without a file yet. */

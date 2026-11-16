@@ -57,7 +57,7 @@ import {createUploadPreparation, describeUploads, preparationFiles, restoreUploa
 
 import {CustomerItem, CustomerListNote, CustomerMode, acceptedUploads, type CustomerDefaultAdapter} from './customer-mode'
 import {customerCoverage, customerFileSlots, type CoverageSource} from './customer-coverage'
-import {missingTypes, recognitionHold, uploadBoard, uploadFileStatus, uploadStatusText} from './upload-board'
+import {matchStatus, missingTypes, recognitionHold, uploadBoard, uploadFileStatus, uploadStatusText, type UploadFileStatus} from './upload-board'
 import {chooseReauditRecognition, reauditRecognition, type ReauditRecognition} from './reaudit-intent'
 
 export type AuditTask = components['schemas']['AuditTask']
@@ -88,7 +88,7 @@ export type AuditIntakeAdapter = AuditAcceptanceAdapter & AuditRecognitionAdapte
   prepareReaudit?: (roundId: string) => Promise<components['schemas']['AuditReauditInputs']>
   readRound?: ReadRound
 }
-export type RuleChoice = {id: string; title: string; type?: string; template?: string}
+type RuleChoice = {id: string; title: string; type?: string; template?: string}
 const lastTemplateKey = 'ppap.rule-template'
 const lastTemplate = () => {try {return localStorage.getItem(lastTemplateKey) ?? ''} catch {return ''}}
 const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewing: '审核中', completed: '已完成'}
@@ -926,7 +926,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }
   const cardTone = {ok: 'bg-card', warn: 'border-warning/40 bg-warning/5', block: 'border-destructive/30 bg-destructive/5', soft: 'bg-muted/30'} as const
   const fileCustomer = (row: AuditTaskFile) => row.match?.metadata.customer || task?.customer_preference || ''
-  const matchBadge = (row: AuditTaskFile): ['success' | 'warning' | 'outline', string] => row.match?.state === 'matched' && row.match.rule ? ['success', '已匹配'] : row.match?.state === 'reference' ? ['outline', '比对资料'] : row.match?.state === 'unmatched' ? ['warning', '未匹配'] : row.match?.state === 'matching' ? ['outline', '识别中'] : !row.match || row.match.state === 'pending' ? ['outline', '等待识别'] : checkerSuiteUnavailable(row.match) ? ['warning', '还不能自动审核'] : ['warning', '识别异常']
+  const matchBadge = (row: AuditTaskFile): [UploadFileStatus['tone'], string] => {const status = matchStatus(row.match, false); return [status.tone, status.label]}
   // Inside a file card a notice is plain text: what happened, then what to do.
   const cardNotice = (title: string, body: string, action?: ReactNode) => <div className="space-y-1.5"><p className="text-sm font-medium">{title}</p><p className="text-xs text-muted-foreground">{body}</p>{action}</div>
   // One card per file: format, name and where it came from; the recognized facts; then the rule or what to do next.

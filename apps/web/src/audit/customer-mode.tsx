@@ -1,4 +1,4 @@
-import {useEffect, useState, type ReactNode} from 'react'
+import {useEffect, useState} from 'react'
 import type {components} from '../generated/openapi'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Button} from '../components/ui/button'
@@ -27,7 +27,7 @@ export function CustomerItem({value, label, coverage}: {value: string; label: st
 }
 export const CustomerListNote = ({count}: {count: number}) => <p className="px-2 pt-1.5 pb-1 text-xs text-muted-foreground">已开通 {count} 家客户的模板与规则</p>
 
-export function CustomerMode({value, ready, options, adapter, onChange, onInitialDefault, onRefresh, coverage, hint}: {value: string; ready: boolean; options: {value: string; label: string}[]; adapter: CustomerDefaultAdapter; onChange: (value: string) => void; onInitialDefault: (value: string) => void; onRefresh?: () => void; coverage?: (customer: string) => Coverage | null; hint?: ReactNode}) {
+export function CustomerMode({value, ready, options, adapter, onChange, onInitialDefault, onRefresh, coverage}: {value: string; ready: boolean; options: {value: string; label: string}[]; adapter: CustomerDefaultAdapter; onChange: (value: string) => void; onInitialDefault: (value: string) => void; onRefresh?: () => void; coverage?: (customer: string) => Coverage | null}) {
   const [current, setCurrent] = useState<CustomerDefault | null>(null)
   const [confirming, setConfirming] = useState(false), [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(''), [readRevision, setReadRevision] = useState(0)
@@ -57,7 +57,7 @@ export function CustomerMode({value, ready, options, adapter, onChange, onInitia
     } finally {setSaving(false)}
   }
   return <div className="grid gap-2">
-    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><Label htmlFor="audit-customer">审核客户</Label>{hint}</div>
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><Label htmlFor="audit-customer">审核客户</Label></div>
     <div className="flex flex-wrap items-center gap-2">
       <Select value={ready ? value : ''} onValueChange={onChange} onOpenChange={open => {if (open) onRefresh?.()}}><SelectTrigger id="audit-customer" className="h-10 w-80 max-w-full"><SelectValue placeholder="请选择本次审核客户"/></SelectTrigger><SelectContent><CustomerListNote count={choices.length}/><CustomerItem value="auto" label="自动识别"/>{choices.map(option => <CustomerItem key={option.value} value={option.value} label={option.label} coverage={coverage?.(option.value)}/>)}</SelectContent></Select>
       <Button variant="ghost" size="sm" disabled={!current || saving || !canSave} onClick={() => setConfirming(true)}>设为企业默认</Button>
