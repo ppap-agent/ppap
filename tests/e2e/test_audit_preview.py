@@ -4010,19 +4010,37 @@ class AuditPreviewTests(unittest.TestCase):
             browser.close()
 
     def test_fresh_recovery_rejects_an_older_read_of_the_same_task(self):
+        # Every Task read waits for this test. The page's first read answers with an
+        # older copy (files still under review). The person leaves and returns; the
+        # return read lands first, and the late older answer must not replace it.
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-race&task=preview-recovery-task")
-            read_results(page)
+            controls = page.get_by_role("complementary", name="预览事件控制", exact=True)
+            held = controls.get_by_role("button", name=re.compile(r"^返回示例读取 \d+$"))
+
+            def all_issued_reads_held(more_than: int = 0) -> int:
+                def settled():
+                    issued = page.evaluate("window.ppapTaskReadsIssued || 0")
+                    return issued if issued > more_than and held.count() == issued else 0
+
+                return wait_until(page, settled, "every issued Task read should be held")
+
+            before_leaving = all_issued_reads_held()
             new_task(page)
             page.go_back()
+            all_issued_reads_held(before_leaving)
+            # The return read is the newest one; release it before any older read.
+            held.last.click()
+            open_task_file(page)
             expect(audit_details(page).get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True)).to_be_visible()
             expect(audit_details(page).get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True)).to_have_accessible_description("1")
             expect(audit_details(page).get_by_text("无法判断 1", exact=True)).to_be_visible()
             close_workspace_panel(page)
-            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            while held.count():
+                held.first.click()
             expect(audit_details(page).get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True)).to_be_visible()
             expect(audit_details(page).get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True)).to_have_accessible_description("1")
             expect(audit_details(page).get_by_text("无法判断 1", exact=True)).to_be_visible()

@@ -64,6 +64,14 @@ const displayAdapter = fixtureDisplay(taskStore, scene)
 const reportAdapter = fixtureReports(taskStore, scene)
 const sharingAdapter = fixtureSharing(taskStore, scene)
 let recoveryRead = 0
+// restore-race holds every Task read until the test releases it. The page's
+// first read answers with an older copy, so the test can release a fresher
+// read first and prove the late, older answer never replaces it.
+let restoreRaceReads = 0
+const olderRecoveryCopy = (task: AuditTask): AuditTask => ({
+  ...structuredClone(task),
+  files: task.files.map(file => (file.audit ? {...structuredClone(file), audit: {...structuredClone(file.audit), execution: 'running', conclusion: null}} : structuredClone(file))),
+})
 const foreignPackageReads = new Set<string>()
 let authenticated = false
 const acceptanceReads = new Map<string, number>()
@@ -184,6 +192,8 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
   },
   readTask: async (id, requestId) => {
     recoveryRead += 1
+    // Lets restore-race tests tell when every issued read is held, independent of render timing.
+    if (scene === 'restore-race') (window as Window & {ppapTaskReadsIssued?: number}).ppapTaskReadsIssued = recoveryRead
     if (scene === 'restore-auth' && !authenticated) throw Object.assign(new Error('preview_auth_required'), {status: 401})
     if (scene === 'restore-denied') throw Object.assign(new Error('preview_forbidden'), {status: 403})
     if (scene === 'restore-error' && recoveryRead === 1) throw new Error('preview_offline')
@@ -505,7 +515,7 @@ function Preview() {
         return {...result, report_package: {...job, reports, outcomes: reports.map(reference => ({reference, state: 'prepared' as const, reason: null}))}}
       }
       if (automaticObservation && (recoveryRead > 1 || scene === 'observe-matching')) return defer(`任务观察 · ${id} · 读取 ${scene === 'observe-matching' ? recoveryRead : recoveryRead - 1}`, result)
-      if (scene === 'restore-race' && recoveryRead === 2 && task) return defer(`旧结果 · ${id}`, task)
+      if (scene === 'restore-race' && task) return defer(`任务读取 · ${id}`, ++restoreRaceReads === 1 ? olderRecoveryCopy(result) : result)
       return scene === 'matching' && !task?.round_id && !requestId ? defer(`识别结果 · ${task?.number}`, result) : scene === 'audit-loading' && (task?.round_id || result.round_id) ? defer(`审核结果 · ${task?.number}`, result) : scene === 'restore-loading' && recoveryRead === 1 ? defer(`恢复任务 · ${id}`, result) : displayReadFixture(result, scene)
     },
   }
