@@ -7,7 +7,7 @@ import type { Precheck, Task, TaskFile } from './model';
 import { call, newId, say, taskLink } from './ppap';
 
 const { Text, Title } = Typography;
-type Quota = { quota_sufficient: boolean; message: string };
+type Quota = { accept_allowed?: boolean; accept_reason?: string; message?: string; remaining_trial_ai_points?: number; unavailable?: boolean; usage_charge_enabled?: boolean };
 
 /** Resubmits the task's files with one change; the server recognizes them again and nothing is accepted. */
 export function useRevise(refresh: () => Promise<void>, setBusy: (text: string) => void, setNotice: (text: string) => void) {
@@ -137,7 +137,9 @@ export function Confirm({ task, revise, refresh, onReselect }: { task: Task; rev
   const blocks = precheck && precheck !== 'unavailable' ? precheck.blocks : [];
   const warnings = precheck && precheck !== 'unavailable' ? precheck.warnings : [];
   const finding = (entry: Precheck['blocks'][number], index: number) => <List.Item key={index} main={<Text><Text strong>{entry.filename}</Text>：{entry.problem}{entry.action && <Text type="tertiary">（{entry.action}）</Text>}</Text>} />;
-  const short = quota && !quota.quota_sufficient;
+  // Acceptance is the server's call (trial points count too); a missing AI package alone does not block.
+  const short = Boolean(quota && !quota.unavailable && quota.accept_allowed === false);
+  const balance = !quota || short ? '' : quota.usage_charge_enabled === false ? '本环境不扣点' : typeof quota.remaining_trial_ai_points === 'number' && quota.remaining_trial_ai_points > 0 ? `试用额度剩余 ${quota.remaining_trial_ai_points} 点` : quota.message;
 
   return (
     <section className="confirm" aria-label="开始审核前的核对">
@@ -164,9 +166,9 @@ export function Confirm({ task, revise, refresh, onReselect }: { task: Task; rev
       </Space>
       <Text type="tertiary">
         将审核 {targets} 份资料，预计用量 {task.estimated_points === null ? '无法预估' : `${task.estimated_points} 点`}
-        {quota && !short && <>（{quota.message}）</>}。每份资料的规则见下方列表，可在每行“调整”。
+        {balance && <>（{balance}）</>}。每份资料的规则见下方列表，可在每行“调整”。
       </Text>
-      {short && <Banner type="warning" fullMode={false} closeIcon={null} description={quota!.message} />}
+      {short && <Banner type="warning" fullMode={false} closeIcon={null} description={quota!.accept_reason || quota!.message} />}
       {notice && <Banner type="warning" fullMode={false} closeIcon={null} description={notice} />}
       {precheck === null && <Text type="tertiary" role="status"><Spin size="small" /> 正在做数据预检…</Text>}
       {blocks.length > 0 && <Banner type="danger" fullMode={false} closeIcon={null} title={`预检发现 ${blocks.length} 个必须先处理的问题`} description={<List size="small" split={false}>{blocks.map(finding)}</List>} />}
@@ -181,7 +183,7 @@ export function Confirm({ task, revise, refresh, onReselect }: { task: Task; rev
         {targets === 0 ? (
           <Button theme="solid" type="primary" loading={busy} onClick={() => void end()}>结束，不审核</Button>
         ) : task.confirmation_basis_digest && task.input_revision !== undefined ? (
-          <Button theme="solid" type="primary" loading={busy} disabled={blocks.length > 0 || precheck === null || Boolean(short)} onClick={() => void confirm()}>确认并开始审核</Button>
+          <Button theme="solid" type="primary" loading={busy} disabled={blocks.length > 0 || precheck === null || short} onClick={() => void confirm()}>确认并开始审核</Button>
         ) : (
           <Button theme="solid" type="primary" onClick={() => window.JSSDK.navigation.open(taskLink(task.id), '_blank')}>在 PPAP 中核对</Button>
         )}
