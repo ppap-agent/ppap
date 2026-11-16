@@ -174,8 +174,14 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       await navigator.clipboard.writeText(text);
       void window.JSSDK.toast.success('整改清单已复制');
     } catch {
-      const done = await window.JSSDK.clipboard.writeText(text.slice(0, 1000)).catch(() => false);
-      void (done ? window.JSSDK.toast.success(text.length > 1000 ? '已复制整改清单的前一部分' : '整改清单已复制') : window.JSSDK.toast.error('没有复制成功，请稍后重试'));
+      // The host clipboard takes at most 1000 characters; a longer list is saved whole instead of cut short.
+      if (text.length > 1000) {
+        save(new Blob([text], { type: 'text/plain;charset=utf-8' }), '整改清单.txt');
+        void window.JSSDK.toast.success('整改清单较长，已下载为文本文件');
+        return;
+      }
+      const done = await window.JSSDK.clipboard.writeText(text).catch(() => false);
+      void (done ? window.JSSDK.toast.success('整改清单已复制') : window.JSSDK.toast.error('没有复制成功，请稍后重试'));
     }
   }
 
