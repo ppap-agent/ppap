@@ -192,7 +192,13 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
         <Space wrap>
           {choosing && chosen.length > 0 && <Button theme={startFirst ? 'solid' : 'light'} type="primary" loading={Boolean(busy)} onClick={() => void start()}>{startLabel}</Button>}
           {writable && written !== true && <Button theme={startFirst && choosing && chosen.length > 0 ? 'light' : 'solid'} type="primary" disabled={Boolean(busy)} onClick={() => void writeBack()}>写回工作项</Button>}
-          {writable && written === true && <Tag color="green" type="light">已写回工作项</Tag>}
+          {writable && written === true && (
+            <>
+              <Tag color="green" type="light">已写回工作项</Tag>
+              {/* Writing back again is safe: the comment is not repeated, and the conclusion field is brought up to date. */}
+              <Button theme="borderless" size="small" disabled={Boolean(busy)} onClick={() => void writeBack()}>重新写回</Button>
+            </>
+          )}
         </Space>
       </header>
       {busy && <Text type="tertiary" role="status"><Spin size="small" /> {busy}</Text>}
