@@ -586,3 +586,57 @@ def test_writeback_completes_the_waiting_ai_node_only_for_a_conforming_latest_ro
         assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "running")).status_code == 200
         assert client.post(writeback, headers=bearer).json()["node"] == "failed"
         assert fake.node_calls[-1] == "query"
+
+
+def test_a_reviewer_releases_a_non_conforming_latest_round_without_changing_its_conclusion(auth_store_factory, monkeypatch):
+    tenant = "meego-feishu-" + uuid.uuid4().hex
+    fake = FakeMeego()
+    fake.conclusion_options = {"符合": "opt_pass", "不符合": "opt_ng", "尚有未确定项": "opt_unknown"}
+    store = auth_store_factory(settings_for(tenant, fake.tenant, **AI_NODE), reset=False, role="api")
+    principal, browser = feishu_login(store, tenant, "质量工程师")
+    round_id, older = str(uuid.uuid4()), str(uuid.uuid4())
+    grants = {"value": {"read"}}
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round", grant_required=True))
+    monkeypatch.setattr(store, "grants", lambda rid, uid: grants["value"])
+    monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
+    monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
+    monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: finished_task(task_id))
+    rounds = [
+        {"id": "t-" + round_id, "round_id": round_id, "state": "completed", "created_at": "2026-11-16T02:00:00+00:00"},
+        {"id": "t-" + older, "round_id": older, "state": "completed", "created_at": "2026-11-15T02:00:00+00:00"},
+    ]
+    monkeypatch.setattr(store, "list_audit_tasks", lambda who, limit, offset, target=None: rounds)
+    release = f"/integrations/meego/rounds/{round_id}/release"
+    with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
+        bearer = {"Authorization": "Bearer " + connect(client, browser)}
+        assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "stopped")).status_code == 200
+        assert client.post(release, headers=bearer, json={"reason": "客户已书面接受偏差"}).status_code == 403
+        grants["value"] = {"read", "review"}
+        assert client.post(release, headers=bearer, json={"reason": "  "}).status_code == 400
+        # Nothing waits on PPAP: there is nothing to release.
+        assert client.post(release, headers=bearer, json={"reason": "客户已书面接受偏差"}).json()["error"] == "release_no_waiting_node"
+        fake.node_state, fake.ai_status = "DOING", "running"
+        assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "running")).status_code == 200
+        # Only the latest round speaks for the work item.
+        assert client.post(f"/integrations/meego/rounds/{older}/release", headers=bearer, json={"reason": "旧轮次"}).json()["error"] == "release_older_round"
+        # The machine conclusion is written back as it is; the node keeps waiting.
+        assert client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer).json()["node"] == "not_passed"
+        assert fake.conclusion == "opt_ng" and fake.node_calls == []
+        released = client.post(release, headers=bearer, json={"reason": "客户已书面接受偏差"})
+        assert released.status_code == 200, released.text
+        assert released.json()["node"] == "completed" and released.json()["release"]["reason"] == "客户已书面接受偏差"
+        assert fake.node_state == "PASSED"
+        # The release is its own comment; the round's conclusion and the field stay non-conforming.
+        assert len(fake.comments) == 2 and "PPAP 人工放行" in fake.comments[1] and "客户已书面接受偏差" in fake.comments[1]
+        assert "不符合" in fake.comments[1] and fake.conclusion == "opt_ng"
+        assert f"PPAP 审核轮次 {round_id}" not in fake.comments[1]
+        # Repeating keeps the first release and writes nothing again.
+        again = client.post(release, headers=bearer, json={"reason": "另一个理由"}).json()
+        assert again["release"]["reason"] == "客户已书面接受偏差" and again["state"] == "already_written" and len(fake.comments) == 2
+        # The tab reads the release next to the round, not as its conclusion.
+        audits = client.get("/integrations/meego/work-items/proj_1/story/42/audits", headers=bearer).json()
+        assert audits["releases"][round_id]["reason"] == "客户已书面接受偏差"
+        # Reached again later (a rollback): writing the same released round back completes the node again.
+        fake.node_state, fake.ai_status = "DOING", "running"
+        assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "running")).status_code == 200
+        assert client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer).json()["node"] == "completed"

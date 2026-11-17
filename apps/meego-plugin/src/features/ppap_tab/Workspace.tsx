@@ -1,7 +1,7 @@
 // One surface for a work item's PPAP package: what is attached, what the latest round
 // concluded about it, what is still missing, and what needs a person. Starting, confirming and
 // following an audit all happen on the document list itself.
-import { Banner, Button, Collapse, Empty, List, Progress, Radio, RadioGroup, Select, Space, Spin, Table, TabPane, Tabs, Tag, Typography } from '@douyinfe/semi-ui';
+import { Banner, Button, Collapse, Empty, List, Modal, Progress, Radio, RadioGroup, Select, Space, Spin, Table, TabPane, Tabs, Tag, TextArea, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Data, Item } from './data';
 import { Confirm, ConfirmRow, useRevise } from './Confirm';
@@ -74,6 +74,8 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
   const choosing = !flight || (flight.state === 'pending_confirm' && reselect);
   const chosen = docs.filter(doc => picked.has(doc.attachment.uid));
   const nodeWaiting = data.aiNode?.status === 'running';
+  const [releasing, setReleasing] = useState(false);
+  const [reason, setReason] = useState('');
 
   // When the flow is waiting on PPAP, the first audit is prepared without a click: the whole
   // package is read and matched, and stops at confirmation. Nothing is accepted or charged
@@ -153,10 +155,29 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       if (reply.reports?.state === 'not_configured') notes.push('这个空间还没有“PPAP 审核报告”附件字段，管理员添加后，逐文件审核报告会一并写回。');
       else if (reply.reports?.state === 'pending') notes.push('有审核报告还在生成，生成后再写回一次即可补上。');
       else if (reply.reports?.state === 'failed' || reply.reports?.state === 'unknown') notes.push('审核报告没有全部附上，请稍后再写回一次；已附上的不会重复。');
-      if (reply.node === 'not_passed') notes.push('结论不是“符合”，流程节点继续等待，整改后重新审核整包。');
+      if (reply.node === 'not_passed') notes.push('结论不是“符合”，流程节点继续等待：整改后重新审核整包；确需例外时，由有复核权限的人人工放行。');
       else if (reply.node === 'failed' || reply.node === 'unknown') notes.push('流程节点没有自动完成，请稍后再写回一次。');
       else if (reply.node === 'not_configured') notes.push('流程里的 PPAP 节点尚未配置完成，请联系管理员。');
       if (notes.length) setNotice('结论已写入评论区。' + notes.join(''));
+      await refresh();
+    } catch (failure) {
+      setNotice(say(failure));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  // A reviewer lets the flow pass although the round did not conform; the conclusion itself stays.
+  async function release() {
+    if (!latest?.round_id || !reason.trim()) return;
+    setBusy('正在放行…');
+    setNotice('');
+    try {
+      const reply = await call<{ node: string }>(`/integrations/meego/rounds/${latest.round_id}/release`, { method: 'POST', body: { reason: reason.trim() } });
+      setReleasing(false);
+      setReason('');
+      if (reply.node === 'completed') void window.JSSDK.toast.success('已放行，流程已进入下一步');
+      else setNotice('放行已记录，但流程节点没有自动完成，请稍后再试一次。');
       await refresh();
     } catch (failure) {
       setNotice(say(failure));
@@ -214,6 +235,9 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
   const startLabel = !latest ? `审核 ${chosen.length} 份资料` : `重新审核整包（${chosen.length} 份）`;
   // Once the package has changed, the next step is a new round; until then it is sharing the conclusion.
   const startFirst = !latest || pack.stale || !writable || written === true;
+  const released = latest?.round_id ? data.releases[latest.round_id] : undefined;
+  // Only the latest, unchanged, written-back round of a waiting node can be released.
+  const releasable = nodeWaiting && !released && !pack.stale && (total === 'NG' || total === 'UNKNOWN');
 
   return (
     <div className="workspace">
@@ -242,6 +266,7 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
               <Tag color="green" type="light">已写回工作项</Tag>
               {/* Writing back again is safe: the comment is not repeated, and the conclusion field is brought up to date. */}
               <Button theme="borderless" size="small" disabled={Boolean(busy)} onClick={() => void writeBack()}>重新写回</Button>
+              {releasable && <Button theme="borderless" size="small" type="warning" disabled={Boolean(busy)} onClick={() => setReleasing(true)}>人工放行</Button>}
             </>
           )}
         </Space>
@@ -249,6 +274,22 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       {busy && <Text type="tertiary" role="status"><Spin size="small" /> {busy}</Text>}
       {notice && <Banner type="warning" fullMode={false} description={notice} onClose={() => setNotice('')} />}
       {nodeWaiting && <Banner type="info" fullMode={false} closeIcon={null} description="流程正在等待 PPAP 审核：核对资料并确认后开始审核；结论为“符合”并写回后，流程自动进入下一步。" />}
+      {released && <Banner type="warning" fullMode={false} closeIcon={null} description={`${released.by || '有人'} 于 ${when(released.at)} 人工放行了这次审核，流程已进入下一步。理由：${released.reason}。审核结论保持为“${verdictLabel[total]}”。`} />}
+      <Modal
+        title="人工放行"
+        visible={releasing}
+        okText="确认放行"
+        okButtonProps={{ type: 'warning', disabled: !reason.trim() }}
+        confirmLoading={Boolean(busy)}
+        onOk={() => void release()}
+        onCancel={() => setReleasing(false)}
+      >
+        <Space vertical align="start" spacing="tight" style={{ width: '100%' }}>
+          <Text>这次审核的结论是“{verdictLabel[total]}”。放行后流程进入下一步，结论不会改为“符合”，放行人和理由会写入工作项评论。</Text>
+          <Text strong>放行理由</Text>
+          <TextArea aria-label="放行理由" value={reason} maxLength={500} autosize={{ minRows: 2, maxRows: 6 }} onChange={setReason} placeholder="例如：客户已书面接受该偏差" />
+        </Space>
+      </Modal>
       {stalled && <Banner type="info" fullMode={false} closeIcon={null} description={<>处理时间较长。<Text link onClick={() => void refresh()}>刷新</Text></>} />}
       {pack.stale && !flight && <Banner type="warning" fullMode={false} closeIcon={null} description={`资料在上次审核后有变化${staleWords(pack)}。当前结论针对的是变化前的资料，重新审核整包后才反映现状。`} />}
       {total === 'ERROR' && <Banner type="warning" fullMode={false} closeIcon={null} description="上次审核出现技术错误，结果不完整，不能写回。请重新审核。" />}

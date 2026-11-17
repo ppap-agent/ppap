@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+from contextlib import contextmanager
 from html import escape
 from urllib.parse import quote
 
@@ -19,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from product.feishu import authorize_url
 from product.files import ObjectMissing
-from product.identity import SESSION_COOKIE, can_read, new_token
+from product.identity import SESSION_COOKIE, can_read, can_review, new_token
 from product.logs import emit
 from product.meego import MeegoClient, MeegoError, WorkItemRef, work_item
 from product.meego_writeback import CONCLUSION_LABEL, marker, overall, report_name, summary, task_link
@@ -223,7 +224,12 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         nodes = meego.ai_nodes(item)
         node = next((row for row in nodes if row["status"] in {"running", "done"}), nodes[0] if nodes else None)
         ai_node = {"status": node["status"]} if node else None
-        return JSONResponse({"audits": tasks, "written_round_ids": written, "sources": sources, "ai_node": ai_node})
+        # People's releases of these rounds, kept apart from the rounds' own conclusions.
+        rounds = [str(task["round_id"]) for task in tasks if task.get("round_id")]
+        releases = {
+            rid: {"by": row["released_by_name"], "reason": row["reason"], "at": row["created_at"].isoformat()} for rid, row in meego.round_releases(session.principal.tenant_id, rounds).items()
+        }
+        return JSONResponse({"audits": tasks, "written_round_ids": written, "sources": sources, "ai_node": ai_node, "releases": releases})
 
     @app.post("/integrations/meego/files/import", status_code=201, include_in_schema=False)
     def meego_import(body: dict, request: Request) -> JSONResponse:
@@ -333,14 +339,14 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         await asyncio.to_thread(meego.record_ai_node, item, state_key, status)
         return JSONResponse({})
 
-    @app.post("/integrations/meego/rounds/{round_id}/writeback", include_in_schema=False)
-    def meego_writeback(round_id: str, request: Request) -> JSONResponse:
+    def round_context(round_id: str, request: Request, *, review: bool = False):
+        """The person's host session, the round's finished task and its work item, read with the person's own access."""
         session, binding, denied = host(request)
         if denied:
             return denied
         resource = store.resource(round_id)
         grants = store.grants(round_id, session.principal.user_id) if resource else set()
-        if resource is None or not can_read(session.principal, resource, grants):
+        if resource is None or not (can_review if review else can_read)(session.principal, resource, grants):
             return JSONResponse({"error": "access_denied"}, status_code=403)
         round_body = store.get_round(round_id)
         if round_body is None:
@@ -357,31 +363,105 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             return JSONResponse({"error": "writeback_target_missing"}, status_code=409)
         try:
             item = WorkItemRef.parse(str(target.get("object_ref") or ""))
-            lines = summary(task, web_base)
+            summary(task, web_base)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
-        link = task_link(web_base, str(task["id"]))
-        mark = marker(str(round_body["id"]))
+        return session, binding, str(round_body["id"]), task, item
+
+    @contextmanager
+    def item_lock(item: WorkItemRef):
+        """One writer per work item: writeback and release both change what the work item shows."""
         lock_key = "meego-writeback:" + item.object_ref()
         with store._conn() as guard:
             row = guard.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (lock_key,)).fetchone()
-            if not (row and row[0]):
+            locked = bool(row and row[0])
+            try:
+                yield locked
+            finally:
+                if locked:
+                    guard.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (lock_key,))
+
+    @app.post("/integrations/meego/rounds/{round_id}/writeback", include_in_schema=False)
+    def meego_writeback(round_id: str, request: Request) -> JSONResponse:
+        context = round_context(round_id, request)
+        if isinstance(context, JSONResponse):
+            return context
+        session, binding, round_id, task, item = context
+        lines = summary(task, web_base)
+        link = task_link(web_base, str(task["id"]))
+        released = meego.round_release(session.principal.tenant_id, round_id) is not None
+        with item_lock(item) as locked:
+            if not locked:
                 return JSONResponse({"error": "writeback_in_progress"}, status_code=409)
             try:
-                state = write_comment(binding["user_key"], item, lines, mark)
+                state = write_comment(binding["user_key"], item, lines, marker(round_id))
                 if isinstance(state, JSONResponse):
                     return state
                 field = write_field(session.principal, binding["user_key"], item, task)
                 reports = write_reports(session.principal, binding["user_key"], item, task)
-                node = complete_ai_nodes(binding["user_key"], item, task, latest=field != "older_round")
+                node = complete_ai_nodes(binding["user_key"], item, task, latest=field != "older_round", released=released)
             except MeegoError as exc:
                 return meego_failure(exc)
-            finally:
-                guard.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (lock_key,))
-        return JSONResponse({"state": state, "field": field, "reports": reports, "node": node, "round_id": round_body["id"], "link": link})
+        return JSONResponse({"state": state, "field": field, "reports": reports, "node": node, "round_id": round_id, "link": link})
 
-    def complete_ai_nodes(user_key: str, item: WorkItemRef, task: dict, *, latest: bool) -> str:
-        """Complete the work item's waiting PPAP AI nodes once its latest round conforms and is written back.
+    @app.post("/integrations/meego/rounds/{round_id}/release", include_in_schema=False)
+    def meego_release(round_id: str, body: dict, request: Request) -> JSONResponse:
+        """A person lets the flow pass the PPAP node although the latest round did not conform.
+
+        The round's conclusion stays as the machine found it; the release is its own record and its
+        own comment. Only a reviewer of the round may release, only the work item's latest round,
+        and only while a PPAP node waits on it.
+        """
+        reason = str(body.get("reason") or "").strip()
+        if not reason or len(reason) > 500:
+            return JSONResponse({"error": "invalid_release"}, status_code=400)
+        context = round_context(round_id, request, review=True)
+        if isinstance(context, JSONResponse):
+            return context
+        session, binding, round_id, task, item = context
+        if overall(task) == "PASS":
+            return JSONResponse({"error": "release_not_needed"}, status_code=409)
+        if not is_latest(session.principal, item, task):
+            return JSONResponse({"error": "release_older_round"}, status_code=409)
+        # A repeated request finishes the first release (its comment, its node) instead of failing.
+        repeated = meego.round_release(session.principal.tenant_id, round_id) is not None
+        if not repeated and not any(row["status"] in {"running", "done"} for row in meego.ai_nodes(item)):
+            return JSONResponse({"error": "release_no_waiting_node"}, status_code=409)
+        if not settings.meego_ai_node_enabled():
+            return JSONResponse({"error": "meego_ai_node_disabled"}, status_code=409)
+        with item_lock(item) as locked:
+            if not locked:
+                return JSONResponse({"error": "writeback_in_progress"}, status_code=409)
+            release = meego.release_round(session.principal, round_id, item, reason)
+            lines = [
+                f"PPAP 人工放行（{release_marker(round_id)}）",
+                f"放行人：{release['released_by_name'] or '（未显示姓名）'}",
+                f"理由：{release['reason']}",
+                f"审核结论保持为“{CONCLUSION_LABEL[overall(task)]}”，未改为“符合”。",
+                "查看详情：" + task_link(web_base, str(task["id"])),
+            ]
+            try:
+                state = write_comment(binding["user_key"], item, lines, release_marker(round_id))
+                if isinstance(state, JSONResponse):
+                    return state
+                node = complete_ai_nodes(binding["user_key"], item, task, latest=True, released=True)
+            except MeegoError as exc:
+                return meego_failure(exc)
+        released_at = release["created_at"].isoformat() if release.get("created_at") else None
+        return JSONResponse({"state": state, "node": node, "release": {"by": release["released_by_name"], "reason": release["reason"], "at": released_at}})
+
+    def release_marker(round_id: str) -> str:
+        # Distinct from the writeback marker, so a release comment never reads as the round's own writeback.
+        return f"放行记录 {round_id}"
+
+    def is_latest(principal, item: WorkItemRef, task: dict) -> bool:
+        """Only the work item's latest finished round speaks for it."""
+        target = {"provider": "meego", "object_kind": "work_item", "object_ref": item.object_ref()}
+        rounds = [t for t in store.list_audit_tasks(principal, 50, 0, target=target) if t.get("state") == "completed" and t.get("round_id")]
+        return bool(rounds) and max(rounds, key=lambda t: t["created_at"])["id"] == task["id"]
+
+    def complete_ai_nodes(user_key: str, item: WorkItemRef, task: dict, *, latest: bool, released: bool = False) -> str:
+        """Complete the work item's waiting PPAP AI nodes once its latest round conforms, or a person released it.
 
         Any other conclusion leaves the node waiting for a re-audit. Each step reads the node first,
         so a step that already landed is not sent again, and an unknown result is read back once.
@@ -391,7 +471,7 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             return "none"
         if not latest:
             return "older_round"
-        if overall(task) != "PASS":
+        if overall(task) != "PASS" and not released:
             return "not_passed"
         if not settings.meego_ai_node_enabled():
             return "not_configured"
@@ -483,9 +563,7 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         Only the latest finished round of this work item may set it, so an older round written back
         later never replaces a newer conclusion. The field holds the round's own overall conclusion.
         """
-        target = {"provider": "meego", "object_kind": "work_item", "object_ref": item.object_ref()}
-        rounds = [t for t in store.list_audit_tasks(principal, 50, 0, target=target) if t.get("state") == "completed" and t.get("round_id")]
-        if not rounds or max(rounds, key=lambda t: t["created_at"])["id"] != task["id"]:
+        if not is_latest(principal, item, task):
             return "older_round"
         try:
             found = client.conclusion_field(user_key, item)

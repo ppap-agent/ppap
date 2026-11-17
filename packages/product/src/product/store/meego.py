@@ -220,6 +220,40 @@ class MeegoStore:
                 (item.project_key, int(item.work_item_id)),
             ).fetchall()
 
+    # Releases --------------------------------------------------------------
+
+    def release_round(self, principal: Principal, round_id: str, item: WorkItemRef, reason: str) -> dict:
+        """Record one person's release of a round's PPAP node. A repeated request returns the first release."""
+        with self.connection() as conn:
+            conn.execute(
+                """INSERT INTO product.meego_node_releases (round_id, tenant_id, object_ref, released_by, released_by_name, reason)
+                   VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (round_id) DO NOTHING""",
+                (round_id, principal.tenant_id, item.object_ref(), principal.user_id, principal.display_name[:200], reason),
+            )
+            return self._release(conn, principal.tenant_id, round_id) or {}
+
+    def round_release(self, tenant_id: str, round_id: str) -> dict | None:
+        with self.connection() as conn:
+            return self._release(conn, tenant_id, round_id)
+
+    def round_releases(self, tenant_id: str, round_ids: list[str]) -> dict[str, dict]:
+        if not round_ids:
+            return {}
+        with self.connection() as conn:
+            rows = conn.execute(
+                """SELECT round_id, reason, created_at, released_by_name FROM product.meego_node_releases
+                   WHERE tenant_id=%s AND round_id = ANY(%s::uuid[])""",
+                (tenant_id, round_ids),
+            ).fetchall()
+        return {str(row["round_id"]): row for row in rows}
+
+    def _release(self, conn, tenant_id: str, round_id: str) -> dict | None:
+        return conn.execute(
+            """SELECT round_id, object_ref, reason, created_at, released_by, released_by_name
+               FROM product.meego_node_releases WHERE round_id=%s AND tenant_id=%s""",
+            (round_id, tenant_id),
+        ).fetchone()
+
     # Work-item targets ---------------------------------------------------
 
     def set_task_target(self, principal: Principal, task_id: str, item: WorkItemRef) -> None:

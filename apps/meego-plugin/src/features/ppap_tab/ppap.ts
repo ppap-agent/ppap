@@ -127,6 +127,11 @@ const errorText: Record<string, string> = {
   validation_failed: '有附件无法读取，请检查文件后重试。',
   task_revision_conflict: '审核内容刚发生变化，请核对后再确认。',
   task_not_zero_match: '还有可以审核的资料，不能直接结束。',
+  release_not_needed: '结论已是“符合”，写回后流程会自动进入下一步，不需要放行。',
+  release_older_round: '只能放行这个工作项最近一轮的审核。',
+  release_no_waiting_node: '流程里没有等待 PPAP 的节点，不需要放行。',
+  meego_ai_node_disabled: '流程里的 PPAP 节点尚未配置完成，请联系管理员。',
+  invalid_release: '请填写放行理由（500 字以内）。',
 };
 
 export const say = (failure: unknown) => (failure instanceof PpapError && errorText[failure.code]) || '操作没有完成，请稍后重试。';
