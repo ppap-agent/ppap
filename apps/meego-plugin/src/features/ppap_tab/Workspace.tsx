@@ -1,7 +1,8 @@
 // One surface for a work item's PPAP package: what is attached, what the latest round
 // concluded about it, what is still missing, and what needs a person. Starting, confirming and
 // following an audit all happen on the document list itself.
-import { Banner, Button, Collapse, Empty, List, Modal, Progress, Radio, RadioGroup, Select, Space, Spin, Table, TabPane, Tabs, Tag, TextArea, Typography } from '@douyinfe/semi-ui';
+import { IconDownload, IconEyeOpened, IconMore } from '@douyinfe/semi-icons';
+import { Banner, Button, Collapse, Dropdown, Empty, List, Modal, Progress, Radio, RadioGroup, Select, Space, Spin, Table, Tag, TextArea, Tooltip, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Data, Item } from './data';
 import { itemPath, outsideText } from './data';
@@ -16,7 +17,7 @@ import type { FileVersion, Job, Task, TaskFile } from './model';
 import { bytes, call, newId, PpapError, save, say, taskLink, waitFor } from './ppap';
 
 const { Text } = Typography;
-type Props = { item: Item; data: Data; stalled: boolean; refresh: () => Promise<void>; onWritten: (roundId: string) => void };
+type Props = { item: Item; data: Data; user: string; stalled: boolean; refresh: () => Promise<void>; onWritten: (roundId: string) => void; onDisconnect: () => void };
 type Input = { file_version_id: string; validation_id: string; selection: 'selected'; removal_reason: null; preferred_rule_version_id?: string; reference_only?: boolean };
 type Carried = { file: FileVersion; validation_id?: string; validation?: { state?: string }; preferred_rule_version_id?: string; reference_only?: boolean };
 
@@ -28,7 +29,7 @@ const reportPath = (task: Task, row: TaskFile) => {
   return `/audit-tasks/${task.id}/reports/${audit.report.report_id}/pdf?${query}`;
 };
 
-export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
+export function Workspace({ item, data, user, stalled, refresh, onWritten, onDisconnect }: Props) {
   const pack = useMemo(() => buildPackage(data.attachments, data.tasks, data.sources), [data]);
   const { docs, flight, latest } = pack;
   const view = useMemo(() => standing(latest, pack.previous), [latest, pack.previous]);
@@ -48,7 +49,7 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
   }, [data.rules, customer, docs]);
   const unknownDocs = docs.filter(doc => !doc.type && ['new', 'added', 'matching'].includes(doc.state)).length;
 
-  const [tab, setTab] = useState('docs');
+  const [showMissing, setShowMissing] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const seen = useRef<Set<string>>(new Set());
   const [busy, setBusy] = useState('');
@@ -278,15 +279,109 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       ? '流程正在等待 PPAP 审核：复核人对这次“符合”的结论有异议，写回后流程仍会等待。重新审核整包，或由有复核权限的人人工放行。'
       : '流程正在等待 PPAP 审核：核对资料并确认后开始审核；结论为“符合”并写回后，流程自动进入下一步。';
 
+  // One primary action, chosen by where the package stands; the rest wait in the menu.
+  const canStart = choosing && chosen.length > 0;
+  const canWrite = writable && written !== true;
+  const primary: 'start' | 'write' | null = canStart && startFirst ? 'start' : canWrite ? 'write' : canStart ? 'start' : null;
+  const outside = data.aiNode?.status === 'completed' && Boolean(data.aiNode.outside);
+  // Where the flow stands, said once: the first of these that applies.
+  const flow: { tone: Tone; text: string; spin?: boolean; action?: { label: string; run: () => void } } | null =
+    total === 'ERROR' && !flight
+      ? { tone: 'warning', text: '上次审核出现技术错误，结果不完整，不能写回。请重新审核。' }
+      : stalled
+        ? { tone: 'info', text: '处理时间较长。', action: { label: '刷新', run: () => void refresh() } }
+        : flight && flight.state !== 'pending_confirm' && flight.state !== 'matching'
+          ? { tone: 'info', spin: true, text: `审核进行中${flight.progress ? `，已完成 ${flight.progress.completed}/${flight.progress.total} 份` : ''}。可以离开这个页面，审核会继续。` }
+          : pack.stale && !flight
+            ? { tone: 'warning', text: `资料在上次审核后有变化${staleWords(pack)}。当前结论针对的是变化前的资料，重新审核整包后才反映现状。` }
+            : outside
+              ? { tone: 'warning', text: `${outsideText}审核结论保持为“${verdictLabel[total]}”。` }
+              : nodeWaiting
+                ? { tone: 'info', text: waitingText }
+                : released
+                  ? { tone: 'neutral', text: `${released.by || '有人'} 于 ${when(released.at)} 人工放行了这次审核${data.aiNode?.status === 'completed' ? '，流程已进入下一步' : ''}。理由：${released.reason}。审核结论保持为“${verdictLabel[total]}”。` }
+                  : null;
+  const meta = [
+    `${docs.length} 份资料`,
+    latest && when(latest.round_started_at ?? latest.created_at),
+    latest && (ngCount ? `不符合 ${ngCount} 项` : ''),
+    latest && (view.issues.length ? `待处理 ${view.issues.length} 项` : ''),
+    latest?.round_id && written !== null && (written ? '已写回' : '尚未写回'),
+  ].filter(Boolean);
+  const issuesFirst = Boolean(latest && view.issues.length);
+  const issuesRef = useRef<HTMLElement>(null);
+  const goToIssues = () => {
+    setScope('attention');
+    issuesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const issuesSection = latest && (
+    <section className="section" ref={issuesRef} aria-labelledby="ppap-issues">
+      <div className="section-head">
+        <h3 id="ppap-issues">需要处理<span className="count">{view.issues.length}</span></h3>
+        <RadioGroup type="button" buttonSize="small" aria-label="显示范围" value={scope} onChange={event => setScope(event.target.value as 'attention' | 'all')}>
+          <Radio value="attention">待处理</Radio>
+          <Radio value="all">全部检查项</Radio>
+        </RadioGroup>
+      </div>
+      {shown.length === 0 ? (
+        <Text type="tertiary">没有待处理的问题{view.resolved.length ? `，上一次的 ${view.resolved.length} 个问题已解决` : ''}。</Text>
+      ) : (
+        <div className={current ? 'split has-detail' : 'split'}>
+          <nav className="issues" aria-label="检查项">
+            <IssueList issues={shown} current={open} onOpen={issue => setOpen({ file: issue.row.file.id, clause: issue.check.rule_item.id })} />
+            {view.resolved.length > 0 && (
+              <Collapse>
+                <Collapse.Panel header={`已解决 ${view.resolved.length} 项`} itemKey="resolved">
+                  <List size="small" dataSource={view.resolved} renderItem={entry => <List.Item main={<Text ellipsis={{ showTooltip: true, rows: 2 }}>{entry.check.rule_item.rule_to_check}</Text>} extra={<Tag color="green" type="light" size="small">已解决</Tag>} />} />
+                </Collapse.Panel>
+              </Collapse>
+            )}
+          </nav>
+          <section className="detail">
+            {current ? (
+              <Issue task={latest} row={current.row} check={current.check} position={current.row.audit!.checks.indexOf(current.check) + 1} stale={pack.stale} onBack={() => setOpen(null)} onChanged={refresh} />
+            ) : (
+              <Text type="tertiary" className="placeholder">选择一项，对照原件核对并记录复核。</Text>
+            )}
+          </section>
+        </div>
+      )}
+    </section>
+  );
+
+  const docsSection = (
+    <section className="section" aria-labelledby="ppap-docs">
+      <div className="section-head">
+        <h3 id="ppap-docs">资料<span className="count">{docs.length}</span></h3>
+      </div>
+      <DocTable docs={docs} fields={data.fields} flight={flight} revise={revise} selectable={choosing && !busy} busy={Boolean(busy)} picked={picked} onPick={setPicked} onIssues={goToIssues} onReport={setReport} onDownload={row => void download(row)} onRegenerate={row => void regenerate(row)} onRefresh={() => void refresh().catch(failure => setNotice(say(failure)))} />
+      {customer && missing.length > 0 && (
+        <div className="missing">
+          <Text type="tertiary">{customer} 要求的资料中，还有 {missing.length} 类没有提交。</Text>
+          <Button theme="borderless" size="small" onClick={() => setShowMissing(value => !value)}>{showMissing ? '收起' : `查看 ${missing.length} 类`}</Button>
+          {showMissing && (
+            <div className="missing-list">
+              {unknownDocs > 0 && <Text type="tertiary" size="small">有 {unknownDocs} 份附件还没有识别类型，审核后这里会更新。</Text>}
+              <Text>{missing.map(documentTypeLabel).join('、')}</Text>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+
   return (
     <div className="workspace">
-      <header className="bar">
-        <Space wrap align="center">
-          <Tag size="large" type="solid" color={total === 'NONE' ? 'grey' : total === 'ERROR' ? 'orange' : bucketColor(total)}>{verdictLabel[total]}</Tag>
-          {latest && <Text>不符合 <Text strong>{ngCount}</Text> 项 · 待处理 <Text strong>{view.issues.length}</Text> 项{view.resolved.length > 0 && <> · 已解决 <Text strong>{view.resolved.length}</Text> 项</>}</Text>}
-          {latest && <Text type="tertiary" size="small">{when(latest.round_started_at ?? latest.created_at)} 的审核</Text>}
-        </Space>
-        <Space wrap>
+      <header className="hero">
+        <div className="hero-main">
+          <span className={`hero-verdict tone-${toneOf(total)}`}>
+            <span className="dot" aria-hidden="true" />
+            {verdictLabel[total]}
+          </span>
+          <span className="hero-meta">{meta.join(' · ')}</span>
+        </div>
+        <div className="hero-actions">
           {choosing && !latest && allTemplates.size > 1 && (
             <Select
               size="default"
@@ -302,24 +397,41 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
               }}
             />
           )}
-          {choosing && chosen.length > 0 && <Button theme={startFirst ? 'solid' : 'light'} type="primary" loading={Boolean(busy)} onClick={() => void start()}>{startLabel}</Button>}
-          {writable && written !== true && <Button theme={startFirst && choosing && chosen.length > 0 ? 'light' : 'solid'} type="primary" disabled={Boolean(busy)} onClick={() => void writeBack()}>写回工作项</Button>}
-          {writable && written === true && (
-            <>
-              <Tag color="green" type="light">已写回工作项</Tag>
-              {/* Writing back again is safe: the comment is not repeated, and the conclusion field is brought up to date. */}
-              <Button theme="borderless" size="small" disabled={Boolean(busy)} onClick={() => void writeBack()}>重新写回</Button>
-              {releasable && <Button theme="borderless" size="small" type="warning" disabled={Boolean(busy)} onClick={() => setReleasing(true)}>人工放行</Button>}
-            </>
-          )}
-        </Space>
+          {releasable && <Button type="warning" disabled={Boolean(busy)} onClick={() => setReleasing(true)}>人工放行</Button>}
+          {primary === 'start' && <Button theme="solid" type="primary" loading={Boolean(busy)} onClick={() => void start()}>{startLabel}</Button>}
+          {primary === 'write' && <Button theme="solid" type="primary" loading={Boolean(busy)} onClick={() => void writeBack()}>写回工作项</Button>}
+          <Dropdown
+            trigger="click"
+            position="bottomRight"
+            render={
+              <Dropdown.Menu>
+                {primary !== 'start' && canStart && <Dropdown.Item disabled={Boolean(busy)} onClick={() => void start()}>{startLabel}</Dropdown.Item>}
+                {primary !== 'write' && canWrite && <Dropdown.Item disabled={Boolean(busy)} onClick={() => void writeBack()}>写回工作项</Dropdown.Item>}
+                {/* Writing back again is safe: the comment is not repeated, and the conclusion field is brought up to date. */}
+                {writable && written === true && <Dropdown.Item disabled={Boolean(busy)} onClick={() => void writeBack()}>重新写回</Dropdown.Item>}
+                {ngCount > 0 && <Dropdown.Item onClick={() => void copyList()}>复制整改清单</Dropdown.Item>}
+                {(flight ?? latest) && <Dropdown.Item onClick={() => window.JSSDK.navigation.open(taskLink((flight ?? latest)!.id), '_blank')}>在 PPAP 中打开这次审核</Dropdown.Item>}
+                <Dropdown.Divider />
+                <Dropdown.Title>以 {user} 的 PPAP 身份使用</Dropdown.Title>
+                <Dropdown.Item onClick={onDisconnect}>断开连接</Dropdown.Item>
+              </Dropdown.Menu>
+            }
+          >
+            <Button theme="borderless" type="tertiary" icon={<IconMore />} aria-label="更多操作" />
+          </Dropdown>
+        </div>
       </header>
-      {busy && <Text type="tertiary" role="status"><Spin size="small" /> {busy}</Text>}
+      {busy && <p className="flow tone-info" role="status"><Spin size="small" /><span>{busy}</span></p>}
       {notice && <Banner type="warning" fullMode={false} description={notice} onClose={() => setNotice('')} />}
-      {nodeWaiting && <Banner type="info" fullMode={false} closeIcon={null} description={waitingText} />}
-      {data.aiNode?.status === 'completed' && data.aiNode.outside && <Banner type="warning" fullMode={false} closeIcon={null} description={`${outsideText}审核结论保持为“${verdictLabel[total]}”。`} />}
-      {/* After a rollback the node is back here (waiting or stopped); the release is then only history. */}
-      {released && <Banner type="warning" fullMode={false} closeIcon={null} description={`${released.by || '有人'} 于 ${when(released.at)} 人工放行了这次审核${data.aiNode?.status === 'completed' ? '，流程已进入下一步' : ''}。理由：${released.reason}。审核结论保持为“${verdictLabel[total]}”。`} />}
+      {flow && !busy && (
+        <p className={`flow tone-${flow.tone}`} role="status">
+          {flow.spin ? <Spin size="small" /> : <span className="dot" aria-hidden="true" />}
+          <span>
+            {flow.text}
+            {flow.action && <Button theme="borderless" size="small" onClick={flow.action.run}>{flow.action.label}</Button>}
+          </span>
+        </p>
+      )}
       <Modal
         title="人工放行"
         visible={releasing}
@@ -335,73 +447,34 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
           <TextArea aria-label="放行理由" value={reason} maxLength={500} autosize={{ minRows: 2, maxRows: 6 }} onChange={setReason} placeholder="例如：客户已书面接受该偏差" />
         </Space>
       </Modal>
-      {stalled && <Banner type="info" fullMode={false} closeIcon={null} description={<>处理时间较长。<Text link onClick={() => void refresh()}>刷新</Text></>} />}
-      {pack.stale && !flight && <Banner type="warning" fullMode={false} closeIcon={null} description={`资料在上次审核后有变化${staleWords(pack)}。当前结论针对的是变化前的资料，重新审核整包后才反映现状。`} />}
-      {total === 'ERROR' && <Banner type="warning" fullMode={false} closeIcon={null} description="上次审核出现技术错误，结果不完整，不能写回。请重新审核。" />}
-      {flight && flight.state !== 'pending_confirm' && <Running task={flight} />}
       {flight && flight.state === 'pending_confirm' && !reselect && <Confirm task={flight} rules={data.rules} space={item.project_key} revise={revise} refresh={refresh} onReselect={() => setReselect(true)} />}
 
-      <Tabs type="line" activeKey={tab} onChange={setTab}>
-        <TabPane tab={`资料 ${docs.length}`} itemKey="docs">
-          {report && latest ? (
-            <article className="report-view" aria-label="审核报告">
-              <Space className="report-head" wrap>
-                <Button size="small" theme="borderless" onClick={() => setReport(null)}>返回资料</Button>
-                <Text strong ellipsis={{ showTooltip: true }}>{report.audit!.report.artifact!.filename}</Text>
-                <Button size="small" onClick={() => void download(report)}>下载报告</Button>
-              </Space>
-              <PdfView key={report.file.id} name={report.audit!.report.artifact!.filename} load={() => bytes(reportPath(latest, report))} />
-            </article>
-          ) : (
-            <DocTable docs={docs} fields={data.fields} flight={flight} revise={revise} selectable={choosing && !busy} busy={Boolean(busy)} picked={picked} onPick={setPicked} onIssues={() => setTab('issues')} onReport={setReport} onDownload={row => void download(row)} onRegenerate={row => void regenerate(row)} onRefresh={() => void refresh().catch(failure => setNotice(say(failure)))} />
-          )}
-          {customer && missing.length > 0 && (
-            <Collapse>
-              <Collapse.Panel header={`${customer} 要求的资料中，还有 ${missing.length} 类没有提交`} itemKey="missing">
-                {unknownDocs > 0 && <Text type="tertiary" size="small">有 {unknownDocs} 份附件还没有识别类型，审核后这里会更新。</Text>}
-                <List size="small" split={false} dataSource={missing} renderItem={type => <List.Item main={<Text>{documentTypeLabel(type)}</Text>} />} />
-              </Collapse.Panel>
-            </Collapse>
-          )}
-        </TabPane>
-        <TabPane tab={`问题 ${view.issues.length}`} itemKey="issues">
-          {latest && (
-            <RadioGroup type="button" buttonSize="small" aria-label="显示范围" value={scope} onChange={event => setScope(event.target.value as 'attention' | 'all')} className="scope">
-              <Radio value="attention">待处理 {view.issues.length}</Radio>
-              <Radio value="all">全部检查项</Radio>
-            </RadioGroup>
-          )}
-          {shown.length === 0 ? (
-            <Empty title={latest ? '没有待处理的问题' : '还没有审核结果'} description={!latest ? '在“资料”里开始审核。' : view.resolved.length ? `上一次的 ${view.resolved.length} 个问题已解决。` : undefined} />
-          ) : (
-            <div className={current ? 'split has-detail' : 'split'}>
-              <nav className="issues" aria-label="待处理的问题">
-                {ngCount > 0 && <Button size="small" onClick={() => void copyList()}>复制整改清单</Button>}
-                <IssueList issues={shown} current={open} onOpen={issue => setOpen({ file: issue.row.file.id, clause: issue.check.rule_item.id })} />
-                {view.resolved.length > 0 && (
-                  <Collapse>
-                    <Collapse.Panel header={`已解决 ${view.resolved.length} 项`} itemKey="resolved">
-                      <List size="small" dataSource={view.resolved} renderItem={entry => <List.Item main={<Text ellipsis={{ showTooltip: true, rows: 2 }}>{entry.check.rule_item.rule_to_check}</Text>} extra={<Tag color="green" type="light" size="small">已解决</Tag>} />} />
-                    </Collapse.Panel>
-                  </Collapse>
-                )}
-              </nav>
-              <section className="detail">
-                {current ? (
-                  <Issue task={latest!} row={current.row} check={current.check} position={current.row.audit!.checks.indexOf(current.check) + 1} stale={pack.stale} onBack={() => setOpen(null)} onChanged={refresh} />
-                ) : (
-                  <Empty className="placeholder" description="选择一项，对照原件核对并记录复核。" />
-                )}
-              </section>
-            </div>
-          )}
-        </TabPane>
-      </Tabs>
-
-      {(flight ?? latest) && <Text link size="small" onClick={() => window.JSSDK.navigation.open(taskLink((flight ?? latest)!.id), '_blank')}>在 PPAP 中打开这次审核</Text>}
+      {report && latest ? (
+        <article className="report-view" aria-label="审核报告">
+          <div className="report-head">
+            <Button size="small" theme="borderless" onClick={() => setReport(null)}>返回</Button>
+            <Text strong ellipsis={{ showTooltip: true }}>{report.audit!.report.artifact!.filename}</Text>
+            <Button size="small" icon={<IconDownload />} onClick={() => void download(report)}>下载</Button>
+          </div>
+          <PdfView key={report.file.id} name={report.audit!.report.artifact!.filename} load={() => bytes(reportPath(latest, report))} />
+        </article>
+      ) : issuesFirst ? (
+        <>
+          {issuesSection}
+          {docsSection}
+        </>
+      ) : (
+        <>
+          {docsSection}
+          {issuesSection}
+        </>
+      )}
     </div>
   );
 }
+
+type Tone = 'pass' | 'ng' | 'warning' | 'info' | 'neutral';
+const toneOf = (total: keyof typeof verdictLabel): Tone => (total === 'PASS' ? 'pass' : total === 'NG' ? 'ng' : total === 'NONE' ? 'neutral' : 'warning');
 
 function staleWords(pack: Package): string {
   const added = pack.docs.filter(doc => doc.state === 'added').length;
@@ -437,12 +510,15 @@ function DocTable(props: DocTableProps) {
       rowKey={(doc?: Doc) => doc!.attachment.uid}
       columns={columns}
       dataSource={docs}
-      rowSelection={{
-        selectedRowKeys: [...picked],
-        disabled: !selectable,
-        getCheckboxProps: () => ({ disabled: !selectable }),
-        onChange: keys => props.onPick(new Set((keys || []).map(String))),
-      }}
+      // Choosing the package is the only time a row is picked; otherwise there is nothing to tick.
+      rowSelection={
+        selectable
+          ? {
+              selectedRowKeys: [...picked],
+              onChange: keys => props.onPick(new Set((keys || []).map(String))),
+            }
+          : undefined
+      }
     />
   );
 }
@@ -484,10 +560,14 @@ function DocStatus({ doc, onIssues, onReport, onDownload, onRegenerate }: { doc:
           <Tag color={bucketColor(audit!.conclusion)} type="light">{audit!.conclusion ? conclusionLabel[audit!.conclusion] : '尚有未确定项'}</Tag>
           {open > 0 && <Text link onClick={onIssues}>{open} 项待处理</Text>}
           {reportReady(row!) && (
-            <>
-              <Text link onClick={() => onReport(row!)}>查看报告</Text>
-              <Text link onClick={() => onDownload(row!)}>下载报告</Text>
-            </>
+            <span className="row-actions">
+              <Tooltip content="查看报告">
+                <Button size="small" theme="borderless" type="tertiary" icon={<IconEyeOpened />} aria-label={`查看 ${doc.attachment.name} 的审核报告`} onClick={() => onReport(row!)} />
+              </Tooltip>
+              <Tooltip content="下载报告">
+                <Button size="small" theme="borderless" type="tertiary" icon={<IconDownload />} aria-label={`下载 ${doc.attachment.name} 的审核报告`} onClick={() => onDownload(row!)} />
+              </Tooltip>
+            </span>
           )}
           {audit!.report.state === 'pending' || audit!.report.state === 'generating' ? <Text type="tertiary" size="small">报告生成中…</Text> : null}
           {audit!.report.state === 'failed' && (audit!.report.regenerate_allowed && audit!.report.report_id ? <Text link onClick={() => onRegenerate(row!)}>报告生成失败，重新生成</Text> : <Text type="tertiary" size="small">报告生成失败</Text>)}
@@ -506,14 +586,6 @@ function Unaudited({ state }: { state: string }) {
       </Space>
     );
   return <Text type="tertiary">{state === 'reference' ? '作为参考资料，未单独审核' : state === 'unread' ? '识别失败，未审核' : '没有可用规则，未审核'}</Text>;
-}
-
-// The audit in flight ----------------------------------------------------
-
-function Running({ task }: { task: Task }) {
-  // While files are being recognized each row says so itself; saying it again here would repeat it.
-  if (task.state === 'matching') return null;
-  return <Banner type="info" fullMode={false} closeIcon={null} icon={<Spin size="small" />} description={`审核进行中${task.progress ? `，已完成 ${task.progress.completed}/${task.progress.total} 份` : ''}。可以离开这个页面，审核会继续。`} />;
 }
 
 // What needs a person ------------------------------------------------------

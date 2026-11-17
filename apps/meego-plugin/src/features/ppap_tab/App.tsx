@@ -123,11 +123,15 @@ export default function App() {
 
   return (
     <div className="ppap">
-      <Workspace item={item} data={data} stalled={stalled} refresh={refresh} onWritten={roundId => setData(previous => (previous ? { ...previous, written: [...(previous.written || []), roundId] } : previous))} />
-      <footer className="account muted small">
-        <span>以 <span title={user}>{user}</span> 的 PPAP 身份使用</span>
-        <button className="link" onClick={() => void disconnect()}>断开连接</button>
-      </footer>
+      <Workspace
+        item={item}
+        data={data}
+        user={user}
+        stalled={stalled}
+        refresh={refresh}
+        onWritten={roundId => setData(previous => (previous ? { ...previous, written: [...(previous.written || []), roundId] } : previous))}
+        onDisconnect={() => void disconnect()}
+      />
     </div>
   );
 }

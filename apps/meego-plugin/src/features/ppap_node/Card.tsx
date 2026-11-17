@@ -68,22 +68,22 @@ export default function Card({ context: where, lead, hint }: Props = {}) {
   const released = pack.latest?.round_id ? data.releases[pack.latest.round_id] : undefined;
   const moving = pack.flight ? (pack.flight.state === 'pending_confirm' ? '有一次审核等待确认' : '审核进行中') : '';
 
+  // The one thing about the flow worth a line here; the tab says the rest.
+  const note = data.aiNode?.status === 'completed' && data.aiNode.outside ? outsideText : moving ? `${moving}。` : pack.stale ? '资料在这次审核后有变化，结论针对的是变化前的资料。' : released ? `${released.by || '有人'} 人工放行了这次审核：${released.reason}` : '';
+  const facts = pack.latest ? [ng ? `不符合 ${ng} 项` : '', issues.length ? `待处理 ${issues.length} 项` : '', when(pack.latest.round_started_at ?? pack.latest.created_at), written ? '已写回' : '尚未写回'].filter(Boolean) : [];
+
   return (
     <div className="node-card">
       {lead}
-      <Space wrap align="center">
-        <Tag size="large" type="solid" color={total === 'NONE' ? 'grey' : total === 'ERROR' ? 'orange' : bucketColor(total)}>{label[total]}</Tag>
-        {pack.latest && <Text>不符合 <Text strong>{ng}</Text> 项 · 待处理 <Text strong>{issues.length}</Text> 项</Text>}
-        {pack.latest && <Text type="tertiary" size="small">{when(pack.latest.round_started_at ?? pack.latest.created_at)} 的审核{written ? '，已写回' : '，尚未写回'}</Text>}
-      </Space>
-      {data.aiNode?.status === 'completed' && data.aiNode.outside && <Text type="warning" size="small">{outsideText}</Text>}
-      {released && <Text type="warning" size="small">{released.by || '有人'} 人工放行了这次审核：{released.reason}</Text>}
-      {pack.stale && <Text type="warning" size="small">资料在这次审核后有变化，结论针对的是变化前的资料。</Text>}
-      {moving && <Text type="tertiary" size="small">{moving}。</Text>}
-      <Space>
+      <div className="node-line">
+        <Tag type="light" color={total === 'NONE' ? 'grey' : total === 'ERROR' ? 'orange' : bucketColor(total)}>{label[total]}</Tag>
+        {facts.length > 0 && <Text type="tertiary" size="small">{facts.join(' · ')}</Text>}
+      </div>
+      {note && <Text size="small" type={moving ? 'tertiary' : 'warning'}>{note}</Text>}
+      <div className="node-line">
         <Text type="tertiary" size="small">{hint ?? '在工作项的“PPAP 审核”标签中发起审核和处理问题。'}</Text>
         <Button size="small" theme="borderless" onClick={() => void load()}>刷新</Button>
-      </Space>
+      </div>
     </div>
   );
 }

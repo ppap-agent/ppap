@@ -9,10 +9,38 @@ body { margin: 0; background: transparent; }
 .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .link { background: none; border: none; padding: 0; font: inherit; color: var(--semi-color-link); cursor: pointer; }
-.account { display: flex; flex-wrap: wrap; gap: 4px 16px; padding-top: 8px; border-top: 1px solid var(--semi-color-border); }
 
-.workspace { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.workspace { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+/* Where the package stands: one word, one line of facts, one primary action. */
+.hero { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding-bottom: 12px; border-bottom: 1px solid var(--semi-color-border); }
+.hero-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hero-verdict { display: inline-flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 600; line-height: 26px; }
+.hero-meta { font-size: 12px; line-height: 18px; color: var(--semi-color-text-2); padding-left: 16px; }
+.hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* Tone is a dot, never a fill: the page stays calm, the color still says it. */
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--semi-color-text-3); }
+.tone-pass .dot { background: var(--semi-color-success); }
+.tone-ng .dot { background: var(--semi-color-danger); }
+.tone-warning .dot { background: var(--semi-color-warning); }
+.tone-info .dot { background: var(--semi-color-primary); }
+
+/* Where the flow stands, said once. */
+.flow { display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 8px 12px; border-radius: 6px; background: var(--semi-color-fill-0); line-height: 22px; }
+.flow .dot { transform: translateY(-1px); }
+.flow .semi-spin { align-self: center; }
+
+/* Sections, headed the way Feishu Project heads its own. */
+.section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; }
+.section-head h3 { margin: 0; padding-left: 8px; border-left: 3px solid var(--semi-color-primary); font-size: 14px; font-weight: 600; line-height: 16px; }
+.count { margin-left: 6px; font-weight: 400; color: var(--semi-color-text-2); }
+.missing { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.missing-list { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; border-radius: 6px; background: var(--semi-color-fill-0); }
+.row-actions { display: inline-flex; gap: 2px; }
+.report-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.report-head > .semi-typography { flex: 1; min-width: 0; }
 .confirm { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border: 1px solid var(--semi-color-border); border-radius: 8px; background: var(--semi-color-fill-0); }
 .doc-name { display: flex; flex-direction: column; min-width: 0; max-width: 46cqw; }
 .progress { display: flex; align-items: center; gap: 8px; min-width: 140px; }
@@ -50,7 +78,6 @@ body { margin: 0; background: transparent; }
 .confirm-row { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .remove-reason .semi-input-wrapper { min-width: 180px; }
 .report-view { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.scope { margin-bottom: 8px; }
 
 /* Narrow panes (a phone, or a slim detail tab): one thing at a time. */
 @container ppap (max-width: 679px) {
@@ -68,4 +95,5 @@ body { margin: 0; background: transparent; }
   .issue { grid-template-columns: minmax(280px, 2fr) minmax(0, 3fr); grid-template-areas: "main original" "review original"; grid-template-rows: auto 1fr; align-items: start; }
 }
 
-.node-card { display: flex; flex-direction: column; gap: 6px; padding: 8px 4px; font-size: 14px; color: var(--semi-color-text-0); }
+.node-card { display: flex; flex-direction: column; gap: 4px; padding: 8px 4px; font-size: 14px; color: var(--semi-color-text-0); }
+.node-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
