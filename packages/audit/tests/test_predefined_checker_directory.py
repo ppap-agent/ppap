@@ -248,9 +248,10 @@ def test_scan_order_is_independent_of_locale(tmp_path, monkeypatch):
 
 def test_wheel_and_container_context_keep_the_same_leaf_bytes(tmp_path):
     app = (ROOT / "deploy/app/Dockerfile").read_text(encoding="utf-8")
-    deep = (ROOT / "deploy/deep/Dockerfile").read_text(encoding="utf-8")
     assert "COPY packages /app/packages" in app
-    assert "COPY packages/audit/src /app/packages/audit/src" in deep
+    # Deep is a stage of the same image graph: it runs the app stage's own /app source, checkers included.
+    assert "FROM app AS deep" in app
+    assert "ln -s /app/packages/audit/src/audit /opt/agent/semantic" in app
     ignored = {line.strip() for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()}
     assert not ({"packages", "packages/audit", "**/checkers", "packages/audit/src/audit/checkers"} & ignored)
     uv = shutil.which("uv")
