@@ -92,6 +92,7 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 | `PPAP_MODEL_VISION_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller；不向 Deep guest 注入 |
 | `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS`、`PPAP_DEEP_MODEL_MAX_REQUESTS` | ConfigMap `ppap-current` | API、Worker、Deep（企业 Key 的允许地址；每个 Deep Attempt 的请求次数熔断）|
 | 企业 Key（企业 BYOK） | 表 `product.tenant_model_credentials`（密文） | 运营用 `python -m product.tenant_models` 设置；无客户接口 |
+| `PPAP_MEEGO_AI_NODE_PLUGIN_ID`、`PPAP_MEEGO_AI_NODE_TOKEN`、`PPAP_MEEGO_AI_NODE_PLUGIN_SECRET` | Secret `ppap-current`（值记在仓库根目录不入 Git 的 `.env`） | API（飞书项目 AI 节点：事件验签、完成节点）|
 
 已有 Secret 使用按 key 合并更新，保留其余数据。例如，`PPAP_SECRET_ENV_FILE` 指向权限为 `0600`、不入 Git 的生产文件，且**只包含本次已确认要更新到 `ppap-current` 的 key**。下面的管道自动更新这些 key，不将密钥放入命令参数或输出：
 
@@ -102,6 +103,18 @@ kubectl -n ppap-test create secret generic ppap-current \
   --from-env-file="$PPAP_SECRET_ENV_FILE" --dry-run=client -o json \
   | python3 -c 'import json, sys; json.dump({"data": json.load(sys.stdin)["data"]}, sys.stdout)' \
   | kubectl -n ppap-test patch secret ppap-current --type=merge --patch-file=/dev/stdin
+```
+
+值记在仓库根目录 `.env`（`0600`、不入 Git）里的 key，按前缀只取本次要同步的那几个，不把整份开发 `.env` 当作生产配置。例如同步飞书项目 AI 节点的三个 key：
+
+```sh
+set -euo pipefail
+set +x
+grep '^PPAP_MEEGO_AI_NODE_' .env \
+  | kubectl -n ppap-test create secret generic ppap-current --from-env-file=/dev/stdin --dry-run=client -o json \
+  | python3 -c 'import json, sys; json.dump({"data": json.load(sys.stdin)["data"]}, sys.stdout)' \
+  | kubectl -n ppap-test patch secret ppap-current --type=merge --patch-file=/dev/stdin
+kubectl -n ppap-test rollout restart deploy/ppap-current-api
 ```
 
 Secret 不存在时，先用同一个已确认文件创建；其他 Secret 按表中归属分别更新，不把整份 `ppap-current-text-model-v1` 覆盖到 `ppap-current`。新配置 key 还必须出现在所属容器的明确 `secretKeyRef`／`configMapKeyRef` 中；只写入 Secret 而没有容器引用，同样属于未完成配置。
