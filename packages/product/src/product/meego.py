@@ -70,6 +70,11 @@ def _safe_segment(value: str) -> bool:
     return bool(value) and len(value) <= 128 and all(c.isalnum() or c in "_-" for c in value)
 
 
+def work_item_url(settings, item: WorkItemRef) -> str:
+    """The work item's page in Feishu Project; the space key resolves to the space's own address."""
+    return f"{settings.meego_base_url.rstrip('/')}/{item.project_key}/{item.work_item_type_key}/detail/{item.work_item_id}"
+
+
 def work_item(project_key: str, work_item_type_key: str, work_item_id: str) -> WorkItemRef:
     return WorkItemRef.parse(f"{project_key}/{work_item_type_key}/{work_item_id}")
 

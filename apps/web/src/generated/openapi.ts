@@ -2876,6 +2876,7 @@ export interface components {
             round_id: string | null;
             /** Round Started At */
             round_started_at?: string | null;
+            source?: components["schemas"]["AuditTaskSource"];
             /** Source Draft Id */
             source_draft_id: string | null;
             /**
@@ -2953,6 +2954,16 @@ export interface components {
             statuses: components["schemas"]["PrecheckStatus"][];
             /** Warnings */
             warnings: components["schemas"]["PrecheckFinding"][];
+        };
+        /** AuditTaskSource */
+        AuditTaskSource: {
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "meego_work_item";
+            /** Url */
+            url: string;
         };
         /** AuditTaskSubject */
         AuditTaskSubject: {

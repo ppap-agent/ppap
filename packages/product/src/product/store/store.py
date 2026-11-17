@@ -1548,6 +1548,15 @@ class AuthStore:
             if request_id and task.get("acceptance", {}).get("request_id") != _as_uuid(request_id):
                 queued = self._task_confirmation_receipt(conn, principal, task_id, request_id=_as_uuid(request_id))
                 task["acceptance"] = queued or {"request_id": _as_uuid(request_id), "state": "pending", "reason": None}
+            # Where the task came from, as a way back: a Feishu Project work item opens at its own address.
+            target = self._target_row(conn, "draft_writeback_targets", "draft_id", task_id)
+            if target and target["provider"] == "meego" and target["object_kind"] == "work_item":
+                from product.meego import WorkItemRef, work_item_url
+
+                try:
+                    task["source"] = {"kind": "meego_work_item", "url": work_item_url(self.settings, WorkItemRef.parse(target["object_ref"]))}
+                except ValueError:
+                    pass  # A reference that is not a work item address gives no way back; the task itself still reads.
             return task
 
     def _notification_preference(self, conn, draft: dict) -> dict:

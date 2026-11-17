@@ -123,3 +123,12 @@ def test_report_names_tell_same_named_files_of_one_round_apart_and_never_drift()
     for start in (None, ""):
         with pytest.raises(ValueError):
             report_names(["PFMEA.xlsx"], start)
+
+
+def test_a_work_item_opens_at_its_feishu_project_address_by_space_key():
+    from types import SimpleNamespace
+
+    from product.meego import work_item, work_item_url
+
+    settings = SimpleNamespace(meego_base_url="https://project.feishu.cn/")
+    assert work_item_url(settings, work_item("6afa8c695111c30e59b3bd22", "story", "7170181153")) == "https://project.feishu.cn/6afa8c695111c30e59b3bd22/story/detail/7170181153"

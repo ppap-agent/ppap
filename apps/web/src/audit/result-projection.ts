@@ -10,14 +10,20 @@ export function reconcileTaskNotification(previous: Task | null | undefined, nex
 type TaskFile = components['schemas']['AuditTaskFile']
 export type ReviewFile = Pick<TaskFile, 'file' | 'audit' | 'display_info'> & Partial<Pick<TaskFile, 'match'>>
 
-/** Display totals use the same frozen projections as each file, excluding references. */
+/** Each clause's standing as the server defines it (machine, or settled by confirmed original facts) and the total it adds to. */
+const outcomeCount = {PASS: 'pass_count', NG: 'ng_count', UNABLE: 'unknown_count', uncovered: 'not_covered_count', ERR: 'error_count'} as const
+
+/** Display totals count each clause where it stands now, the same standing the Feishu Project tab shows; references excluded. */
 export function taskResultCounts(task: Task) {
   const targets = task.files.filter(row => row.selection === 'selected' && row.match?.state !== 'reference')
   if (taskProgressError(task) || !targets.length || targets.some(row => !row.audit || resultConsistencyError(task, row))) return null
   return targets.reduce((total, row) => {
     const audit = row.audit!
     total.items += audit.progress.total
-    for (const key of ['pass_count', 'ng_count', 'unknown_count', 'not_covered_count', 'error_count'] as const) total[key] += audit.counts[key]
+    for (const check of audit.checks) {
+      const key = check.outcome && check.outcome in outcomeCount ? outcomeCount[check.outcome as keyof typeof outcomeCount] : null
+      if (key) total[key] += 1
+    }
     return total
   }, {items: 0, pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0})
 }

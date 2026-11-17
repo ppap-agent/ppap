@@ -39,10 +39,26 @@ export default function App() {
   }, []);
   useEffect(() => void connect(), [connect]);
 
+  const readAt = useRef(0);
   const refresh = useCallback(async () => {
     if (!item) return;
+    readAt.current = Date.now();
     setData(await loadWorkItem(item, names.current));
   }, [item]);
+
+  // Back from PPAP (or anywhere else): what was confirmed or reviewed there shows here without a click.
+  useEffect(() => {
+    if (!item) return;
+    const back = () => {
+      if (document.visibilityState === 'visible' && Date.now() - readAt.current > 10_000) void refresh().catch(() => undefined);
+    };
+    document.addEventListener('visibilitychange', back);
+    window.addEventListener('focus', back);
+    return () => {
+      document.removeEventListener('visibilitychange', back);
+      window.removeEventListener('focus', back);
+    };
+  }, [item, refresh]);
 
   useEffect(() => {
     if (!item) return;

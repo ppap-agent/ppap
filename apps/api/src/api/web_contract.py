@@ -913,6 +913,11 @@ class AuditClauseEvaluation(TypedDict):
     confirmation: NotRequired["AuditFactConfirmation"]
 
 
+class AuditTaskSource(TypedDict):
+    kind: Literal["meego_work_item"]
+    url: str
+
+
 class AuditFactConfirmation(TypedDict):
     """A clause the machine could not decide, settled by recomputation from confirmed original facts."""
 
@@ -1367,6 +1372,8 @@ class AuditTask(AuditTaskIdentity):
     files: list[AuditTaskFile]
     execution: NotRequired[Literal["queued", "running", "completed", "failed"]]
     has_execution_error: NotRequired[bool]
+    # Where the task came from, as a way back (a Feishu Project work item).
+    source: NotRequired["AuditTaskSource"]
     # The round's standing, defined once: what writeback, release, the flow node and every page read.
     conclusion: NotRequired[Literal["PASS", "NG", "UNKNOWN", "ERROR"] | None]
     machine_conclusion: NotRequired[Literal["PASS", "NG", "UNKNOWN", "ERROR"] | None]
