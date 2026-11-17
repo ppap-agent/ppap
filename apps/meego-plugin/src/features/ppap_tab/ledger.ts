@@ -19,7 +19,66 @@ export type Doc = {
 const AUDITABLE = ['.xlsx', '.xls', '.xlsm', '.docx', '.doc', '.pdf'];
 export const auditable = (name: string) => AUDITABLE.some(suffix => name.toLowerCase().endsWith(suffix));
 
-export type Rule = { id: string; title: string; type: string | null; customers: string[] | null; predecessor_id: string | null };
+export type Rule = { id: string; title: string; type: string | null; customers: string[] | null; predecessor_id: string | null; kind?: string; rule_profile?: string | null; customer_scope?: string | null };
+
+// Audit templates: the same keys and names as the PPAP web rules page (apps/web/src/audit/rule-templates.ts).
+// A template is one customer's set of rules, one per document type; system templates come with PPAP,
+// enterprise templates are the enterprise's own.
+const SHARED_TEMPLATE = 'shared';
+const PENDING_TEMPLATE = 'pending';
+
+export function templateKey(rule: Rule): string {
+  const customer = rule.customers?.[0]?.trim();
+  if (rule.rule_profile === 'v4' && customer) return `system:${customer}`;
+  if (rule.customer_scope === 'all') return SHARED_TEMPLATE;
+  return customer ? `customer:${customer}` : PENDING_TEMPLATE;
+}
+
+export function templateName(key: string): string {
+  if (key === SHARED_TEMPLATE) return '通用规则';
+  if (key.startsWith('system:')) return `${key.slice('system:'.length)} 规则`;
+  return key.replace(/^customer:/, '');
+}
+
+/** The customer a template's rules belong to; shared rules belong to none. */
+export function templateOwner(key: string): string | null {
+  return /^(?:system|customer):(.+)$/.exec(key)?.[1] ?? null;
+}
+
+/** Each template's newest audit rules, as recognition accepts them. Unsorted uploads are not a template. */
+export function templates(rules: Rule[]): Map<string, Rule[]> {
+  const replaced = new Set(rules.map(rule => rule.predecessor_id).filter(Boolean));
+  const grouped = new Map<string, Rule[]>();
+  for (const rule of rules) {
+    if (rule.kind !== 'engine' || replaced.has(rule.id)) continue;
+    const key = templateKey(rule);
+    if (key !== PENDING_TEMPLATE) grouped.set(key, [...(grouped.get(key) ?? []), rule]);
+  }
+  return grouped;
+}
+
+/** The template a task is using: one whose customer is the task's, the space's last choice first. */
+export function currentTemplate(all: Map<string, Rule[]>, customer: string | null, remembered: string | null): string | null {
+  const owned = [...all.keys()].filter(key => customer && templateOwner(key) && sameCustomer(templateOwner(key)!, customer));
+  return remembered && owned.includes(remembered) ? remembered : owned.find(key => key.startsWith('system:')) ?? owned[0] ?? null;
+}
+
+// The last template used in a space, per viewer; a convenience that the page works without.
+export function rememberedTemplate(space: string): string | null {
+  try {
+    return localStorage.getItem(`ppap.template.${space}`);
+  } catch {
+    return null;
+  }
+}
+
+export function rememberTemplate(space: string, key: string): void {
+  try {
+    localStorage.setItem(`ppap.template.${space}`, key);
+  } catch {
+    // The choice still applies; it is only not remembered.
+  }
+}
 
 export type Package = {
   docs: Doc[];

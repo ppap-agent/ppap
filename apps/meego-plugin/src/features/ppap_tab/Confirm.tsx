@@ -1,7 +1,9 @@
 // Checking an audit before it is accepted: what each file will be judged by, for which
 // customer, how deeply, and at what cost. Nothing here charges; only "确认并开始审核" does.
 import { Banner, Button, Collapse, Dropdown, Input, List, Select, Space, Spin, Switch, Tag, Typography } from '@douyinfe/semi-ui';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { currentTemplate, rememberedTemplate, rememberTemplate, templateName, templateOwner, templates } from './ledger';
+import type { Rule } from './ledger';
 import { checkerUnavailable, matchLabel } from './model';
 import type { Precheck, Task, TaskFile } from './model';
 import { call, newId, say, taskLink } from './ppap';
@@ -95,10 +97,11 @@ export function ConfirmRow({ task, row, revise, disabled }: { task: Task; row: T
   );
 }
 
-/** The decision before acceptance: customer, depth, precheck, cost; then confirm or end without auditing. */
-export function Confirm({ task, revise, refresh, onReselect }: { task: Task; revise: Revise; refresh: () => Promise<void>; onReselect: () => void }) {
+/** The decision before acceptance: template, depth, precheck, cost; then confirm or end without auditing. */
+export function Confirm({ task, rules, space, revise, refresh, onReselect }: { task: Task; rules: Rule[]; space: string; revise: Revise; refresh: () => Promise<void>; onReselect: () => void }) {
   const [precheck, setPrecheck] = useState<Precheck | null | 'unavailable'>(null);
-  const [customers, setCustomers] = useState<string[]>([]);
+  const all = useMemo(() => templates(rules), [rules]);
+  const template = currentTemplate(all, task.customer_preference ?? null, rememberedTemplate(space));
   const [quota, setQuota] = useState<Quota | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
@@ -108,9 +111,6 @@ export function Confirm({ task, revise, refresh, onReselect }: { task: Task; rev
   useEffect(() => {
     call<Precheck>(`/audit-tasks/${task.id}/precheck`).then(setPrecheck, () => setPrecheck('unavailable'));
   }, [task.id, task.input_revision]);
-  useEffect(() => {
-    call<{ customers: { name: string }[] }>('/audit-customers').then(reply => setCustomers(reply.customers.map(row => row.name)), () => setCustomers([]));
-  }, []);
   useEffect(() => {
     if (!targets) return setQuota(null);
     // The server's own wording for the balance; it decides whether acceptance is allowed.
@@ -131,6 +131,13 @@ export function Confirm({ task, revise, refresh, onReselect }: { task: Task; rev
   }
   const confirm = () => act(() => call(`/audit-tasks/${task.id}/confirm`, { method: 'POST', body: { request_id: newId(), expected_revision: task.input_revision, expected_confirmation_basis_digest: task.confirmation_basis_digest } }));
   const deep = (on: boolean) => act(() => call(`/audit-tasks/${task.id}/deep-mode`, { method: 'PUT', body: { deep_mode: on, expected_revision: task.input_revision } }));
+  // A template sets the task's customer and gives each recognized document type that template's rule;
+  // recognition then reads every file again against it.
+  const chooseTemplate = (key: string) => {
+    rememberTemplate(space, key);
+    const byType = new Map((all.get(key) ?? []).filter(rule => rule.type).map(rule => [rule.type!, rule.id]));
+    void revise(task, row => ({ ...row, preferred_rule_version_id: (row.match?.document_type && byType.get(row.match.document_type)) || null }), templateOwner(key) ?? task.customer_preference ?? null);
+  };
   // Nothing left to audit: end the task without a round, charge or report, saying why for each file.
   // A file that has a rule but no checker program yet (暂不能审核) is left out of the task, not marked as rule-less.
   const unauditable = task.files.filter(row => row.selection === 'selected' && !['unmatched', 'reference'].includes(row.match?.state ?? ''));
@@ -157,16 +164,16 @@ export function Confirm({ task, revise, refresh, onReselect }: { task: Task; rev
     <section className="confirm" aria-label="开始审核前的核对">
       <Title heading={6}>核对识别结果后开始审核</Title>
       <Space wrap align="center">
-        <Text type="tertiary">审核客户</Text>
+        <Text type="tertiary">审核模板</Text>
         <Select
           size="small"
-          aria-label="审核客户"
-          style={{ minWidth: 120 }}
+          aria-label="审核模板"
+          style={{ minWidth: 160 }}
           disabled={busy}
-          value={task.customer_preference ?? undefined}
-          placeholder="未指定"
-          optionList={customers.map(name => ({ value: name, label: name }))}
-          onChange={value => void revise(task, row => ({ ...row, preferred_rule_version_id: null }), String(value))}
+          value={template ?? undefined}
+          placeholder="按文件自动匹配"
+          optionList={[...all.keys()].sort((a, b) => templateName(a).localeCompare(templateName(b), 'zh-CN')).map(key => ({ value: key, label: templateName(key) }))}
+          onChange={value => chooseTemplate(String(value))}
         />
         {task.deep_mode_option?.available && (
           <Space align="center">

@@ -8,7 +8,7 @@ import { Confirm, ConfirmRow, useRevise } from './Confirm';
 import type { Revise } from './Confirm';
 import { PdfView } from './Evidence';
 import { Issue } from './Issue';
-import { buildPackage, rectification, requiredTypes, standing, unaudited, verdict } from './ledger';
+import { buildPackage, currentTemplate, rectification, rememberedTemplate, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
 import type { Doc, OpenIssue, Package } from './ledger';
 import { bucket, bucketColor, bucketLabel, byUrgency, conclusionLabel, documentTypeLabel, reviewOf, when } from './model';
 import type { FileVersion, Job, Task, TaskFile } from './model';
@@ -32,13 +32,15 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
   const { docs, flight, latest } = pack;
   const view = useMemo(() => standing(latest, pack.previous), [latest, pack.previous]);
   const total = verdict(latest);
-  // Before the first audit the person may pick the customer; after that each round keeps its own.
-  const [chosenCustomer, setChosenCustomer] = useState<string | null>(null);
-  const [customers, setCustomers] = useState<string[]>([]);
-  useEffect(() => {
-    call<{ customers: { name: string }[] }>('/audit-customers').then(reply => setCustomers(reply.customers.map(row => row.name)), () => setCustomers([]));
-  }, []);
-  const customer = (flight ?? latest)?.customer_preference ?? chosenCustomer ?? data.defaultCustomer;
+  // Before the first audit the person may pick the audit template; after that each round keeps its own.
+  // The first audit starts from the template last used in this space, else the enterprise's default customer.
+  const allTemplates = useMemo(() => templates(data.rules), [data.rules]);
+  const [chosenTemplate, setChosenTemplate] = useState<string | null>(() => {
+    const remembered = rememberedTemplate(item.project_key);
+    return remembered && allTemplates.has(remembered) ? remembered : null;
+  });
+  const customer = (flight ?? latest)?.customer_preference ?? (chosenTemplate && templateOwner(chosenTemplate)) ?? data.defaultCustomer;
+  const shownTemplate = chosenTemplate ?? currentTemplate(allTemplates, customer, null);
   const missing = useMemo(() => {
     const have = new Set(docs.map(doc => doc.type).filter(Boolean));
     return requiredTypes(data.rules, customer).filter(type => !have.has(type));
@@ -248,15 +250,19 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
           {latest && <Text type="tertiary" size="small">{when(latest.round_started_at ?? latest.created_at)} 的审核</Text>}
         </Space>
         <Space wrap>
-          {choosing && !latest && customers.length > 1 && (
+          {choosing && !latest && allTemplates.size > 1 && (
             <Select
               size="default"
-              aria-label="审核客户"
-              prefix="审核客户"
+              aria-label="审核模板"
+              prefix="审核模板"
               disabled={Boolean(busy)}
-              value={customer ?? undefined}
-              optionList={customers.map(name => ({ value: name, label: name }))}
-              onChange={value => setChosenCustomer(String(value))}
+              value={shownTemplate ?? undefined}
+              placeholder="按文件自动匹配"
+              optionList={[...allTemplates.keys()].sort((a, b) => templateName(a).localeCompare(templateName(b), 'zh-CN')).map(key => ({ value: key, label: templateName(key) }))}
+              onChange={value => {
+                setChosenTemplate(String(value));
+                rememberTemplate(item.project_key, String(value));
+              }}
             />
           )}
           {choosing && chosen.length > 0 && <Button theme={startFirst ? 'solid' : 'light'} type="primary" loading={Boolean(busy)} onClick={() => void start()}>{startLabel}</Button>}
@@ -294,7 +300,7 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       {pack.stale && !flight && <Banner type="warning" fullMode={false} closeIcon={null} description={`资料在上次审核后有变化${staleWords(pack)}。当前结论针对的是变化前的资料，重新审核整包后才反映现状。`} />}
       {total === 'ERROR' && <Banner type="warning" fullMode={false} closeIcon={null} description="上次审核出现技术错误，结果不完整，不能写回。请重新审核。" />}
       {flight && flight.state !== 'pending_confirm' && <Running task={flight} />}
-      {flight && flight.state === 'pending_confirm' && !reselect && <Confirm task={flight} revise={revise} refresh={refresh} onReselect={() => setReselect(true)} />}
+      {flight && flight.state === 'pending_confirm' && !reselect && <Confirm task={flight} rules={data.rules} space={item.project_key} revise={revise} refresh={refresh} onReselect={() => setReselect(true)} />}
 
       <Tabs type="line" activeKey={tab} onChange={setTab}>
         <TabPane tab={`资料 ${docs.length}`} itemKey="docs">
