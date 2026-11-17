@@ -174,6 +174,7 @@ class PreparationHTTP:
             self.task = {
                 "id": self.draft["id"],
                 "number": "PPAP-恢复-001",
+                "creator": {"name": "示例用户", "mine": True},
                 "state": "matching",
                 "confirmation_basis_digest": None,
                 "confirmation_scope": None,

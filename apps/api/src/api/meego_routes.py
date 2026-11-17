@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from product.feishu import authorize_url
 from product.files import ObjectMissing
-from product.identity import SESSION_COOKIE, can_read, can_review, new_token
+from product.identity import SESSION_COOKIE, can_modify, new_token
 from product.logs import emit
 from product.meego import MeegoClient, MeegoError, WorkItemRef, work_item
 from product.meego_writeback import CONCLUSION_LABEL, marker, report_names, summary, task_link
@@ -351,14 +351,14 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         await asyncio.to_thread(meego.record_ai_node, item, state_key, status, outside=outside)
         return JSONResponse({})
 
-    def round_context(round_id: str, request: Request, *, review: bool = False):
-        """The person's host session, the round's finished task and its work item, read with the person's own access."""
+    def round_context(round_id: str, request: Request):
+        """The person's host session, the round's finished task and its work item. Writing back and
+        releasing change the work item on the round's behalf, so only the round's creator does either."""
         session, binding, denied = host(request)
         if denied:
             return denied
         resource = store.resource(round_id)
-        grants = store.grants(round_id, session.principal.user_id) if resource else set()
-        if resource is None or not (can_review if review else can_read)(session.principal, resource, grants):
+        if resource is None or not can_modify(session.principal, resource):
             return JSONResponse({"error": "access_denied"}, status_code=403)
         round_body = store.get_round(round_id)
         if round_body is None:
@@ -421,13 +421,13 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         """A person lets the flow pass the PPAP node although the latest round did not conform.
 
         The round's conclusion stays as the machine found it; the release is its own record and its
-        own comment. Only a reviewer of the round may release, only the work item's latest round,
+        own comment. Only the round's creator may release, only the work item's latest round,
         and only while a PPAP node waits on it.
         """
         reason = str(body.get("reason") or "").strip()
         if not reason or len(reason) > 500:
             return JSONResponse({"error": "invalid_release"}, status_code=400)
-        context = round_context(round_id, request, review=True)
+        context = round_context(round_id, request)
         if isinstance(context, JSONResponse):
             return context
         session, binding, round_id, task, item = context

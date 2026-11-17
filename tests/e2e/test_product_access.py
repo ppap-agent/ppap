@@ -53,6 +53,7 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     task = {
         "id": "original-task",
         "number": "PPAP-20261019-001",
+        "creator": {"name": "示例用户", "mine": True},
         "state": "pending_confirm",
         "created_at": "2026-10-19T00:00:00Z",
         "updated_at": "2026-10-19T00:00:00Z",

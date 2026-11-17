@@ -154,6 +154,7 @@ def reaudit_routes(page, *, accept=False):
             task = {
                 "id": body["source_draft_id"],
                 "number": "PPAP-受控重审",
+                "creator": {"name": "示例用户", "mine": True},
                 "state": "pending_confirm",
                 "recognition_request_id": body["request_id"],
                 "input_revision": 0,

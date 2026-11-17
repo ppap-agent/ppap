@@ -46,7 +46,7 @@ export function Issue({ task, row, check, position, stale, facts, onBack, onChan
             </Paragraph>
           </>
         )}
-        {facts?.round_id === task.round_id && openFacts(facts, check).map(question => <FactForm key={question.file_version_id + question.field} roundId={task.round_id!} revision={facts.revision} question={question} onChanged={onChanged} />)}
+        {task.creator.mine && facts?.round_id === task.round_id && openFacts(facts, check).map(question => <FactForm key={question.file_version_id + question.field} roundId={task.round_id!} revision={facts.revision} question={question} onChanged={onChanged} />)}
 
         <Text strong className="label">原件依据</Text>
         {sources.length === 0 ? (
@@ -66,14 +66,14 @@ export function Issue({ task, row, check, position, stale, facts, onBack, onChan
       </div>
       {check.review_item_key && task.round_id && (
         <div className="issue-review">
-          <ReviewForm key={check.review_item_key} roundId={task.round_id} check={check} fileName={fileOf} ownFile={row.file.id} onChanged={onChanged} />
+          <ReviewForm key={check.review_item_key} roundId={task.round_id} check={check} fileName={fileOf} ownFile={row.file.id} editable={task.creator.mine} onChanged={onChanged} />
         </div>
       )}
     </article>
   );
 }
 
-/** A reviewer answers one original fact; PPAP recomputes the clauses that depend on it, without a model. */
+/** The task's creator answers one original fact; PPAP recomputes the clauses that depend on it, without a model. */
 function FactForm({ roundId, revision, question, onChanged }: { roundId: string; revision: number; question: FactQuestion; onChanged: () => Promise<void> }) {
   const id = useId();
   const [value, setValue] = useState<boolean | string | null>(question.answer_type === 'boolean' ? null : '');
@@ -125,12 +125,12 @@ function FactForm({ roundId, revision, question, onChanged }: { roundId: string;
 
 const judgments = ['confirm', 'disagree', 'unknown', 'manual-satisfied', 'manual-unsatisfied'] as const;
 
-function ReviewForm({ roundId, check, fileName, ownFile, onChanged }: { roundId: string; check: Check; fileName: (versionId: string) => { original_filename: string } | undefined; ownFile: string; onChanged: () => Promise<void> }) {
+function ReviewForm({ roundId, check, fileName, ownFile, editable, onChanged }: { roundId: string; check: Check; fileName: (versionId: string) => { original_filename: string } | undefined; ownFile: string; editable: boolean; onChanged: () => Promise<void> }) {
   const [where, setWhere] = useState('');
   const [quote, setQuote] = useState('');
   const saved = reviewOf(check);
   const id = useId();
-  const [editing, setEditing] = useState(!saved);
+  const [editing, setEditing] = useState(!saved && editable);
   const [judgment, setJudgment] = useState(saved?.judgment || '');
   const [rationale, setRationale] = useState(saved?.rationale || '');
   const [nextStep, setNextStep] = useState(saved?.next_step || '');
@@ -186,6 +186,7 @@ function ReviewForm({ roundId, check, fileName, ownFile, onChanged }: { roundId:
     }
   }
 
+  if (!editing && !saved) return null;
   if (!editing && saved)
     return (
       <section className="review" aria-label="人工复核">
@@ -194,7 +195,7 @@ function ReviewForm({ roundId, check, fileName, ownFile, onChanged }: { roundId:
         <div><Tag color="blue" type="light">{judgmentLabel[saved.judgment] || saved.judgment}</Tag></div>
         <Paragraph className="pre">{saved.rationale}</Paragraph>
         {saved.next_step && <Paragraph className="pre" type="tertiary">下一步：{saved.next_step}</Paragraph>}
-        <div><Button size="small" onClick={() => setEditing(true)}>修改复核</Button></div>
+        {editable && <div><Button size="small" onClick={() => setEditing(true)}>修改复核</Button></div>}
       </section>
     );
 

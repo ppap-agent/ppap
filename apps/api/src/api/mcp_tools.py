@@ -107,7 +107,6 @@ def register_tools(mcp, gateway, authority):
             request_id,
             f"/files/{file_id}/versions",
             {**body, "request_id": str(request_id)},
-            probes=[f"/resources/{file_id}"],
             result_path=lambda v: f"/files/{v['file_id']}/versions/{v['id']}",
         )
 

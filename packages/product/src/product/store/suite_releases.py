@@ -665,18 +665,14 @@ class SuiteReleaseStore:
 
     @staticmethod
     def _rounds(conn, principal, revision_id: str) -> list[dict]:
-        # Reuse Round/Task resource grants. Tenant membership does not grant access
-        # to another member's private audit tasks or source documents.
+        # Every member of the enterprise sees its rounds.
         rows = conn.execute(
             """SELECT DISTINCT r.id, r.source_draft_id, r.created_at
                FROM product.audit_rounds r JOIN product.checker_execution_snapshots s ON s.round_id = r.id AND s.tenant_id = r.tenant_id
                CROSS JOIN LATERAL jsonb_array_elements(s.body->'targets') t
                WHERE r.tenant_id = %s AND t->>'suite_revision_id' = %s
-                 AND (r.created_by = %s OR EXISTS (
-                     SELECT 1 FROM product.resource_grants g WHERE g.user_id = %s
-                     AND g.resource_id IN (r.id, r.source_draft_id) AND g.capability IN ('read', 'review')))
                ORDER BY r.created_at DESC, r.id""",
-            (principal.tenant_id, revision_id, principal.user_id, principal.user_id),
+            (principal.tenant_id, revision_id),
         ).fetchall()
         return [{"id": str(row[0]), "task_id": str(row[1]) if row[1] else None, "created_at": row[2].isoformat()} for row in rows]
 

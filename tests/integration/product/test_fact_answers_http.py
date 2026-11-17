@@ -57,35 +57,33 @@ def test_http_fact_answer_and_report_keep_the_original(auth_store_factory, tmp_p
     assert observed == ["model observation"]
 
 
-@pytest.mark.parametrize("scope", ["foreign_tenant", "read_without_review", "original_revoked", "membership_revoked"])
-def test_fact_answers_recheck_current_review_and_original_authorization(auth_store_factory, tmp_path, monkeypatch, scope):
+@pytest.mark.parametrize("scope", ["foreign_tenant", "other_member", "membership_revoked"])
+def test_fact_answers_are_read_by_the_enterprise_and_answered_only_by_the_round_creator(auth_store_factory, tmp_path, monkeypatch, scope):
     store, api, alice, rid, version, observed = prepare_fact_round(auth_store_factory, tmp_path, monkeypatch)
     request = answer_request(api, alice, rid)
     receipt = api.apply_fact_answer(alice, rid, request)
     if scope == "foreign_tenant":
         person = store.upsert_feishu_identity("another-enterprise", "eve")
-    elif scope == "read_without_review":
+    elif scope == "other_member":
         person = store.upsert_feishu_identity("fact-enterprise", "bob")
-        draft = store.create_draft(alice)
-        with store._conn() as conn:
-            conn.execute("UPDATE product.audit_drafts SET task_fingerprint='private-fact-test',task_day=current_date,task_sequence=1 WHERE id=%s", (draft["id"],))
-            conn.execute("UPDATE product.audit_rounds SET source_draft_id=%s WHERE id=%s", (draft["id"], rid))
-            conn.execute("INSERT INTO product.resource_grants(resource_id,user_id,capability) VALUES(%s,%s,'read'),(%s,%s,'read')", (rid, person.user_id, version["file_id"], person.user_id))
     else:
         person = alice
         with store._conn() as conn:
-            if scope == "original_revoked":
-                conn.execute("DELETE FROM product.resource_grants WHERE resource_id=%s AND user_id=%s", (version["file_id"], alice.user_id))
-            else:
-                conn.execute("DELETE FROM product.memberships WHERE tenant_id=%s AND user_id=%s", (alice.tenant_id, alice.user_id))
+            conn.execute("DELETE FROM product.memberships WHERE tenant_id=%s AND user_id=%s", (alice.tenant_id, alice.user_id))
+    readable = scope == "other_member"
     with TestClient(create_app(store.settings, auth_store=api)) as client:
         client.cookies.set(SESSION_COOKIE, store.create_session(person))
         path = f"/audit-rounds/{rid}/fact-answers"
         for suffix in ("", "/" + request["operation_id"], "/report"):
-            assert client.get(path + suffix).status_code in {401, 403}
+            assert client.get(path + suffix).status_code in ({200} if readable else {401, 403})
         assert client.post(path, json={**request, "operation_id": str(uuid4()), "expected_revision": 1}).status_code in {401, 403}
-    with pytest.raises(KeyError):
-        api.read_fact_answers(person, rid)
+    if readable:
+        assert api.read_fact_answers(person, rid)["answers"] == api.read_fact_answers(alice, rid)["answers"]
+        with pytest.raises(KeyError):
+            api.apply_fact_answer(person, rid, {**request, "operation_id": str(uuid4()), "expected_revision": 1})
+    else:
+        with pytest.raises(KeyError):
+            api.read_fact_answers(person, rid)
     with store._conn() as conn:
         assert conn.execute("SELECT receipt FROM product.original_fact_answers WHERE round_id=%s", (rid,)).fetchall() == [(receipt,)]
     assert observed == ["model observation"]

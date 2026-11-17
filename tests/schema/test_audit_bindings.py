@@ -391,7 +391,7 @@ def check(context):
         principal[0] = self.store.principal_for_fixture("carol")
         self.assertEqual(client.get(path + "?read_view=true").status_code, 403)
 
-    def test_resumable_drafts_keep_origin_and_respect_grants(self):
+    def test_resumable_drafts_keep_origin_and_stay_with_their_creator(self):
         from product.fixtures import RULE_A
 
         file = self.upload("draft.txt")
@@ -498,9 +498,6 @@ def check(context):
         with self.assertRaisesRegex(ValueError, "idempotency_conflict"):
             self.store.accept_draft(self.alice, self.draft(changed_rule), key)
         bob = self.store.principal_for_fixture("bob")
-        with self.store._conn() as conn:
-            for version in (first, reference):
-                conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read')", (version.file_id, bob.user_id))
         other_draft = self.store.create_draft(bob)["id"]
         self.store.save_draft(bob, other_draft, items)
         replay = self.store.accept_draft(bob, other_draft, key)
@@ -612,19 +609,11 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["toast"]["type"], "error")
         self.assertIsNone(api_store.get_audit_task(self.alice, task["id"])["round_id"])
-        source_id = task["files"][0]["file"]["file_id"]
         with connect(self.settings, "migrator") as conn:
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (source_id, self.alice.user_id))
-        self.assertEqual(client.post("/integrations/feishu/events", json=body).json()["toast"]["type"], "error")
-        with connect(self.settings, "migrator") as conn:
-            conn.execute("INSERT INTO product.resource_grants VALUES (%s, %s, 'read')", (source_id, self.alice.user_id))
             conn.execute("DELETE FROM product.memberships WHERE user_id = %s AND tenant_id = %s", (self.alice.user_id, self.alice.tenant_id))
         self.assertEqual(client.post("/integrations/feishu/events", json=body).json()["toast"]["type"], "error")
         with connect(self.settings, "migrator") as conn:
             conn.execute("INSERT INTO product.memberships (user_id, tenant_id, role) VALUES (%s, %s, 'member')", (self.alice.user_id, self.alice.tenant_id))
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (task["id"], self.alice.user_id))
-        denied = client.post("/integrations/feishu/events", json=body)
-        self.assertEqual(denied.json()["toast"]["type"], "error")
         self.assertEqual(api_store.list_rounds(self.alice), [])
         self.assertEqual(api_store.list_usage_events(self.alice), [])
 
@@ -838,13 +827,13 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(len(store.list_rounds(self.alice)), 1)
         self.assertEqual(store.list_usage_events(self.alice), [])
 
-    def test_card_confirmation_rechecks_resource_permission_after_queue_commit(self):
+    def test_card_confirmation_rechecks_membership_after_queue_commit(self):
         from product.db import connect
 
-        files, task, store, _, body = self.prepared_card_confirmation()
+        _, task, store, _, body = self.prepared_card_confirmation()
         store.enqueue_task_confirmation(self.card_action(body))
         with connect(self.settings, "migrator") as conn:
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (files[0].file_id, self.alice.user_id))
+            conn.execute("DELETE FROM product.memberships WHERE user_id = %s AND tenant_id = %s", (self.alice.user_id, self.alice.tenant_id))
         receipt = self.process_card_confirmation(store)
         self.assertEqual(receipt["state"], "rejected")
         self.assertTrue(receipt["reason"])
@@ -1047,18 +1036,17 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(api_store.get_task_notification(self.alice, task["id"])["delivery"]["state"], "sent")
         self.assertIsNone(api_store.claim_task_notification("third-notifier"))
 
-    def test_notification_rechecks_source_access_before_dispatch(self):
+    def test_notification_rechecks_the_recipient_membership_before_dispatch(self):
         from product import build_product_store
         from product.db import connect
         from product.fixtures import APP_ID
 
         self.settings.feishu_app_id = APP_ID
-        files, task, _ = self.prepared_display_task(confirm=False)
+        _, task, _ = self.prepared_display_task(confirm=False)
         api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
         claimed, recipient = api_store.claim_task_notification("notifier")
         with connect(self.settings, "migrator") as conn:
-            # The first file is also the rule source, which the tenant shares; revoke a plain upload.
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (files[1].file_id, self.alice.user_id))
+            conn.execute("DELETE FROM product.memberships WHERE user_id = %s AND tenant_id = %s", (self.alice.user_id, self.alice.tenant_id))
         self.assertIsNone(api_store.start_task_notification(claimed, "notifier", recipient))
         self.assertIsNone(api_store.claim_task_notification("notifier-again"))
         self.assertEqual(api_store.get_task_notification(self.alice, task["id"])["delivery"]["state"], "not_due")
@@ -1194,7 +1182,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertFalse(preference["can_change"])
         self.assertIsNone(api_store.claim_task_notification("notifier-c"))
 
-    def test_completion_notification_setting_is_private_persistent_and_revisioned(self):
+    def test_completion_notification_setting_is_the_creators_persistent_and_revisioned(self):
         from api.audit_routes import register_audit_routes
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
@@ -1217,8 +1205,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(client.put(path, json={"enabled": True, "expected_revision": 0}).status_code, 409)
         self.assertEqual(client.put(path, json={"enabled": "false", "expected_revision": 1}).status_code, 400)
         self.assertEqual(client.get(path).json()["revision"], 1)
+        # Another member of the enterprise sees the setting but cannot change it.
         self.display_principal = self.store.principal_for_fixture("bob")
-        self.assertEqual(client.get(path).status_code, 403)
+        self.assertEqual(client.get(path).json()["revision"], 1)
         self.assertEqual(client.put(path, json={"enabled": True, "expected_revision": 1}).status_code, 403)
         self.display_principal = self.store.principal_for_fixture("carol")
         self.assertEqual(client.get(path).status_code, 403)
@@ -1282,14 +1271,25 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(refreshed[0]["document_id"], other_doc["document_id"])
         self.assertGreater(refreshed[0]["updated_at"], refreshed[1]["updated_at"])
         self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "更正客户"}).json()["total"], 1)
-        from product.db import connect
-
-        with connect(self.settings, "migrator") as conn:
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (first.file_id, self.alice.user_id))
-        self.assertEqual(self.display_client.get(history_path + "/result", params=old).status_code, 403)
-        remaining = self.display_client.get(history_path).json()["entries"]
-        self.assertEqual([entry["sequence"] for entry in remaining], [2])
+        self.assertIs(detail.json()["creator"]["mine"], True)
+        # Another member of the enterprise reads the same archive and history, but cannot correct it.
         self.display_principal = self.store.principal_for_fixture("bob")
+        self.assertEqual(self.display_client.get("/audit-archive").json()["total"], 2)
+        self.assertEqual([entry["sequence"] for entry in self.display_client.get(history_path).json()["entries"]], [2, 1])
+        shared = self.display_client.get(history_path + "/result", params=old)
+        self.assertEqual(shared.status_code, 200)
+        self.assertIs(shared.json()["creator"]["mine"], False)
+        refused = self.display_client.post(
+            f"/audit-tasks/{old_task['id']}/display-info",
+            json={
+                "request_id": str(uuid.uuid4()),
+                "reference": {"task_id": old_task["id"], "round_id": old_task["round_id"], "file_version_id": other.id},
+                "expected_revision": 1,
+                "values": {"customer": "他人更正", "model": "M2", "part_number": "P2", "part": "更正零件"},
+            },
+        )
+        self.assertEqual(refused.status_code, 403)
+        self.display_principal = self.store.principal_for_fixture("carol")
         self.assertEqual(self.display_client.get("/audit-archive").json()["total"], 0)
         self.assertEqual(self.display_client.get(history_path).status_code, 403)
 
@@ -1337,7 +1337,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         named = [row["match"]["metadata"] for row in expected["files"] if row["selection"] == "selected" and row.get("match") and any(row["match"]["metadata"].get(key) for key in fields)]
         recognized = named[0] if named else None
         self.assertEqual(summary.get("subject"), recognized and {key: recognized.get(key) or None for key in fields})
-        self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("bob")), [])
+        # The enterprise shares one task list; each member sees whose task it is.
+        shared = self.store.list_audit_tasks(self.store.principal_for_fixture("bob"))
+        self.assertEqual([(row["id"], row["creator"]["mine"]) for row in shared], [(task["id"], False)])
         self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("carol")), [])
         self.assertEqual(self.store.get_audit_task(self.alice, task["id"]), expected)
         # A target narrows the list to tasks started for that one external object.
@@ -1347,12 +1349,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.store.save_draft_writeback(conn, task["id"], work_item)
         self.assertEqual([row["id"] for row in self.store.list_audit_tasks(self.alice, target=work_item)], [task["id"]])
         self.assertEqual(self.store.list_audit_tasks(self.alice, target={**work_item, "object_ref": "proj_1/story/43"}), [])
-        self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("bob"), target=work_item), [])
-        with connect(self.settings, "migrator") as conn:
-            # The first file is also the rule source, which the tenant shares; revoke a plain upload.
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (files[1].file_id, self.alice.user_id))
-        with self.assertRaises(KeyError):
-            self.store.list_audit_tasks(self.alice)
+        self.assertEqual([row["id"] for row in self.store.list_audit_tasks(self.store.principal_for_fixture("bob"), target=work_item)], [task["id"]])
+        self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("carol"), target=work_item), [])
 
     def test_rule_directory_is_metadata_only_and_preserves_customer_scope_and_lineage(self):
         import json
@@ -1426,32 +1424,24 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(first[0], all_rows[0])
         self.assertEqual(count[0], one, "list queries must be batched, not repeated for each round")
 
-    def test_file_read_shares_authorization_and_version_connection_and_honors_revocation(self):
+    def test_file_read_shares_authorization_and_version_connection_within_the_enterprise(self):
         from unittest.mock import patch
 
-        from product.db import connect
-
         files, task, _ = self.prepared_display_task()
-        # The first file is also the rule source, which the tenant shares; revoke on a plain upload.
         file = files[1]
         with patch.object(self.store, "_conn", wraps=self.store._conn) as connections:
             actual = self.store.read_file_version(self.alice, file.file_id, file.id)
         self.assertEqual(actual, file)
         self.assertEqual(connections.call_count, 1)
         self.assertEqual(self.store.read_file_version(self.alice, file.file_id, file.id, round_id=task["round_id"]), file)
-        for principal in (self.store.principal_for_fixture("bob"), self.store.principal_for_fixture("carol")):
-            with self.assertRaises(KeyError):
-                self.store.read_file_version(principal, file.file_id, file.id, round_id=task["round_id"])
+        # Another member of the enterprise reads the file; another enterprise does not.
+        self.assertEqual(self.store.read_file_version(self.store.principal_for_fixture("bob"), file.file_id, file.id, round_id=task["round_id"]), file)
+        with self.assertRaises(KeyError):
+            self.store.read_file_version(self.store.principal_for_fixture("carol"), file.file_id, file.id, round_id=task["round_id"])
         with self.assertRaises(KeyError):
             self.store.read_file_version(self.alice, str(uuid.uuid4()), file.id)
-        with connect(self.settings, "migrator") as conn:
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (file.file_id, self.alice.user_id))
-        with self.assertRaises(KeyError):
-            self.store.read_file_version(self.alice, file.file_id, file.id)
-        # Frozen round access is independent of the current source-file grant.
-        self.assertEqual(self.store.read_file_version(self.alice, file.file_id, file.id, round_id=task["round_id"]), file)
 
-    def test_usage_links_the_paid_file_to_its_own_history_and_keeps_fee_when_access_is_revoked(self):
+    def test_usage_links_the_paid_file_to_its_own_history(self):
         from product.db import connect
 
         self.settings.feishu_ai_item_id = "test-item"
@@ -1474,23 +1464,16 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         page = self.display_client.get("/audit-usage?range=all").json()
         old = next(row for row in page["entries"] if row["reference"]["task_id"] == old_task["id"])
         self.assertEqual(old["audit_sequence"], 1)
-        self.assertEqual(old["audit_access"]["state"], "allowed")
         path = f"/audit-archive/{old['document_id']}/history/result"
         detail = self.display_client.get(path, params=old["reference"])
         self.assertEqual(detail.status_code, 200)
         self.assertEqual(detail.json()["file"]["file"]["id"], first.id)
         self.assertEqual(detail.json()["entry"]["reference"]["round_id"], old_task["round_id"])
-        with connect(self.settings, "migrator") as conn:
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (first.file_id, self.alice.user_id))
-        denied_page = self.display_client.get("/audit-usage?range=all").json()
-        self.assertEqual(denied_page["total"], 2)
-        old_denied = next(row for row in denied_page["entries"] if row["usage_id"] == old["usage_id"])
-        self.assertEqual(old_denied["points"], 500)
-        self.assertIsNone(old_denied["document_id"])
-        self.assertEqual(old_denied["audit_access"]["state"], "denied")
-        new = next(row for row in denied_page["entries"] if row["reference"]["task_id"] == new_task["id"])
+        self.assertEqual(page["total"], 2)
+        self.assertEqual(old["points"], 500)
+        new = next(row for row in page["entries"] if row["reference"]["task_id"] == new_task["id"])
         self.assertEqual(new["audit_sequence"], 2)
-        self.assertEqual(self.display_client.get(path, params=old["reference"]).status_code, 403)
+        self.assertEqual(new["document_id"], old["document_id"])
         self.assertEqual(self.store.list_usage_events(self.alice), before)
 
     def prepared_display_task(self, files=None, *, complete_audit=True, per_file_rules=False, confirm=True):
@@ -1643,9 +1626,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.display_client.get(path + "/" + command["request_id"]).json(), receipt)
         self.assertEqual(self.store.get_audit_task(self.alice, task["id"])["files"][0]["display_info"]["revision"], 0)
 
-    def test_display_requires_current_review_access_but_saved_receipt_remains_readable(self):
-        from product.db import connect
-
+    def test_display_is_corrected_only_by_the_task_creator(self):
         files, task, _worker = self.prepared_display_task()
         path = f"/audit-tasks/{task['id']}"
         command = {
@@ -1656,22 +1637,20 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         }
         receipt = self.display_client.post(path + "/display-info", json=command).json()
         self.assertEqual(receipt["state"], "saved")
-        for resource_id in (task["id"], task["round_id"]):
-            with self.subTest(resource_id=resource_id), connect(self.settings, "migrator") as conn:
-                conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s AND capability = 'review'", (resource_id, self.alice.user_id))
-                loaded = self.display_client.get(path)
-                self.assertEqual(loaded.status_code, 200)
-                self.assertEqual(loaded.json()["files"][0]["display_edit_access"]["state"], "denied")
-                self.assertEqual(self.display_client.post(path + "/display-info", json={**command, "request_id": str(uuid.uuid4()), "expected_revision": 1}).status_code, 403)
-                self.assertEqual(self.display_client.get(path + "/display-info/" + command["request_id"]).json(), receipt)
-                conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'review')", (resource_id, self.alice.user_id))
-        with connect(self.settings, "migrator") as conn:
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (task["round_id"], self.alice.user_id))
+        # Another member of the enterprise sees the corrected values, not someone else's request, and cannot correct them.
+        self.display_principal = self.store.principal_for_fixture("bob")
+        loaded = self.display_client.get(path)
+        self.assertEqual(loaded.status_code, 200)
+        self.assertIs(loaded.json()["creator"]["mine"], False)
+        self.assertEqual(loaded.json()["files"][0]["display_info"], receipt["info"])
+        self.assertEqual(self.display_client.post(path + "/display-info", json={**command, "request_id": str(uuid.uuid4()), "expected_revision": 1}).status_code, 403)
+        self.assertIsNone(self.display_client.get(path + "/display-info/" + command["request_id"]).json())
+        self.display_principal = self.store.principal_for_fixture("carol")
         self.assertEqual(self.display_client.get(path + "/display-info/" + command["request_id"]).status_code, 403)
+        self.display_principal = self.alice
+        self.assertEqual(self.display_client.get(path + "/display-info/" + command["request_id"]).json(), receipt)
 
-    def test_display_does_not_expand_private_task_ownership_or_accept_other_frozen_inputs(self):
-        from product.db import connect
-
+    def test_display_does_not_expand_task_ownership_or_accept_other_frozen_inputs(self):
         files, task, _worker = self.prepared_display_task()
         path = f"/audit-tasks/{task['id']}"
         command = {
@@ -1680,17 +1659,10 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             "expected_revision": 0,
             "values": {"customer": None, "model": None, "part_number": None, "part": None},
         }
-        for actor in ("bob", "carol"):
+        for actor, receipt_status in (("bob", 200), ("carol", 403)):
             self.display_principal = self.store.principal_for_fixture(actor)
-            with connect(self.settings, "migrator") as conn:
-                for resource_id in (task["id"], task["round_id"]):
-                    for capability in ("read", "review"):
-                        conn.execute(
-                            "INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
-                            (resource_id, self.display_principal.user_id, capability),
-                        )
             self.assertEqual(self.display_client.post(path + "/display-info", json=command).status_code, 403)
-            self.assertEqual(self.display_client.get(path + "/display-info/" + command["request_id"]).status_code, 403)
+            self.assertEqual(self.display_client.get(path + "/display-info/" + command["request_id"]).status_code, receipt_status)
         self.display_principal = self.alice
         for key in ("round_id", "file_version_id"):
             invalid = {**command, "reference": {**command["reference"], key: str(uuid.uuid4())}}
@@ -1727,37 +1699,6 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(self.display_client.get(path + "/display-info/" + command["request_id"]).json())
         self.assertEqual(self.display_client.post(path + "/display-info", json={**second_command, "request_id": str(uuid.uuid4())}).json()["info"]["revision"], 1)
         self.assertEqual(self.display_client.get(f"/audit-tasks/{first['id']}").json()["files"][0]["display_info"], receipt["info"])
-
-    def test_display_save_waiting_on_revoked_review_permission_cannot_commit(self):
-        from product.db import connect
-
-        files, task, _worker = self.prepared_display_task()
-        path = f"/audit-tasks/{task['id']}"
-        command = {
-            "request_id": str(uuid.uuid4()),
-            "reference": {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": files[0].id},
-            "expected_revision": 0,
-            "values": {"customer": None, "model": None, "part_number": None, "part": "撤权后不可写"},
-        }
-        with ThreadPoolExecutor(1) as pool, connect(self.settings, "migrator") as revoker:
-            with revoker.transaction():
-                revoker_pid = revoker.execute("SELECT pg_backend_pid()").fetchone()[0]
-                revoker.execute("SELECT 1 FROM product.resource_grants WHERE resource_id = %s AND user_id = %s AND capability = 'review' FOR UPDATE", (task["round_id"], self.alice.user_id)).fetchone()
-                pending = pool.submit(self.display_client.post, path + "/display-info", json=command)
-                with connect(self.settings, "migrator") as observer:
-                    deadline = time.monotonic() + 5
-                    while time.monotonic() < deadline:
-                        if observer.execute("SELECT 1 FROM pg_stat_activity WHERE datname = %s AND %s = ANY(pg_blocking_pids(pid))", (self.database, revoker_pid)).fetchone():
-                            break
-                        time.sleep(0.01)
-                    else:
-                        self.fail("display save did not reach the locked review permission")
-                revoker.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s AND capability = 'review'", (task["round_id"], self.alice.user_id))
-            self.assertEqual(pending.result(timeout=5).status_code, 403)
-        self.assertIsNone(self.display_client.get(path + "/display-info/" + command["request_id"]).json())
-        loaded = self.display_client.get(path).json()["files"][0]
-        self.assertEqual(loaded["display_info"]["revision"], 0)
-        self.assertEqual(loaded["display_edit_access"]["state"], "denied")
 
     def prepared_query_task(self, *, verified=True, documents=(("控制计划.xlsx", "P-1"),)):
         del verified
@@ -1869,8 +1810,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertIn("部分判定的证据未经验证", text)
         for field, value in (("round_id", str(uuid.uuid4())), ("file_version_id", str(uuid.uuid4())), ("result_attempt", 2), ("artifact_id", "other-artifact")):
             self.assertEqual(self.display_client.get(pdf_path, params={**query, field: value}).status_code, 403)
+        # The enterprise reads the report; another enterprise does not.
         self.display_principal = self.store.principal_for_fixture("bob")
-        self.assertEqual(self.display_client.get(pdf_path, params=query).status_code, 403)
+        self.assertEqual(self.display_client.get(pdf_path, params=query).status_code, 200)
         self.display_principal = self.store.principal_for_fixture("carol")
         self.assertEqual(self.display_client.get(pdf_path, params=query).status_code, 403)
         self.display_principal = None
@@ -2070,8 +2012,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(worker.claim_job("no-extra-archive-work"))
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
-    def test_archive_zip_rechecks_every_task_and_recovers_only_the_same_frozen_collection(self):
-        from product.db import connect
+    def test_archive_zip_belongs_to_its_requester_and_recovers_only_the_same_frozen_collection(self):
         from worker import process_claimed
 
         first, _worker, _completed, first_command, _ = self.prepared_report_package(accept=False)
@@ -2086,15 +2027,14 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertTrue(worker.complete_job(old, "archive-failed", {"error": "temporary_failure"}, "failed"))
         path = f"/audit-report-packages/{command['request_id']}"
         retry = {"request_id": str(uuid.uuid4()), "package_id": package["package_id"], "expected_attempt": 1}
-        with connect(self.settings, "migrator") as conn:
-            capabilities = conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s RETURNING capability", (second["round_id"], self.alice.user_id)).fetchall()
+        # A package request is its requester's: another member neither reads nor retries it; another enterprise cannot package these reports.
+        self.display_principal = self.store.principal_for_fixture("bob")
         self.assertEqual(self.display_client.get(path).status_code, 403)
         self.assertEqual(self.display_client.post(path + "/retries", json=retry).status_code, 403)
+        self.display_principal = self.store.principal_for_fixture("carol")
         self.assertEqual(self.display_client.post("/audit-report-packages", json={**command, "request_id": str(uuid.uuid4())}).status_code, 403)
         self.assertIsNone(worker.claim_job("permission-denied-cannot-retry"))
-        with connect(self.settings, "migrator") as conn:
-            for (capability,) in capabilities:
-                conn.execute("INSERT INTO product.resource_grants VALUES (%s, %s, %s)", (second["round_id"], self.alice.user_id, capability))
+        self.display_principal = self.alice
         recovered = self.display_client.post(path + "/retries", json=retry)
         self.assertEqual(recovered.status_code, 202, recovered.text)
         self.assertEqual(recovered.json()["reports"], reports)
@@ -2105,14 +2045,15 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         process_claimed(worker, current, "archive-recovery")
         ready = self.display_client.get(path).json()
         self.assertEqual((ready["state"], ready["artifact"]["artifact_id"]), ("ready", f"{old.id}:2"))
-        with connect(self.settings, "migrator") as conn:
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (first["round_id"], self.alice.user_id))
+        self.display_principal = self.store.principal_for_fixture("bob")
         self.assertEqual(self.display_client.get(path).status_code, 403)
-        self.assertEqual(self.display_client.post("/audit-report-packages", json=command).status_code, 403)
         self.assertEqual(self.display_client.get(path + "/zip", params={"package_id": ready["package_id"], "artifact_id": ready["artifact"]["artifact_id"]}).status_code, 403)
+        self.display_principal = self.store.principal_for_fixture("carol")
+        self.assertEqual(self.display_client.post("/audit-report-packages", json=command).status_code, 403)
+        self.display_principal = self.alice
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
-    def test_report_share_freezes_reports_and_keeps_recipient_task_and_original_private(self):
+    def test_report_share_freezes_reports_and_keeps_the_receipt_with_its_sender(self):
         import json
         from datetime import datetime, timedelta, timezone
 
@@ -2187,8 +2128,11 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertIn("share=" + command["request_id"], parse_qs(urlsplit(link).query)["return_to"][0])
             active[0] = bob
             client.cookies.set(SESSION_COOKIE, api.create_session(bob, UserTokens("test-bob-token", "", expires, expires)))
+            # The share receipt stays with its sender; the recipient, in the same enterprise, reads the task but does not own it.
             self.assertEqual(client.get(path).status_code, 403)
-            self.assertEqual(client.get("/audit-tasks/" + task["id"]).status_code, 403)
+            recipient_view = client.get("/audit-tasks/" + task["id"])
+            self.assertEqual(recipient_view.status_code, 200)
+            self.assertIs(recipient_view.json()["creator"]["mine"], False)
             shared = client.get(path + "/reports")
             self.assertEqual(shared.status_code, 200, shared.text)
             # Both originals are also tenant rule sources here; the share itself never links an original.
@@ -2673,7 +2617,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
     def test_zip_recovery_rechecks_owner_and_quota_only_for_new_requests(self):
-        task, worker, _completed, command, package = self.prepared_report_package()
+        _task, worker, _completed, command, package = self.prepared_report_package()
         old = worker.claim_job("zip-denied-failed")
         self.assertTrue(worker.complete_job(old, "zip-denied-failed", {"error": "temporary_failure"}, "failed"))
         path = f"/audit-report-packages/{command['request_id']}/retries"
@@ -2693,20 +2637,13 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.settings.usage_charge_enabled = True
         self.assertEqual(self.display_client.post(path, json=retry).status_code, 202)
         self.assertEqual(self.display_client.get(f"/audit-report-packages/{retry['request_id']}").json()["receipt"]["state"], "accepted")
-        self.schema.require(
-            self.schema.psql(
-                self.schema.migrator_user(),
-                self.schema.migrator_password(),
-                self.database,
-                "-c",
-                f"DELETE FROM product.resource_grants WHERE resource_id = '{task['round_id']}' AND user_id = '{self.alice.user_id}'",
-            ),
-            "revoke isolated round access",
-        )
+        # The accepted retry is its requester's; another member cannot replay or read it.
+        self.display_principal = self.store.principal_for_fixture("bob")
         self.assertEqual(self.display_client.post(path, json=retry).status_code, 403)
         self.assertEqual(self.display_client.get(f"/audit-report-packages/{retry['request_id']}").status_code, 403)
-        self.assertIsNotNone(worker.claim_job("accepted-before-revocation"))
-        self.assertIsNone(worker.claim_job("no-replay-after-revocation"))
+        self.display_principal = self.alice
+        self.assertIsNotNone(worker.claim_job("accepted-retry"))
+        self.assertIsNone(worker.claim_job("no-replay-by-another-member"))
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
     def test_zip_recovery_cannot_rebind_the_package_or_silently_replace_a_frozen_pdf(self):
@@ -2929,8 +2866,12 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         for actor in ("bob", "carol", None):
             self.display_principal = self.store.principal_for_fixture(actor) if actor else None
             expected = 403 if actor else 401
+            # Another member of the enterprise reads the report but only its task's creator regenerates it.
             self.assertEqual(self.display_client.post(path, json=command).status_code, expected)
-            self.assertEqual(self.display_client.get(path + "/" + command["request_id"], params=query).status_code, expected)
+            read = self.display_client.get(path + "/" + command["request_id"], params=query)
+            self.assertEqual(read.status_code, 200 if actor == "bob" else expected)
+            if actor == "bob":
+                self.assertIsNone(read.json())
         self.display_principal = self.alice
         self.settings.usage_charge_enabled = True
         denied = self.display_client.post(path, json=command)
@@ -3074,7 +3015,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.assertEqual(mixed["settlement"]["state"], "pending")
         self.assertEqual(mixed["reference"], {"task_id": draft, "round_id": accepted["id"], "file_version_id": second.id, "result_attempt": None})
         self.assertEqual(entries[first.original_filename]["settlement"]["state"], "trial")
-        self.assertTrue(all(row["points"] == 500 and row["audit_access"]["state"] != "allowed" for row in page["entries"]))
+        self.assertTrue(all(row["points"] == 500 and row["document_id"] is None for row in page["entries"]))
         self.assertEqual(client.get("/audit-usage?range=all&search=费用核对").json()["total"], 1)
         self.assertEqual(client.get("/audit-usage?range=all&page=2").json()["entries"], [])
         self.assertEqual(client.get("/audit-usage?range=invalid").status_code, 400)

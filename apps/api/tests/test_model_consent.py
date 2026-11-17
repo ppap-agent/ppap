@@ -18,7 +18,7 @@ def test_deep_accept_forwards_exact_consent_to_atomic_admission(expectation):
         received.append(kwargs)
         raise ValueError("model_configuration_changed")
 
-    store = SimpleNamespace(resource=lambda identity: SimpleNamespace(tenant_id="tenant-a", kind="draft"), grants=lambda *args: {"read"}, accept_draft=accept)
+    store = SimpleNamespace(resource=lambda identity: SimpleNamespace(tenant_id="tenant-a", kind="draft", created_by="actor"), accept_draft=accept)
     app = FastAPI()
     register_audit_routes(app, store, lambda request: principal, lambda *args: {})
     response = TestClient(app).post("/drafts/draft-a/accept", json={"idempotency_key": str(uuid4()), **expectation})
@@ -28,7 +28,7 @@ def test_deep_accept_forwards_exact_consent_to_atomic_admission(expectation):
 
 
 def test_deep_rejects_invalid_revision_before_admission():
-    store = SimpleNamespace(resource=lambda identity: SimpleNamespace(tenant_id="tenant-a", kind="draft"), grants=lambda *args: {"read"})
+    store = SimpleNamespace(resource=lambda identity: SimpleNamespace(tenant_id="tenant-a", kind="draft", created_by="actor"))
     app = FastAPI()
     register_audit_routes(app, store, lambda request: SimpleNamespace(user_id="actor", tenant_id="tenant-a"), lambda *args: {})
     for invalid in ([], {}, 3, "x" * 65):

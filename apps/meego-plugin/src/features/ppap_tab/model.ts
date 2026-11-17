@@ -37,7 +37,7 @@ export type Check = {
   confirmation?: Confirmation;
 };
 export type Confirmation = { status: FindingStatus; suggestions: string; confirmed_by: string[]; confirmed_at: string };
-/** An original fact the machine could not read, asked of a reviewer; answering recomputes its clauses without a model. */
+/** An original fact the machine could not read, asked of the task's creator; answering recomputes its clauses without a model. */
 export type FactQuestion = { file_version_id: string; field: string; prompt: string; answer_type: 'boolean' | 'text'; locator: Locator | null; item_keys: string[]; fingerprint: string; answered: boolean };
 export type FactView = { round_id: string; revision: number; questions: FactQuestion[] };
 
@@ -77,6 +77,8 @@ export type Task = {
   number: string;
   state: 'matching' | 'pending_confirm' | 'reviewing' | 'completed';
   created_at: string;
+  // Everyone in the enterprise sees a task; only its creator (mine) confirms, reviews, writes back or releases it.
+  creator: { name: string; mine: boolean };
   customer_preference?: string | null;
   // The earlier round a re-audit continues; every revision of the draft must name it again.
   predecessor_id?: string | null;

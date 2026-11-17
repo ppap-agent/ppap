@@ -132,7 +132,7 @@ class UsagePreviewTests(unittest.TestCase):
             expect(page.get_by_role("table", name="逐文件用量记录", exact=True)).to_have_count(0)
             browser.close()
 
-    def test_deleted_denied_and_unmapped_history_keep_the_consumption_identity(self):
+    def test_unmapped_history_keeps_the_consumption_identity(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
@@ -140,11 +140,12 @@ class UsagePreviewTests(unittest.TestCase):
             expect(page.get_by_role("alert")).to_contain_text("另有 1,200 点历史费用待确认")
             expect(page.get_by_role("group", name="本月消费次数", exact=True)).to_contain_text("—")
             expect(usage_row(page, 1)).not_to_contain_text("第 2 次审核")
-            for number, reason in ((1, "尚未确认文档关联"), (4, "当前账号无权读取这次审核"), (5, "这次审核记录已删除")):
+            # A fee without a document link keeps its points; only a linked audit can be opened.
+            for number in (1, 5):
                 row = usage_row(page, number)
-                expect(row).to_contain_text(reason)
                 expect(row.get_by_role("cell").nth(5)).to_contain_text("500")
                 expect(row.get_by_role("button", name="查看", exact=True)).to_be_disabled()
+            expect(usage_row(page, 4).get_by_role("button", name="查看", exact=True)).to_be_enabled()
             page.goto(PREVIEW + "/preview/audit.html?scene=usage-ready&view=usage&archiveDoc=preview-archive-A001&auditRef=broken")
             expect(page.get_by_text("这次消费的审核记录暂不可用", exact=True)).to_be_visible()
             expect(page.get_by_role("region", name="文档历史审核", exact=True)).to_have_count(0)
@@ -253,7 +254,7 @@ class UsagePreviewTests(unittest.TestCase):
             self.assertIn("auditRef=", page.url)
             page.reload()
             expect_history(page, 2)
-            expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_be_enabled()
             page.get_by_role("button", name="返回用量记录", exact=True).click()
             expect(row).to_contain_text("第 2 次审核")
             page.get_by_role("searchbox", name="搜索文件名或发起人", exact=True).fill("示例王工")

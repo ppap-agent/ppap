@@ -53,6 +53,7 @@ def task_routes(page, partial_error):
     task = {
         "id": TASK,
         "number": "PPAP-状态核对",
+        "creator": {"name": "示例用户", "mine": True},
         "state": "completed",
         "execution": "completed",
         "has_execution_error": partial_error,
@@ -82,7 +83,7 @@ def task_routes(page, partial_error):
         )
         failed["audit"]["checks"][0].update(execution="failed", coverage="execution_error", finding=None)
         task["files"].append(failed)
-    summary = {key: task[key] for key in ("id", "number", "state", "execution", "has_execution_error", "created_at", "updated_at", "input_revision", "round_id", "completion_reason")}
+    summary = {key: task[key] for key in ("id", "number", "creator", "state", "execution", "has_execution_error", "created_at", "updated_at", "input_revision", "round_id", "completion_reason")}
     summary.update(
         result_counts={"PASS": 0, "NG": 1, "ERR": 0, "UNABLE": 0, "NA": 0},
         uncovered_count=int(partial_error),

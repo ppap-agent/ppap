@@ -66,7 +66,7 @@ from product.files import (
     safe_content_type,
 )
 from product.fixtures import SUBJECTS
-from product.identity import DOCS_SESSION_SECONDS, DOCS_TOKEN_PREFIX, EDITION_COOKIE, SESSION_COOKIE, ProviderAuthError, can_read, can_review, new_token, safe_return_to
+from product.identity import DOCS_SESSION_SECONDS, DOCS_TOKEN_PREFIX, EDITION_COOKIE, SESSION_COOKIE, ProviderAuthError, can_modify, can_read, new_token, safe_return_to
 from product.logs import QUIET_PATHS, bind, emit, new_request_id, reset, round_id_from_path
 from product.logs import configure as configure_logs
 from product.mcp import McpError
@@ -266,15 +266,17 @@ def create_app(
         finally:
             reset(tokens)
 
-    def require_file_read(request: Request, file_id: str):
+    def require_file(request: Request, file_id: str, *, modify: bool = False):
         principal = principal_of(request)
         if not principal:
             return None, JSONResponse({"error": "unauthenticated"}, status_code=401)
         resource = store.resource(file_id)
-        grants = store.grants(file_id, principal.user_id) if resource else set()
-        if resource is None or resource.kind != "file" or not can_read(principal, resource, grants):
+        if resource is None or resource.kind != "file" or not (can_modify if modify else can_read)(principal, resource):
             return principal, JSONResponse({"error": "access_denied"}, status_code=403)
         return principal, None
+
+    def require_file_read(request: Request, file_id: str):
+        return require_file(request, file_id)
 
     def require_file_version(request: Request, file_id: str, version_id: str):
         principal = principal_of(request)
@@ -513,24 +515,6 @@ def create_app(
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         return JSONResponse(principal.public())
 
-    @app.get("/resources/{resource_id}")
-    def resource_get(resource_id: str, request: Request) -> JSONResponse:
-        principal = principal_of(request)
-        if not principal:
-            return JSONResponse({"error": "unauthenticated"}, status_code=401)
-        resource = store.resource(resource_id)
-        grants = store.grants(resource_id, principal.user_id) if resource else set()
-        if resource is None or not can_read(principal, resource, grants):
-            return JSONResponse({"error": "access_denied"}, status_code=403)
-        return JSONResponse(
-            {
-                "id": resource.id,
-                "tenant_id": resource.tenant_id,
-                "kind": resource.kind,
-                "review_allowed": can_review(principal, resource, grants),
-            }
-        )
-
     @app.post("/files", response_model=wc.FileVersion, status_code=201, openapi_extra=wc.openapi_body(wc.FileCreateRequest))
     def files_create(body: dict, request: Request) -> JSONResponse:
         principal = principal_of(request)
@@ -557,7 +541,7 @@ def create_app(
 
     @app.post("/files/{file_id}/versions", response_model=wc.FileVersion, status_code=201, openapi_extra=wc.openapi_body(wc.FileCreateRequest))
     def files_new_version(file_id: str, body: dict, request: Request) -> JSONResponse:
-        principal, denied = require_file_read(request, file_id)
+        principal, denied = require_file(request, file_id, modify=True)
         if denied:
             return denied
         if ("request_id" in body or "sha256" in body) and (not body.get("request_id") or not body.get("sha256")):
@@ -595,7 +579,7 @@ def create_app(
 
     @app.put("/files/{file_id}/versions/{version_id}/blob", response_model=wc.FileVersion)
     async def files_blob(file_id: str, version_id: str, request: Request):
-        principal, denied = require_file_read(request, file_id)
+        principal, denied = require_file(request, file_id, modify=True)
         if denied:
             return denied
         version = store.get_version(file_id, version_id)
@@ -619,7 +603,7 @@ def create_app(
 
     @app.post("/files/{file_id}/versions/{version_id}/finalize", response_model=wc.FileVersion, openapi_extra=wc.openapi_body(wc.FileFinalizeRequest, required=False))
     async def files_finalize(file_id: str, version_id: str, request: Request) -> JSONResponse:
-        principal, denied = require_file_read(request, file_id)
+        principal, denied = require_file(request, file_id, modify=True)
         if denied:
             return denied
         version = store.get_version(file_id, version_id)
@@ -958,8 +942,7 @@ def create_app(
         if not session.access_token:
             return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
         resource = store.resource(round_id)
-        grants = store.grants(round_id, session.principal.user_id) if resource else set()
-        if resource is None or not can_read(session.principal, resource, grants):
+        if resource is None or not can_modify(session.principal, resource):
             return JSONResponse({"error": "access_denied"}, status_code=403)
         round_body = store.get_round(round_id)
         if round_body is None:

@@ -1010,15 +1010,9 @@ class AuditRoundReadFile(TypedDict):
     audit: AuditFileReview | None
 
 
-class AuditRoundReportSource(TypedDict):
-    task_id: str | None
-    access: AuditArchiveAccess
-
-
 class AuditRoundReadView(TypedDict):
     files: list[AuditRoundReadFile]
     unassigned_findings: list[Finding]
-    report_source: NotRequired[AuditRoundReportSource]
 
 
 class AuditAcceptance(TypedDict):
@@ -1134,7 +1128,6 @@ class AuditTaskFile(AuditRecognitionFile):
     validation_scope: NotRequired[FileValidationScope]
     audit: NotRequired[AuditFileReview | None]
     display_info: NotRequired[AuditFileDisplayInfo | None]
-    display_edit_access: NotRequired[AuditArchiveAccess]
 
 
 class AuditShareTargetReference(TypedDict):
@@ -1222,12 +1215,20 @@ class RelatedAuditTask(TypedDict):
     number: str
 
 
+class AuditTaskCreator(TypedDict):
+    """Everyone in the enterprise sees a task; only its creator (mine) changes it."""
+
+    name: str
+    mine: bool
+
+
 class AuditTaskIdentity(TypedDict):
     id: str
     number: str
     state: Literal["matching", "pending_confirm", "reviewing", "completed"]
     created_at: str
     updated_at: str
+    creator: AuditTaskCreator
     source_draft_id: str | None
     round_id: str | None
     customer_preference: str | None
@@ -1315,6 +1316,7 @@ class AuditTaskSummary(TypedDict):
     input_revision: int
     created_at: str
     updated_at: str
+    creator: AuditTaskCreator
     round_id: str | None
     completion_reason: Literal["no_matching_rules", "processed"] | None
     deep_mode: bool
@@ -1396,11 +1398,6 @@ class AuditResultReference(TypedDict):
     result_attempt: int | None
 
 
-class AuditArchiveAccess(TypedDict):
-    state: Literal["allowed", "denied", "unknown", "deleted"]
-    reason: str | None
-
-
 class AuditHistoryEntry(TypedDict):
     document_id: str
     reference: AuditResultReference
@@ -1412,7 +1409,6 @@ class AuditHistoryEntry(TypedDict):
     rule_title: str | None
     source_revision: str | None
     report: AuditFileReport
-    report_access: AuditArchiveAccess
 
 
 class AuditArchiveDocument(TypedDict):
@@ -1483,22 +1479,20 @@ class AuditHistoryPage(TypedDict):
 class AuditArchiveOriginal(TypedDict):
     file_version_id: str
     file: FileVersion | None
-    access: AuditArchiveAccess
 
 
 class AuditHistoryDetail(TypedDict):
-    """Authorized frozen content, not permission to read the whole source task.
+    """One frozen result of a task, readable by the whole enterprise; creator.mine says who may change it.
 
     report_share, when present, belongs to this single full report reference.
     Do not inherit the source task's latest, unrelated share operation.
     """
 
     entry: AuditHistoryEntry
+    creator: AuditTaskCreator
     file: AuditTaskFile
     frozen_file_version_ids: list[str]
     originals: list[AuditArchiveOriginal]
-    source_task_access: AuditArchiveAccess
-    report_access: AuditArchiveAccess
     report_share: NotRequired[AuditReportShare | None]
 
 
@@ -1578,7 +1572,6 @@ class AuditUsageEntry(TypedDict):
     settlement: AuditUsageSettlement
     reference: AuditResultReference
     document_id: str | None
-    audit_access: AuditArchiveAccess
 
 
 class AuditUsagePage(TypedDict):

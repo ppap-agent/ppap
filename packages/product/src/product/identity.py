@@ -126,23 +126,19 @@ class Resource:
     id: str
     tenant_id: str
     kind: str
-    grant_required: bool = False
+    # Who created the draft, round or file; the one person who may change it.
+    created_by: str | None = None
 
 
-def can_read(principal: Principal, resource: Resource, grants: set[str]) -> bool:
-    if principal.tenant_id != resource.tenant_id or resource.kind == "template":
-        return False
-    if resource.kind == "audit_round" and not resource.grant_required:
-        return True
-    return bool(grants & {"read", "review"})
+# Audit data has two rules. Every member of an enterprise sees its drafts, rounds and files; only
+# the person who created one changes it, or anything that hangs on it (reviews, confirmed facts,
+# writeback, release, reports). Templates are read through their own surface, never as a resource.
+def can_read(principal: Principal, resource: Resource) -> bool:
+    return principal.tenant_id == resource.tenant_id and resource.kind != "template"
 
 
-def can_review(principal: Principal, resource: Resource, grants: set[str]) -> bool:
-    if not can_read(principal, resource, grants):
-        return False
-    if resource.kind == "audit_round" and not resource.grant_required:
-        return True
-    return "review" in grants
+def can_modify(principal: Principal, resource: Resource) -> bool:
+    return can_read(principal, resource) and resource.created_by == principal.user_id
 
 
 def constant_time_equal(left: str, right: str) -> bool:

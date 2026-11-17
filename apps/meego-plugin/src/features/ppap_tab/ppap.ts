@@ -128,7 +128,7 @@ const errorText: Record<string, string> = {
   round_has_errors: '审核出现技术错误，不能写回。',
   wait_timeout: '处理时间较长，请稍后回来查看。',
   writeback_target_missing: '这一次审核不是从这个工作项发起的，不能写回。',
-  access_denied: '你没有权限查看这项审核。',
+  access_denied: '没有权限：同一企业的人可以查看审核，只有发起人可以修改。',
   review_conflict: '这条复核刚被更新过，已为你载入最新内容，请核对后再保存。',
   invalid_review: '复核内容不完整或过长，请检查后再保存。',
   validation_failed: '有附件无法读取，请检查文件后重试。',

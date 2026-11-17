@@ -221,7 +221,7 @@ class AuditArchivePreviewTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1280, "height": 853})
-            page.goto(PREVIEW + "/preview/audit.html?scene=archive-task-allowed&view=archive&archiveDoc=preview-archive-A001")
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001")
             panel = page.get_by_role("complementary", name="历次审核", exact=True)
             expect(panel.get_by_role("button", name=re.compile("^选择第"))).to_have_count(4)
             expect(panel.get_by_role("button", name="选择第 3 次审核", exact=True)).to_have_attribute("aria-pressed", "true")

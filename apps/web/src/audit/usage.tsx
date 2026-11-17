@@ -120,7 +120,7 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
           <TableCell className="max-w-56 whitespace-normal"><Badge variant={stateTone[row.settlement.state]}>{states[row.settlement.state]}</Badge>{row.settlement.reason && <p className="mt-1 text-xs text-muted-foreground">{row.settlement.reason}</p>}</TableCell>
           <TableCell>{row.initiator}</TableCell>
           <TableCell className="whitespace-normal text-right"><p className="tabular-nums">{row.points}</p><p className="text-xs text-muted-foreground">{row.allocation.free_points !== null && row.allocation.paid_points !== null ? `免费 ${row.allocation.free_points} · 付费 ${row.allocation.paid_points}` : row.allocation.reason}</p></TableCell>
-          <TableCell className="max-w-48 whitespace-normal text-right"><Button variant="link" size="sm" disabled={loading || Boolean(error) || !archiveAdapter || row.audit_access.state !== 'allowed' || !row.document_id} onClick={() => navigate(row.document_id, row.reference)}>查看</Button>{row.audit_access.state !== 'allowed' && <p className="text-xs text-muted-foreground">{row.audit_access.reason || '未取得这次审核的访问许可。'}</p>}</TableCell>
+          <TableCell className="max-w-48 whitespace-normal text-right"><Button variant="link" size="sm" disabled={loading || Boolean(error) || !archiveAdapter || !row.document_id} onClick={() => navigate(row.document_id, row.reference)}>查看</Button></TableCell>
         </TableRow>)}</TableBody>
       </Table> : <p className="py-12 text-center text-sm text-muted-foreground">当前筛选下没有消费记录。</p>}</div>}
       <Pager total={current.total} page={query.page} disabled={loading || Boolean(error)} onPage={value => filter({page: value})}/>

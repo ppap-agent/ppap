@@ -6,8 +6,6 @@ import type {ReportShare} from '../src/audit/sharing-contract'
 import {fixtureReport, withReportBytes} from './audit-reports'
 
 type Task = components['schemas']['AuditTask']
-const allowed = {state: 'allowed' as const, reason: null}
-const denied = {state: 'denied' as const, reason: '无权查看来源任务。'}
 
 /** Provider-confirmed sample identities only. Arbitrary uploads are not archived. */
 export function fixtureArchive(tasks: Map<string, Task>, scene: string, seed: (id: string, sequence: number, failed: boolean, pending: boolean) => Task, readShare: (reference: AuditReportReference) => ReportShare | null): AuditArchiveAdapter {
@@ -29,9 +27,9 @@ export function fixtureArchive(tasks: Map<string, Task>, scene: string, seed: (i
           if (scene === 'archive-report-failed' && index === 0 && sequence === 2) task = {...task, files: task.files.map(row => row.audit && row.file.original_filename === '控制计划.xlsx' ? {...row, audit: {...row.audit, report: {...row.audit.report, state: 'failed', artifact: null, generated_at: null, reason: 'PDF 生成失败。', regenerate_allowed: true, regenerate_reason: null}}} : row)}
           tasks.set(task.id, task)
           const file = task.files[index === 2 ? 0 : index === 3 ? 2 : 1], audit = file.audit!
-          const entry: HistoryEntry = {document_id: documentId, reference: {task_id: task.id, round_id: task.round_id!, file_version_id: file.file.id, result_attempt: audit.result_attempt}, sequence, audited_at: `2026-10-${String(sequence === 4 ? 16 : sequence === 3 ? 15 : sequence === 2 ? 11 : 1).padStart(2, '0')}T09:00:00+08:00`, initiator: index === 1 ? '示例王工' : '示例李工', execution: audit.execution, conclusion: audit.conclusion, rule_title: audit.rule?.title ?? null, source_revision: sequence === 2 ? 'Rev B' : sequence === 3 ? 'Rev C' : null, report: structuredClone(audit.report), report_access: allowed}
+          const entry: HistoryEntry = {document_id: documentId, reference: {task_id: task.id, round_id: task.round_id!, file_version_id: file.file.id, result_attempt: audit.result_attempt}, sequence, audited_at: `2026-10-${String(sequence === 4 ? 16 : sequence === 3 ? 15 : sequence === 2 ? 11 : 1).padStart(2, '0')}T09:00:00+08:00`, initiator: index === 1 ? '示例王工' : '示例李工', execution: audit.execution, conclusion: audit.conclusion, rule_title: audit.rule?.title ?? null, source_revision: sequence === 2 ? 'Rev B' : sequence === 3 ? 'Rev C' : null, report: structuredClone(audit.report)}
           history.push(entry)
-          details.set(resultKey(entry.reference), {entry, file: structuredClone(file), frozen_file_version_ids: task.files.filter(row => row.selection === 'selected').map(row => row.file.id), originals: task.files.filter(row => row.selection === 'selected').map(row => ({file_version_id: row.file.id, file: structuredClone(row.file), access: allowed})), source_task_access: scene === 'archive-task-allowed' ? allowed : denied, report_access: allowed})
+          details.set(resultKey(entry.reference), {entry, file: structuredClone(file), frozen_file_version_ids: task.files.filter(row => row.selection === 'selected').map(row => row.file.id), originals: task.files.filter(row => row.selection === 'selected').map(row => ({file_version_id: row.file.id, file: structuredClone(row.file)})), creator: {name: index === 1 ? '示例王工' : '示例李工', mine: scene !== 'archive-task-foreign'}})
         }
         const complete = history.find(row => row.execution === 'completed') || null
         documents.push({document_id: documentId, provider: 'feishu', title: index < 2 ? '控制计划.xlsx' : index === 2 ? 'PFMEA.xlsx' : index === 3 ? '过程流程图.pdf' : `控制计划-零件${String(index + 1).padStart(2, '0')}.xlsx`, metadata, document_type: index === 2 ? 'PFMEA' : index === 3 ? '过程流程图' : '控制计划', updated_at: history[0].audited_at, latest_completed: complete, latest_activity: history[0]})
@@ -67,11 +65,7 @@ export function fixtureArchive(tasks: Map<string, Task>, scene: string, seed: (i
       if (file?.audit) {result.file = structuredClone(file); result.entry.report = structuredClone(file.audit.report)}
       const reportReference = historyReportReference(result.entry)
       result.report_share = reportReference ? readShare(reportReference) : null
-      if (scene === 'archive-original-denied') result.originals = result.originals.map(row => ({...row, file: null, access: {state: 'denied', reason: '当前账号无权查看原件。'}}))
-      if (['archive-report-deleted', 'archive-report-denied'].includes(scene) && result.entry.sequence === 2) {
-        const access = {state: scene === 'archive-report-deleted' ? 'deleted' as const : 'denied' as const, reason: '所选历史报告已删除或访问权限已变更。'}
-        result.report_access = access; result.entry.report_access = access
-      }
+      if (scene === 'archive-original-denied') result.originals = result.originals.map(row => ({...row, file: null}))
       if (scene === 'archive-history-conflict') result.entry.conclusion = result.file.audit?.conclusion === 'PASS' ? 'NG' : 'PASS'
       if (scene === 'archive-share-scope-conflict') result.report_share = {request: {request_id: 'preview-wrong-share', organization_id: 'preview-org', reports: [{...reference, result_attempt: reference.result_attempt!, report_id: result.entry.report.report_id!, file_version_id: 'preview-other-file'}], targets: [], content: {kind: 'link', artifact: null, package_id: null}}, receipt: {request_id: 'preview-wrong-share', state: 'pending', reason: '分享记录与当前文件不匹配。'}, deliveries: []}
       return result

@@ -286,8 +286,7 @@ def test_writeback_reads_back_before_writing_and_never_rewrites_after_unknown(au
     store = auth_store_factory(settings_for(tenant, fake.tenant), reset=False, role="api")
     principal, browser = feishu_login(store, tenant)
     round_id = str(uuid.uuid4())
-    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
-    monkeypatch.setattr(store, "grants", lambda rid, uid: {"read"})
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round", created_by=principal.user_id))
     monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
     monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
     monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: finished_task(task_id))
@@ -324,8 +323,7 @@ def test_writeback_refuses_feishu_or_missing_targets(auth_store_factory, monkeyp
     fake = FakeMeego()
     store = auth_store_factory(settings_for(tenant, fake.tenant), reset=False, role="api")
     principal, browser = feishu_login(store, tenant)
-    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
-    monkeypatch.setattr(store, "grants", lambda rid, uid: {"read"})
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round", created_by=principal.user_id))
     monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
     monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: {**finished_task(task_id), "state": "reviewing", "execution": "running"})
     monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "feishu", "object_kind": "docx", "object_ref": "doc-token"})
@@ -393,8 +391,7 @@ def test_writeback_sets_the_conclusion_field_only_for_the_latest_round_and_reads
     store = auth_store_factory(settings_for(tenant, fake.tenant), reset=False, role="api")
     principal, browser = feishu_login(store, tenant)
     latest, older = str(uuid.uuid4()), str(uuid.uuid4())
-    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
-    monkeypatch.setattr(store, "grants", lambda rid, uid: {"read"})
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round", created_by=principal.user_id))
     monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
     monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
     monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: finished_task(task_id))
@@ -434,8 +431,7 @@ def test_writeback_attaches_each_report_once_per_round_outside_the_audited_attac
     store = auth_store_factory(settings_for(tenant, fake.tenant), reset=False, role="api")
     principal, browser = feishu_login(store, tenant)
     round_id = str(uuid.uuid4())
-    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
-    monkeypatch.setattr(store, "grants", lambda rid, uid: {"read"})
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round", created_by=principal.user_id))
     monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
     monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
     monkeypatch.setattr(store, "list_audit_tasks", lambda who, limit, offset, target=None: [])
@@ -572,8 +568,7 @@ def test_writeback_completes_the_waiting_ai_node_only_for_a_conforming_latest_ro
     def task_of(task_id):
         return finished_task(task_id, conclusion["value"])
 
-    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
-    monkeypatch.setattr(store, "grants", lambda rid, uid: {"read"})
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round", created_by=principal.user_id))
     monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
     monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
     monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: task_of(task_id))
@@ -614,16 +609,16 @@ def test_writeback_completes_the_waiting_ai_node_only_for_a_conforming_latest_ro
         assert fake.node_calls[-1] == "query"
 
 
-def test_a_reviewer_releases_a_non_conforming_latest_round_without_changing_its_conclusion(auth_store_factory, monkeypatch):
+def test_the_round_creator_releases_a_non_conforming_latest_round_without_changing_its_conclusion(auth_store_factory, monkeypatch):
     tenant = "meego-feishu-" + uuid.uuid4().hex
     fake = FakeMeego()
     fake.conclusion_options = {"符合": "opt_pass", "不符合": "opt_ng", "尚有未确定项": "opt_unknown"}
     store = auth_store_factory(settings_for(tenant, fake.tenant, **AI_NODE), reset=False, role="api")
     principal, browser = feishu_login(store, tenant, "质量工程师")
     round_id, older = str(uuid.uuid4()), str(uuid.uuid4())
-    grants = {"value": {"read"}}
-    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round", grant_required=True))
-    monkeypatch.setattr(store, "grants", lambda rid, uid: grants["value"])
+    # Another member of the enterprise created the round first: they may read it, not release it.
+    creator = {"value": str(uuid.uuid4())}
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round", created_by=creator["value"]))
     monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
     monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
     monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: finished_task(task_id))
@@ -637,7 +632,8 @@ def test_a_reviewer_releases_a_non_conforming_latest_round_without_changing_its_
         bearer = {"Authorization": "Bearer " + connect(client, browser)}
         assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "stopped")).status_code == 200
         assert client.post(release, headers=bearer, json={"reason": "客户已书面接受偏差"}).status_code == 403
-        grants["value"] = {"read", "review"}
+        assert client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer).status_code == 403
+        creator["value"] = principal.user_id
         assert client.post(release, headers=bearer, json={"reason": "  "}).status_code == 400
         # Nothing waits on PPAP: there is nothing to release.
         assert client.post(release, headers=bearer, json={"reason": "客户已书面接受偏差"}).json()["error"] == "release_no_waiting_node"
@@ -702,8 +698,7 @@ def test_a_reviewer_objection_keeps_a_conforming_round_from_completing_the_node_
         # The machine found the clause conforming; the reviewer's judgment is kept beside it.
         return finished_task(task_id, "PASS", objection=bool(judgment["value"]))
 
-    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
-    monkeypatch.setattr(store, "grants", lambda rid, uid: {"read", "review"})
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round", created_by=principal.user_id))
     monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
     monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
     monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: task_of(task_id))

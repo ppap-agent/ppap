@@ -63,8 +63,6 @@ from product.files import (
 from product.fixtures import (
     APP_ID,
     PRESENCE_RULE_BODY,
-    RESOURCE_A,
-    RESOURCE_B,
     RULE_A,
     RULE_B,
     SUBJECTS,
@@ -80,6 +78,7 @@ from product.identity import (
     Principal,
     Resource,
     Session,
+    can_modify,
     can_read,
     identity_key,
     new_token,
@@ -412,28 +411,19 @@ class AuthStore:
         parsed = _as_uuid(resource_id)
         if not parsed:
             return None
+        # The creator is recorded once, on the draft, round or file itself.
         row = conn.execute(
-            """SELECT r.id, r.tenant_id, r.kind, EXISTS (
-                    SELECT 1 FROM product.audit_rounds a JOIN product.audit_drafts d ON d.id = a.source_draft_id
-                    WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL)
-                FROM product.resources r WHERE r.id = %s""",
+            """SELECT r.id, r.tenant_id, r.kind, COALESCE(d.created_by, a.created_by, f.created_by)
+                FROM product.resources r
+                LEFT JOIN product.audit_drafts d ON d.id = r.id
+                LEFT JOIN product.audit_rounds a ON a.id = r.id
+                LEFT JOIN product.files f ON f.id = r.id
+                WHERE r.id = %s""",
             (parsed,),
         ).fetchone()
         if not row:
             return None
-        return Resource(str(row[0]), str(row[1]), row[2], row[3])
-
-    def grants(self, resource_id: str, user_id: str) -> set[str]:
-        with self._conn() as conn:
-            return self._grants(conn, resource_id, user_id)
-
-    @staticmethod
-    def _grants(conn, resource_id: str, user_id: str) -> set[str]:
-        rows = conn.execute(
-            "SELECT capability FROM product.resource_grants WHERE resource_id = %s AND user_id = %s",
-            (resource_id, user_id),
-        ).fetchall()
-        return {row[0] for row in rows}
+        return Resource(str(row[0]), str(row[1]), row[2], str(row[3]) if row[3] else None)
 
     def seed_isolated_dev(self) -> None:
         with self._conn() as conn:
@@ -469,35 +459,6 @@ class AuthStore:
                         """,
                         (spec["user_id"], spec["tenant_id"]),
                     )
-                conn.execute(
-                    """
-                    INSERT INTO product.resources (id, tenant_id, kind)
-                    VALUES (%s, %s, 'fixture'), (%s, %s, 'fixture')
-                    ON CONFLICT (id) DO NOTHING
-                    """,
-                    (RESOURCE_A, TENANT_A, RESOURCE_B, TENANT_B),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES
-                      (%s, %s, 'read'), (%s, %s, 'review'),
-                      (%s, %s, 'read'),
-                      (%s, %s, 'read'), (%s, %s, 'review')
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (
-                        RESOURCE_A,
-                        USER_ALICE,
-                        RESOURCE_A,
-                        USER_ALICE,
-                        RESOURCE_A,
-                        USER_BOB,
-                        RESOURCE_B,
-                        USER_CAROL,
-                        RESOURCE_B,
-                        USER_CAROL,
-                    ),
-                )
                 schema_row = conn.execute("SELECT to_regclass('product.suite_revisions')").fetchone()
                 core_schema = schema_row is not None and schema_row[0] is not None
                 for rule_id, tenant_id, name in ((RULE_A, TENANT_A, "alice"), (RULE_B, TENANT_B, "carol")):
@@ -644,14 +605,6 @@ class AuthStore:
                     """,
                     (version_id, fid, principal.tenant_id, name, ctype, declared, key, STAGING),
                 )
-                conn.execute(
-                    """
-                    INSERT INTO product.resource_grants (resource_id, user_id, capability)
-                    VALUES (%s, %s, 'read')
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (fid, principal.user_id),
-                )
         return FileVersion(version_id, fid, principal.tenant_id, name, ctype, declared, key, STAGING)
 
     def _create_requested_upload(self, principal, name, ctype, declared, file_id, request_id, expected_sha256, source=None, feishu_folder_token=None) -> FileVersion:
@@ -676,7 +629,7 @@ class AuthStore:
                 if str(row[2]) != principal.tenant_id or not row[9] or row[9].get("user_id") != principal.user_id:
                     raise KeyError("missing")
                 resource = self.resource(str(row[1]))
-                if resource is None or not can_read(principal, resource, self.grants(str(row[1]), principal.user_id)):
+                if resource is None or not can_read(principal, resource):
                     raise KeyError("missing")
                 fixed_inputs = {key: value for key, value in row[9].items() if key != "cloud_upload"}
                 if source and row[9].get("source") != source or not source and fixed_inputs != inputs:
@@ -684,13 +637,13 @@ class AuthStore:
                 return self._version_from_row(row)
             if fid:
                 resource = self.resource(fid)
-                if resource is None or resource.kind != "file" or not can_read(principal, resource, self.grants(fid, principal.user_id)):
+                # A new version changes the file: only its creator adds one.
+                if resource is None or resource.kind != "file" or not can_modify(principal, resource):
                     raise KeyError("missing")
             else:
                 fid = str(uuid.uuid4())
                 conn.execute("INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'file')", (fid, principal.tenant_id))
                 conn.execute("INSERT INTO product.files (id, tenant_id, created_by, original_filename) VALUES (%s, %s, %s, %s)", (fid, principal.tenant_id, principal.user_id, name))
-                conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read')", (fid, principal.user_id))
             key = version_object_key(principal.tenant_id, fid, version_id)
             conn.execute(
                 """INSERT INTO product.file_versions (id, file_id, tenant_id, original_filename, content_type, byte_size, object_key, status, upload_request)
@@ -905,13 +858,7 @@ class AuthStore:
             return receipt
         version = self._version_from_row(row)
         resource = self.resource(version.file_id)
-        if (
-            version.tenant_id != principal.tenant_id
-            or not row[9]
-            or row[9].get("user_id") != principal.user_id
-            or resource is None
-            or not can_read(principal, resource, self.grants(version.file_id, principal.user_id))
-        ):
+        if version.tenant_id != principal.tenant_id or not row[9] or row[9].get("user_id") != principal.user_id or resource is None or not can_read(principal, resource):
             raise KeyError("missing")
         state = {STAGING: "uploading", READY: "ready", FAILED: "failed"}[version.status]
         reason = None if version.status == READY else "上传尚未完成，可沿用原请求继续传输。" if version.status == STAGING else "原上传已失败，不能继续写入该版本。"
@@ -968,21 +915,16 @@ class AuthStore:
         with self._conn() as conn:
             row = conn.execute(
                 """SELECT f.id, f.file_id, f.tenant_id, f.original_filename, f.content_type, f.byte_size, f.sha256, f.object_key, f.status,
-                    r.id, r.tenant_id, r.kind,
-                    EXISTS (SELECT 1 FROM product.audit_rounds a JOIN product.audit_drafts d ON d.id = a.source_draft_id
-                        WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL),
-                    ARRAY(SELECT g.capability FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = %s),
-                    EXISTS (SELECT 1 FROM product.rule_versions rv WHERE rv.tenant_id = f.tenant_id AND rv.source_file_version_id = f.id)
+                    r.id, r.tenant_id, r.kind
                 FROM product.file_versions f JOIN product.resources r ON r.id = %s
                 WHERE f.file_id = %s AND f.id = %s AND f.tenant_id = %s
                   AND (%s OR EXISTS (SELECT 1 FROM product.round_inputs i WHERE i.round_id = r.id AND i.file_version_id = f.id))""",
-                (principal.user_id, rid, fid, vid, principal.tenant_id, round_id is None),
+                (rid, fid, vid, principal.tenant_id, round_id is None),
             ).fetchone()
-        # The exact original a published rule cites is shared with the rule's tenant, like the rule itself.
+        # Read through the round that froze it, or through the file itself; either way within the enterprise.
         if row is None or row[11] != ("audit_round" if round_id else "file"):
             raise KeyError("missing")
-        grants = set(row[13]) | ({"read"} if row[14] and round_id is None else set())
-        if not can_read(principal, Resource(str(row[9]), str(row[10]), row[11], row[12]), grants):
+        if not can_read(principal, Resource(str(row[9]), str(row[10]), row[11])):
             raise KeyError("missing")
         return self._version_from_row(row[:9])
 
@@ -1185,14 +1127,14 @@ class AuthStore:
         if len(rows) != len(set(job_ids)):
             raise KeyError("missing")
         for task_id in {row[1]["task_id"] for row in rows if row[1].get("task_id")}:
-            self._recognition_owner(conn, principal, task_id)
+            self._task_draft(conn, principal, task_id, modify=False)
         sources = {row[1]["source_file_version_id"] for row in rows}
         self._prepared_items(conn, principal, [{"file_version_id": version_id, "role": "reference"} for version_id in sources])
         return {str(row[0]): rule_parse_view(str(row[0]), row[1], row[2], row[3], bool(row[4])) for row in rows}
 
     def _reaudit_source(self, conn, principal: Principal, predecessor_id: str) -> dict:
         resource = self._resource(conn, predecessor_id)
-        if not resource or resource.kind != "audit_round" or not can_read(principal, resource, self._grants(conn, predecessor_id, principal.user_id)):
+        if not resource or resource.kind != "audit_round" or not can_read(principal, resource):
             raise KeyError("missing")
         row = conn.execute(
             """SELECT r.execution, d.customer_preference,
@@ -1203,7 +1145,7 @@ class AuthStore:
         if not row or row[0] not in {"completed", "failed"}:
             raise ValueError("reaudit_source_not_finished")
         if row[2]:
-            self._recognition_owner(conn, principal, str(row[2]))
+            self._task_draft(conn, principal, str(row[2]), modify=False)
         materials = conn.execute(
             """SELECT i.file_version_id, i.role, i.rule_version_id, i.rule_title, i.rule_body, j.result
             FROM product.round_inputs i JOIN product.audit_rounds r ON r.id = i.round_id
@@ -1337,7 +1279,7 @@ class AuthStore:
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("recognition-request:" + request_id,))
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("recognition:" + task_id,))
             if revising:
-                draft = self._recognition_owner(conn, principal, task_id, lock=True)
+                draft = self._task_draft(conn, principal, task_id, lock=True, modify=True)
                 if (str(draft["predecessor_id"]) if draft["predecessor_id"] else None) != predecessor:
                     raise ValueError("task_input_locked")
                 receipt = conn.execute("SELECT tenant_id, kind, payload FROM engine.jobs WHERE id = %s", (request_id,)).fetchone()
@@ -1367,7 +1309,7 @@ class AuthStore:
                 return self._recognition_public(conn, principal, task_id)
             existing = conn.execute("SELECT task_fingerprint FROM product.audit_drafts WHERE id = %s", (task_id,)).fetchone()
             if existing and existing[0] is not None:
-                self._recognition_owner(conn, principal, task_id)
+                self._task_draft(conn, principal, task_id, modify=True)
                 if existing[0] != fingerprint:
                     raise ValueError("idempotency_conflict")
                 if promoting:
@@ -1426,9 +1368,6 @@ class AuthStore:
                     VALUES (%s, %s, %s, 'open', %s, %s, %s, %s, %s)""",
                     (task_id, principal.tenant_id, principal.user_id, fingerprint, day, sequence, customer, predecessor),
                 )
-                conn.execute(
-                    "INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read'), (%s, %s, 'review')", (task_id, principal.user_id, task_id, principal.user_id)
-                )
             self._recognition_inputs(conn, principal, task_id, normalized, customer, 0, request_id if promoting else None, fingerprint if promoting else None)
             return self._recognition_public(conn, principal, task_id)
 
@@ -1452,7 +1391,7 @@ class AuthStore:
         # An uploaded rule without a generated program is not offered for audit.
         programless = programless_suite_keys(conn, principal.tenant_id, [rule["suite_key"] for rule in all_rules if str(rule.get("suite_key") or "").startswith("custom:")])
         candidates = [rule for rule in latest_rule_versions(all_rules) if rule.get("suite_key") not in programless]
-        draft = self._recognition_owner(conn, principal, task_id)
+        draft = self._task_draft(conn, principal, task_id, modify=True)
         predecessor = self._reaudit_source(conn, principal, str(draft["predecessor_id"])) if draft["predecessor_id"] else None
         replacements = [row["replacement_of_file_version_id"] for row in files if row["selection"] == "selected" and row.get("replacement_of_file_version_id")]
         if len(replacements) != len(set(replacements)):
@@ -1521,18 +1460,29 @@ class AuthStore:
                 (task_id, row["file_version_id"], "reference" if reference_only else "target", row["selection"], row["removal_reason"], row["validation_id"], analysis_id, position, preferred),
             )
 
-    def _recognition_owner(self, conn, principal: Principal, task_id: str, *, lock: bool = False) -> dict:
+    @staticmethod
+    def _display_name(conn, tenant_id, user_id) -> str:
+        """How a member of the enterprise is named there (their identity in its provider)."""
+        row = conn.execute(
+            """SELECT i.display_name FROM product.identities i JOIN product.tenants t ON t.provider = i.provider AND t.external_key = i.tenant_key
+            WHERE i.user_id = %s AND t.id = %s ORDER BY i.display_name <> '' DESC LIMIT 1""",
+            (user_id, tenant_id),
+        ).fetchone()
+        return row[0] if row else ""
+
+    def _task_draft(self, conn, principal: Principal, task_id: str, *, modify: bool, lock: bool = False) -> dict:
+        """A task of the person's enterprise. Everyone there reads it; only its creator changes it."""
         parsed = _as_uuid(task_id)
         if not parsed:
             raise KeyError("missing")
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """SELECT d.* FROM product.audit_drafts d JOIN product.resources r ON r.id = d.id
-                WHERE d.id = %s AND d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL
-                AND r.tenant_id = d.tenant_id AND r.kind = 'audit_draft'
-                AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = %s AND g.capability IN ('read', 'review'))"""
+                WHERE d.id = %s AND d.tenant_id = %s AND d.task_fingerprint IS NOT NULL
+                AND r.tenant_id = d.tenant_id AND r.kind = 'audit_draft'"""
+                + (" AND d.created_by = %s" if modify else "")
                 + (" FOR UPDATE OF d" if lock else ""),
-                (parsed, principal.tenant_id, principal.user_id, principal.user_id),
+                (parsed, principal.tenant_id, *([principal.user_id] if modify else [])),
             )
             draft = cur.fetchone()
         if not draft:
@@ -1586,13 +1536,13 @@ class AuthStore:
     def get_task_notification(self, principal: Principal, task_id: str) -> dict:
         with self._conn() as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            return self._notification_preference(conn, self._recognition_owner(conn, principal, task_id))
+            return self._notification_preference(conn, self._task_draft(conn, principal, task_id, modify=False))
 
     def save_task_notification(self, principal: Principal, task_id: str, body: dict) -> dict:
         if set(body) != {"enabled", "expected_revision"} or type(body.get("enabled")) is not bool or type(body.get("expected_revision")) is not int or body["expected_revision"] < 0:
             raise ValueError("invalid_notification_preference")
         with self._conn() as conn, conn.transaction():
-            draft = self._recognition_owner(conn, principal, task_id, lock=True)
+            draft = self._task_draft(conn, principal, task_id, lock=True, modify=True)
             if draft["notification_revision"] != body["expected_revision"]:
                 raise ValueError("notification_revision_conflict")
             if not self._notification_preference(conn, draft)["can_change"]:
@@ -1601,7 +1551,7 @@ class AuthStore:
                 "UPDATE product.audit_drafts SET notification_enabled = %s, notification_revision = notification_revision + 1, updated_at = now() WHERE id = %s",
                 (body["enabled"], draft["id"]),
             )
-            return self._notification_preference(conn, self._recognition_owner(conn, principal, task_id))
+            return self._notification_preference(conn, self._task_draft(conn, principal, task_id, modify=True))
 
     def _deep_mode_option(self, conn, tenant_id: str) -> dict:
         """Deep mode needs the deep runtime and the tenant's coding model; never a silent fallback."""
@@ -1620,7 +1570,7 @@ class AuthStore:
         if set(body) != {"deep_mode", "expected_revision"} or type(body.get("deep_mode")) is not bool or type(body.get("expected_revision")) is not int or body["expected_revision"] < 0:
             raise ValueError("invalid_deep_mode")
         with self._conn() as conn, conn.transaction():
-            draft = self._recognition_owner(conn, principal, task_id, lock=True)
+            draft = self._task_draft(conn, principal, task_id, lock=True, modify=True)
             if draft["input_revision"] != body["expected_revision"]:
                 raise ValueError("task_revision_conflict")
             if draft["status"] != DRAFT_OPEN or draft["task_completion_reason"]:
@@ -1762,7 +1712,7 @@ class AuthStore:
                 ).fetchone()
                 if not identity or not self.settings.tenant_allowed(principal.tenant_key):
                     raise KeyError("recipient_unavailable")
-                draft = self._recognition_owner(conn, principal, task_id, lock=True)
+                draft = self._task_draft(conn, principal, task_id, lock=True, modify=True)
                 task = self._recognition_public(conn, principal, task_id)
                 if stage == "confirmation" and task["state"] == "matching":
                     self._defer_task_notification(conn, claimed, worker_ident)
@@ -1899,11 +1849,6 @@ class AuthStore:
                     AND j.result->>'state' = 'sent' AND j.result->>'message_id' = %s
                     AND i.provider = 'feishu' AND i.app_id = %s AND i.tenant_key = %s AND i.subject = %s
                     AND jsonb_typeof(j.payload->'confirmation') = 'object' AND d.task_fingerprint IS NOT NULL
-                    AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = d.created_by AND g.capability IN ('read', 'review'))
-                    AND (r.id IS NULL OR EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = d.created_by AND g.capability IN ('read', 'review')))
-                    AND NOT EXISTS (SELECT 1 FROM product.draft_items di JOIN product.file_versions f ON f.id = di.file_version_id
-                        WHERE di.draft_id = d.id AND NOT EXISTS (SELECT 1 FROM product.resource_grants g
-                            WHERE g.resource_id = f.file_id AND g.user_id = d.created_by AND g.capability IN ('read', 'review')))
                 ), locked AS MATERIALIZED (
                     SELECT source.*, pg_advisory_xact_lock(hashtextextended(tenant_id::text || ':' || (confirmation->>'request_id'), 0))
                     FROM source WHERE NOT EXISTS (SELECT 1 FROM engine.jobs existing WHERE existing.id = (confirmation->>'request_id')::uuid)
@@ -2027,18 +1972,11 @@ class AuthStore:
             LEFT JOIN LATERAL (SELECT display_values, created_at FROM product.audit_display_requests x
                 WHERE x.task_id = d.id AND x.round_id = a.id AND x.file_version_id = f.id AND x.state = 'saved'
                 ORDER BY expected_revision DESC LIMIT 1) display ON true
-            WHERE d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL)
+            WHERE d.tenant_id = %s AND d.task_fingerprint IS NOT NULL)
             SELECT id, file_version_id, object_kind, object_ref, created_at, sequence,
                 original_filename, metadata, document_type, display_values, archive_updated_at, round_id FROM history h
-            WHERE NOT EXISTS (SELECT 1 FROM unnest(ARRAY[h.id, h.round_id, h.file_id]) wanted(resource_id)
-                WHERE NOT EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = wanted.resource_id
-                    AND g.user_id = %s AND g.capability IN ('read', 'review')))
-            AND NOT EXISTS (SELECT 1 FROM product.draft_items other
-                JOIN product.file_versions other_file ON other_file.id = other.file_version_id
-                WHERE other.draft_id = h.id AND NOT EXISTS (SELECT 1 FROM product.resource_grants g
-                    WHERE g.resource_id = other_file.file_id AND g.user_id = %s AND g.capability IN ('read', 'review')))
             ORDER BY created_at, round_id, file_version_id""",
-            (principal.tenant_id, principal.user_id, principal.user_id, principal.user_id),
+            (principal.tenant_id,),
         ).fetchall()
 
     @staticmethod
@@ -2047,7 +1985,7 @@ class AuthStore:
 
     def _archive_task_summary(self, conn, principal: Principal, task_id: str, round_id: str) -> dict:
         """Read only archive fields, retaining the full task's ownership/readiness checks."""
-        draft = self._recognition_owner(conn, principal, task_id)
+        draft = self._task_draft(conn, principal, task_id, modify=False)
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """SELECT i.file_version_id, i.selection, i.validation_job_id, f.original_filename,
@@ -2063,7 +2001,7 @@ class AuthStore:
         round = self._round_public(conn, round_id)
         if round is None or round["source_draft_id"] != task_id:
             raise KeyError("missing")
-        reports, _updated = self._task_file_reports(conn, principal.tenant_id, task_id, round_id, round["result_attempt"])
+        reports, _updated = self._task_file_reports(conn, principal.tenant_id, task_id, round_id, round["result_attempt"], mine=str(draft["created_by"]) == principal.user_id)
         projected = []
         for file in files:
             vid = str(file["file_version_id"])
@@ -2119,13 +2057,12 @@ class AuthStore:
                 "reference": {"task_id": tid, "round_id": task["round_id"], "file_version_id": vid, "result_attempt": audit["result_attempt"]},
                 "sequence": sequence,
                 "audited_at": accepted_at.isoformat(),
-                "initiator": principal.display_name,
+                "initiator": task["creator"]["name"],
                 "execution": audit["execution"],
                 "conclusion": audit["conclusion"],
                 "rule_title": (audit.get("rule") or {}).get("title"),
                 "source_revision": None,
                 "report": audit["report"],
-                "report_access": {"state": "allowed", "reason": None},
             }
             record["entries"].append(entry)
             record["details"].append((entry, task, file))
@@ -2194,30 +2131,18 @@ class AuthStore:
                 raise KeyError("missing")
             entry, task, file = selected
             inputs = conn.execute(
-                """SELECT i.file_version_id, f.file_id, EXISTS (SELECT 1 FROM product.resource_grants g
-                WHERE g.resource_id = f.file_id AND g.user_id = %s AND g.capability IN ('read', 'review'))
-                , f.tenant_id, f.original_filename, f.content_type, f.byte_size, f.sha256, f.object_key, f.status
+                """SELECT i.file_version_id, f.file_id, f.tenant_id, f.original_filename, f.content_type, f.byte_size, f.sha256, f.object_key, f.status
                 FROM product.round_inputs i JOIN product.file_versions f ON f.id = i.file_version_id
                 WHERE i.round_id = %s AND f.tenant_id = %s""",
-                (principal.user_id, task["round_id"], principal.tenant_id),
+                (task["round_id"], principal.tenant_id),
             ).fetchall()
-            originals = []
-            for version_id, file_id, allowed, *version_fields in inputs:
-                version = self._version_from_row((version_id, file_id, *version_fields)) if allowed else None
-                originals.append(
-                    {
-                        "file_version_id": str(version_id),
-                        "file": version.public() if version else None,
-                        "access": {"state": "allowed" if version else "denied", "reason": None if version else "当前账号无权读取这份原件。"},
-                    }
-                )
+            originals = [{"file_version_id": str(row[0]), "file": self._version_from_row(row).public()} for row in inputs]
             return {
                 "entry": entry,
+                "creator": task["creator"],
                 "file": file,
                 "frozen_file_version_ids": [str(row[0]) for row in inputs],
                 "originals": originals,
-                "source_task_access": {"state": "allowed", "reason": None},
-                "report_access": entry["report_access"],
             }
 
     def confirm_audit_task(
@@ -2241,7 +2166,7 @@ class AuthStore:
             # same receipt store; no new operation ledger is needed.
             prior = conn.execute("SELECT tenant_id, kind, payload, result FROM engine.jobs WHERE id=%s FOR UPDATE", (key,)).fetchone()
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
-            self._recognition_owner(conn, principal, parsed_task)
+            self._task_draft(conn, principal, parsed_task, modify=True)
             if prior is None:
                 prior = conn.execute("SELECT tenant_id, kind, payload, result FROM engine.jobs WHERE id=%s", (key,)).fetchone()
             accepted = conn.execute(
@@ -2361,18 +2286,11 @@ class AuthStore:
                 (reference["task_id"], reference["round_id"]),
             )
             saved = {str(row["file_version_id"]): {"revision": row["expected_revision"] + 1, "values": _display_values(row["display_values"])} for row in cur.fetchall()}
-        editable = {
-            str(row[0])
-            for row in conn.execute(
-                "SELECT resource_id FROM product.resource_grants WHERE resource_id = ANY(%s::uuid[]) AND user_id = %s AND capability = 'review'", ([task["id"], task["round_id"]], principal.user_id)
-            ).fetchall()
-        } == {task["id"], task["round_id"]}
         for file in task["files"]:
             if file["selection"] != "selected" or not file.get("audit"):
                 continue
             metadata = (file.get("match") or {}).get("metadata") or {}
             file["display_info"] = saved.get(file["file"]["id"], {"revision": 0, "values": {key: metadata.get(key) for key in DISPLAY_FIELDS}})
-            file["display_edit_access"] = {"state": "allowed" if editable else "denied", "reason": None if editable else "你目前没有更正显示信息的权限。"}
         return task
 
     def save_audit_display(self, principal: Principal, task_id: str, body: dict) -> dict:
@@ -2395,16 +2313,10 @@ class AuthStore:
         ):
             raise ValueError("invalid_display_request")
         with self._conn() as conn, conn.transaction():
-            self._recognition_owner(conn, principal, task_id, lock=True)
+            self._task_draft(conn, principal, task_id, lock=True, modify=True)
             task = self._recognition_public(conn, principal, task_id)
             file = next((file for file in task["files"] if file["file"]["id"] == reference["file_version_id"] and file["selection"] == "selected" and file.get("audit")), None)
             if task["round_id"] != reference["round_id"] or file is None:
-                raise KeyError("missing")
-            grants = conn.execute(
-                "SELECT resource_id FROM product.resource_grants WHERE resource_id = ANY(%s::uuid[]) AND user_id = %s AND capability = 'review' FOR SHARE",
-                ([task_id, task["round_id"]], principal.user_id),
-            ).fetchall()
-            if {str(row[0]) for row in grants} != {task_id, task["round_id"]}:
                 raise KeyError("missing")
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute("SELECT * FROM product.audit_display_requests WHERE request_id = %s", (body["request_id"],))
@@ -2478,7 +2390,7 @@ class AuthStore:
             if preparation and preparation[0] is None and PREPARATION_KEY in (preparation[1] or {}):
                 self._require_preparation_owner(conn, principal, task_id)
                 return read
-            owned = self._recognition_owner(conn, principal, task_id)
+            owned = self._task_draft(conn, principal, task_id, modify=True)
             revision = 0 if task_id == request_id and PREPARATION_KEY not in (owned["case_context"] or {}) else None
             if revision is None:
                 job = conn.execute("SELECT payload FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'file_analysis'", (request_id, principal.tenant_id)).fetchone()
@@ -2491,7 +2403,7 @@ class AuthStore:
             return read
 
     def _recognition_public(self, conn, principal: Principal, task_id: str) -> dict:
-        draft = self._recognition_owner(conn, principal, task_id)
+        draft = self._task_draft(conn, principal, task_id, modify=False)
         task_id = str(draft["id"])
         original_rules = {}
         if draft["predecessor_id"]:
@@ -2500,9 +2412,8 @@ class AuthStore:
                 for row in conn.execute(
                     """SELECT i.file_version_id, i.rule_version_id, i.rule_title FROM product.round_inputs i
                 JOIN product.audit_rounds r ON r.id = i.round_id
-                WHERE r.id = %s AND r.tenant_id = %s AND i.rule_version_id IS NOT NULL
-                AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = %s AND g.capability IN ('read', 'review'))""",
-                    (draft["predecessor_id"], principal.tenant_id, principal.user_id),
+                WHERE r.id = %s AND r.tenant_id = %s AND i.rule_version_id IS NOT NULL""",
+                    (draft["predecessor_id"], principal.tenant_id),
                 ).fetchall()
             }
         available_rules = self._list_rules(conn, principal.tenant_id) if original_rules else []
@@ -2606,6 +2517,8 @@ class AuthStore:
         task = {
             "id": task_id,
             "number": f"PPAP-{draft['task_day']:%Y%m%d}-{draft['task_sequence']:03d}",
+            # Everyone in the enterprise sees the task; the creator is the one who may change it.
+            "creator": {"name": self._display_name(conn, draft["tenant_id"], draft["created_by"]), "mine": str(draft["created_by"]) == principal.user_id},
             "state": "completed" if draft["task_completion_reason"] else "matching" if matching else "pending_confirm",
             "created_at": draft["created_at"].isoformat(),
             "updated_at": updated.isoformat(),
@@ -2630,32 +2543,28 @@ class AuthStore:
             task["predecessor_id"] = str(draft["predecessor_id"])
             previous = conn.execute(
                 """SELECT d.id FROM product.audit_rounds r JOIN product.audit_drafts d ON d.id = r.source_draft_id
-                WHERE r.id = %s AND d.created_by = %s AND d.tenant_id = %s AND d.task_fingerprint IS NOT NULL
-                AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = %s AND g.capability IN ('read', 'review'))""",
-                (draft["predecessor_id"], principal.user_id, principal.tenant_id, principal.user_id),
+                WHERE r.id = %s AND d.tenant_id = %s AND d.task_fingerprint IS NOT NULL""",
+                (draft["predecessor_id"], principal.tenant_id),
             ).fetchone()
             if previous:
                 task["predecessor_task_id"] = str(previous[0])
         accepted = conn.execute(
-            """SELECT a.id, a.idempotency_key, COALESCE(j.updated_at, a.created_at), EXISTS (
-                SELECT 1 FROM product.resource_grants g WHERE g.resource_id = a.id AND g.user_id = %s AND g.capability IN ('read', 'review'))
+            """SELECT a.id, a.idempotency_key, COALESCE(j.updated_at, a.created_at)
             FROM product.audit_rounds a LEFT JOIN engine.jobs j ON j.audit_round_id = a.id AND j.kind = 'audit'
             WHERE a.source_draft_id = %s AND a.tenant_id = %s ORDER BY a.created_at LIMIT 1""",
-            (principal.user_id, task_id, principal.tenant_id),
+            (task_id, principal.tenant_id),
         ).fetchone()
         if not accepted:
             confirmation = self._task_confirmation_receipt(conn, principal, task_id)
             if confirmation:
                 task["acceptance"] = confirmation
         if accepted:
-            if not accepted[3]:
-                raise KeyError("missing")
             task["acceptance"] = {"request_id": accepted[1], "state": "accepted", "reason": None}
             task["updated_at"] = max(updated, accepted[2]).isoformat()
             round = self._round_public(conn, str(accepted[0]), principal=principal)
             if round is None:
                 raise KeyError("missing")
-            reports, report_updated = self._task_file_reports(conn, principal.tenant_id, task_id, round["id"], round["result_attempt"])
+            reports, report_updated = self._task_file_reports(conn, principal.tenant_id, task_id, round["id"], round["result_attempt"], mine=task["creator"]["mine"])
             if report_updated:
                 task["updated_at"] = max(datetime.fromisoformat(task["updated_at"]), report_updated).isoformat()
             from .fact_answers import confirmed_results
@@ -2667,10 +2576,9 @@ class AuthStore:
                 {"id": str(row[0]), "number": f"PPAP-{row[1]:%Y%m%d}-{row[2]:03d}"}
                 for row in conn.execute(
                     """SELECT d.id, d.task_day, d.task_sequence FROM product.audit_drafts d
-                WHERE d.predecessor_id = %s AND d.created_by = %s AND d.tenant_id = %s AND d.task_fingerprint IS NOT NULL
-                AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = %s AND g.capability IN ('read', 'review'))
+                WHERE d.predecessor_id = %s AND d.tenant_id = %s AND d.task_fingerprint IS NOT NULL
                 ORDER BY d.created_at, d.id""",
-                    (round["id"], principal.user_id, principal.tenant_id, principal.user_id),
+                    (round["id"], principal.tenant_id),
                 ).fetchall()
             ]
             activity = conn.execute(
@@ -2787,16 +2695,14 @@ class AuthStore:
                     WHEN r.id IS NOT NULL THEN 'reviewing'
                     WHEN EXISTS (SELECT 1 FROM product.draft_items i JOIN engine.jobs j ON j.id = i.analysis_job_id WHERE i.draft_id = d.id AND j.status IN ('queued', 'leased')) THEN 'matching'
                     ELSE 'pending_confirm' END AS state,
-                COALESCE(r.deep_mode, d.deep_mode) AS deep_mode
+                COALESCE(r.deep_mode, d.deep_mode) AS deep_mode, d.created_by
                 FROM product.audit_drafts d
                 LEFT JOIN product.audit_rounds r ON r.source_draft_id = d.id
-                WHERE d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL
-                AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = %s AND g.capability IN ('read', 'review'))
-                AND (r.id IS NULL OR EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = d.created_by AND g.capability IN ('read', 'review')))
+                WHERE d.tenant_id = %s AND d.task_fingerprint IS NOT NULL
                 AND (%s = '' OR EXISTS (SELECT 1 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id WHERE i.draft_id = d.id AND f.original_filename ILIKE %s))
                 AND (%s = '' OR EXISTS (SELECT 1 FROM product.draft_writeback_targets w WHERE w.draft_id = d.id AND w.provider = %s AND w.object_kind = %s AND w.object_ref = %s))
                 ) SELECT * FROM visible WHERE (%s = '' OR state = %s) ORDER BY updated_at DESC, id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, principal.user_id, principal.user_id, q, needle, *target_filter, state, state, limit, offset),
+                (principal.tenant_id, q, needle, *target_filter, state, state, limit, offset),
             ).fetchall()
             if not rows:
                 return []
@@ -2827,6 +2733,7 @@ class AuthStore:
             for file in files:
                 grouped.setdefault(str(file[0]), []).append({"file": self._version_from_row(file[2:]).public(), "selection": file[1]})
             histories = {row["id"]: row for row in self._round_histories(conn, [str(row[7]) for row in rows if row[7]])}
+            names = {str(user): self._display_name(conn, principal.tenant_id, user) for user in {row[10] for row in rows}}
             return [
                 {
                     "id": str(row[0]),
@@ -2838,6 +2745,7 @@ class AuthStore:
                     "round_id": str(row[7]) if row[7] else None,
                     "state": row[8],
                     "deep_mode": bool(row[9]),
+                    "creator": {"name": names[str(row[10])], "mine": str(row[10]) == principal.user_id},
                     "files": grouped.get(str(row[0]), []),
                     **({"subject": subjects[str(row[0])]} if str(row[0]) in subjects else {}),
                     **({key: histories[str(row[7])][key] for key in ("execution", "has_execution_error", "result_counts", "reviewed_count", "uncovered_count")} if row[7] else {}),
@@ -2847,7 +2755,7 @@ class AuthStore:
 
     def end_unmatched_task(self, principal: Principal, task_id: str, expected_revision: int, removals: list, unselected_file_version_ids: list | None = None) -> dict:
         with self._conn() as conn, conn.transaction():
-            draft = self._recognition_owner(conn, principal, task_id, lock=True)
+            draft = self._task_draft(conn, principal, task_id, lock=True, modify=True)
             if type(expected_revision) is not int or expected_revision < 0:
                 raise ValueError("invalid_task_revision")
             if draft["input_revision"] != expected_revision:
@@ -3097,10 +3005,8 @@ class AuthStore:
         if not conn.execute(
             """SELECT 1 FROM product.audit_drafts d JOIN product.resources r ON r.id = d.id
             WHERE d.id = %s AND d.tenant_id = %s AND d.created_by = %s
-            AND r.tenant_id = d.tenant_id AND r.kind = 'audit_draft'
-            AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id
-                        AND g.user_id = %s AND g.capability IN ('read', 'review'))""",
-            (draft_id, principal.tenant_id, principal.user_id, principal.user_id),
+            AND r.tenant_id = d.tenant_id AND r.kind = 'audit_draft'""",
+            (draft_id, principal.tenant_id, principal.user_id),
         ).fetchone():
             raise KeyError("missing")
 
@@ -3136,7 +3042,7 @@ class AuthStore:
             context = {PREPARATION_KEY: preparation}
         if predecessor_id:
             resource = self.resource(predecessor_id)
-            if resource is None or resource.kind != "audit_round" or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
+            if resource is None or resource.kind != "audit_round" or not can_read(principal, resource):
                 raise KeyError("missing")
             predecessor_id = resource.id
         with self._conn() as conn:
@@ -3146,12 +3052,7 @@ class AuthStore:
                 existing = conn.execute("SELECT tenant_id, created_by, predecessor_id FROM product.audit_drafts WHERE id = %s", (draft_id,)).fetchone()
                 if existing:
                     resource = self.resource(draft_id)
-                    if (
-                        str(existing[0]) != principal.tenant_id
-                        or str(existing[1]) != principal.user_id
-                        or resource is None
-                        or not can_read(principal, resource, self.grants(draft_id, principal.user_id))
-                    ):
+                    if str(existing[0]) != principal.tenant_id or str(existing[1]) != principal.user_id or resource is None or not can_modify(principal, resource):
                         raise KeyError("missing")
                     saved = cast(dict, self._draft_public(conn, draft_id))
                     if preparation is not None:
@@ -3185,14 +3086,6 @@ class AuthStore:
                     """,
                     (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN, predecessor_id, Jsonb(context)),
                 )
-                conn.execute(
-                    """
-                    INSERT INTO product.resource_grants (resource_id, user_id, capability)
-                    VALUES (%s, %s, 'read'), (%s, %s, 'review')
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (draft_id, principal.user_id, draft_id, principal.user_id),
-                )
                 if predecessor_id:
                     writeback = self._target_row(conn, "round_writeback_targets", "round_id", predecessor_id)
                     if writeback:
@@ -3208,19 +3101,17 @@ class AuthStore:
         needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         with self._conn() as conn:
             rows = conn.execute(
+                # Open drafts are the person's own unfinished work: the list to resume from is theirs.
                 """SELECT d.id FROM product.audit_drafts d
-                   WHERE d.tenant_id = %s AND d.status = %s
+                   WHERE d.tenant_id = %s AND d.status = %s AND d.created_by = %s
                      AND d.task_fingerprint IS NULL
-                     AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id
-                                 AND g.user_id = %s AND g.capability IN ('read', 'review'))
-                     AND (NOT (d.case_context ? '_native_upload_preparation') OR d.created_by = %s)
                      AND (EXISTS (SELECT 1 FROM product.draft_items i WHERE i.draft_id = d.id)
                           OR jsonb_array_length(COALESCE(d.case_context->'_native_upload_preparation'->'uploads', '[]'::jsonb)) > 0)
                      AND (%s = '' OR d.case_context::text ILIKE %s OR EXISTS (
                          SELECT 1 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id
                          WHERE i.draft_id = d.id AND f.original_filename ILIKE %s))
                    ORDER BY d.updated_at DESC, d.id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, DRAFT_OPEN, principal.user_id, principal.user_id, q, needle, needle, limit, offset),
+                (principal.tenant_id, DRAFT_OPEN, principal.user_id, q, needle, needle, limit, offset),
             ).fetchall()
             return [cast(dict, self._draft_public(conn, row[0])) for row in rows]
 
@@ -3324,7 +3215,7 @@ class AuthStore:
             raise KeyError("missing")
         if predecessor_id:
             resource = self.resource(predecessor_id)
-            if resource is None or resource.kind != "audit_round" or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
+            if resource is None or resource.kind != "audit_round" or not can_read(principal, resource):
                 raise KeyError("missing")
         with self._conn() as conn:
             with conn.transaction():
@@ -3403,8 +3294,6 @@ class AuthStore:
                    FROM product.audit_rounds r
                    LEFT JOIN product.audit_drafts d ON d.id = r.source_draft_id
                    WHERE r.tenant_id = %s
-                     AND (d.task_fingerprint IS NULL OR EXISTS (SELECT 1 FROM product.resource_grants g
-                         WHERE g.resource_id = r.id AND g.user_id = %s AND g.capability IN ('read', 'review')))
                      AND (%s = '' OR r.execution = %s)
                      AND (NOT %s OR EXISTS (
                          SELECT 1 FROM product.findings f WHERE f.round_id = r.id
@@ -3413,7 +3302,7 @@ class AuthStore:
                          SELECT 1 FROM product.round_inputs i JOIN product.file_versions f ON f.id = i.file_version_id
                          WHERE i.round_id = r.id AND (f.original_filename ILIKE %s OR i.rule_title ILIKE %s)))
                    ORDER BY activity_at DESC, r.id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, principal.user_id, execution, execution, unreviewed, q, needle, needle, needle, limit, offset),
+                (principal.tenant_id, execution, execution, unreviewed, q, needle, needle, needle, limit, offset),
             ).fetchall()
             return self._round_histories(conn, [str(row[0]) for row in rows])
 
@@ -3941,7 +3830,8 @@ class AuthStore:
                 recognized[str(version_id)] = {key: metadata.get(key) for key in DISPLAY_FIELDS}
         return recognized
 
-    def _task_file_reports(self, conn, tenant_id, task_id, round_id, result_attempt) -> tuple[dict, datetime | None]:
+    def _task_file_reports(self, conn, tenant_id, task_id, round_id, result_attempt, *, mine: bool) -> tuple[dict, datetime | None]:
+        """Each file's report; regenerating one changes the task, so only its creator (mine) may."""
         rows = conn.execute(
             """SELECT id, payload, status, result, updated_at FROM engine.jobs
             WHERE tenant_id = %s AND audit_round_id = %s AND kind = 'report_pdf' AND payload->>'task_id' = %s
@@ -3960,8 +3850,8 @@ class AuthStore:
                 "reason": "报告生成失败。审核结果已保存。" if state == "failed" else None,
                 "artifact": result.get("artifact") if state == "ready" else None,
                 "generated_at": result.get("generated_at") if state == "ready" else None,
-                "regenerate_allowed": state == "failed" and row[2] == "failed",
-                "regenerate_reason": "重试前将重新检查可用额度，不产生新的审核费用。" if self.settings.usage_charge_enabled else None,
+                "regenerate_allowed": mine and state == "failed" and row[2] == "failed",
+                "regenerate_reason": ("重试前将重新检查可用额度，不产生新的审核费用。" if self.settings.usage_charge_enabled else None) if mine else "只有任务发起人可以重新生成报告。",
                 **({"generation_request": {"request_id": row[1]["regeneration_request_id"], "state": "accepted", "reason": None}} if row[1].get("regeneration_request_id") else {}),
             }
         return reports, max((row[4] for row in rows), default=None)
@@ -3975,15 +3865,7 @@ class AuthStore:
             or reference["result_attempt"] < 1
         ):
             raise ValueError("invalid_report_regeneration")
-        self._recognition_owner(conn, principal, reference["task_id"], lock=lock)
-        if lock:
-            grants = conn.execute(
-                """SELECT resource_id FROM product.resource_grants WHERE resource_id = ANY(%s::uuid[])
-                AND user_id = %s AND capability IN ('read', 'review') ORDER BY resource_id FOR SHARE""",
-                ([reference["task_id"], reference["round_id"]], principal.user_id),
-            ).fetchall()
-            if {str(row[0]) for row in grants} != {reference["task_id"], reference["round_id"]}:
-                raise KeyError("missing")
+        self._task_draft(conn, principal, reference["task_id"], modify=lock, lock=lock)
         row = conn.execute(
             "SELECT payload, status FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_pdf'" + (" FOR UPDATE" if lock else ""),
             (reference["report_id"], principal.tenant_id),
@@ -4207,15 +4089,9 @@ class AuthStore:
             original = source[2]
             task_ids = sorted({reference["task_id"] for reference in original["reports"]})
             for task_id in task_ids:
-                self._recognition_owner(conn, principal, task_id, lock=True)
+                self._task_draft(conn, principal, task_id, lock=True, modify=False)
             task = self._recognition_public(conn, principal, original["task_id"])
-            resources = task_ids + sorted({reference["round_id"] for reference in original["reports"]})
-            grants = conn.execute(
-                """SELECT resource_id FROM product.resource_grants WHERE resource_id = ANY(%s::uuid[])
-                AND user_id = %s AND capability IN ('read', 'review') ORDER BY resource_id FOR SHARE""",
-                (resources, principal.user_id),
-            ).fetchall()
-            if {str(row[0]) for row in grants} != set(resources) or original["package_id"] != body["package_id"]:
+            if original["package_id"] != body["package_id"]:
                 raise KeyError("missing")
             row = conn.execute(
                 "SELECT status, attempt FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_zip' FOR UPDATE",
@@ -4348,7 +4224,7 @@ class AuthStore:
             raise KeyError("missing")
         with self._conn() as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            draft = self._recognition_owner(conn, principal, reference["task_id"])
+            draft = self._task_draft(conn, principal, reference["task_id"], modify=False)
             task_id = str(draft["id"])
             # Downloads retain the Task's complete file-access checks, but do not
             # need recognition, reviews, display edits, ZIPs or sharing projections.
@@ -4367,10 +4243,8 @@ class AuthStore:
                 SELECT r.id, r.result_attempt, i.file_version_id, i.rule_version_id, i.rule_title
                 FROM current_round r JOIN product.round_inputs i ON i.round_id = r.id
                 JOIN product.draft_items d ON d.draft_id = %s AND d.file_version_id = i.file_version_id
-                WHERE i.role = 'target' AND i.rule_version_id IS NOT NULL AND d.selection = 'selected'
-                AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = r.id
-                    AND g.user_id = %s AND g.capability IN ('read', 'review'))""",
-                (task_id, principal.tenant_id, task_id, principal.user_id),
+                WHERE i.role = 'target' AND i.rule_version_id IS NOT NULL AND d.selection = 'selected'""",
+                (task_id, principal.tenant_id, task_id),
             ).fetchall()
             if not rows:
                 raise KeyError("missing")
@@ -4413,16 +4287,13 @@ class AuthStore:
                 str(row[0]): row
                 for row in conn.execute(
                     """SELECT f.id, f.file_id, f.tenant_id, f.status, f.original_filename, r.kind, r.tenant_id,
-                (EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = f.file_id
-                    AND g.user_id = %s AND g.capability IN ('read', 'review'))
-                 OR EXISTS (SELECT 1 FROM product.rule_versions rv WHERE rv.tenant_id = f.tenant_id AND rv.source_file_version_id = f.id)),
                 f.upload_request->>'feishu_folder_token' IS NULL OR
                     (f.upload_request->'cloud_upload'->>'phase' = 'ready' AND EXISTS
                         (SELECT 1 FROM product.file_version_sources s WHERE s.file_version_id = f.id
                          AND s.provider = 'feishu' AND s.object_ref = f.upload_request->'cloud_upload'->>'file_token'))
                 FROM product.file_versions f LEFT JOIN product.resources r ON r.id = f.file_id
                 WHERE f.id = ANY(%s::uuid[])""",
-                    (principal.user_id, [vid for vid, _role in parsed]),
+                    ([vid for vid, _role in parsed],),
                 ).fetchall()
             }
             if parsed
@@ -4432,9 +4303,9 @@ class AuthStore:
             row = rows.get(vid)
             if not row or str(row[2]) != principal.tenant_id:
                 raise KeyError("missing")
-            if row[3] != READY or not row[8]:
+            if row[3] != READY or not row[7]:
                 raise ValueError("file_not_ready")
-            if row[5] != "file" or str(row[6]) != principal.tenant_id or not row[7]:
+            if row[5] != "file" or str(row[6]) != principal.tenant_id:
                 raise KeyError("missing")
             prepared.append({"file_version_id": str(row[0]), "role": role, "file_id": str(row[1]), "original_filename": row[4]})
         return prepared
@@ -4510,7 +4381,7 @@ class AuthStore:
                 raise ValueError("task_input_locked")
             draft_status = draft[2]
             if task_revision is not None:
-                owned = self._recognition_owner(conn, principal, source_draft_id)
+                owned = self._task_draft(conn, principal, source_draft_id, modify=True)
                 predecessor_id = str(owned["predecessor_id"]) if owned["predecessor_id"] else None
                 if existing and (str(existing[3]) != source_draft_id or str(existing[4]) != principal.user_id):
                     raise ValueError("idempotency_conflict")
@@ -4591,7 +4462,7 @@ class AuthStore:
         fingerprint = request_fingerprint(prepared)
         if existing:
             resource = self._resource(conn, str(existing[0]))
-            if resource is None or not can_read(principal, resource, self._grants(conn, str(existing[0]), principal.user_id)):
+            if resource is None or not can_read(principal, resource):
                 raise KeyError("missing")
             if existing[1] != fingerprint or (str(existing[2]) if existing[2] else None) != predecessor_id:
                 raise ValueError("idempotency_conflict")
@@ -4666,14 +4537,6 @@ class AuthStore:
         if target is None and predecessor_id:
             target = self._target_row(conn, "round_writeback_targets", "round_id", predecessor_id)
         self.copy_writeback_to_round(conn, round_id, target)
-        conn.execute(
-            """
-            INSERT INTO product.resource_grants (resource_id, user_id, capability)
-            VALUES (%s, %s, 'read'), (%s, %s, 'review')
-            ON CONFLICT DO NOTHING
-            """,
-            (round_id, principal.user_id, round_id, principal.user_id),
-        )
         conn.execute(
             """
             INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status)
@@ -4912,7 +4775,7 @@ class AuthStore:
                        source_draft_id, result_attempt, created_at, case_context,
                        EXISTS (SELECT 1 FROM product.audit_drafts d WHERE d.id = source_draft_id AND d.task_fingerprint IS NOT NULL),
                        (SELECT json_build_object('provider', provider, 'object_kind', object_kind, 'object_ref', object_ref)
-                        FROM product.round_writeback_targets WHERE round_id = a.id), a.review_document_pairs, a.deep_mode
+                        FROM product.round_writeback_targets WHERE round_id = a.id), a.review_document_pairs, a.deep_mode, a.created_by
                 FROM product.audit_rounds a WHERE id = %s""",
                 (round_id,),
             )
@@ -5033,21 +4896,10 @@ class AuthStore:
             }
             view = round_read_view(body, versions)
             if row[8] and principal is not None:
-                task_id = str(row[4])
-                try:
-                    self._recognition_owner(conn, principal, task_id)
-                except KeyError:
-                    reason = "当前账号无权访问此任务报告。"
-                    view["report_source"] = {"task_id": None, "access": {"state": "denied", "reason": reason}}
-                    for file in view["files"]:
-                        if file["audit"]:
-                            file["audit"]["report"] = {"state": "not_eligible", "report_id": None, "reason": reason}
-                else:
-                    reports, _updated_at = self._task_file_reports(conn, principal.tenant_id, task_id, round_id, row[5])
-                    view["report_source"] = {"task_id": task_id, "access": {"state": "allowed", "reason": None}}
-                    for file in view["files"]:
-                        if file["audit"] and file["file"]["id"] in reports:
-                            file["audit"]["report"] = reports[file["file"]["id"]]
+                reports, _updated_at = self._task_file_reports(conn, principal.tenant_id, str(row[4]), round_id, row[5], mine=str(row[12]) == principal.user_id)
+                for file in view["files"]:
+                    if file["audit"] and file["file"]["id"] in reports:
+                        file["audit"]["report"] = reports[file["file"]["id"]]
             body["read_view"] = view
         return body
 
@@ -5142,7 +4994,7 @@ class AuthStore:
         started for one object is never re-pointed at another.
         """
         with self._conn() as conn, conn.transaction():
-            draft = self._recognition_owner(conn, principal, task_id, lock=True)
+            draft = self._task_draft(conn, principal, task_id, lock=True, modify=True)
             if conn.execute("SELECT 1 FROM product.audit_rounds WHERE source_draft_id=%s", (draft["id"],)).fetchone():
                 raise ValueError("task_input_locked")
             current = self.draft_writeback(conn, str(draft["id"]))

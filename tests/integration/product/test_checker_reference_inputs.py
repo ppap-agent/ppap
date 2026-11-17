@@ -20,6 +20,7 @@ def test_reference_without_rule_keeps_confirmed_document_type(auth_store_factory
         assert frozen[0].rules is None
         prepared[0]["document_type"] = None
         assert freeze_authorized_inputs(conn, principal, prepared)[0].document_type is None
-        conn.execute("DELETE FROM product.resource_grants WHERE resource_id=%s AND user_id=%s", (version.file_id, principal.user_id))
+        # Only a ready version of this enterprise's file is frozen.
+        conn.execute("UPDATE product.file_versions SET status='failed' WHERE id=%s", (version.id,))
         with pytest.raises(KeyError, match="snapshot_file_missing"):
             freeze_authorized_inputs(conn, principal, prepared)

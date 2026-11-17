@@ -31,7 +31,7 @@ const messages: Record<string, string> = {
   feishu_export_failed: '有飞书文档无法导出，请稍后重试。',
   unsupported_doc_type: '有文件的类型暂不支持审核。',
   too_large: '有文件超过 200 MB，无法审核。',
-  access_denied: '你没有权限查看这项审核。',
+  access_denied: '没有权限：同一企业的人可以查看审核，只有发起人可以修改。',
   task_revision_conflict: '审核内容刚发生变化，请核对后再确认。',
   round_incomplete: '审核尚未全部完成，暂时不能写入文档。',
   round_has_errors: '审核出现技术错误，不能写入文档。',
@@ -167,7 +167,8 @@ function AddonApp() {
         {stage.kind === 'error' && <div role="alert" className="mb-2 rounded-md bg-warning/10 px-3 py-2 text-warning" data-testid="addon-error"><p>{stage.text}</p></div>}
         {showIntake && <Intake call={call} doc={session.current!.doc} host={session.current!.host} predecessor={choosing ? latest?.round_id ?? null : null} onStarted={started} onCancel={task ? () => setChoosing(false) : undefined} setPrimary={setPrimary} notify={notify} />}
         {stage.kind === 'ready' && !showIntake && task?.state === 'matching' && <Waiting text="正在识别文件类型和规则…" setPrimary={setPrimary} />}
-        {stage.kind === 'ready' && !showIntake && task?.state === 'pending_confirm' && <Confirm task={task} call={call} open={open} onReselect={() => setChoosing(true)} onConfirmed={() => void watch(task.id).catch(cause => notify('error', say(cause)))} setPrimary={setPrimary} notify={notify} />}
+        {stage.kind === 'ready' && !showIntake && task?.state === 'pending_confirm' && !task.creator.mine && <Waiting text={`${task.creator.name || '同事'} 已准备一次审核，等待其确认。`} setPrimary={setPrimary} />}
+        {stage.kind === 'ready' && !showIntake && task?.state === 'pending_confirm' && task.creator.mine && <Confirm task={task} call={call} open={open} onReselect={() => setChoosing(true)} onConfirmed={() => void watch(task.id).catch(cause => notify('error', say(cause)))} setPrimary={setPrimary} notify={notify} />}
         {stage.kind === 'ready' && !showIntake && task?.state === 'reviewing' && <Running task={task} setPrimary={setPrimary} />}
         {stage.kind === 'ready' && !showIntake && task?.state === 'completed' && <Result task={task} call={call} host={session.current!.host} canEdit={canEdit} open={open} onReaudit={() => setChoosing(true)} setPrimary={setPrimary} notify={notify} />}
       </main>
@@ -347,7 +348,8 @@ function Result({task, call, host, canEdit, open, onReaudit, setPrimary, notify}
   const [written, setWritten] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   const [viewing, setViewing] = useState<Evidence | null>(null)
-  const writable = ['PASS', 'NG', 'UNKNOWN'].includes(overall) && Boolean(task.round_id)
+  // Writing a result into the document speaks for the round: only its creator does it; anyone may audit again.
+  const writable = task.creator.mine && ['PASS', 'NG', 'UNKNOWN'].includes(overall) && Boolean(task.round_id)
   const mark = marker(task)
 
   // Read the document back: it is the only record of whether this result is already in it.

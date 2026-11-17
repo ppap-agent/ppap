@@ -40,7 +40,7 @@ import {TEMPLATE_GUIDE_URL} from './template-links'
 import {documentTypeLabel, executionLabel} from './status-labels'
 import {AuditUsage} from './usage'
 import type {AuditUsageAdapter} from './usage-contract'
-import {reconcileTaskDisplay, unconfirmedDisplayAccess, type DisplayInfo, type DisplayReference} from './display-info-contract'
+import {reconcileTaskDisplay, type DisplayInfo, type DisplayReference} from './display-info-contract'
 import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
 import {ReviewEditorContext} from './review-editor'
 import {reconcileTaskSummary, subjectLabel, summarizeTask, taskIsBehindSummary, type TaskSummary} from './task-summary'
@@ -313,11 +313,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     setTasks(rows => rows.map(update))
   }
   const displayEditor = useDisplayEditor(displayAdapter, task ? [task, ...tasks.filter(row => row.id !== task.id)] : tasks, `${surface}:${task?.id || ''}:${reportView}`, changeDisplay)
-  function invalidateDisplayAccess(id: string) {
-    const update = (current: AuditTask): AuditTask => current.id !== id ? current : {...current, files: current.files.map(file => ({...file, display_edit_access: unconfirmedDisplayAccess(file.display_edit_access, '任务读取未完成，编辑许可待重新确认。')}))}
-    setTask(current => current ? update(current) : current)
-    setTasks(rows => rows.map(update))
-  }
   const acceptance = useTaskAcceptance(adapter, next => {
     drafts.current.delete(next.id)
     const current = saveTask(next)
@@ -344,6 +339,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const recognitionNeedsCurrent = recognitionState?.phase === 'conflict' && ((task?.input_revision ?? -1) < (recognitionState.currentRevision ?? Infinity) || task?.state !== recognitionState.currentState)
   // While recognition runs, files, purposes and the customer stay as they were sent.
   const recognizing = recognitionLocked || task?.state === 'matching'
+  // Everyone in the enterprise opens a task; only its creator confirms rules or starts the audit.
+  const foreign = Boolean(task && !task.creator.mine)
   const inputLocked = recognitionLocked || preparingMatchEpoch === draftEpoch.current || !task && preparationStatus.id === activeUploadDraftId.current && ['reading', 'error'].includes(preparationStatus.phase) || Boolean(task && ['sending', 'unknown'].includes(endStatus[task.id]))
   useEffect(() => {
     if (!preparation.current || task || surface !== 'audit' || !activeUploadDraftId.current || ['reading', 'error'].includes(preparationStatus.phase) || preparingMatch.current === draftEpoch.current) return
@@ -533,7 +530,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       setFiles(structuredClone(saved ? mergeFileIntent(saved.files, current.files) : current.files)); setCustomer(saved?.customer ?? current.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setRecovery(null)
     } catch (failure) {
       if (restoreEpoch.current !== epoch) return
-      invalidateDisplayAccess(id)
       const status = failure instanceof Error && 'status' in failure ? failure.status : null
       const state = status === 401 ? 'unauthenticated' : status === 403 ? 'forbidden' : status === 404 ? 'not_found' : 'error'
       setRecovery({id, state, traceId: requestTrace(failure), message: state === 'unauthenticated' ? '登录已失效，请重新登录。' : state === 'forbidden' ? '当前账号无权访问此任务。' : state === 'not_found' ? '未找到此任务，请核对链接。' : '暂时无法读取任务，请重试。'})
@@ -741,7 +737,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       return true
     } catch (failure) {
       if (taskReadEpoch.current.get(current.id) !== epoch) return null
-      invalidateDisplayAccess(current.id)
       setReadStatus(rows => ({...rows, [current.id]: {busy: false, traceId: requestTrace(failure), error: failure instanceof Error && failure.message === 'regressive_progress' ? '收到较早或不完整的审核进度，已保留当前结果。请稍后重新读取。' : '任务结果读取失败，任务与文件仍保留。重新读取不会重新创建任务或开始审核。'}}))
       return false
     } finally {
@@ -1061,11 +1056,11 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         {!task && preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'reading' && <section role="status" aria-label="正在恢复上传准备" className="space-y-4"><h1 className="sr-only">上传准备</h1><ReadSkeleton label="正在恢复上传的文件…" kind="list" rows={3}/></section>}
         {!task && preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'saving' && <ReadSkeleton label="正在保存上传准备…" kind="inline"/>}
         {!task && preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'error' && <Alert variant="destructive"><AlertTitle>上传准备待确认</AlertTitle><AlertDescription><p>{preparationStatus.message}</p><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => void readPreparation(activeUploadDraftId.current!)}>读取准备记录</Button>{preparationStatus.conflict && <Button variant="outline" size="sm" onClick={() => {retainDraft(); void readPreparation(activeUploadDraftId.current!, true)}}>载入已保存资料</Button>}</div></AlertDescription></Alert>}
-        <fieldset hidden={preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'reading'} disabled={inputLocked || preparingReaudit} className="min-w-0 space-y-6">
+        <fieldset hidden={preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'reading'} disabled={inputLocked || preparingReaudit || foreign} className="min-w-0 space-y-6">
         {surface === 'audit' && step === 'upload' && pageActions && createPortal(stepper, pageActions)}
         {step === 'match' && <header className="flex items-start justify-between gap-6"><div className="min-w-0 flex-1 space-y-1.5">
           <h1 className="text-2xl font-semibold tracking-tight">确认规则</h1>
-          {task && <div className="space-y-0.5 text-sm leading-relaxed text-muted-foreground"><p>系统识别每份文件的要素并匹配客户规则；核对规则后点击【开始审核】。</p><p className="tabular-nums">当前客户：{task.customer_preference ? adapter.customers?.find(option => option.value === task.customer_preference)?.label ?? task.customer_preference : '自动识别'}{taskCoverage && <> · 规则覆盖 {taskCoverage.supported}/{taskCoverage.total} 类</>}</p></div>}
+          {task && <div className="space-y-0.5 text-sm leading-relaxed text-muted-foreground"><p>系统识别每份文件的要素并匹配客户规则；核对规则后点击【开始审核】。</p>{foreign && <p>{task.creator.name || '同事'} 发起，只有发起人可以确认规则和开始审核。</p>}<p className="tabular-nums">当前客户：{task.customer_preference ? adapter.customers?.find(option => option.value === task.customer_preference)?.label ?? task.customer_preference : '自动识别'}{taskCoverage && <> · 规则覆盖 {taskCoverage.supported}/{taskCoverage.total} 类</>}</p></div>}
         </div>{stepper}</header>}
         <input ref={input} disabled={!customerReady} type="file" className="sr-only" aria-label="选择审核文件" multiple accept={acceptedUploads(customer).accept} onChange={event => {receive(Array.from(event.target.files || [])); event.target.value = ''}}/>
         {step === 'upload' && <section aria-label="上传文件" data-dragging={dragging} className="rounded-lg border bg-card transition-colors data-[dragging=true]:border-primary" onDragOver={event => {event.preventDefault(); setDragging(true)}} onDragLeave={event => {if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false)}} onDrop={event => {event.preventDefault(); setDragging(false); receive(Array.from(event.dataTransfer.files))}}>

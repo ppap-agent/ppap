@@ -417,10 +417,13 @@ def test_rule_parse_recovers_original_job_after_reply_loss_and_api_restart(mcp_a
         # Parsing alone does not publish its candidate.
         with store._conn() as conn:
             assert conn.execute("SELECT count(*) FROM product.rule_versions WHERE source_file_version_id = %s", (source["id"],)).fetchone()[0] == 0
-        for person in ("bob", "carol"):
-            _, other, _ = connection(restored, store, person=person, scopes=" ".join(SCOPES))
-            assert call(restored, other["access_token"], "get_rule_parse", parse_id=parse_id)["error"] == "access_denied"
-            assert call(restored, other["access_token"], "get_rule_sources", file_id=source["file_id"], version_id=source["id"])["error"] == "access_denied"
+        # The same enterprise reads the parse and its sources; another enterprise does not.
+        _, bob, _ = connection(restored, store, person="bob", scopes=" ".join(SCOPES))
+        assert call(restored, bob["access_token"], "get_rule_parse", parse_id=parse_id)["status"] == "ok"
+        assert call(restored, bob["access_token"], "get_rule_sources", file_id=source["file_id"], version_id=source["id"])["status"] == "ok"
+        _, carol, _ = connection(restored, store, person="carol", scopes=" ".join(SCOPES))
+        assert call(restored, carol["access_token"], "get_rule_parse", parse_id=parse_id)["error"] == "access_denied"
+        assert call(restored, carol["access_token"], "get_rule_sources", file_id=source["file_id"], version_id=source["id"])["error"] == "access_denied"
         assert restored.post("/oauth/revoke", data={"client_id": cid, "token": token}).status_code == 200
         assert rpc(restored, token, "tools/call", {"name": "get_rule_parse", "arguments": {"parse_id": parse_id}}).status_code == 401
 
@@ -479,7 +482,8 @@ def test_prepare_task_reads_original_identity_after_reply_loss_and_restart(mcp_a
             assert conn.execute("SELECT count(*) FROM product.audit_drafts WHERE id = %s", (task_id,)).fetchone()[0] == 1
         for person in ("bob", "carol"):
             _, other, _ = connection(restored, store, person=person, scopes=" ".join(SCOPES))
-            assert call(restored, other["access_token"], "get_task", task_id=task_id)["status"] == "error"
+            # The same enterprise reads the task; only its creator reads its own recognition request.
+            assert call(restored, other["access_token"], "get_task", task_id=task_id)["status"] == ("ok" if person == "bob" else "error")
             assert call(restored, other["access_token"], "get_recognition", task_id=task_id, request_id=request_id)["status"] == "error"
         assert restored.post("/oauth/revoke", data={"client_id": cid, "token": token}).status_code == 200
         assert rpc(restored, token, "tools/call", {"name": "get_task", "arguments": {"task_id": task_id}}).status_code == 401
@@ -755,7 +759,9 @@ def test_mcp_preparation_carries_writeback_target_through_restart_acceptance_and
             assert call(restarted, token, "get_round", round_id=round_id)["data"]["value"] == original_round
             for person in ("bob", "carol"):
                 _, other, _ = connection(restarted, store, person=person, scopes=" ".join(SCOPES))
-                assert call(restarted, other["access_token"], "get_draft", draft_id=task["id"])["status"] == "error"
+                if person == "carol":
+                    assert call(restarted, other["access_token"], "get_draft", draft_id=task["id"])["status"] == "error"
+                # Writing back speaks for the round: only its creator does it.
                 assert call(restarted, other["access_token"], "writeback_feishu_report", **arguments)["status"] == "error"
             assert restarted.post("/oauth/revoke", data={"client_id": cid, "token": token}).status_code == 200
             assert rpc(restarted, token, "tools/call", {"name": "writeback_feishu_report", "arguments": arguments}).status_code == 401
@@ -904,10 +910,13 @@ def test_mcp_review_replacement_and_linked_reaudit_preserve_frozen_suite_history
         assert usage["events"] == []  # This fixture explicitly disables charging.
         tasks = call(restored, token, "list_tasks")["data"]["value"]["tasks"]
         assert {task["id"] for task in tasks} == {first_task["id"], next_task_id}
-        for person in ("bob", "carol"):
-            _, other, _ = connection(restored, store, person=person, scopes=" ".join(SCOPES))
-            assert call(restored, other["access_token"], "get_reaudit_inputs", round_id=round_id)["error"] == "access_denied"
-            assert call(restored, other["access_token"], "get_round", round_id=next_round_id)["error"] == "access_denied"
+        # The same enterprise reads (and may re-audit) the rounds; another enterprise does not.
+        _, bob, _ = connection(restored, store, person="bob", scopes=" ".join(SCOPES))
+        assert call(restored, bob["access_token"], "get_reaudit_inputs", round_id=round_id)["status"] == "ok"
+        assert call(restored, bob["access_token"], "get_round", round_id=next_round_id)["status"] == "ok"
+        _, carol, _ = connection(restored, store, person="carol", scopes=" ".join(SCOPES))
+        assert call(restored, carol["access_token"], "get_reaudit_inputs", round_id=round_id)["error"] == "access_denied"
+        assert call(restored, carol["access_token"], "get_round", round_id=next_round_id)["error"] == "access_denied"
         assert restored.post("/oauth/revoke", data={"client_id": cid, "token": token}).status_code == 200
         assert restored.get(old_transfer, headers={"Authorization": "Bearer " + token}).status_code == 401
 

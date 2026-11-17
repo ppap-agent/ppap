@@ -160,7 +160,7 @@ def test_missing_official_proof_is_atomic_and_only_explicit_force_can_run(admiss
     assert execution["verification"] == "unverified"
 
 
-@pytest.mark.parametrize("fault", ["object_bytes", "file_access"])
+@pytest.mark.parametrize("fault", ["object_bytes", "file_not_ready"])
 def test_admission_integrity_failures_never_queue_a_round(admission, fault):
     a = admission
     a.verify()
@@ -170,7 +170,7 @@ def test_admission_integrity_failures_never_queue_a_round(admission, fault):
         a.store.objects.data[f"suites/official/objects/{digest}"] = b"changed outside the immutable artifact"
     else:
         with a.store._conn() as conn:
-            conn.execute("DELETE FROM product.resource_grants WHERE resource_id=%s AND user_id=%s", (a.reference.file_id, a.alice.user_id))
+            conn.execute("UPDATE product.file_versions SET status='failed' WHERE id=%s", (a.reference.id,))
     before = a.counts()
     with pytest.raises((KeyError, ValueError)):
         a.store.accept_draft(a.alice, draft, "invalid-input")

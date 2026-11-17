@@ -34,7 +34,8 @@ function keepOperation(roundId: string, operationId: string | null) {
   writeAuditAddress(url)
 }
 /** Answers apply only to this frozen original and round. Machine findings stay untouched. */
-export function FactQuestions({roundId, files, findings = [], fileVersionId, adapter: providedAdapter}: {roundId: string; files: FileVersion[]; findings?: MachineFinding[]; fileVersionId?: string; adapter?: FactAnswersAdapter}) {
+/** `editable` is the task creator's: everyone in the enterprise reads the answers, only the creator gives them. */
+export function FactQuestions({roundId, files, findings = [], fileVersionId, adapter: providedAdapter, editable = true}: {roundId: string; files: FileVersion[]; findings?: MachineFinding[]; fileVersionId?: string; adapter?: FactAnswersAdapter; editable?: boolean}) {
   const inheritedAdapter = useContext(FactAnswersContext)
   const adapter = providedAdapter ?? inheritedAdapter
   const [view, setView] = useState<FactAnswersView | null>(null)
@@ -112,7 +113,8 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
     {error && <Alert variant="destructive"><AlertTitle>{pending ? '回答结果待确认' : '事实确认暂不可用'}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     {notice && <p role="status" className="text-sm">{notice}</p>}
     {pending && <div className="flex flex-wrap items-center gap-3 text-sm"><p role="status">{saving ? '正在保存并核对回答…' : '有一次回答等待确认，当前不能再次提交。'}</p><Button variant="outline" disabled={saving} onClick={() => void recover()}>查看原回答操作</Button></div>}
-    {groups.map(group => {
+    {!editable && questions.some(question => !question.answered) && <p className="text-sm text-muted-foreground">只有任务发起人可以确认这些事实。</p>}
+    {editable && groups.map(group => {
       const question = (row: FactQuestion) => <FactQuestionForm key={`${row.file_version_id}:${row.field}:${row.fingerprint}`} question={row} file={files.find(file => file.id === row.file_version_id)} roundId={roundId} disabled={loading || saving || Boolean(pending)} onAnswer={value => void apply(row, value)}/>
       return <section key={group.fileVersionId} aria-label={`${filename(group.fileVersionId)}的事实问题`} className="space-y-4 border-t pt-4"><h3 className="font-medium"><FileName name={filename(group.fileVersionId)}/></h3>{group.visible.map(question)}{group.folded.length > 0 && <Disclosure  summary={<>更多待确认事实（{group.folded.length}）</>}><div className="space-y-4">{group.folded.map(question)}</div></Disclosure>}</section>
     })}

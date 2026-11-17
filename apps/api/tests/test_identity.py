@@ -17,8 +17,8 @@ from product.feishu import (
     accept_event,
     user_info,
 )
-from product.fixtures import RESOURCE_A, RESOURCE_B, SUBJECTS
-from product.identity import Principal, Resource, can_read, can_review, identity_key, safe_return_to
+from product.fixtures import SUBJECTS
+from product.identity import Principal, Resource, can_modify, can_read, identity_key, safe_return_to
 from product.settings import Settings
 
 
@@ -35,30 +35,19 @@ class DecisionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             identity_key("feishu", "cli_1", "", "ou_1")
 
-    def test_cross_tenant_read_denied(self):
-        alice = Principal("u1", "t1", "feishu", "app", "tk1", "ou_1", "member")
-        other = Resource("r2", "t2", "fixture")
-        self.assertFalse(can_read(alice, other, {"read", "review"}))
-
-    def test_login_membership_is_not_review(self):
-        alice = Principal("u1", "t1", "feishu", "app", "tk1", "ou_1", "member")
-        resource = Resource("r1", "t1", "fixture")
-        self.assertTrue(can_read(alice, resource, {"read"}))
-        self.assertFalse(can_review(alice, resource, {"read"}))
-        self.assertTrue(can_review(alice, resource, {"read", "review"}))
-
-    def test_accepted_round_is_tenant_owned_without_personal_grant(self):
+    def test_enterprise_reads_and_only_the_creator_modifies(self):
         alice = Principal("u1", "t1", "feishu", "app", "tk1", "ou_1", "member")
         bob = Principal("u2", "t1", "feishu", "app", "tk1", "ou_2", "member")
         carol = Principal("u3", "t2", "feishu", "app", "tk2", "ou_3", "member")
-        round_resource = Resource("round-1", "t1", "audit_round")
-        draft = Resource("draft-1", "t1", "audit_draft")
-        self.assertTrue(can_read(alice, round_resource, set()))
-        self.assertTrue(can_read(bob, round_resource, set()))
-        self.assertTrue(can_review(bob, round_resource, set()))
-        self.assertFalse(can_read(carol, round_resource, {"read", "review"}))
-        self.assertFalse(can_read(bob, draft, set()))
-        self.assertTrue(can_read(alice, draft, {"read"}))
+        for kind in ("audit_draft", "audit_round", "file"):
+            resource = Resource("r1", "t1", kind, created_by="u1")
+            self.assertTrue(can_read(alice, resource) and can_modify(alice, resource))
+            self.assertTrue(can_read(bob, resource))
+            self.assertFalse(can_modify(bob, resource))
+            self.assertFalse(can_read(carol, resource) or can_modify(carol, resource))
+        # A resource whose creator is unknown is read-only for everyone; a template is never a resource read.
+        self.assertFalse(can_modify(alice, Resource("r2", "t1", "audit_round")))
+        self.assertFalse(can_read(alice, Resource("r3", "t1", "template", created_by="u1")))
 
     def test_return_to_rejects_foreign_origin(self):
         with _clean_env():
@@ -182,22 +171,17 @@ class HttpAuthTests(unittest.TestCase):
             self.assertEqual(self.client.get("/me").status_code, 401)
             self.assertEqual(loads.call_count, 2, "a later request must not reuse a prior authorization")
 
-    def test_object_grants_two_tenants(self):
-        alice = self._cookie("alice")
-        bob = self._cookie("bob")
-        carol = self._cookie("carol")
-        allowed = self.client.get("/resources/" + RESOURCE_A, cookies=alice)
-        self.assertEqual(allowed.status_code, 200)
-        self.assertTrue(allowed.json()["review_allowed"])
-        member_only = self.client.get("/resources/" + RESOURCE_A, cookies=bob)
-        self.assertEqual(member_only.status_code, 200)
-        self.assertFalse(member_only.json()["review_allowed"])
-        denied = self.client.get("/resources/" + RESOURCE_A, cookies=carol)
-        self.assertEqual(denied.status_code, 403)
-        self.assertEqual(denied.json(), {"error": "access_denied"})
-        self.assertNotIn("kind", denied.json())
-        other = self.client.get("/resources/" + RESOURCE_B, cookies=alice)
-        self.assertEqual(other.status_code, 403)
+    def test_file_is_read_by_the_enterprise_and_versioned_by_its_creator(self):
+        meta = {"original_filename": "plan.xlsx", "content_type": "application/octet-stream", "byte_size": 3}
+        alice, bob, carol = self._cookie("alice"), self._cookie("bob"), self._cookie("carol")
+        created = self.client.post("/files", json=meta, cookies=alice).json()
+        version = f"/files/{created['file_id']}/versions/{created['id']}"
+        self.assertEqual(self.client.put(version + "/blob", content=b"abc", cookies=alice).status_code, 200)
+        self.assertEqual(self.client.post(version + "/finalize", cookies=alice).status_code, 200)
+        self.assertEqual(self.client.get(version, cookies=bob).status_code, 200)
+        self.assertEqual(self.client.get(version, cookies=carol).json(), {"error": "access_denied"})
+        self.assertEqual(self.client.post(f"/files/{created['file_id']}/versions", json=meta, cookies=bob).status_code, 403)
+        self.assertEqual(self.client.post(f"/files/{created['file_id']}/versions", json=meta, cookies=alice).status_code, 201)
 
     def test_oauth_state_and_off_origin_return(self):
         from urllib.parse import parse_qs, urlparse
@@ -266,7 +250,7 @@ class HttpAuthTests(unittest.TestCase):
                 FakeHttp(),
             )
         )
-        dest = "http://127.0.0.1:4173/?resource=" + RESOURCE_A
+        dest = "http://127.0.0.1:4173/?resource=00000000-0000-4000-8000-0000000000aa"
         start = client.get("/login/feishu", params={"return_to": dest}, follow_redirects=False)
         state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
         done = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)
@@ -292,9 +276,9 @@ class HttpAuthTests(unittest.TestCase):
 
     def test_unauthenticated_and_unknown_resource(self):
         self.assertEqual(self.client.get("/me").status_code, 401)
-        self.assertEqual(self.client.get("/resources/" + RESOURCE_A).status_code, 401)
+        self.assertEqual(self.client.get("/files/x/versions/y").status_code, 401)
         cookies = self._cookie("alice")
-        denied = self.client.get("/resources/not-a-uuid", cookies=cookies)
+        denied = self.client.get("/files/not-a-uuid/versions/not-a-uuid", cookies=cookies)
         self.assertEqual(denied.status_code, 403)
         self.assertEqual(denied.json(), {"error": "access_denied"})
 
@@ -387,7 +371,7 @@ class HttpAuthTests(unittest.TestCase):
             settings = Settings()
         http = _TokenHttp()
         client = self._oauth_client(http, settings)
-        dest = "https://ppap.example/?resource=" + RESOURCE_A
+        dest = "https://ppap.example/?resource=00000000-0000-4000-8000-0000000000aa"
         start = client.get("/login/feishu", params={"return_to": dest}, follow_redirects=False)
         state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
         done = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)

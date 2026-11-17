@@ -1682,32 +1682,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("region", name="文件信息概览", exact=True).get_by_text("文件 A 更正", exact=True)).to_be_visible()
             browser.close()
 
-    def test_a_saved_receipt_after_revocation_can_confirm_values_but_cannot_grant_permission(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 1000})
-            page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/preview/audit.html?scene=restore-display-denied&task=preview-recovery-task")
-            file_overview(page)
-            page.get_by_role("button", name="更正显示信息", exact=True).click()
-            dialog = page.get_by_role("dialog", name="更正显示信息", exact=True)
-            dialog.get_by_role("textbox", name="客户", exact=True).fill("原请求已保存的客户")
-            dialog.get_by_role("button", name="保存显示信息", exact=True).click()
-            dialog.get_by_role("button", name="关闭，稍后核对", exact=True).click()
-            read_results(page)
-            expect(page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True)).to_be_enabled()
-            page.evaluate("window.postMessage({type:'ppap-preview-read'},location.origin)")
-            file_overview(page)
-            page.get_by_role("button", name="更正显示信息", exact=True).click()
-            dialog.get_by_role("button", name="核对保存结果", exact=True).click()
-            expect(dialog).not_to_be_visible()
-            expect(page.get_by_role("region", name="文件信息概览", exact=True).get_by_text("原请求已保存的客户", exact=True)).to_be_visible()
-            file_overview(page)
-            page.get_by_role("button", name="更正显示信息", exact=True).click()
-            expect(dialog.get_by_role("textbox", name="客户", exact=True)).to_be_disabled()
-            expect(dialog.get_by_role("button", name="保存显示信息", exact=True)).to_be_disabled()
-            browser.close()
-
     def test_display_dialog_is_keyboard_accessible_and_can_clear_fields(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -2706,7 +2680,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()
             browser.close()
 
-    def test_incomplete_scope_record_preserves_actual_verdict_and_report_access(self):
+    def test_incomplete_scope_record_preserves_actual_verdict_and_report_entry(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
@@ -2935,7 +2909,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("navigation", name="当前位置", exact=True).get_by_text("审核文件", exact=True)).to_be_visible()
             browser.close()
 
-    def test_archive_report_access_does_not_imply_original_or_private_task_access(self):
+    def test_archive_history_offers_its_source_task_and_reports_a_missing_original(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1280, "height": 1000})
@@ -2944,8 +2918,8 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("table", name="审核文件列表", exact=True).get_by_role("row", name=re.compile("P0418901")).get_by_role("button").first.click()
             select_history(page, 2)
             expect(selected_revision(page, "Rev B")).to_be_visible()
-            # Without access the notice explains it; no dead button is shown.
-            expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_have_count(0)
+            # The enterprise reads every task, so the history always leads back to its source task.
+            expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_be_enabled()
             page.get_by_role("button", name="查看原件", exact=True).click()
             expect(page.get_by_text("本次原件不可访问", exact=True)).to_be_visible()
             page.get_by_role("tab", name="审核详情", exact=True).click()
@@ -2953,24 +2927,6 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="查看报告", exact=True).click()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
             browser.close()
-
-    def test_historical_report_deleted_or_denied_never_opens_newest_pdf(self):
-        for scene in ("archive-report-deleted", "archive-report-denied"):
-            with self.subTest(scene=scene), sync_playwright() as playwright:
-                browser = playwright.chromium.launch()
-                page = browser.new_page(viewport={"width": 1280, "height": 1000})
-                page.set_default_timeout(5000)
-                page.goto(PREVIEW + "/preview/audit.html?scene=" + scene + "&view=archive")
-                page.get_by_role("row", name=re.compile("P0418901")).get_by_role("button").first.click()
-                select_history(page, 2)
-                page.get_by_role("button", name="查看报告", exact=True).click()
-                expect(page.get_by_text("本次报告不可访问", exact=True)).to_be_visible()
-                expect(page.get_by_text("第 2 次审核 · 原件修订 Rev B", exact=True)).to_be_visible()
-                expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_have_count(0)
-                expect(page.get_by_role("button", name="分享", exact=True)).to_be_disabled()
-                page.get_by_role("button", name="返回本次审核", exact=True).click()
-                expect(selected_revision(page, "Rev B")).to_be_visible()
-                browser.close()
 
     def test_historical_report_download_and_return_keep_the_selected_audit(self):
         with sync_playwright() as playwright:
@@ -3017,12 +2973,12 @@ class AuditPreviewTests(unittest.TestCase):
             expect(selected_revision(page, "Rev B")).to_have_count(0)
             browser.close()
 
-    def test_allowed_history_source_task_returns_to_the_same_selected_history(self):
+    def test_history_source_task_returns_to_the_same_selected_history(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/preview/audit.html?scene=archive-task-allowed&view=archive")
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
             row = page.get_by_role("table", name="审核文件列表", exact=True).get_by_role("row", name=re.compile("P0418901"))
             row.get_by_role("button").first.click()
             select_history(page, 2)
@@ -3060,7 +3016,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(original).not_to_have_attribute("data-file-version", "preview-archive-task-A001-3-version-1")
             browser.close()
 
-    def test_archive_history_uses_selected_round_original_without_opening_private_task(self):
+    def test_archive_history_uses_selected_round_original_before_opening_its_task(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
@@ -3070,7 +3026,7 @@ class AuditPreviewTests(unittest.TestCase):
             row.get_by_role("button").first.click()
             expect(page.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
             expect(selected_revision(page, "Rev C")).to_be_visible()
-            expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_be_enabled()
             select_history(page, 2)
             expect(selected_revision(page, "Rev B")).to_be_visible()
             open_basis(page)

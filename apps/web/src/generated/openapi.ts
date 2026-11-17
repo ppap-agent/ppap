@@ -1400,23 +1400,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/resources/{resource_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Resource Get */
-        get: operations["resource_get_resources__resource_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/review-hints/responses": {
         parameters: {
             query?: never;
@@ -1925,16 +1908,6 @@ export interface components {
              */
             state: "pending" | "accepted" | "rejected";
         };
-        /** AuditArchiveAccess */
-        AuditArchiveAccess: {
-            /** Reason */
-            reason: string | null;
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "allowed" | "denied" | "unknown" | "deleted";
-        };
         /** AuditArchiveCategory */
         AuditArchiveCategory: {
             /** Count */
@@ -1982,7 +1955,6 @@ export interface components {
         };
         /** AuditArchiveOriginal */
         AuditArchiveOriginal: {
-            access: components["schemas"]["AuditArchiveAccess"];
             file: components["schemas"]["FileVersion"] | null;
             /** File Version Id */
             file_version_id: string;
@@ -2326,21 +2298,20 @@ export interface components {
         };
         /**
          * AuditHistoryDetail
-         * @description Authorized frozen content, not permission to read the whole source task.
+         * @description One frozen result of a task, readable by the whole enterprise; creator.mine says who may change it.
          *
          *     report_share, when present, belongs to this single full report reference.
          *     Do not inherit the source task's latest, unrelated share operation.
          */
         AuditHistoryDetail: {
+            creator: components["schemas"]["AuditTaskCreator"];
             entry: components["schemas"]["AuditHistoryEntry"];
             file: components["schemas"]["AuditTaskFile"];
             /** Frozen File Version Ids */
             frozen_file_version_ids: string[];
             /** Originals */
             originals: components["schemas"]["AuditArchiveOriginal"][];
-            report_access: components["schemas"]["AuditArchiveAccess"];
             report_share?: components["schemas"]["AuditReportShare"] | null;
-            source_task_access: components["schemas"]["AuditArchiveAccess"];
         };
         /** AuditHistoryEntry */
         AuditHistoryEntry: {
@@ -2359,7 +2330,6 @@ export interface components {
             initiator: string;
             reference: components["schemas"]["AuditResultReference"];
             report: components["schemas"]["AuditFileReport"];
-            report_access: components["schemas"]["AuditArchiveAccess"];
             /** Rule Title */
             rule_title: string | null;
             /** Sequence */
@@ -2645,15 +2615,8 @@ export interface components {
         AuditRoundReadView: {
             /** Files */
             files: components["schemas"]["AuditRoundReadFile"][];
-            report_source?: components["schemas"]["AuditRoundReportSource"];
             /** Unassigned Findings */
             unassigned_findings: components["schemas"]["Finding"][];
-        };
-        /** AuditRoundReportSource */
-        AuditRoundReportSource: {
-            access: components["schemas"]["AuditArchiveAccess"];
-            /** Task Id */
-            task_id: string | null;
         };
         /** AuditRuleMatch */
         AuditRuleMatch: {
@@ -2833,6 +2796,7 @@ export interface components {
             confirmation_scope: components["schemas"]["AuditTaskConfirmationScope"] | null;
             /** Created At */
             created_at: string;
+            creator: components["schemas"]["AuditTaskCreator"];
             /** Customer Preference */
             customer_preference: string | null;
             /** Deep Mode */
@@ -2907,11 +2871,20 @@ export interface components {
             /** Target File Version Ids */
             target_file_version_ids: string[];
         };
+        /**
+         * AuditTaskCreator
+         * @description Everyone in the enterprise sees a task; only its creator (mine) changes it.
+         */
+        AuditTaskCreator: {
+            /** Mine */
+            mine: boolean;
+            /** Name */
+            name: string;
+        };
         /** AuditTaskFile */
         AuditTaskFile: {
             audit?: components["schemas"]["AuditFileReview"] | null;
             deep_review?: components["schemas"]["AuditDeepReview"] | null;
-            display_edit_access?: components["schemas"]["AuditArchiveAccess"];
             display_info?: components["schemas"]["AuditFileDisplayInfo"] | null;
             file: components["schemas"]["FileVersion"];
             match: components["schemas"]["AuditRuleMatch"] | null;
@@ -2980,6 +2953,7 @@ export interface components {
             completion_reason: ("no_matching_rules" | "processed") | null;
             /** Created At */
             created_at: string;
+            creator: components["schemas"]["AuditTaskCreator"];
             /** Deep Mode */
             deep_mode: boolean;
             /**
@@ -3095,7 +3069,6 @@ export interface components {
          */
         AuditUsageEntry: {
             allocation: components["schemas"]["AuditUsageAllocation"];
-            audit_access: components["schemas"]["AuditArchiveAccess"];
             /** Audit Sequence */
             audit_sequence: number | null;
             /** Debited At */
@@ -8309,37 +8282,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-        };
-    };
-    resource_get_resources__resource_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                resource_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

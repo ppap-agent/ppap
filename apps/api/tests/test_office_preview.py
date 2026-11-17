@@ -68,7 +68,6 @@ class OfficePreviewTests(unittest.TestCase):
         self.assertEqual(client.get("/files/file1/versions/version1/office?round_id=round1").status_code, 200)
         store.read_file_version.assert_called_with(principal, "file1", "version1", round_id="round1")
         store.resource.assert_not_called()
-        store.grants.assert_not_called()
         token = self.ticket()
         response = client.get("/office/content", params={"ticket": token})
         self.assertEqual(response.content, b"file-content")

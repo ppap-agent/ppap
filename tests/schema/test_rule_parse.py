@@ -20,7 +20,6 @@ class RuleParseDatabaseTests(unittest.TestCase):
     def test_idempotent_acceptance_unknown_lease_late_result_and_current_source_authorization(self):
         from api import create_app
         from fastapi.testclient import TestClient
-        from product.db import connect
         from product.settings import Settings
         from product.store import AuthStore
         from worker import process_claimed
@@ -80,16 +79,14 @@ class RuleParseDatabaseTests(unittest.TestCase):
             with worker._conn() as conn:
                 self.assertEqual(conn.execute("SELECT count(*) FROM engine.attempts WHERE job_id = %s", (job.id,)).fetchone()[0], 1)
             with TestClient(create_app(settings, lambda _: {"state": "ok"}, lambda _: {"state": "ok"}, api)) as client:
-                for user in ("bob", "carol"):
+                # The same enterprise reads the parse result; another enterprise does not.
+                for user, status in (("bob", 200), ("carol", 403)):
                     client.cookies.clear()
                     self.assertEqual(client.post("/isolated-dev/sessions", json={"subject": user}).status_code, 200)
-                    self.assertEqual(client.get("/rules/parse/" + job.id).status_code, 403)
+                    self.assertEqual(client.get("/rules/parse/" + job.id).status_code, status)
                 client.cookies.clear()
                 client.post("/isolated-dev/sessions", json={"subject": "alice"})
                 self.assertEqual(client.get("/rules/parse/" + job.id).status_code, 200)
-                with connect(settings, "migrator") as conn:
-                    conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (source.file_id, alice.user_id))
-                self.assertEqual(client.get("/rules/parse/" + job.id).status_code, 403)
         finally:
             self.schema.require(
                 self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {database} WITH (FORCE)"), "drop isolated rule parse DB"

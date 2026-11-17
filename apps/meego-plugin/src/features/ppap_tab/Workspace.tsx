@@ -74,7 +74,10 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
     docs.forEach(doc => seen.current.add(doc.attachment.uid));
   }, [docs]);
 
-  const choosing = !flight || (flight.state === 'pending_confirm' && reselect);
+  // Someone else's prepared audit waits for them; anyone may start their own audit of the package instead.
+  const foreign = Boolean(flight && !flight.creator.mine);
+  const choosing = !flight || (flight.state === 'pending_confirm' && (reselect || foreign));
+  const mine = Boolean(latest?.creator.mine);
   const chosen = docs.filter(doc => picked.has(doc.attachment.uid));
   const nodeWaiting = data.aiNode?.status === 'running';
   const [releasing, setReleasing] = useState(false);
@@ -186,8 +189,8 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
       if (reply.reports?.state === 'not_configured') notes.push('这个空间还没有“PPAP 审核报告”附件字段，管理员添加后，逐文件审核报告会一并写回。');
       else if (reply.reports?.state === 'pending') notes.push('有审核报告还在生成，生成后再写回一次即可补上。');
       else if (reply.reports?.state === 'failed' || reply.reports?.state === 'unknown') notes.push('审核报告没有全部附上，请稍后再写回一次；已附上的不会重复。');
-      if (reply.node === 'review_objection') notes.push('复核人对这次“符合”的结论有异议，流程节点继续等待：重新审核整包，或由有复核权限的人人工放行。');
-      else if (reply.node === 'not_passed') notes.push('结论不是“符合”，流程节点继续等待：整改后重新审核整包；确需例外时，由有复核权限的人人工放行。');
+      if (reply.node === 'review_objection') notes.push('复核人对这次“符合”的结论有异议，流程节点继续等待：重新审核整包，或人工放行。');
+      else if (reply.node === 'not_passed') notes.push('结论不是“符合”，流程节点继续等待：整改后重新审核整包；确需例外时，可以人工放行。');
       else if (reply.node === 'failed' || reply.node === 'unknown') notes.push('流程节点没有自动完成，请稍后再写回一次。');
       else if (reply.node === 'not_configured') notes.push('流程里的 PPAP 节点尚未配置完成，请联系管理员。');
       if (notes.length) setNotice('结论已写入评论区。' + notes.join(''));
@@ -199,7 +202,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
     }
   }
 
-  // A reviewer lets the flow pass although the round did not conform; the conclusion itself stays.
+  // The round's creator lets the flow pass although the round did not conform; the conclusion itself stays.
   async function release() {
     if (!latest?.round_id || !reason.trim()) return;
     setBusy('正在放行…');
@@ -262,20 +265,21 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
 
   const ngCount = view.issues.filter(issue => bucket(issue.check) === 'NG').length;
   const written = latest?.round_id ? (data.written === null ? null : data.written.includes(latest.round_id)) : null;
-  const writable = !flight && Boolean(latest?.round_id) && ['PASS', 'NG', 'UNKNOWN'].includes(total);
+  // Writing back and releasing speak for the round on the work item: only its creator does either.
+  const writable = !flight && mine && Boolean(latest?.round_id) && ['PASS', 'NG', 'UNKNOWN'].includes(total);
   const current = open && shown.find(issue => issue.row.file.id === open.file && issue.check.rule_item.id === open.clause);
-  const startLabel = !latest ? `审核 ${chosen.length} 份资料` : `重新审核整包（${chosen.length} 份）`;
+  const startLabel = !latest ? `审核 ${chosen.length} 份资料` : mine ? `重新审核整包（${chosen.length} 份）` : `由我重新审核整包（${chosen.length} 份）`;
   // Once the package has changed, the next step is a new round; until then it is sharing the conclusion.
   const startFirst = !latest || pack.stale || !writable || written === true;
   const released = latest?.round_id ? data.releases[latest.round_id] : undefined;
   // Only the latest, unchanged, written-back round of a waiting node can be released.
   // A reviewer's objection keeps a conforming round from completing the node on its own; the conclusion stays as found.
   const objection = Boolean(latest?.objection);
-  const releasable = nodeWaiting && !released && !pack.stale && (total === 'NG' || total === 'UNKNOWN' || (total === 'PASS' && objection));
+  const releasable = nodeWaiting && mine && !released && !pack.stale && (total === 'NG' || total === 'UNKNOWN' || (total === 'PASS' && objection));
   // Written back and conforming, the node completes itself, unless a reviewer objects.
   const waitingText =
     total === 'PASS' && objection && !pack.stale
-      ? '流程正在等待 PPAP 审核：复核人对这次“符合”的结论有异议，写回后流程仍会等待。重新审核整包，或由有复核权限的人人工放行。'
+      ? '流程正在等待 PPAP 审核：复核人对这次“符合”的结论有异议，写回后流程仍会等待。重新审核整包，或由发起人人工放行。'
       : '流程正在等待 PPAP 审核：核对资料并确认后开始审核；结论为“符合”并写回后，流程自动进入下一步。';
 
   // One primary action, chosen by where the package stands; the rest wait in the menu.
@@ -291,6 +295,8 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
         ? { tone: 'info', text: '处理时间较长。', action: { label: '刷新', run: () => void refresh() } }
         : flight && flight.state !== 'pending_confirm' && flight.state !== 'matching'
           ? { tone: 'info', spin: true, text: `审核进行中${flight.progress ? `，已完成 ${flight.progress.completed}/${flight.progress.total} 份` : ''}。可以离开这个页面，审核会继续。` }
+          : foreign && flight!.state === 'pending_confirm'
+            ? { tone: 'info', text: `${flight!.creator.name || '同事'} 已准备一次审核，等待其确认。你也可以由自己审核整包。` }
           : pack.stale && !flight
             ? { tone: 'warning', text: `资料在上次审核后有变化${staleWords(pack)}。当前结论针对的是变化前的资料，重新审核整包后才反映现状。` }
             : outside
@@ -302,6 +308,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
                   : null;
   const meta = [
     `${docs.length} 份资料`,
+    latest && !mine && `${latest.creator.name || '同事'} 发起`,
     latest && when(latest.round_started_at ?? latest.created_at),
     latest && (ngCount ? `不符合 ${ngCount} 项` : ''),
     latest && (view.issues.length ? `待处理 ${view.issues.length} 项` : ''),
@@ -446,7 +453,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
           <TextArea aria-label="放行理由" value={reason} maxLength={500} autosize={{ minRows: 2, maxRows: 6 }} onChange={setReason} placeholder="例如：客户已书面接受该偏差" />
         </Space>
       </Modal>
-      {flight && flight.state === 'pending_confirm' && !reselect && <Confirm task={flight} rules={data.rules} space={item.project_key} revise={revise} refresh={refresh} onReselect={() => setReselect(true)} />}
+      {flight && !foreign && flight.state === 'pending_confirm' && !reselect && <Confirm task={flight} rules={data.rules} space={item.project_key} revise={revise} refresh={refresh} onReselect={() => setReselect(true)} />}
 
       {report && latest ? (
         <article className="report-view" aria-label="审核报告">
@@ -500,7 +507,7 @@ function DocTable(props: DocTableProps) {
       ),
     },
     { title: '审核结果', dataIndex: 'state', width: '42%', render: (_: unknown, doc: Doc) =>
-        doc.state === 'confirm' && props.flight ? <ConfirmRow task={props.flight} row={doc.row!} revise={props.revise} disabled={props.busy} /> : <DocStatus doc={doc} onIssues={props.onIssues} onReport={props.onReport} onDownload={props.onDownload} onRegenerate={props.onRegenerate} /> },
+        doc.state === 'confirm' && props.flight?.creator.mine ? <ConfirmRow task={props.flight} row={doc.row!} revise={props.revise} disabled={props.busy} /> : <DocStatus doc={doc} onIssues={props.onIssues} onReport={props.onReport} onDownload={props.onDownload} onRegenerate={props.onRegenerate} /> },
   ];
   return (
     <Table
@@ -535,7 +542,7 @@ function DocStatus({ doc, onIssues, onReport, onDownload, onRegenerate }: { doc:
     case 'matching':
       return <Text type="tertiary"><Spin size="small" /> 正在识别类型和规则…</Text>;
     case 'confirm':
-      return null;
+      return <Text type="tertiary">待发起人确认</Text>;
     case 'running':
       // Only a matched file is audited; the others already have their final answer.
       if (!audit) return row!.match?.state === 'matched' && !row!.reference_only ? <Text type="tertiary">排队中</Text> : <Unaudited state={unaudited(row!)} />;

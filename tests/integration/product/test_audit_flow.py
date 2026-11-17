@@ -12,7 +12,7 @@ import pytest
 from api import create_app
 from fastapi.testclient import TestClient
 from product import build_product_store
-from product.fixtures import RULE_A, USER_BOB
+from product.fixtures import RULE_A, USER_ALICE
 from product.settings import Settings
 from product.store.suite_releases import SuiteReleaseStore
 from psycopg import errors, sql
@@ -88,7 +88,7 @@ class AuditFlowTests(unittest.TestCase):
         self.assertIsNotNone(claimed)
         process_claimed(self.store, claimed, "test-worker")
 
-    def test_reaudit_draft_acceptance_retains_authorized_predecessor(self):
+    def test_reaudit_draft_acceptance_retains_readable_predecessor(self):
         self._login("alice")
         target = self._upload("report.xlsx", b"target-bytes")
 
@@ -107,14 +107,15 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/drafts/{second_draft}").json()["status"], "accepted")
         self.assertEqual(self.client.post(f"/drafts/{second_draft}/accept", json=payload).json()["id"], second.json()["id"])
         self.assertEqual(self.client.post(f"/drafts/{second_draft}/accept", json={"idempotency_key": "second-report"}).status_code, 409)
+        # Another member of the enterprise re-audits alice's round as their own round.
+        self._login("bob")
         third_draft = draft()
-        self._execute(
-            "DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s",
-            (first["id"], self.store.principal_for_fixture("alice").user_id),
-        )
         third = self.client.post(f"/drafts/{third_draft}/accept", json={"idempotency_key": "third-report", "predecessor_id": first["id"]})
         self.assertEqual(third.status_code, 201)
         self.assertEqual(third.json()["predecessor_id"], first["id"])
+        self._login("carol")
+        foreign = self.client.post("/drafts").json()["id"]
+        self.assertEqual(self.client.post(f"/drafts/{foreign}/accept", json={"idempotency_key": "carol-report", "predecessor_id": first["id"]}).status_code, 403)
 
     def test_reaudit_preparation_keeps_original_inputs_and_replays_one_draft(self):
         self._login("alice")
@@ -151,10 +152,7 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(self.client.post("/drafts", json=payload).status_code, 403)
         self._login("carol")
         self.assertEqual(self.client.post("/drafts", json=payload).status_code, 403)
-        self._login("alice")
-        self._execute("DELETE FROM product.resource_grants WHERE resource_id = %s", (request_id,))
         self.assertEqual(self.client.get(f"/drafts/{request_id}").status_code, 403)
-        self.assertEqual(self.client.post("/drafts", json=payload).status_code, 403)
 
     def test_initial_draft_inputs_are_atomic_and_concurrent_creation_reuses_identity(self):
         self._login("alice")
@@ -309,7 +307,7 @@ class AuditFlowTests(unittest.TestCase):
                 conn.execute(sql.SQL("DROP FUNCTION IF EXISTS {}()").format(function))
                 conn.execute(sql.SQL("DROP SEQUENCE IF EXISTS {}").format(sequence))
 
-    def test_cross_tenant_and_review_permission(self):
+    def test_cross_tenant_and_creator_only_review(self):
         self._login("alice")
         target = self._upload("report.xlsx", b"secret-bytes")
         draft = self.client.post("/drafts").json()["id"]
@@ -331,10 +329,12 @@ class AuditFlowTests(unittest.TestCase):
         original = self.client.get(f"/rounds/{round_id}/files/{finding['locator']['file_id']}/versions/{finding['locator']['file_version_id']}/download")
         self.assertEqual(original.status_code, 200)
         self.assertEqual(original.content, self.originals[target["id"]])
-        reviewed = self.client.put(
-            f"/rounds/{round_id}/reviews",
-            json={"item_key": finding["item_key"], "judgment": "同意", "rationale": "x", "next_step": "y", "version": 0},
-        )
+        review = {"item_key": finding["item_key"], "judgment": "同意", "rationale": "x", "next_step": "y", "version": 0}
+        # Another member of the enterprise reads the round and its originals, but only its creator reviews it.
+        self.assertEqual(self.client.put(f"/rounds/{round_id}/reviews", json=review).status_code, 403)
+        self.assertEqual(self._scalar("SELECT count(*) FROM product.reviews WHERE round_id = %s", (round_id,)), 0)
+        self._login("alice")
+        reviewed = self.client.put(f"/rounds/{round_id}/reviews", json=review)
         self.assertEqual(reviewed.status_code, 200)
         self.assertEqual(reviewed.json()["findings"][0]["review"]["judgment"], "同意")
         self.assertEqual(
@@ -344,10 +344,10 @@ class AuditFlowTests(unittest.TestCase):
                     (round_id, finding["item_key"]),
                 )
             ),
-            USER_BOB,
+            USER_ALICE,
         )
 
-    def test_drafts_stay_personal_while_rounds_are_tenant_owned(self):
+    def test_drafts_are_changed_by_their_creator_while_rounds_are_tenant_read(self):
         self._login("alice")
         target = self._upload("report.xlsx", b"draft-bytes")
         draft = self.client.post("/drafts").json()["id"]
@@ -355,9 +355,13 @@ class AuditFlowTests(unittest.TestCase):
             f"/drafts/{draft}",
             json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
+        # Another member of the enterprise may read the draft but does not list or change it.
         self._login("bob")
-        self.assertEqual(self.client.get(f"/drafts/{draft}").status_code, 403)
+        self.assertEqual(self.client.get(f"/drafts/{draft}").status_code, 200)
         self.assertEqual(self.client.get("/drafts").json()["drafts"], [])
+        self.assertEqual(self.client.put(f"/drafts/{draft}", json={"items": []}).status_code, 403)
+        self._login("carol")
+        self.assertEqual(self.client.get(f"/drafts/{draft}").status_code, 403)
         self._login("alice")
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "tenant-round"}).json()["id"]
         self._login("bob")

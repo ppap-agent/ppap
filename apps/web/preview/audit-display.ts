@@ -13,7 +13,7 @@ export function fixtureDisplay(tasks: Map<string, AuditTask>, scene: string): Au
       attempts += 1
       const task = tasks.get(request.reference.task_id)
       const file = task?.round_id === request.reference.round_id ? task.files.find(row => row.file.id === request.reference.file_version_id) : undefined
-      if (!file?.display_info || file.display_edit_access?.state !== 'allowed') return {request, state: 'rejected', info: null, reason: '无权编辑此文件信息。'}
+      if (!file?.display_info || !task?.creator.mine) return {request, state: 'rejected', info: null, reason: '无权编辑此文件信息。'}
       let receipt: DisplayReceipt
       if (scene === 'restore-display-rejected' && attempts === 1) receipt = {request, state: 'rejected', info: null, reason: '未能保存，请重试。'}
       else {
@@ -37,8 +37,9 @@ export function displayReadFixture(task: AuditTask, scene: string): AuditTask {
   const next = structuredClone(task)
   next.files = next.files.map(file => {
     if (!file.display_info?.revision) return file
-    if (scene === 'restore-display-stale' || scene === 'restore-display-denied') return {...file, display_info: {revision: 0, values: Object.fromEntries(displayFields.map(([field]) => [field, file.match?.metadata[field] ?? null])) as ReturnType<typeof fileDisplayValues>}, display_edit_access: scene === 'restore-display-denied' ? {state: 'denied' as const, reason: '编辑许可已撤销。'} : file.display_edit_access}
+    if (scene === 'restore-display-stale' || scene === 'restore-display-denied') return {...file, display_info: {revision: 0, values: Object.fromEntries(displayFields.map(([field]) => [field, file.match?.metadata[field] ?? null])) as ReturnType<typeof fileDisplayValues>}}
     return file
   })
+  if (scene === 'restore-display-denied') next.creator = {name: '示例同事', mine: false}
   return next
 }

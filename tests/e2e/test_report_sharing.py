@@ -260,6 +260,7 @@ def test_directory_timeout_retries_the_same_page_and_ignores_its_late_reply():
         task = {
             "id": task_id,
             "number": "PPAP-目录读取测试",
+            "creator": {"name": "示例用户", "mine": True},
             "state": "completed",
             "confirmation_basis_digest": None,
             "confirmation_scope": None,

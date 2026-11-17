@@ -7,7 +7,7 @@ from pathlib import PurePath
 
 from psycopg.types.json import Jsonb
 
-from product.identity import can_read, can_review
+from product.identity import can_modify, can_read
 from product.review_hints import MAX_REVIEW_HINTS, HintResult, review_hints
 from product.store.suites import SuiteStore
 from product.store.task_view import file_round_audit
@@ -15,8 +15,7 @@ from product.store.task_view import file_round_audit
 
 def _authorize(store, conn, principal, round_id, *, write=False):
     resource = store._resource(conn, round_id)
-    grants = store._grants(conn, round_id, principal.user_id) if resource else set()
-    if not resource or resource.kind != "audit_round" or not can_read(principal, resource, grants) or write and not can_review(principal, resource, grants):
+    if not resource or resource.kind != "audit_round" or not (can_modify if write else can_read)(principal, resource):
         raise KeyError("missing")
     if not conn.execute("SELECT 1 FROM product.memberships WHERE tenant_id=%s AND user_id=%s AND role='member'", (principal.tenant_id, principal.user_id)).fetchone():
         raise KeyError("missing")

@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from product import build_product_store
 from product.feishu import UserTokens
-from product.fixtures import RULE_A, USER_ALICE, USER_BOB
+from product.fixtures import RULE_A
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from product.store.store import AuthStore
@@ -269,16 +269,12 @@ def test_native_preparation_saved_removal_reason_matches_the_recognition_normali
 
 
 @pytest.mark.parametrize("subject", ["bob", "carol"])
-def test_native_preparation_does_not_expand_creator_or_tenant_access(task_system, auth_store_factory, subject):
+def test_native_preparation_does_not_expand_creator_or_tenant_access(task_system, subject):
     client, worker = task_system
     preparation = upload_preparation([checked_file(client, worker)])
     draft_id = str(uuid.uuid4())
     assert client.post("/drafts", json={"request_id": draft_id, "upload_preparation": preparation}).status_code == 201
-    # Even a same-tenant read grant is not permission to borrow a private upload
-    # batch or promote it as its creator.
-    admin = auth_store_factory(worker.settings, reset=False)
-    with admin._conn() as conn:
-        conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read') ON CONFLICT DO NOTHING", (draft_id, USER_BOB))
+    # An upload batch not yet promoted to a task stays its creator's; no other member borrows or promotes it.
     assert client.post("/isolated-dev/sessions", json={"subject": subject}).status_code == 200
     assert client.get(f"/drafts/{draft_id}").status_code == 403
     assert client.get("/drafts").json()["drafts"] == []
@@ -353,7 +349,7 @@ def executable_task(matched_task, core_system):
     return client, worker, path, body, rule
 
 
-def test_archive_summary_matches_frozen_detail_and_preserves_default_and_revocation(matched_task, auth_store_factory):
+def test_archive_summary_matches_frozen_detail_and_is_shared_by_the_enterprise(matched_task, auth_store_factory):
     client, worker, path, body, rule = matched_task
     migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
     version = body["files"][0]["file_version_id"]
@@ -414,13 +410,17 @@ def test_archive_summary_matches_frozen_detail_and_preserves_default_and_revocat
         assert {key: entry[key] for key in ("execution", "conclusion", "report")} == {key: audit[key] for key in ("execution", "conclusion", "report")}
         assert entry["rule_title"] == audit["rule"]["title"]
         assert entry["conclusion"] != "PASS"
+        assert detail.json()["creator"]["mine"] is True
     frozen = history["entries"][-1]["reference"]
-    with migrator._conn() as conn:
-        conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (tasks[0]["id"], USER_ALICE))
-    remaining = client.get(history_path).json()
-    assert [entry["sequence"] for entry in remaining["entries"]] == [3, 2]
-    assert remaining["default_reference"] is None
-    assert client.get(history_path + "/result", params=frozen).status_code == 403
+    # Every member of the enterprise reads the same history; only the creator may change it.
+    assert client.post("/isolated-dev/sessions", json={"subject": "bob"}).status_code == 200
+    assert [entry["reference"] for entry in client.get(history_path).json()["entries"]] == [entry["reference"] for entry in history["entries"]]
+    shared = client.get(history_path + "/result", params=frozen)
+    assert shared.status_code == 200, shared.text
+    assert shared.json()["creator"]["mine"] is False and shared.json()["creator"]["name"] == history["entries"][-1]["initiator"]
+    assert client.post("/isolated-dev/sessions", json={"subject": "carol"}).status_code == 200
+    assert client.get(history_path).status_code in {403, 404}
+    assert client.get(history_path + "/result", params=frozen).status_code in {403, 404}
 
 
 @pytest.mark.parametrize("invalid", ["not_ready", "unmapped_cloud_file", "foreign_resource", "invalid_validation", "stale_analysis", "string_revision"])
@@ -486,7 +486,6 @@ def test_round_read_view_projects_the_same_authorized_task_report_without_creati
     observed = response.json()
     TypeAdapter(wc.Round).validate_python(observed)
     view = observed["read_view"]
-    assert view["report_source"] == {"task_id": task["id"], "access": {"state": "allowed", "reason": None}}
     assert len(view["files"]) == 1
     assert view["files"][0]["file"] == task["files"][0]["file"]
     assert view["files"][0]["audit"] == expected
@@ -499,12 +498,13 @@ def test_round_read_view_projects_the_same_authorized_task_report_without_creati
         assert worker.claim_job("round-report-no-read-side-effect") is None
 
 
-def test_round_report_projection_keeps_private_task_and_current_grant_authority(executable_task, auth_store_factory):
+def test_round_report_projection_is_shared_by_the_enterprise_but_only_its_creator_regenerates(executable_task):
     client, worker, path, _body, _rule = executable_task
     accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
-    process_claimed(worker, worker.claim_job("private-report-audit"), "private-report-audit")
-    process_claimed(worker, worker.claim_job("private-report-pdf"), "private-report-pdf")
+    process_claimed(worker, worker.claim_job("shared-report-audit"), "shared-report-audit")
+    process_claimed(worker, worker.claim_job("shared-report-pdf"), "shared-report-pdf")
     task = client.get(path).json()
+    assert task["creator"]["mine"] is True
     audit = task["files"][0]["audit"]
     report = audit["report"]
     assert report["state"] == "ready"
@@ -513,51 +513,30 @@ def test_round_report_projection_keeps_private_task_and_current_grant_authority(
     reference = {"round_id": task["round_id"], "file_version_id": audit["file_version_id"], "result_attempt": audit["result_attempt"], "artifact_id": report["artifact"]["artifact_id"]}
     original_pdf = client.get(download_path, params=reference)
     assert original_pdf.status_code == 200 and original_pdf.content.startswith(b"%PDF-")
-    migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
-    # Explicit Round and Task grants still do not make Bob the private Task owner.
-    with migrator._conn() as conn:
-        for identity in (task["round_id"], task["id"]):
-            conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read')", (identity, USER_BOB))
 
-    def read_denied_report():
-        response = client.get(round_path, params={"read_view": True})
-        assert response.status_code == 200, response.text
-        view = TypeAdapter(wc.Round).validate_python(response.json())["read_view"]
-        assert view["report_source"]["task_id"] is None
-        assert view["report_source"]["access"]["state"] == "denied"
-        assert view["report_source"]["access"]["reason"]
-        actual = view["files"][0]["audit"]
-        assert {key: value for key, value in actual.items() if key != "report"} == {key: value for key, value in audit.items() if key != "report"}
-        assert actual["report"]["report_id"] is None
-        assert not actual["report"].get("artifact")
-        assert report["report_id"] not in json.dumps(view)
-        assert report["artifact"]["artifact_id"] not in json.dumps(view)
-        assert client.get(path).status_code == 403
-        assert client.get(download_path, params=reference).status_code == 403
-
+    # Another member of the enterprise reads the same task, round and report, and is told who may regenerate it.
     client.cookies.clear()
     assert client.post("/isolated-dev/sessions", json={"subject": "bob"}).status_code == 200
-    read_denied_report()
+    shared = client.get(path)
+    assert shared.status_code == 200, shared.text
+    assert shared.json()["creator"] == {"name": task["creator"]["name"], "mine": False}
+    response = client.get(round_path, params={"read_view": True})
+    assert response.status_code == 200, response.text
+    seen = TypeAdapter(wc.Round).validate_python(response.json())["read_view"]["files"][0]["audit"]["report"]
+    assert {key: value for key, value in seen.items() if key != "regenerate_reason"} == {key: value for key, value in report.items() if key != "regenerate_reason"}
+    assert seen["regenerate_allowed"] is False and seen["regenerate_reason"] == "只有任务发起人可以重新生成报告。"
+    assert client.get(download_path, params=reference).content == original_pdf.content
     client.cookies.clear()
     assert client.post("/isolated-dev/sessions", json={"subject": "carol"}).status_code == 200
     assert client.get(round_path, params={"read_view": True}).status_code == 403
+    assert client.get(path).status_code == 403
     assert client.get(download_path, params=reference).status_code == 403
     client.cookies.clear()
     assert client.get(round_path, params={"read_view": True}).status_code == 401
-    assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
-    with migrator._conn() as conn:
-        conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (task["id"], USER_ALICE))
-    read_denied_report()
-    with migrator._conn() as conn:
-        conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read')", (task["id"], USER_ALICE))
-    restored = client.get(round_path, params={"read_view": True}).json()["read_view"]
-    assert restored["report_source"] == {"task_id": task["id"], "access": {"state": "allowed", "reason": None}}
-    assert restored["files"][0]["audit"]["report"] == report
-    assert client.get(download_path, params=reference).content == original_pdf.content
-    assert worker.claim_job("private-report-no-new-work") is None
+    assert worker.claim_job("shared-report-no-new-work") is None
 
 
-def test_legacy_round_read_view_does_not_invent_a_private_task_or_report(task_system):
+def test_legacy_round_read_view_does_not_invent_a_task_or_report(task_system):
     client, worker = task_system
     file = checked_file(client, worker, "历史原件.xlsx")
     draft = client.post("/drafts", json={"items": [{"file_version_id": file["file_version_id"], "role": "target", "rule_version_id": RULE_A}]}).json()
@@ -568,7 +547,6 @@ def test_legacy_round_read_view_does_not_invent_a_private_task_or_report(task_sy
     assert response.status_code == 200, response.text
     observed = response.json()
     TypeAdapter(wc.Round).validate_python(observed)
-    assert "report_source" not in observed["read_view"]
     assert observed["read_view"]["files"][0]["audit"]["report"]["state"] == "not_eligible"
     assert {key: value for key, value in observed.items() if key != "read_view"} == original
     assert client.get("/audit-tasks").json()["tasks"] == []
@@ -639,7 +617,7 @@ def billing_client(worker, item):
     return client, http, calls
 
 
-@pytest.mark.parametrize("fault", ["round_grant", "unselected_file_grant", "unselected_not_ready", "unselected_cloud_source", "target_unselected", "result_attempt"])
+@pytest.mark.parametrize("fault", ["unselected_not_ready", "unselected_cloud_source", "target_unselected", "result_attempt"])
 def test_pdf_download_keeps_complete_task_authority(executable_task, auth_store_factory, fault):
     client, worker, path, body, _rule = executable_task
     unselected = {**checked_file(client, worker, "未选择的补充.xlsx"), "selection": "unselected"}
@@ -662,11 +640,7 @@ def test_pdf_download_keeps_complete_task_authority(executable_task, auth_store_
     assert original_pdf.status_code == 200 and original_pdf.content.startswith(b"%PDF-")
     migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
     with migrator._conn() as conn:
-        if fault in {"round_grant", "unselected_file_grant"}:
-            resource = task["round_id"] if fault == "round_grant" else next(file["file"]["file_id"] for file in task["files"] if file["file"]["id"] == unselected["file_version_id"])
-            capabilities = conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s RETURNING capability", (resource, USER_ALICE)).fetchall()
-            assert capabilities
-        elif fault == "unselected_not_ready":
+        if fault == "unselected_not_ready":
             conn.execute("UPDATE product.file_versions SET status = 'failed' WHERE id = %s", (unselected["file_version_id"],))
         elif fault == "unselected_cloud_source":
             upload_request = conn.execute("SELECT upload_request FROM product.file_versions WHERE id = %s", (unselected["file_version_id"],)).fetchone()[0]
@@ -687,10 +661,7 @@ def test_pdf_download_keeps_complete_task_authority(executable_task, auth_store_
         assert response.json() == {"error": expected}
     finally:
         with migrator._conn() as conn:
-            if fault in {"round_grant", "unselected_file_grant"}:
-                for (capability,) in capabilities:
-                    conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, %s)", (resource, USER_ALICE, capability))
-            elif fault == "unselected_not_ready":
+            if fault == "unselected_not_ready":
                 conn.execute("UPDATE product.file_versions SET status = 'ready' WHERE id = %s", (unselected["file_version_id"],))
             elif fault == "unselected_cloud_source":
                 conn.execute("UPDATE product.file_versions SET upload_request = %s WHERE id = %s", (Jsonb(upload_request) if upload_request is not None else None, unselected["file_version_id"]))
@@ -1028,6 +999,15 @@ def test_charged_report_and_zip_recovery_check_quota_without_new_audit_fees(matc
         "result_attempt": original["result_attempt"],
         "report_id": failed_report.id,
     }
+    # Another member of the enterprise sees the failed report but cannot regenerate it.
+    client.cookies.clear()
+    assert client.post("/isolated-dev/sessions", json={"subject": "bob"}).status_code == 200
+    seen = next(source["audit"]["report"] for source in client.get(path).json()["files"] if source["file"]["id"] == source_id)
+    assert seen["state"] == "failed" and seen["regenerate_allowed"] is False
+    refused = client.post(path + f"/reports/{failed_report.id}/regenerations", json={"request_id": str(uuid.uuid4()), "reference": reference})
+    assert refused.status_code == 403, refused.text
+    client.cookies.clear()
+    assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
     worker.settings.feishu_free_trial_quota_points = 0
     item = {"enabled": True, "user_quota": 0, "ai_package_purchased": True}
     charged, http, calls = billing_client(worker, item)
@@ -1523,12 +1503,18 @@ def test_reaudit_source_authorization_and_scope_cannot_be_bypassed(matched_task,
     assert client.post("/audit-tasks", json=command).status_code == 409
     assert client.get(path).json() == original
     assert client.post("/isolated-dev/sessions", json={"subject": subject}).status_code == 200
-    denied_read = client.get(f"/rounds/{accepted['round_id']}/reaudit-inputs")
-    denied_create = client.post("/audit-tasks", json=command)
-    for response in (denied_read, denied_create):
-        assert response.status_code == 403
-        assert response.json() == {"error": "access_denied"}
-    assert client.get("/audit-tasks").json()["tasks"] == []
+    if subject == "bob":
+        # Another member of the enterprise may re-audit the round as their own task, under the same scope rules.
+        assert client.get(f"/rounds/{accepted['round_id']}/reaudit-inputs").status_code == 200
+        assert client.post("/audit-tasks", json=command).status_code == 409
+        assert [row["id"] for row in client.get("/audit-tasks").json()["tasks"]] == [original["id"]]
+    else:
+        denied_read = client.get(f"/rounds/{accepted['round_id']}/reaudit-inputs")
+        denied_create = client.post("/audit-tasks", json=command)
+        for response in (denied_read, denied_create):
+            assert response.status_code == 403
+            assert response.json() == {"error": "access_denied"}
+        assert client.get("/audit-tasks").json()["tasks"] == []
     assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
     assert client.get(path).json() == original
     assert [row["id"] for row in client.get("/audit-tasks").json()["tasks"]] == [original["id"]]
@@ -2082,7 +2068,7 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
     assert_task_summary(summaries[0], finished)
 
 
-def test_private_task_cannot_be_read_through_its_round_or_original_by_a_tenant_peer(task_system):
+def test_tenant_peer_reads_the_task_round_and_original_but_cannot_change_them(task_system):
     client, worker = task_system
     worker.settings.usage_charge_enabled = False
     file = checked_file(client, worker)
@@ -2097,16 +2083,24 @@ def test_private_task_cannot_be_read_through_its_round_or_original_by_a_tenant_p
     assert client.post("/drafts", json={"predecessor_id": accepted["round_id"]}).status_code == 409
     client.cookies.clear()
     assert client.post("/isolated-dev/sessions", json={"subject": "bob"}).status_code == 200
-    assert client.get(path).status_code == 403
+    shared = client.get(path)
+    assert shared.status_code == 200, shared.text
+    assert shared.json()["creator"]["mine"] is False
     assert client.post(path + "/confirm", json=command).status_code == 403
+    assert client.get(round_path).status_code == 200
+    assert [row["id"] for row in client.get("/rounds").json()["rounds"]] == [accepted["round_id"]]
+    source = f"/files/{version['file_id']}/versions/{version['id']}"
+    assert client.get(round_path + source + "/download").status_code == 200
+    assert client.put(round_path + "/reviews", json={"item_key": "1", "judgment": "confirm", "rationale": "peer", "next_step": "", "version": 0}).status_code == 403
+    client.cookies.clear()
+    assert client.post("/isolated-dev/sessions", json={"subject": "carol"}).status_code == 200
+    assert client.get(path).status_code == 403
     assert client.get(round_path).status_code == 403
     assert client.get("/rounds").json()["rounds"] == []
     assert client.get(round_path + "/bundle").status_code == 403
-    source = f"/files/{version['file_id']}/versions/{version['id']}"
     assert client.get(round_path + source + "/download").status_code == 403
     assert client.get(round_path + source + "/preview").status_code == 403
     assert client.get(source + "/office", params={"round_id": accepted["round_id"]}).status_code == 403
-    assert client.put(round_path + "/reviews", json={"item_key": "1", "judgment": "confirm", "rationale": "peer", "next_step": "", "version": 0}).status_code == 403
 
 
 def test_task_creation_requires_the_exact_completed_file_validation_receipt(task_system):
@@ -2164,24 +2158,27 @@ def test_reference_only_task_can_end_without_a_round_report_or_charge(task_syste
     assert client.get("/rounds").json()["rounds"] == []
 
 
-def test_task_reads_and_job_reads_require_the_private_draft_owner(task_system, auth_store_factory):
+def test_task_is_read_by_the_enterprise_and_changed_only_by_its_creator(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
     source_id = client.get(f"/file-validations/{file['validation_id']}").json()["source_file_id"]
     body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}
     task = client.post("/audit-tasks", json=body).json()
     worker.claim_job("recognition")
-    migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
-    # A file grant is not a private Task grant. Seed this policy boundary directly.
-    with migrator._conn() as conn:
-        conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read')", (source_id, USER_BOB))
     for subject in ("bob", "carol"):
         client.cookies.clear()
         assert client.post("/isolated-dev/sessions", json={"subject": subject}).status_code == 200
         if subject == "bob":
+            # Same enterprise: the task, its file and its listing are visible, marked as someone else's.
             assert client.get(f"/files/{source_id}/versions/{file['file_version_id']}").status_code == 200
-        assert client.get("/audit-tasks").json()["tasks"] == []
-        assert client.get(f"/audit-tasks/{task['id']}").status_code == 403
+            assert [(row["id"], row["creator"]["mine"]) for row in client.get("/audit-tasks").json()["tasks"]] == [(task["id"], False)]
+            shared = client.get(f"/audit-tasks/{task['id']}")
+            assert shared.status_code == 200, shared.text
+            assert shared.json()["creator"]["mine"] is False
+        else:
+            assert client.get(f"/files/{source_id}/versions/{file['file_version_id']}").status_code == 403
+            assert client.get("/audit-tasks").json()["tasks"] == []
+            assert client.get(f"/audit-tasks/{task['id']}").status_code == 403
         assert client.get(f"/audit-tasks/{task['id']}/recognitions/{task['id']}").status_code == 403
         assert client.post(f"/audit-tasks/{task['id']}/end", json={"expected_revision": 0}).status_code == 403
         assert client.post("/audit-tasks", json=body).status_code == 403

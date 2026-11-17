@@ -124,7 +124,7 @@ def test_unknown_check_is_not_automatically_restarted_and_only_owner_can_complet
     assert client.get(path).json() == confirmed
 
 
-def test_file_validation_requires_ready_source_and_current_file_access(validation_system):
+def test_file_validation_requires_ready_source_and_enterprise_file_access(validation_system):
     client, _ = validation_system
     version = client.post("/files", json={"original_filename": "report.xlsx", "byte_size": 1}).json()
     body = validation_request(version)
@@ -135,9 +135,15 @@ def test_file_validation_requires_ready_source_and_current_file_access(validatio
     for subject in ("bob", "carol"):
         client.cookies.clear()
         assert client.post("/isolated-dev/sessions", json={"subject": subject}).status_code == 200
-        assert client.post("/file-validations", json=body).status_code == 403
-        assert client.get(f"/file-validations/{body['request_id']}").status_code == 403
-        assert client.get(path + "/validation").status_code == 403
+        if subject == "bob":
+            # Another member reads the receipt but cannot take over its request.
+            assert client.post("/file-validations", json=body).status_code == 409
+            assert client.get(f"/file-validations/{body['request_id']}").status_code == 200
+            assert client.get(path + "/validation").status_code == 200
+        else:
+            assert client.post("/file-validations", json=body).status_code == 403
+            assert client.get(f"/file-validations/{body['request_id']}").status_code == 403
+            assert client.get(path + "/validation").status_code == 403
     client.cookies.clear()
     assert client.post("/file-validations", json=body).status_code == 401
     assert client.get(f"/file-validations/{body['request_id']}").status_code == 401

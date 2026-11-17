@@ -198,7 +198,7 @@ class RuleApiTests(unittest.TestCase):
             self.assertEqual(rejected.json()["error"], "rule_source_unverified")
         self.assertEqual(self.client.post("/rules", json=payload(clause)).status_code, 201)
         self.login("bob")
-        # Once a rule cites it, the original is shared with that rule inside the tenant.
+        # Every member of the enterprise reads its originals.
         self.assertEqual(self.client.get(path).status_code, 200)
         self.assertEqual(self.client.post("/rules", json=payload(clause)).status_code, 201)
         self.client.cookies.clear()
@@ -247,7 +247,7 @@ class RuleApiTests(unittest.TestCase):
         published = self.client.post("/rules", json=payload).json()
         self.login("bob")
         self.assertEqual(self.client.get("/rules/" + published["id"]).status_code, 200)
-        # The original a published rule cites is shared with the rule inside the tenant.
+        # Every member of the enterprise reads its originals.
         self.assertEqual(self.client.get(f"/files/{source['file_id']}/versions/{source['id']}/download").status_code, 200)
         self.assertEqual(self.client.post("/rules", json=payload).status_code, 201)
         self.assertEqual(self.submit_parse(source).status_code, 202)
@@ -355,20 +355,14 @@ class RuleApiTests(unittest.TestCase):
         self.assertNotEqual(second.json()["id"], request_id)
         self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 2)
 
-    def test_parse_result_requires_current_source_access_and_same_tenant(self):
+    def test_parse_result_is_read_by_the_enterprise_only(self):
         source = self.upload()
         completed = self.finish_parse(source)
         self.login("bob")
-        self.assertEqual(self.client.get("/rules/parse/" + completed["id"]).status_code, 403)
+        self.assertEqual(self.client.get("/rules/parse/" + completed["id"]).json(), completed)
         self.login("carol")
         self.assertEqual(self.client.get("/rules/parse/" + completed["id"]).status_code, 403)
         self.assertEqual(self.submit_parse(self.upload(), completed["id"]).status_code, 403)
-        self.login("alice")
-        self._execute(
-            "DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s",
-            (source["file_id"], self.store.principal_for_fixture("alice").user_id),
-        )
-        self.assertEqual(self.client.get("/rules/parse/" + completed["id"]).status_code, 403)
 
 
 if __name__ == "__main__":

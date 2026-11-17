@@ -153,8 +153,7 @@ def test_pagination_and_initiator_search_keep_the_exact_authorized_history_refer
     selected = next(row for row in combined if row["document_id"])
     assert selected["reference"] == {"task_id": "task-1", "round_id": "round-1", "file_version_id": "version-1", "result_attempt": 2}
     assert selected["audit_sequence"] == 3
-    assert selected["audit_access"]["state"] == "allowed"
-    assert all(row["audit_access"]["state"] == "denied" for row in combined if row != selected)
+    assert all(row["document_id"] is None and row["audit_sequence"] is None for row in combined if row != selected)
 
 
 def test_settlement_filter_and_export_cover_every_matching_entry_not_one_page():

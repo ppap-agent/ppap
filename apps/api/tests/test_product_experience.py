@@ -186,8 +186,10 @@ class ProductExperienceTests(unittest.TestCase):
         # A resumed draft does not depend on a browser query parameter for lineage.
         accepted = self.client.post(f"/drafts/{next_draft}/accept", json={"idempotency_key": "resume-again"}).json()
         self.assertEqual(accepted["predecessor_id"], first)
+        # Bob reads Alice's round and re-audits it in a draft of his own; Alice's open drafts stay hers.
         self.login("bob")
         self.assertEqual(self.client.get("/drafts").json()["drafts"], [])
+        self.assertEqual(self.client.put(f"/drafts/{ids[1]}", json={"items": items}).status_code, 403)
         resumed = self.client.post("/drafts", json={"predecessor_id": first})
         self.assertEqual(resumed.status_code, 201)
         self.assertEqual(resumed.json()["predecessor_id"], first)
@@ -219,8 +221,9 @@ class ProductExperienceTests(unittest.TestCase):
         self.assertEqual(self.client.get(round_path).status_code, 200)
         self.assertEqual(self.client.get(round_path + "?start_row=0").status_code, 422)
         self.assertEqual(self.client.get(round_path + "?start_row=1048577").status_code, 422)
+        # Everyone in the enterprise reads its files and rounds.
         self.login("bob")
-        self.assertEqual(self.client.get(path + "/preview").status_code, 403)
+        self.assertEqual(self.client.get(path + "/preview").status_code, 200)
         self.assertEqual(self.client.get(round_path).status_code, 200)
         self.assertEqual(self.client.get(round_path + "?sheet=Sheet1&start_row=30").status_code, 200)
         self.assertEqual({row["id"] for row in self.client.get("/rounds").json()["rounds"]}, set(rounds))

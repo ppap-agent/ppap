@@ -216,10 +216,6 @@ def freeze_authorized_inputs(conn, principal, prepared: list[dict]) -> tuple[Fro
         ).fetchone()
         if row is None or str(row[2]) != item["file_id"]:
             raise KeyError("snapshot_file_missing")
-        # Do not infer access from tenant membership. Recheck the object grant here.
-        allowed = conn.execute("SELECT 1 FROM product.resource_grants WHERE resource_id=%s AND user_id=%s AND capability IN ('read','review')", (item["file_id"], principal.user_id)).fetchone()
-        if allowed is None:
-            raise KeyError("snapshot_file_missing")
         metadata = item.get("frozen_metadata") or {}
         customers = (item.get("rule_body") or {}).get("customers") or []
         inputs.append(

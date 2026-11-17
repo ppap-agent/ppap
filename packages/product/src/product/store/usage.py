@@ -84,7 +84,6 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
                 "settlement": settlement,
                 "reference": reference,
                 "document_id": history["document_id"] if history else None,
-                "audit_access": {"state": "allowed", "reason": None} if history else {"state": "denied", "reason": "尚未取得这次审核的文件档案访问许可。"},
             }
         )
 

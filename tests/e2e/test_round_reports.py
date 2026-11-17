@@ -98,12 +98,12 @@ def round_report_routes(page, *, report_state="ready", verification=None):
         "read_view": {
             "files": [{"file": version, "role": "target", "rule": rule, "audit": copy.deepcopy(audit)}],
             "unassigned_findings": [],
-            "report_source": {"task_id": TASK, "access": {"state": "allowed", "reason": None}},
         },
     }
     task = {
         "id": TASK,
         "number": "PPAP-原审核",
+        "creator": {"name": "示例用户", "mine": True},
         "state": "reviewing" if report_state in {"pending", "generating"} else "completed",
         "confirmation_basis_digest": None,
         "confirmation_scope": None,

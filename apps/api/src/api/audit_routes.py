@@ -6,7 +6,7 @@ from typing import Any, Literal, cast
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from product.files import ObjectMissing, attachment_content_disposition, original_filename, safe_content_type
-from product.identity import can_read, can_review
+from product.identity import can_modify, can_read
 from product.store import AuthStore
 
 from api import web_contract as wc
@@ -19,15 +19,12 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
             return None, JSONResponse({"error": "unauthenticated"}, status_code=401)
         return principal, None
 
-    def require_object(request: Request, resource_id: str, review: bool = False):
+    def require_object(request: Request, resource_id: str, modify: bool = False):
         principal, denied = require_principal(request)
         if denied:
             return None, denied
         resource = store.resource(resource_id)
-        grants = store.grants(resource_id, principal.user_id) if resource else set()
-        if resource is None or not can_read(principal, resource, grants):
-            return principal, JSONResponse({"error": "access_denied"}, status_code=403)
-        if review and not can_review(principal, resource, grants):
+        if resource is None or not (can_modify if modify else can_read)(principal, resource):
             return principal, JSONResponse({"error": "access_denied"}, status_code=403)
         return principal, None
 
@@ -440,7 +437,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
 
     @app.put("/drafts/{draft_id}", response_model=wc.Draft, openapi_extra=wc.openapi_body(wc.DraftSaveRequest))
     def drafts_save(draft_id: str, body: dict, request: Request) -> JSONResponse:
-        principal, denied = require_object(request, draft_id)
+        principal, denied = require_object(request, draft_id, modify=True)
         if denied:
             return denied
         items = body.get("items") if "items" in body else None
@@ -463,7 +460,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
 
     @app.post("/drafts/{draft_id}/accept", response_model=wc.Round, status_code=201, openapi_extra=wc.openapi_body(wc.DraftAcceptRequest))
     def drafts_accept(draft_id: str, body: dict, request: Request) -> JSONResponse:
-        principal, denied = require_object(request, draft_id)
+        principal, denied = require_object(request, draft_id, modify=True)
         if denied:
             return denied
         try:
@@ -548,7 +545,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
     def review_document_pair(round_id: str, body: dict, request: Request):
         from product.store.review_hints import declare_pair
 
-        principal, denied = require_object(request, round_id, review=True)
+        principal, denied = require_object(request, round_id, modify=True)
         if denied:
             return denied
         try:
@@ -569,7 +566,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
     def review_hint_response(round_id: str, body: dict, request: Request):
         from product.store.review_hints import respond
 
-        principal, denied = require_object(request, round_id, review=True)
+        principal, denied = require_object(request, round_id, modify=True)
         if denied:
             return denied
         try:
@@ -653,7 +650,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
 
     @app.put("/rounds/{round_id}/reviews", response_model=wc.Round, openapi_extra=wc.openapi_body(wc.ReviewRequest))
     def rounds_review(round_id: str, body: dict, request: Request) -> JSONResponse:
-        principal, denied = require_object(request, round_id, review=True)
+        principal, denied = require_object(request, round_id, modify=True)
         if denied:
             return denied
         try:

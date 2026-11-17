@@ -8,7 +8,7 @@
 
 API、Worker 和迁移操作使用各自需要的最小运行权限。业务访问始终检查租户和对象权限；外部身份使用 provider/app/tenant/subject 绑定。
 
-登录不等于对象权限，也不等于人工复核权限。
+登录不等于跨租户访问。同一企业成员可查看彼此的审核；修改（含人工复核、写回、放行）只限对象创建人。
 
 MCP OAuth 委托绑定 provider/app/tenant/subject、客户端和固定资源地址；Scope 只缩小当前用户权限。Bearer、文件传输和 Resource 读取都重新检查当前授权。浏览器 Cookie 不能直接调用 MCP。授权码使用 S256 PKCE 且只能兑换一次；刷新令牌轮换，重复使用旧刷新令牌会撤销整个委托。PostgreSQL 连接默认自动提交，因此这些读改写必须显式开启事务，不能只依赖连接上下文或单条 `FOR UPDATE`。
 

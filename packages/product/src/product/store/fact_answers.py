@@ -10,7 +10,7 @@ from audit.fact_questions import BooleanFactEvaluation, FactQuestion, fingerprin
 from psycopg.types.json import Jsonb
 from pydantic import ValidationError
 
-from product.identity import can_review
+from product.identity import can_modify, can_read
 
 
 def _uuid(value):
@@ -25,17 +25,8 @@ def _authorize(store, conn, principal, round_id, *, write=False):
     if not conn.execute(membership + (" FOR KEY SHARE" if write else ""), (principal.tenant_id, principal.user_id)).fetchone():
         raise KeyError("missing")
     versions = [str(row[0]) for row in conn.execute("SELECT file_version_id FROM product.round_inputs WHERE round_id=%s", (round_id,)).fetchall()]
-    if write:
-        # Keep current source and review grants through the answer transaction.
-        conn.execute(
-            """SELECT resource_id FROM product.resource_grants WHERE user_id=%s AND
-               (resource_id=%s OR resource_id IN (SELECT file_id FROM product.file_versions WHERE id=ANY(%s::uuid[])))
-               ORDER BY resource_id,capability FOR SHARE""",
-            (principal.user_id, round_id, versions),
-        ).fetchall()
     resource = store._resource(conn, round_id)
-    grants = store._grants(conn, round_id, principal.user_id) if resource else set()
-    if not resource or resource.kind != "audit_round" or not can_review(principal, resource, grants):
+    if not resource or resource.kind != "audit_round" or not (can_modify if write else can_read)(principal, resource):
         raise KeyError("missing")
     store._prepared_items(conn, principal, [{"file_version_id": version, "role": "reference"} for version in versions])
 

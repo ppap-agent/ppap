@@ -26,7 +26,7 @@ def register_report_routes(app, store, session_of, http, settings):
             return None, None, None, JSONResponse({"error": "unauthenticated"}, status_code=401)
         principal = session.principal
         resource = store.resource(round_id)
-        if resource is None or not can_read(principal, resource, store.grants(round_id, principal.user_id)):
+        if resource is None or not can_read(principal, resource):
             return None, None, None, JSONResponse({"error": "access_denied"}, status_code=403)
         body = store.get_round(round_id)
         try:
