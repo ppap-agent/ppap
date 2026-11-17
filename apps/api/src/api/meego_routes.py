@@ -327,9 +327,12 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             before=obj(change.get("before")).get("status"),
             after=after,
         )
-        # 8001/8002 carry the new AI status; 8003 completes the node; 8004 rolls it back to an earlier
-        # status; 8005 removes it. A frozen node (8006) keeps its last status.
-        status = "completed" if event_type == 8003 else "removed" if event_type == 8005 else after or str(obj(node.get("ai_info")).get("status") or "")
+        # 8001/8002 carry the new AI status; 8003 completes the node; 8005 removes it; a frozen node (8006)
+        # keeps its last status. A rollback (8004) brings the flow back to the node while Meego leaves its AI
+        # status at done, so the node is recorded as waiting on PPAP again; completing it later still reads
+        # Meego's own state first.
+        fixed = {8003: "completed", 8004: "running", 8005: "removed"}
+        status = (fixed.get(event_type) if isinstance(event_type, int) else None) or after or str(obj(node.get("ai_info")).get("status") or "")
         if event_type == 8006 or status not in {"idle", "running", "done", "stopped", "completed", "removed"}:
             return JSONResponse({})
         state_key = str(node.get("state_key") or "")

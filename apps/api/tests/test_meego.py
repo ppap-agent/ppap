@@ -532,8 +532,9 @@ def test_ai_node_events_only_keep_the_signed_nodes_status(auth_store_factory):
                 assert post(client, 8003, source="openapi").status_code == 200
                 assert post(client, 8001, "done", source="openapi").status_code == 200
                 assert client.get(path, headers=bearer).json()["ai_node"]["status"] == "completed"
-                # A rollback reaching the node again waits again; a removal without a node key changes nothing.
-                assert post(client, 8001, "running").status_code == 200
+                # A rollback (8004, no status change in Meego) reaching the node again waits again;
+                # a removal without a node key changes nothing.
+                assert post(client, 8004).status_code == 200
                 assert post(client, 8005, state_key="").status_code == 200
                 assert client.get(path, headers=bearer).json()["ai_node"]["status"] == "running"
                 assert post(client, 8001, "stopped").status_code == 200
@@ -579,6 +580,12 @@ def test_writeback_completes_the_waiting_ai_node_only_for_a_conforming_latest_ro
         # Written back again: the node is already completed and is not sent again.
         assert client.post(writeback, headers=bearer).json()["node"] == "none"
         assert len(fake.node_calls) == 4
+        # Rolled back: Meego leaves the AI status done; the node waits again and completes without a second edit.
+        fake.node_state = "REACHED"
+        assert client.post("/integrations/meego/ai-node/events", json=node_event(8004)).status_code == 200
+        assert client.post(writeback, headers=bearer).json()["node"] == "completed"
+        assert fake.node_calls[4:] == ["query", "confirm"] and fake.node_state == "PASSED"
+        del fake.node_calls[4:]
         # Reached again and a lost confirm reply: read back once, never confirmed twice.
         fake.node_state, fake.ai_status, fake.fail_confirm_unknown = "DOING", "running", True
         assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "running")).status_code == 200
