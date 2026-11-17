@@ -79,12 +79,14 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
   const [releasing, setReleasing] = useState(false);
   const [reason, setReason] = useState('');
 
-  // When the flow is waiting on PPAP, the first audit is prepared without a click: the whole
-  // package is read and matched, and stops at confirmation. Nothing is accepted or charged
-  // until the person confirms. Re-audits stay the person's choice.
+  // When the flow is waiting on PPAP, the audit is prepared without a click: the whole package is
+  // read and matched, and stops at confirmation. Nothing is accepted or charged until the person
+  // confirms. That is the first audit, or a re-audit when the flow came back to the node after the
+  // latest round (a rollback); otherwise re-audits stay the person's choice.
   const autoStarted = useRef(false);
+  const reached = Boolean(latest && data.aiNode?.since && Date.parse(data.aiNode.since) > Date.parse(latest.round_started_at ?? latest.created_at));
   useEffect(() => {
-    if (!nodeWaiting || autoStarted.current || latest || flight || busy || !chosen.length) return;
+    if (!nodeWaiting || autoStarted.current || (latest && !reached) || flight || busy || !chosen.length) return;
     autoStarted.current = true;
     void start();
   });
@@ -157,7 +159,8 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       if (reply.reports?.state === 'not_configured') notes.push('这个空间还没有“PPAP 审核报告”附件字段，管理员添加后，逐文件审核报告会一并写回。');
       else if (reply.reports?.state === 'pending') notes.push('有审核报告还在生成，生成后再写回一次即可补上。');
       else if (reply.reports?.state === 'failed' || reply.reports?.state === 'unknown') notes.push('审核报告没有全部附上，请稍后再写回一次；已附上的不会重复。');
-      if (reply.node === 'not_passed') notes.push('结论不是“符合”，流程节点继续等待：整改后重新审核整包；确需例外时，由有复核权限的人人工放行。');
+      if (reply.node === 'review_objection') notes.push('复核人对这次“符合”的结论有异议，流程节点继续等待：重新审核整包，或由有复核权限的人人工放行。');
+      else if (reply.node === 'not_passed') notes.push('结论不是“符合”，流程节点继续等待：整改后重新审核整包；确需例外时，由有复核权限的人人工放行。');
       else if (reply.node === 'failed' || reply.node === 'unknown') notes.push('流程节点没有自动完成，请稍后再写回一次。');
       else if (reply.node === 'not_configured') notes.push('流程里的 PPAP 节点尚未配置完成，请联系管理员。');
       if (notes.length) setNotice('结论已写入评论区。' + notes.join(''));
@@ -239,7 +242,9 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
   const startFirst = !latest || pack.stale || !writable || written === true;
   const released = latest?.round_id ? data.releases[latest.round_id] : undefined;
   // Only the latest, unchanged, written-back round of a waiting node can be released.
-  const releasable = nodeWaiting && !released && !pack.stale && (total === 'NG' || total === 'UNKNOWN');
+  // A reviewer's objection keeps a conforming round from completing the node on its own; the conclusion stays as found.
+  const objected = Boolean(latest?.files.some(row => row.selection === 'selected' && row.audit?.checks.some(check => ['disagree', 'manual-unsatisfied', 'unknown'].includes(reviewOf(check)?.judgment || ''))));
+  const releasable = nodeWaiting && !released && !pack.stale && (total === 'NG' || total === 'UNKNOWN' || (total === 'PASS' && objected));
 
   return (
     <div className="workspace">
@@ -291,7 +296,7 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
         onCancel={() => setReleasing(false)}
       >
         <Space vertical align="start" spacing="tight" style={{ width: '100%' }}>
-          <Text>这次审核的结论是“{verdictLabel[total]}”。放行后流程进入下一步，结论不会改为“符合”，放行人和理由会写入工作项评论。</Text>
+          <Text>{total === 'PASS' ? '复核人对这次“符合”的结论有异议。' : `这次审核的结论是“${verdictLabel[total]}”，放行后结论不会改为“符合”。`}放行后流程进入下一步，放行人和理由会写入工作项评论。</Text>
           <Text strong>放行理由</Text>
           <TextArea aria-label="放行理由" value={reason} maxLength={500} autosize={{ minRows: 2, maxRows: 6 }} onChange={setReason} placeholder="例如：客户已书面接受该偏差" />
         </Space>

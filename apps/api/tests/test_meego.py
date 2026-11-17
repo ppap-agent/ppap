@@ -526,18 +526,18 @@ def test_ai_node_events_only_keep_the_signed_nodes_status(auth_store_factory):
                 # Reaching the node only records it; Meego's retries write the same row again.
                 assert post(client, 8001, "running").status_code == 200
                 assert post(client, 8001, "running").status_code == 200
-                assert client.get(path, headers=bearer).json()["ai_node"] == {"status": "running"}
+                assert client.get(path, headers=bearer).json()["ai_node"]["status"] == "running"
                 assert fake.downloads == 0 and fake.node_calls == []
                 # PPAP's own completion reports back as openapi events; a late "done" never reopens a completed node.
                 assert post(client, 8003, source="openapi").status_code == 200
                 assert post(client, 8001, "done", source="openapi").status_code == 200
-                assert client.get(path, headers=bearer).json()["ai_node"] == {"status": "completed"}
+                assert client.get(path, headers=bearer).json()["ai_node"]["status"] == "completed"
                 # A rollback reaching the node again waits again; a removal without a node key changes nothing.
                 assert post(client, 8001, "running").status_code == 200
                 assert post(client, 8005, state_key="").status_code == 200
-                assert client.get(path, headers=bearer).json()["ai_node"] == {"status": "running"}
+                assert client.get(path, headers=bearer).json()["ai_node"]["status"] == "running"
                 assert post(client, 8001, "stopped").status_code == 200
-                assert client.get(path, headers=bearer).json()["ai_node"] == {"status": "stopped"}
+                assert client.get(path, headers=bearer).json()["ai_node"]["status"] == "stopped"
         finally:
             store.settings.meego_ai_node_plugin_id, store.settings.meego_ai_node_token = "", ""
 
@@ -665,3 +665,44 @@ def test_the_ai_node_card_uses_the_plugin_connection_through_its_own_app(auth_st
             assert client.post("/integrations/meego/session", json={"code": "bad-code", "app": "ai_node"}).status_code == 401
         finally:
             store.settings.meego_ai_node_plugin_id, store.settings.meego_ai_node_token, store.settings.meego_ai_node_plugin_secret = "", "", ""
+
+
+def test_a_reviewer_objection_keeps_a_conforming_round_from_completing_the_node_until_released(auth_store_factory, monkeypatch):
+    tenant = "meego-feishu-" + uuid.uuid4().hex
+    fake = FakeMeego()
+    store = auth_store_factory(settings_for(tenant, fake.tenant, **AI_NODE), reset=False, role="api")
+    principal, browser = feishu_login(store, tenant)
+    round_id = str(uuid.uuid4())
+    judgment = {"value": "disagree"}
+
+    def task_of(task_id):
+        task = finished_task(task_id)
+        audit = task["files"][0]["audit"]
+        audit["conclusion"] = "PASS"
+        # The machine found the clause conforming; the reviewer's judgment is kept beside it.
+        audit["checks"] = [{"finding": {"status": "PASS"}, "review": {"judgment": judgment["value"]} if judgment["value"] else None}]
+        return task
+
+    monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
+    monkeypatch.setattr(store, "grants", lambda rid, uid: {"read", "review"})
+    monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
+    monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
+    monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: task_of(task_id))
+    latest = [{"id": "t-" + round_id, "round_id": round_id, "state": "completed", "created_at": "2026-11-16T02:00:00+00:00"}]
+    monkeypatch.setattr(store, "list_audit_tasks", lambda who, limit, offset, target=None: latest)
+    with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
+        bearer = {"Authorization": "Bearer " + connect(client, browser)}
+        assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "running")).status_code == 200
+        node = client.get("/integrations/meego/work-items/proj_1/story/42/audits", headers=bearer).json()["ai_node"]
+        assert node["status"] == "running" and node["since"]
+        # Conforming, but the reviewer objected: the node waits, nothing is sent to Meego.
+        assert client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer).json()["node"] == "review_objection"
+        assert fake.node_calls == []
+        # A release with a reason lets it pass; the comment says the round conformed but was objected to.
+        released = client.post(f"/integrations/meego/rounds/{round_id}/release", headers=bearer, json={"reason": "复核意见已与客户确认"}).json()
+        assert released["node"] == "completed" and "复核人有异议" in fake.comments[-1]
+        # Without an objection a conforming round needs no release.
+        judgment["value"] = None
+        other = str(uuid.uuid4())
+        latest[0].update(id="t-" + other, round_id=other)
+        assert client.post(f"/integrations/meego/rounds/{other}/release", headers=bearer, json={"reason": "x"}).json()["error"] == "release_not_needed"
