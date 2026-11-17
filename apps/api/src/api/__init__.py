@@ -885,7 +885,7 @@ def create_app(
 
     @app.get("/integrations/feishu/docs/audits", response_model=wc.AuditRecognitionTasks)
     def feishu_doc_audits(request: Request, file_token: str = "") -> JSONResponse:
-        """This person's audits started from one Feishu document, newest first."""
+        """The enterprise's audits started from one Feishu document, newest first."""
         principal = principal_of(request)
         if principal is None:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)

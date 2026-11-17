@@ -1042,7 +1042,7 @@ export interface paths {
         };
         /**
          * Feishu Doc Audits
-         * @description This person's audits started from one Feishu document, newest first.
+         * @description The enterprise's audits started from one Feishu document, newest first.
          */
         get: operations["feishu_doc_audits_integrations_feishu_docs_audits_get"];
         put?: never;

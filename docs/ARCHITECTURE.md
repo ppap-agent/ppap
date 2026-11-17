@@ -34,7 +34,7 @@ MCP 表只保存客户端授权、确认、传输凭证和调用回执。写入�
 
 原件预览优先使用可选的 OnlyOffice Document Server，Python API 签发只读配置，不提供编辑回写。`PPAP_ONLYOFFICE_URL` 是浏览器可达地址，`PPAP_ONLYOFFICE_API_URL` 是 Document Server 可达的 Product API 地址，`PPAP_ONLYOFFICE_SECRET` 与其 JWT secret 一致。授权通过后签发单文件版本、单租户、十分钟有效的读取凭证；该凭证在到期前仍可读取，因此 Document Server 及其缓存必须属于可信部署边界。API 和反向代理不得记录凭证查询串。缺少服务时回退到有大小上限的 Word / Excel / 文本摘录；摘录不执行宏、公式或模型，也不转换旧 DOC。审核历史支持服务端搜索和分页。飞书目录选择使用当前用户令牌，逐文件导入独立版本，不递归导入或修改来源。
 
-PostgreSQL 中 `product` 保存产品事实，`engine` 保存执行任务/尝试。两者不是两套产品台账。对象存储保存文件版本引用的字节；数据库保存文件版本、对象位置和授权关系。
+PostgreSQL 中 `product` 保存产品事实，`engine` 保存执行任务/尝试。两者不是两套产品台账。对象存储保存文件版本引用的字节；数据库保存文件版本、对象位置和创建人。
 
 `product.provider_authorizations` 是飞书凭据的唯一续期入口，由 `product.store.provider_auth` 保存并发 claim 和结果。浏览器 Session 与 MCP Grant 各自拥有有效期、撤销和授权范围，引用精确的 provider/app/tenant/subject 凭据记录。新登录取得不同凭据时创建新记录；不按用户查找“最新令牌”替换旧委托。此表只保存身份凭据生命周期，不保存审核或报告执行状态，Worker 不可读取。
 
