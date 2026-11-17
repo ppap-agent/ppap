@@ -10,6 +10,7 @@ import { itemPath, outsideText } from './data';
 import { Confirm, ConfirmRow, useRevise } from './Confirm';
 import type { Revise } from './Confirm';
 import { PdfView } from './Evidence';
+import { Guide } from './Guide';
 import { Issue, openFacts } from './Issue';
 import { buildPackage, currentTemplate, pendingStart, rectification, rememberedTemplate, rememberStart, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
 import type { Doc, OpenIssue, Package } from './ledger';
@@ -54,6 +55,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
   const seen = useRef<Set<string>>(new Set());
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
+  const [guide, setGuide] = useState(false);
   const [open, setOpen] = useState<{ file: string; clause: string } | null>(null);
   const [report, setReport] = useState<TaskFile | null>(null);
   const [reselect, setReselect] = useState(false);
@@ -475,6 +477,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
                 {writable && written === true && <Dropdown.Item disabled={Boolean(busy)} onClick={() => void writeBack()}>重新写回</Dropdown.Item>}
                 {ngCount > 0 && <Dropdown.Item onClick={() => void copyList()}>复制整改清单</Dropdown.Item>}
                 {(flight ?? latest) && <Dropdown.Item onClick={() => window.JSSDK.navigation.open(taskLink((flight ?? latest)!.id), '_blank')}>在 PPAP 中打开这次审核</Dropdown.Item>}
+                <Dropdown.Item onClick={() => setGuide(true)}>使用说明</Dropdown.Item>
                 <Dropdown.Divider />
                 <Dropdown.Title>以 {user} 的 PPAP 身份使用</Dropdown.Title>
                 <Dropdown.Item onClick={onDisconnect}>断开连接</Dropdown.Item>
@@ -485,6 +488,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
           </Dropdown>
         </div>
       </header>
+      <Guide visible={guide} onClose={() => setGuide(false)} />
       {busy && <p className="flow tone-info" role="status"><Spin size="small" /><span>{busy}</span></p>}
       {notice && <Banner type="warning" fullMode={false} description={notice} onClose={() => setNotice('')} />}
       {flow && !busy && (

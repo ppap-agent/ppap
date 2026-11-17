@@ -5,6 +5,7 @@ import { Button, Spin } from '@douyinfe/semi-ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import './index.css';
 import { loadWorkItem } from './data';
+import { Guide } from './Guide';
 import type { Data, Item } from './data';
 import type { Task } from './model';
 import { call, say, startSession } from './ppap';
@@ -19,6 +20,7 @@ const moving = (task: Task | undefined) => Boolean(task && (task.state === 'matc
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ kind: 'loading', text: '正在连接 PPAP…' });
   const [user, setUser] = useState('');
+  const [guide, setGuide] = useState(false);
   const [item, setItem] = useState<Item | null>(null);
   const [data, setData] = useState<Data | null>(null);
   const [stalled, setStalled] = useState(false);
@@ -132,7 +134,9 @@ export default function App() {
         <div className="actions">
           <Button theme="solid" type="primary" onClick={() => window.JSSDK.navigation.open(screen.url, '_blank')}>连接 PPAP</Button>
           <Button onClick={() => void connect()}>我已完成连接</Button>
+          <Button theme="borderless" onClick={() => setGuide(true)}>使用说明</Button>
         </div>
+        <Guide visible={guide} onClose={() => setGuide(false)} />
       </section>
     );
   if (!item || !data) return <p className="ppap muted" role="status"><Spin size="small" /> 正在读取这个工作项的资料和审核…</p>;

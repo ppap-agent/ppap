@@ -98,3 +98,6 @@ body { margin: 0; background: transparent; }
 
 .node-card { display: flex; flex-direction: column; gap: 4px; padding: 8px 4px; font-size: 14px; color: var(--semi-color-text-0); }
 .node-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+
+.guide-section { margin-bottom: 16px; }
+.guide-section ol { margin: 4px 0 0; padding-left: 20px; }

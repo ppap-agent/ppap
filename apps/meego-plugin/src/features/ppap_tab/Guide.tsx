@@ -1,0 +1,80 @@
+// The tab's own how-to: the steps a person takes on a work item, in the words the tab uses.
+import { SideSheet, Typography } from '@douyinfe/semi-ui';
+
+const { Title, Paragraph, Text } = Typography;
+
+const sections: { title: string; steps: string[] }[] = [
+  {
+    title: '第一次使用：连接 PPAP',
+    steps: [
+      '点“连接 PPAP”，在打开的页面用飞书登录 PPAP 所在企业的账号。',
+      '页面显示“连接成功”后回到这里，点“我已完成连接”。每人只需连接一次。',
+      '点了没反应时，请允许浏览器弹出窗口后再点。',
+    ],
+  },
+  {
+    title: '上传资料',
+    steps: [
+      '一个工作项就是一包 PPAP 资料。点“上传资料”，选择文件，或选择文件夹一次上传其中全部文件。',
+      '文件放进工作项的“PPAP 资料”附件字段。也可以直接在工作项里添加附件，回来点“刷新”。',
+      '可审核 Excel、Word、PDF；同名文件不重复上传；一个字段最多 50 份，单份不超过 200 MB。',
+    ],
+  },
+  {
+    title: '开始审核',
+    steps: [
+      '流程走到“PPAP 审核”节点、且工作项上还没有审核时，打开这个页签会自动准备一次；否则点“审核 N 份资料”。',
+      '准备好后核对“审核模板”和每份资料匹配的规则，不对的点那一行的“调整”。',
+      '先处理预检里“必须先处理的问题”。同一文件的多个版本同时提交时，在旧版本那一行填写不审核的原因，把它移出本次审核。',
+      '点“确认并开始审核”后才开始审核并计用量。审核进行中可以离开页面。',
+    ],
+  },
+  {
+    title: '处理结果并写回',
+    steps: [
+      '在“需要处理”里逐项对照原件，记录人工复核。复核不改写机器结论。',
+      '点“写回工作项”：结论写入评论区和“PPAP 审核结论”字段，每份资料的审核报告附到“PPAP 审核报告”。重复写回不会重复发评论。',
+      '结论为“符合”并写回后，“PPAP 审核”节点自动完成，流程进入下一步。',
+      '结论为“不符合”或“尚有未确定项”时节点继续等待：整改资料后点“重新审核整包”，或由发起人点“人工放行”并写明理由。',
+      '只有这个工作项最近一轮可以写回和放行。',
+    ],
+  },
+  {
+    title: '谁能做什么',
+    steps: [
+      '同一企业的人都能查看工作项上所有人的审核、原件和报告。',
+      '确认审核、人工复核、确认原件事实、写回和人工放行，只有这一轮的发起人能做。',
+      '别人发起的审核标着“某某发起”。要自己负责时点“由我重新审核整包”，新一轮归你，原来的保留；重新审核会重跑整包并重新计用量。',
+    ],
+  },
+  {
+    title: '常见问题',
+    steps: [
+      '找不到节点的“完成”按钮：在工作项的“节点详情”标签里，把右上角切到“节点详情”视图。',
+      '“确认并开始审核”是灰的：先处理预检里标红的问题。',
+      '流程到了节点却没有自动准备：工作项上已经有审核，点“重新审核整包”。',
+      '资料显示“没有可用规则，未审核”：当前模板里没有这类资料的规则，点“调整”换一条规则，或换审核模板。',
+    ],
+  },
+];
+
+export function Guide({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  return (
+    <SideSheet title="使用说明" visible={visible} onCancel={onClose} width={420}>
+      {sections.map(section => (
+        <section key={section.title} className="guide-section">
+          <Title heading={6}>{section.title}</Title>
+          <ol>
+            {section.steps.map(step => (
+              <li key={step}>
+                <Paragraph>
+                  <Text>{step}</Text>
+                </Paragraph>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ))}
+    </SideSheet>
+  );
+}
