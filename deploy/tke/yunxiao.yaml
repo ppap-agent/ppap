@@ -46,8 +46,12 @@ stages:
                     target = graph['target'][component]
                     assert target['platforms'] == ['linux/amd64']
                     assert target['tags'] == [os.environ['PPAP_IMAGE_PREFIX'] + component + ':' + os.environ['PPAP_BUILD_SHA']]
-                assert graph['target']['deep']['contexts']['ppap-worker'] == 'target:worker'
-                print('Exact source, all four targets and Deep/Worker build dependency verified')
+                # Deep is the Worker application from the same Dockerfile and source, one graph.
+                for component, stage in (('api', 'app'), ('worker', 'app'), ('deep', 'deep')):
+                    assert graph['target'][component]['dockerfile'] == 'deploy/app/Dockerfile'
+                    assert graph['target'][component]['target'] == stage
+                assert graph['target']['deep']['args']['PPAP_APP_BASE'] == 'deep-base'
+                print('Exact source, all four targets and the shared Deep/Worker graph verified')
                 PY
           tcr_login:
             name: Login existing TCR registry
@@ -71,11 +75,14 @@ stages:
                 import json, os
                 # Named contexts change only base-image transport. Keep the
                 # Dockerfile versions/digests and the Deep -> Worker target edge.
+                # Bases are pinned by digest in the Dockerfiles, so a mirror can never move them under the cache.
+                python = 'python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df'
+                node = 'node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94'
                 bases = {
-                    'api': ['python:3.12-slim-bookworm'],
-                    'worker': ['python:3.12-slim-bookworm'],
-                    'web': ['node:22-alpine', 'nginx:1.27-alpine'],
-                    'deep': ['node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94'],
+                    'api': [python, node],
+                    'worker': [python, node],
+                    'web': ['node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a', 'nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10'],
+                    'deep': [python, node],
                 }
                 targets = {
                     component: {
@@ -91,8 +98,16 @@ stages:
                 for component in api worker web deep; do
                   set -- "$@" --set "$component.cache-from=type=registry,ref=${PPAP_IMAGE_PREFIX}${component}:build-cache"
                 done
-                docker buildx bake -f docker-bake.hcl -f /tmp/ppap-current-cache.json release "$@" \
-                  --provenance=false --metadata-file /tmp/ppap-current-images.json --push
+                # The base-image mirror and the registry are reached over the network from the Hong Kong
+                # runner; a dropped connection fails the whole bake. Finished steps are cached, so a retry
+                # repeats only what had not finished.
+                attempt=1
+                until docker buildx bake -f docker-bake.hcl -f /tmp/ppap-current-cache.json release "$@" \
+                  --provenance=false --metadata-file /tmp/ppap-current-images.json --push; do
+                  test "$attempt" -lt 3
+                  attempt=$((attempt + 1))
+                  sleep 20
+                done
                 python3 - <<'PY'
                 import json, os, re
                 metadata = json.load(open('/tmp/ppap-current-images.json'))

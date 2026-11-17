@@ -88,7 +88,11 @@ if (release) {
     const labels = targets[target]?.labels || {}
     if (labels['org.opencontainers.image.revision'] !== sha || labels['org.opencontainers.image.source'] !== 'https://github.com/ppap-agent/ppap') fail(`release ${target} must identify its source`)
   }
-  if (targets.deep?.contexts?.['ppap-worker'] !== 'target:worker') fail('Deep must consume the same Bake Worker build')
+  // Deep is the Worker application with Pi: same Dockerfile, same source, Pi layers below the source.
+  for (const [target, stage] of [['api', 'app'], ['worker', 'app'], ['deep', 'deep']]) {
+    if (targets[target]?.dockerfile !== 'deploy/app/Dockerfile' || targets[target]?.target !== stage) fail(`${target} must build stage ${stage} of deploy/app/Dockerfile`)
+  }
+  if (targets.deep?.args?.PPAP_APP_BASE !== 'deep-base') fail('Deep must build the application on deep-base')
 }
 
 verifyCompose(

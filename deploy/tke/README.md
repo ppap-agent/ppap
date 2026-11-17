@@ -189,9 +189,9 @@ python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 
 构建使用固定 Codeup 分支 `codex/ppap-current-release`；完整 SHA 通过单次运行参数传入，作业检出该 commit 后再构建。分支后续移动不改变本次源码，流水线允许并发，不按提交创建分支。`yunxiao.yaml` 变更时同步云效定义一次；普通构建只启动和读取自己的运行，不修改共享流水线。构建复用 `docker-bake.hcl` 的四目标图和缓存，核对构建回执与镜像源码身份、digest 后写入 `current.yaml`；若清单在构建期间被改动则保留新内容，不覆盖其他操作的选择。提交这些 pin 后，使用上面的原生部署命令。
 
-构建保持四组件统一源码 SHA，一次 Bake 共享步骤并按依赖调度；不增加按文件选择组件的发布分支。固定系统工具放在应用源码之前，Deep 的 npm 安装只依赖锁文件，runner 测试在源码层执行。依赖校验和打包后的 import 检查继续保留。
+构建保持四组件统一源码 SHA，一次 Bake 共享步骤并按依赖调度；不增加按文件选择组件的发布分支。API、Worker、Deep 出自同一个 `deploy/app/Dockerfile`：基础镜像（按 digest 固定）→ 系统包 → uv → 第三方依赖（只随 `uv.lock` 变）→ Deep 的 Node/Pi（`deep-base`，只随 `deploy/deep` 的锁文件和 runner 变）→ 源码。单独阶段编译的产物（转换沙箱）只放在依赖层之上，重新编译不会让下面的大层失效。只改源码的发布只重推源码层。依赖校验和打包后的 import 检查继续保留。
 
-云效公共 Runner 使用原生 Docker 驱动和 inline 缓存，导出到现有各组件的 `:build-cache` 镜像；缓存 tag 不能作为部署 pin。该节点实际拒绝 `docker-container` BuildKit 启动（`flow not support`），因此不启用依赖该驱动的 registry `mode=max` 中间阶段缓存，也不为缓存新增构建服务。固定依赖分层继续减少源码变更时的重装。临时 Runner 的本地 uv cache mount 不保证跨运行持久化；实际缓存收益由构建步骤耗时确认。
+云效公共 Runner 使用原生 Docker 驱动和 inline 缓存，导出到现有各组件的 `:build-cache` 镜像；缓存 tag 不能作为部署 pin。该节点实际拒绝 `docker-container` BuildKit 启动（`flow not support`），因此不启用依赖该驱动的 registry `mode=max` 中间阶段缓存，也不为缓存新增构建服务。中间阶段（转换沙箱编译、Pi 的 npm 安装、Web 的 pnpm 安装）每次重新执行，但它们的产物都放在依赖层之上，不会引起大层重推。镜像站或仓库连接中断时，构建在流水线内最多重试两次，已完成的步骤走缓存。临时 Runner 的本地 uv cache mount 不保证跨运行持久化；实际缓存收益由构建步骤耗时确认。
 
 默认入口先验证该 SHA 的四个镜像；全部存在且身份正确则直接复用，不读取历史成功运行。仅有镜像明确缺失时查询活动流水线：同源码跟进原 run，不同源码活动时停止；历史运行通过 `--run-id` 显式恢复。查询使用云效 [ListPipelineRuns 的 RUNNING 过滤](https://help.aliyun.com/en/yunxiao/developer-reference/listpipelineruns)，不再逐条读取成功历史。
 
