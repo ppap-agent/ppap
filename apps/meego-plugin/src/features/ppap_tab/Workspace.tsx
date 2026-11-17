@@ -83,14 +83,13 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
   const [releasing, setReleasing] = useState(false);
   const [reason, setReason] = useState('');
 
-  // When the flow is waiting on PPAP, the audit is prepared without a click: the whole package is
-  // read and matched, and stops at confirmation. Nothing is accepted or charged until the person
-  // confirms. That is the first audit, or a re-audit when the flow came back to the node after the
-  // latest round (a rollback); otherwise re-audits stay the person's choice.
+  // When the flow is waiting on PPAP and nobody has audited this work item yet, the first audit is
+  // prepared without a click: the whole package is read and matched, and stops at confirmation.
+  // Nothing is accepted or charged until the person confirms. Once anyone has a task here, every
+  // further audit is a person's own choice.
   const autoStarted = useRef(false);
-  const reached = Boolean(latest && data.aiNode?.since && Date.parse(data.aiNode.since) > Date.parse(latest.round_started_at ?? latest.created_at));
   useEffect(() => {
-    if (!nodeWaiting || autoStarted.current || (latest && !reached) || flight || busy || !chosen.length) return;
+    if (!nodeWaiting || autoStarted.current || data.tasks.length || busy || !chosen.length) return;
     autoStarted.current = true;
     void start();
   });

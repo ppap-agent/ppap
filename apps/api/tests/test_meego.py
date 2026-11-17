@@ -272,6 +272,7 @@ def finished_task(task_id: str, conclusion: str = "NG", *, objection: bool = Fal
         "state": "completed",
         "execution": "completed",
         "has_execution_error": False,
+        "created_at": "2026-11-16T07:00:00Z",
         "round_started_at": "2026-11-16T07:30:00Z",
         "conclusion": conclusion,
         "machine_conclusion": conclusion,
@@ -290,6 +291,9 @@ def test_writeback_reads_back_before_writing_and_never_rewrites_after_unknown(au
     monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
     monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
     monkeypatch.setattr(store, "get_audit_task", lambda who, task_id: finished_task(task_id))
+    # Each round written back is the work item's latest one when it is written.
+    newest = [round_id]
+    monkeypatch.setattr(store, "list_audit_tasks", lambda who, limit, offset, target=None: [finished_task("t-" + newest[0])])
     with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
         bearer = {"Authorization": "Bearer " + connect(client, browser)}
         written = client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer)
@@ -301,7 +305,7 @@ def test_writeback_reads_back_before_writing_and_never_rewrites_after_unknown(au
         assert len(fake.comments) == 1
         # A lost reply after the comment landed is resolved by reading back once.
         fake.fail_comment_unknown = True
-        other_round = str(uuid.uuid4())
+        other_round = newest[0] = str(uuid.uuid4())
         landed = client.post(f"/integrations/meego/rounds/{other_round}/writeback", headers=bearer)
         assert landed.json()["state"] == "written"
         assert len(fake.comments) == 2
@@ -313,7 +317,8 @@ def test_writeback_reads_back_before_writing_and_never_rewrites_after_unknown(au
             return fake(request)
 
         with httpx.Client(transport=httpx.MockTransport(lost)) as lost_http, TestClient(create_app(store.settings, auth_store=store, http=lost_http)) as lost_client:
-            unknown = lost_client.post(f"/integrations/meego/rounds/{uuid.uuid4()}/writeback", headers=bearer)
+            newest[0] = str(uuid.uuid4())
+            unknown = lost_client.post(f"/integrations/meego/rounds/{newest[0]}/writeback", headers=bearer)
             assert unknown.status_code == 502 and unknown.json()["error"] == "meego_writeback_unknown"
         assert len(fake.comments) == 2
 
@@ -415,10 +420,11 @@ def test_writeback_sets_the_conclusion_field_only_for_the_latest_round_and_reads
         # Reading first: an equal value is not written again.
         assert client.post(f"/integrations/meego/rounds/{latest}/writeback", headers=bearer).json()["field"] == "unchanged"
         assert fake.field_updates == 1
-        # An older round written back later never replaces the newer conclusion.
+        # An older round is never written back: no comment, no field, the newer conclusion stays.
         fake.conclusion = "opt_pass"
-        assert client.post(f"/integrations/meego/rounds/{older}/writeback", headers=bearer).json()["field"] == "older_round"
-        assert fake.conclusion == "opt_pass" and fake.field_updates == 1
+        older_reply = client.post(f"/integrations/meego/rounds/{older}/writeback", headers=bearer)
+        assert (older_reply.status_code, older_reply.json()["error"]) == (409, "writeback_older_round")
+        assert fake.conclusion == "opt_pass" and fake.field_updates == 1 and len(fake.comments) == 1
         # A lost reply is settled by reading the field back.
         fake.fail_field_unknown = True
         assert client.post(f"/integrations/meego/rounds/{latest}/writeback", headers=bearer).json()["field"] == "written"
@@ -434,7 +440,7 @@ def test_writeback_attaches_each_report_once_per_round_outside_the_audited_attac
     monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round", created_by=principal.user_id))
     monkeypatch.setattr(store, "get_round", lambda rid: {"id": rid, "source_draft_id": "t-" + rid})
     monkeypatch.setattr(store, "round_writeback", lambda rid: {"provider": "meego", "object_kind": "work_item", "object_ref": "proj_1/story/42"})
-    monkeypatch.setattr(store, "list_audit_tasks", lambda who, limit, offset, target=None: [])
+    monkeypatch.setattr(store, "list_audit_tasks", lambda who, limit, offset, target=None: [finished_task("t-" + round_id)])
 
     def with_report(task_id):
         task = finished_task(task_id)
@@ -708,7 +714,7 @@ def test_a_reviewer_objection_keeps_a_conforming_round_from_completing_the_node_
         bearer = {"Authorization": "Bearer " + connect(client, browser)}
         assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "running")).status_code == 200
         node = client.get("/integrations/meego/work-items/proj_1/story/42/audits", headers=bearer).json()["ai_node"]
-        assert node["status"] == "running" and node["since"]
+        assert node == {"status": "running", "outside": False}
         # Conforming, but the reviewer objected: the node waits, nothing is sent to Meego.
         assert client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer).json()["node"] == "review_objection"
         assert fake.node_calls == []

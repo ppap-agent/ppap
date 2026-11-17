@@ -213,10 +213,9 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             if exc.code in {"meego_access_denied", "meego_user_inactive"}:
                 return meego_failure(exc)
         try:
-            tasks = store.list_audit_tasks(session.principal, 20, 0, target={"provider": "meego", "object_kind": "work_item", "object_ref": item.object_ref()})
+            tasks = item_tasks(session.principal, item)
         except (KeyError, ValueError):
             return JSONResponse({"error": "access_denied"}, status_code=403)
-        tasks.sort(key=lambda task: task["created_at"], reverse=True)
         # None means the comments could not be read; the plugin must not show that as "not written".
         written = None if texts is None else [task["round_id"] for task in tasks if task.get("round_id") and any(marker(task["round_id"]) in text for text in texts)]
         # Which attachment of this work item each audited file was imported from, so the plugin can
@@ -224,12 +223,11 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         prefix = item.object_ref() + "/"
         versions = [row["file"]["id"] for task in tasks for row in task.get("files") or []]
         sources = {vid: ref[len(prefix) :] for vid, ref in store.file_sources(versions, "meego").items() if ref.startswith(prefix)}
-        # The work item's PPAP AI node, when its flow has one: the plugin starts the audit on its own
+        # The work item's PPAP AI node, when its flow has one: the plugin prepares the first audit on its own
         # while the node waits, and tells the person the node completes once a conforming round is written back.
         nodes = meego.ai_nodes(item)
         node = next((row for row in nodes if row["status"] in {"running", "done"}), nodes[0] if nodes else None)
-        # "since" is when the node last changed; a node waiting since after the latest round means the flow came back to it.
-        ai_node = {"status": node["status"], "since": node["updated_at"].isoformat(), "outside": bool(node.get("completed_outside"))} if node else None
+        ai_node = {"status": node["status"], "outside": bool(node.get("completed_outside"))} if node else None
         # People's releases of these rounds, kept apart from the rounds' own conclusions.
         rounds = [str(task["round_id"]) for task in tasks if task.get("round_id")]
         releases = {
@@ -395,6 +393,11 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
 
     @app.post("/integrations/meego/rounds/{round_id}/writeback", include_in_schema=False)
     def meego_writeback(round_id: str, request: Request) -> JSONResponse:
+        """Write the round to its work item: comment, conclusion field, reports and the waiting PPAP node.
+
+        Only the work item's latest finished round speaks for it, so an older round is never written,
+        whoever started it.
+        """
         context = round_context(round_id, request)
         if isinstance(context, JSONResponse):
             return context
@@ -405,13 +408,15 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         with item_lock(item) as locked:
             if not locked:
                 return JSONResponse({"error": "writeback_in_progress"}, status_code=409)
+            if not is_latest(session.principal, item, task):
+                return JSONResponse({"error": "writeback_older_round"}, status_code=409)
             try:
                 state = write_comment(binding["user_key"], item, lines, marker(round_id))
                 if isinstance(state, JSONResponse):
                     return state
-                field = write_field(session.principal, binding["user_key"], item, task)
+                field = write_field(binding["user_key"], item, task)
                 reports = write_reports(session.principal, binding["user_key"], item, task)
-                node = complete_ai_nodes(binding["user_key"], item, task, latest=field != "older_round", released=released)
+                node = complete_ai_nodes(binding["user_key"], item, task, released=released)
             except MeegoError as exc:
                 return meego_failure(exc)
         return JSONResponse({"state": state, "field": field, "reports": reports, "node": node, "round_id": round_id, "link": link})
@@ -459,7 +464,7 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
                 state = write_comment(binding["user_key"], item, lines, release_marker(round_id))
                 if isinstance(state, JSONResponse):
                     return state
-                node = complete_ai_nodes(binding["user_key"], item, task, latest=True, released=True)
+                node = complete_ai_nodes(binding["user_key"], item, task, released=True)
             except MeegoError as exc:
                 return meego_failure(exc)
         released_at = release["created_at"].isoformat() if release.get("created_at") else None
@@ -469,13 +474,18 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         # Distinct from the writeback marker, so a release comment never reads as the round's own writeback.
         return f"放行记录 {round_id}"
 
-    def is_latest(principal, item: WorkItemRef, task: dict) -> bool:
-        """Only the work item's latest finished round speaks for it."""
+    def item_tasks(principal, item: WorkItemRef) -> list[dict]:
+        """The enterprise's audits of one work item, newest first: the one list the tab, its card and every
+        write to the work item read, so they all agree on which round is the latest."""
         target = {"provider": "meego", "object_kind": "work_item", "object_ref": item.object_ref()}
-        rounds = [t for t in store.list_audit_tasks(principal, 50, 0, target=target) if t.get("state") == "completed" and t.get("round_id")]
-        return bool(rounds) and max(rounds, key=lambda t: t["created_at"])["id"] == task["id"]
+        return sorted(store.list_audit_tasks(principal, 50, 0, target=target), key=lambda t: t["created_at"], reverse=True)
 
-    def complete_ai_nodes(user_key: str, item: WorkItemRef, task: dict, *, latest: bool, released: bool = False) -> str:
+    def is_latest(principal, item: WorkItemRef, task: dict) -> bool:
+        """Only the work item's latest finished round speaks for it, whoever started it."""
+        latest = next((t for t in item_tasks(principal, item) if t.get("state") == "completed" and t.get("round_id")), None)
+        return latest is not None and latest["id"] == task["id"]
+
+    def complete_ai_nodes(user_key: str, item: WorkItemRef, task: dict, *, released: bool = False) -> str:
         """Complete the work item's waiting PPAP AI nodes once its latest round conforms, or a person released it.
 
         Any other conclusion leaves the node waiting for a re-audit. Each step reads the node first,
@@ -484,8 +494,6 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         waiting = [row["state_key"] for row in meego.ai_nodes(item) if row["status"] in {"running", "done"}]
         if not waiting:
             return "none"
-        if not latest:
-            return "older_round"
         # The task view's conclusion already counts confirmed original facts; reviews never change it.
         if task["conclusion"] != "PASS" and not released:
             return "not_passed"
@@ -576,14 +584,11 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             emit("meego_report_writeback_failed", level=logging.WARNING, code=getattr(exc, "code", type(exc).__name__))
             return {"state": "failed", "written": 0, "total": len(rows)}
 
-    def write_field(principal, user_key: str, item: WorkItemRef, task: dict) -> str:
+    def write_field(user_key: str, item: WorkItemRef, task: dict) -> str:
         """Set the work item's conclusion field when the space has one; flow conditions and views read it.
 
-        Only the latest finished round of this work item may set it, so an older round written back
-        later never replaces a newer conclusion. The field holds the round's own overall conclusion.
+        The field holds the latest round's own overall conclusion; writeback already refused older rounds.
         """
-        if not is_latest(principal, item, task):
-            return "older_round"
         try:
             found = client.conclusion_field(user_key, item)
             if found is None:
