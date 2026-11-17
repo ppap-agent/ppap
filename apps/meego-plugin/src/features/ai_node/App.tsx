@@ -11,7 +11,8 @@ type Props = { ai_node_running?: string };
 const view: Record<string, { label: string; color: 'blue' | 'green' | 'grey' | 'orange'; hint: string }> = {
   idle: { label: '未开始', color: 'grey', hint: '流程到达这个节点后开始等待 PPAP 审核。' },
   running: { label: '等待审核', color: 'blue', hint: '在工作项的“PPAP 审核”标签中核对资料并确认；结论为“符合”并写回后，这个节点自动完成。' },
-  done: { label: '审核通过', color: 'green', hint: '节点正在完成。' },
+  // Done says nothing about the conclusion: a released round completes the node too, and the card below states which.
+  done: { label: '已完成', color: 'green', hint: '这个节点已完成，流程已进入下一步。' },
   stopped: { label: '已停止', color: 'grey', hint: '节点已停止。重新启动后，继续等待 PPAP 审核结论。' },
   error: { label: '出错', color: 'orange', hint: '节点出错，请重新启动。' },
 };

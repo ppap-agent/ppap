@@ -65,6 +65,7 @@ export default function Card({ context: where, lead, hint }: Props = {}) {
   const issues = standing(pack.latest, pack.previous).issues;
   const ng = issues.filter(issue => bucket(issue.check) === 'NG').length;
   const written = pack.latest?.round_id && data.written?.includes(pack.latest.round_id);
+  const released = pack.latest?.round_id ? data.releases[pack.latest.round_id] : undefined;
   const moving = pack.flight ? (pack.flight.state === 'pending_confirm' ? '有一次审核等待确认' : '审核进行中') : '';
 
   return (
@@ -75,6 +76,7 @@ export default function Card({ context: where, lead, hint }: Props = {}) {
         {pack.latest && <Text>不符合 <Text strong>{ng}</Text> 项 · 待处理 <Text strong>{issues.length}</Text> 项</Text>}
         {pack.latest && <Text type="tertiary" size="small">{when(pack.latest.round_started_at ?? pack.latest.created_at)} 的审核{written ? '，已写回' : '，尚未写回'}</Text>}
       </Space>
+      {released && <Text type="warning" size="small">{released.by || '有人'} 人工放行了这次审核：{released.reason}</Text>}
       {pack.stale && <Text type="warning" size="small">资料在这次审核后有变化，结论针对的是变化前的资料。</Text>}
       {moving && <Text type="tertiary" size="small">{moving}。</Text>}
       <Space>
