@@ -290,8 +290,8 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       {busy && <Text type="tertiary" role="status"><Spin size="small" /> {busy}</Text>}
       {notice && <Banner type="warning" fullMode={false} description={notice} onClose={() => setNotice('')} />}
       {nodeWaiting && <Banner type="info" fullMode={false} closeIcon={null} description={waitingText} />}
-      {/* A released round can come back to a waiting node (a rollback); the release is then only history. */}
-      {released && <Banner type="warning" fullMode={false} closeIcon={null} description={`${released.by || '有人'} 于 ${when(released.at)} 人工放行了这次审核${nodeWaiting ? '' : '，流程已进入下一步'}。理由：${released.reason}。审核结论保持为“${verdictLabel[total]}”。`} />}
+      {/* After a rollback the node is back here (waiting or stopped); the release is then only history. */}
+      {released && <Banner type="warning" fullMode={false} closeIcon={null} description={`${released.by || '有人'} 于 ${when(released.at)} 人工放行了这次审核${data.aiNode?.status === 'completed' ? '，流程已进入下一步' : ''}。理由：${released.reason}。审核结论保持为“${verdictLabel[total]}”。`} />}
       <Modal
         title="人工放行"
         visible={releasing}
