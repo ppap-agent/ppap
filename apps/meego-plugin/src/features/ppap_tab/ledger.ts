@@ -5,7 +5,7 @@
 import { bucket, checkerUnavailable, reviewOf } from './model';
 import type { Attachment, Check, Task, TaskFile } from './model';
 
-export type DocState = 'unsupported' | 'new' | 'added' | 'matching' | 'confirm' | 'running' | 'done' | 'failed' | 'reference' | 'no_rule' | 'unavailable' | 'unread';
+export type DocState = 'unsupported' | 'new' | 'added' | 'matching' | 'confirm' | 'running' | 'done' | 'failed' | 'reference' | 'no_rule' | 'unavailable' | 'unread' | 'removed';
 
 export type Doc = {
   attachment: Attachment;
@@ -147,6 +147,8 @@ export function buildPackage(attachments: Attachment[], tasks: Task[], sources: 
 
 /** Why a file of a round has no result of its own; a file without a result is never shown as still running. */
 export function unaudited(row: TaskFile): DocState {
+  // A file the person took out of this audit, with the reason they gave.
+  if (row.selection === 'removed') return 'removed';
   if (row.reference_only || row.match?.state === 'reference') return 'reference';
   if (checkerUnavailable(row)) return 'unavailable';
   if (row.match?.state === 'failed') return 'unread';

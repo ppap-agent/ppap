@@ -614,7 +614,7 @@ function DocStatus({ doc, onIssues, onReport, onDownload, onRegenerate }: { doc:
       return <Text type="tertiary">待发起人确认</Text>;
     case 'running':
       // Only a matched file is audited; the others already have their final answer.
-      if (!audit) return row!.match?.state === 'matched' && !row!.reference_only ? <Text type="tertiary">排队中</Text> : <Unaudited state={unaudited(row!)} />;
+      if (!audit) return row!.selection === 'selected' && row!.match?.state === 'matched' && !row!.reference_only ? <Text type="tertiary">排队中</Text> : <Unaudited state={unaudited(row!)} reason={row!.removal_reason} />;
       return (
         <div className="progress">
           <Progress percent={audit.progress.total ? Math.round((audit.progress.completed / audit.progress.total) * 100) : 0} aria-label={`${doc.attachment.name} 的审核进度`} />
@@ -627,7 +627,8 @@ function DocStatus({ doc, onIssues, onReport, onDownload, onRegenerate }: { doc:
     case 'no_rule':
     case 'unavailable':
     case 'unread':
-      return <Unaudited state={doc.state} />;
+    case 'removed':
+      return <Unaudited state={doc.state} reason={row?.removal_reason} />;
     case 'done': {
       const open = audit!.checks.filter(check => check.attention).length;
       const conclusion = audit!.confirmed_conclusion;
@@ -653,7 +654,8 @@ function DocStatus({ doc, onIssues, onReport, onDownload, onRegenerate }: { doc:
   }
 }
 
-function Unaudited({ state }: { state: string }) {
+function Unaudited({ state, reason }: { state: string; reason?: string | null }) {
+  if (state === 'removed') return <Text type="tertiary">{reason ? `不审核：${reason}` : '不审核'}</Text>;
   if (state === 'unavailable')
     return (
       <Space wrap>
