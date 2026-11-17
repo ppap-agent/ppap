@@ -127,7 +127,9 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
     {Boolean(task.predecessor_id || task.successor_tasks?.length) && <div className="flex flex-wrap items-center gap-3">{task.predecessor_id && <Button variant="link" asChild><a href={task.predecessor_task_id ? taskAddress(task.predecessor_task_id) : `/?round=${encodeURIComponent(task.predecessor_id)}`}>查看前次审核与人工记录</a></Button>}{task.successor_tasks?.map(next => <Button key={next.id} variant="link" asChild><a href={taskAddress(next.id)}>关联重审 {next.number}</a></Button>)}</div>}
   </section>
   // Each card names its customer and rule, as in the task's file list.
-  const stateTone = (row: Task['files'][number], invalid: unknown): ResultTone | 'info' => row.match?.state === 'reference' ? 'outline' : invalid ? 'warning' : !row.audit ? 'outline' : row.audit.execution === 'review_failed' ? 'destructive' : row.audit.execution !== 'completed' ? 'info' : row.audit.conclusion ? resultTone(row.audit.conclusion) : 'warning'
+  // A file's standing counts clauses settled by confirmed original facts; reports keep the machine conclusion.
+  const fileConclusion = (audit: NonNullable<Task['files'][number]['audit']>) => audit.confirmed_conclusion ?? audit.conclusion
+  const stateTone = (row: Task['files'][number], invalid: unknown): ResultTone | 'info' => row.match?.state === 'reference' ? 'outline' : invalid ? 'warning' : !row.audit ? 'outline' : row.audit.execution === 'review_failed' ? 'destructive' : row.audit.execution !== 'completed' ? 'info' : fileConclusion(row.audit) ? resultTone(fileConclusion(row.audit)) : 'warning'
   const queueStatusLabel = (state: string) => state === '等待读取结果' ? '待读取' : state
   const toneRail: Record<ResultTone | 'info', string> = {destructive: 'bg-destructive', warning: 'bg-warning', success: 'bg-success', info: 'bg-info', outline: 'bg-border'}
   // One secondary line: the exception, otherwise the work still open on this file.
@@ -148,7 +150,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   const fileGroups = [{title: '审核文件', rows: targets}, {title: '比对资料', rows: references}].filter(group => group.rows.length)
   const fileQueue = <div className="space-y-3 p-3"><div className="flex items-center justify-between gap-2 px-1"><h2 className="text-base font-semibold">文件列表</h2><Button variant={selected ? 'outline' : 'soft'} size="sm" aria-pressed={!selected} onClick={() => chooseFile('')}>全部文件概览</Button></div><nav aria-label="文件队列">{fileGroups.map(group => <section key={group.title} className="min-w-0 space-y-2">{fileGroups.length > 1 && <h2 className="px-1 text-xs font-medium text-muted-foreground">{group.title}</h2>}<div className="grid gap-2">{group.rows.map(row => {
     const invalid = resultConsistencyError(task, row)
-    const state = row.match?.state === 'reference' ? '比对资料' : invalid ? '结果待确认' : row.audit ? row.audit.execution === 'completed' ? row.audit.conclusion ? conclusionLabel[row.audit.conclusion] ?? '结果未知' : '结果未知' : executionLabel[row.audit.execution] : '等待读取结果'
+    const state = row.match?.state === 'reference' ? '比对资料' : invalid ? '结果待确认' : row.audit ? row.audit.execution === 'completed' ? fileConclusion(row.audit) ? conclusionLabel[fileConclusion(row.audit)!] ?? '结果未知' : '结果未知' : executionLabel[row.audit.execution] : '等待读取结果'
     const badge = queueStatusLabel(state)
     const tone = stateTone(row, invalid)
     const note = queueNote(row, invalid)

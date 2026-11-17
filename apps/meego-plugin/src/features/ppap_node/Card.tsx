@@ -8,11 +8,10 @@ import '../ppap_tab/index.css';
 import { loadWorkItem, outsideText } from '../ppap_tab/data';
 import type { Data, Item } from '../ppap_tab/data';
 import { buildPackage, standing, verdict } from '../ppap_tab/ledger';
-import { bucket, bucketColor, when } from '../ppap_tab/model';
+import { bucket, bucketColor, verdictLabel, when } from '../ppap_tab/model';
 import { say, startSession } from '../ppap_tab/ppap';
 
 const { Text } = Typography;
-const label = { PASS: '符合', NG: '不符合', UNKNOWN: '尚有未确定项', ERROR: '审核异常', NONE: '尚未审核' } as const;
 
 type Where = { spaceId: string; workObjectId: string; workItemId: number | string };
 // The node-form control reads its work item from the control context; the AI node card passes the AI
@@ -76,7 +75,7 @@ export default function Card({ context: where, lead, hint }: Props = {}) {
     <div className="node-card">
       {lead}
       <div className="node-line">
-        <Tag type="light" color={total === 'NONE' ? 'grey' : total === 'ERROR' ? 'orange' : bucketColor(total)}>{label[total]}</Tag>
+        <Tag type="light" color={total === 'NONE' ? 'grey' : total === 'ERROR' ? 'orange' : bucketColor(total)}>{verdictLabel[total]}</Tag>
         {facts.length > 0 && <Text type="tertiary" size="small">{facts.join(' · ')}</Text>}
       </div>
       {note && <Text size="small" type={moving ? 'tertiary' : 'warning'}>{note}</Text>}

@@ -258,9 +258,14 @@ def test_attachment_import_binds_source_before_download_and_replays_one_version(
         assert client.put(f"/integrations/meego/tasks/{uuid.uuid4()}/work-item", json=command, headers=bearer).status_code == 403
 
 
-def finished_task(task_id: str) -> dict:
-    """The web Task view of a finished round (shape of store.get_audit_task)."""
-    counts = {"pass_count": 1, "ng_count": 2, "unknown_count": 0, "not_covered_count": 0, "error_count": 0}
+def finished_task(task_id: str, conclusion: str = "NG", *, objection: bool = False) -> dict:
+    """The web Task view of a finished round (shape of store.get_audit_task), its standing included."""
+    outcomes = {"NG": ["PASS", "NG", "NG"], "PASS": ["PASS"], "UNKNOWN": ["PASS", "UNABLE"]}[conclusion]
+    checks = [{"finding": {"status": outcome}, "outcome": outcome, "objected": False, "attention": outcome != "PASS"} for outcome in outcomes]
+    if objection:
+        checks[0].update(review={"judgment": "disagree"}, objected=True, attention=True)
+    counts = {"pass_count": outcomes.count("PASS"), "ng_count": outcomes.count("NG"), "unknown_count": outcomes.count("UNABLE"), "not_covered_count": 0, "error_count": 0}
+    audit = {"execution": "completed", "conclusion": conclusion, "confirmed_conclusion": conclusion, "counts": counts, "checks": checks}
     return {
         "id": task_id,
         "round_id": task_id[2:],
@@ -268,7 +273,10 @@ def finished_task(task_id: str) -> dict:
         "execution": "completed",
         "has_execution_error": False,
         "round_started_at": "2026-11-16T07:30:00Z",
-        "files": [{"file": {"original_filename": "PFMEA.xlsx"}, "selection": "selected", "match": {"state": "matched"}, "audit": {"execution": "completed", "conclusion": "NG", "counts": counts}}],
+        "conclusion": conclusion,
+        "machine_conclusion": conclusion,
+        "objection": objection,
+        "files": [{"file": {"original_filename": "PFMEA.xlsx"}, "selection": "selected", "match": {"state": "matched"}, "audit": audit}],
     }
 
 
@@ -562,9 +570,7 @@ def test_writeback_completes_the_waiting_ai_node_only_for_a_conforming_latest_ro
     conclusion = {"value": "NG"}
 
     def task_of(task_id):
-        task = finished_task(task_id)
-        task["files"][0]["audit"]["conclusion"] = conclusion["value"]
-        return task
+        return finished_task(task_id, conclusion["value"])
 
     monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
     monkeypatch.setattr(store, "grants", lambda rid, uid: {"read"})
@@ -693,12 +699,8 @@ def test_a_reviewer_objection_keeps_a_conforming_round_from_completing_the_node_
     judgment = {"value": "disagree"}
 
     def task_of(task_id):
-        task = finished_task(task_id)
-        audit = task["files"][0]["audit"]
-        audit["conclusion"] = "PASS"
         # The machine found the clause conforming; the reviewer's judgment is kept beside it.
-        audit["checks"] = [{"finding": {"status": "PASS"}, "review": {"judgment": judgment["value"]} if judgment["value"] else None}]
-        return task
+        return finished_task(task_id, "PASS", objection=bool(judgment["value"]))
 
     monkeypatch.setattr(store, "resource", lambda rid: Resource(rid, principal.tenant_id, "audit_round"))
     monkeypatch.setattr(store, "grants", lambda rid, uid: {"read", "review"})

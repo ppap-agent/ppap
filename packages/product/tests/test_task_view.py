@@ -714,3 +714,56 @@ class TaskRoundViewTests(unittest.TestCase):
         self.assertEqual((view["state"], view["completion_reason"], view["progress"]), ("reviewing", None, {"completed": 1, "total": 2}))
         self.assertEqual(view["files"][2]["removal_reason"], "未匹配")
         self.assertIsNone(view["files"][1].get("audit"))
+
+
+class RoundStandingTests(unittest.TestCase):
+    """The round's standing is defined once, in the task view, for every reader."""
+
+    def confirmed(self, status):
+        return {
+            "version-a:rule:clause-a": {
+                "item_key": "version-a:rule:clause-a",
+                "status": status,
+                "suggestions": "按原件事实复算",
+                "confirmed_by": ["张三"],
+                "confirmed_at": "2026-11-17T08:00:00+00:00",
+                "sources": [],
+            }
+        }
+
+    def test_confirmed_original_facts_settle_an_undecided_clause_beside_the_machine_result(self):
+        round = verified_round("UNABLE")
+        view = task_round_view(task_input(), round)
+        check, audit = view["files"][0]["audit"]["checks"][0], view["files"][0]["audit"]
+        self.assertEqual((check["outcome"], check["attention"], audit["conclusion"], audit["confirmed_conclusion"]), ("UNABLE", True, "UNKNOWN", "UNKNOWN"))
+        self.assertEqual((view["conclusion"], view["machine_conclusion"], view["objection"]), ("UNKNOWN", "UNKNOWN", False))
+        round["fact_results"] = self.confirmed("PASS")
+        view = task_round_view(task_input(), round)
+        check, audit = view["files"][0]["audit"]["checks"][0], view["files"][0]["audit"]
+        # The machine result and conclusion stay as found; the confirmed one is stated beside them.
+        self.assertEqual(check["finding"]["status"], "UNABLE")
+        self.assertEqual((check["outcome"], check["attention"], check["confirmation"]["confirmed_by"]), ("PASS", False, ["张三"]))
+        self.assertEqual((audit["conclusion"], audit["confirmed_conclusion"]), ("UNKNOWN", "PASS"))
+        self.assertEqual((view["conclusion"], view["machine_conclusion"]), ("PASS", "UNKNOWN"))
+
+    def test_a_confirmed_fact_never_overrides_a_decided_machine_result(self):
+        round = verified_round("NG")
+        round["fact_results"] = self.confirmed("PASS")
+        view = task_round_view(task_input(), round)
+        check = view["files"][0]["audit"]["checks"][0]
+        self.assertNotIn("confirmation", check)
+        self.assertEqual((check["outcome"], view["conclusion"]), ("NG", "NG"))
+
+    def test_an_objection_needs_a_person_without_changing_any_conclusion(self):
+        round = verified_round("PASS")
+        round["findings"][0]["review"] = {"judgment": "disagree"}
+        view = task_round_view(task_input(), round)
+        check = view["files"][0]["audit"]["checks"][0]
+        self.assertEqual((check["outcome"], check["objected"], check["attention"]), ("PASS", True, True))
+        self.assertEqual((view["conclusion"], view["objection"]), ("PASS", True))
+
+    def test_a_failed_or_unfinished_round_never_reads_as_a_conclusion(self):
+        self.assertEqual(task_round_view(task_input(), frozen_round("running"))["conclusion"], None)
+        failed = verified_round("PASS")
+        failed["execution"] = "failed"
+        self.assertEqual(task_round_view(task_input(), failed)["conclusion"], "ERROR")

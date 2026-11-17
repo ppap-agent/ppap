@@ -171,6 +171,33 @@ def _counts(checks: list[dict]) -> dict:
 
 
 REPORTED_STATUSES = frozenset({"PASS", "NG", "NA", "UNABLE"})
+# A reviewer's judgment that keeps a clause open; it never changes the machine or confirmed result.
+OBJECTIONS = frozenset({"disagree", "manual-unsatisfied", "unknown"})
+
+
+def _outcome(check: dict, confirmation: dict | None) -> str:
+    """One clause's standing: the machine result, or the result recomputed from confirmed original facts."""
+    finding = check["finding"] or {}
+    if check["execution"] in {"queued", "running"}:
+        return "running"
+    if check["execution"] == "failed" or finding.get("status") == "ERR":
+        return "ERR"
+    if check["coverage"] != "executed":
+        return "uncovered"
+    status = (confirmation or {}).get("status") or finding.get("status")
+    return status if status in {"PASS", "NG", "NA"} else "UNABLE"
+
+
+def _conclusion(outcomes: list[str], complete: bool) -> str:
+    """A file conforms only when every clause is decided, at least one passes and none fails."""
+    return "NG" if "NG" in outcomes else "PASS" if complete and "PASS" in outcomes and set(outcomes) <= {"PASS", "NA"} else "UNKNOWN"
+
+
+def overall(conclusions: list[str | None]) -> str:
+    """A round's one conclusion: any NG is NG; anything undecided (or missing) keeps it open."""
+    if "NG" in conclusions:
+        return "NG"
+    return "PASS" if conclusions and all(value == "PASS" for value in conclusions) else "UNKNOWN"
 
 
 def report_eligible(checks: list[dict], failed: bool, unmapped: list[dict]) -> bool:
@@ -211,6 +238,18 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
     complete = report_eligible(checks, file_has_error, unmapped)
     # An undecided clause never lets the file conform.
     conclusion = ("NG" if counts["ng_count"] else "PASS" if complete and counts["pass_count"] and not counts["unknown_count"] else "UNKNOWN") if finished else None
+    # Each clause's standing is decided here, once, for every reader. A confirmed original fact can only
+    # settle a clause the machine could not decide; it is kept beside the machine result, never over it.
+    confirmed = round.get("fact_results") or {}
+    for check in checks:
+        machine_unable = check["coverage"] == "executed" and (check["finding"] or {}).get("status") == "UNABLE"
+        confirmation = confirmed.get(check.get("review_item_key")) if machine_unable else None
+        if confirmation:
+            check["confirmation"] = {key: deepcopy(confirmation[key]) for key in ("status", "suggestions", "confirmed_by", "confirmed_at", "sources")}
+        check["outcome"] = _outcome(check, confirmation)
+        check["objected"] = (check.get("review") or {}).get("judgment") in OBJECTIONS
+        check["attention"] = check["outcome"] not in {"PASS", "NA", "running"} or check["objected"]
+    confirmed_conclusion = _conclusion([check["outcome"] for check in checks], complete) if finished else None
     return {
         "round_id": round["id"],
         "file_version_id": version_id,
@@ -223,6 +262,7 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
         if file_has_error and round["execution"] != "failed"
         else round.get("failure"),
         "conclusion": conclusion,
+        "confirmed_conclusion": confirmed_conclusion,
         "counts": counts,
         "checks": checks,
         "unmapped_findings": unmapped,
@@ -268,8 +308,21 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
         and ended == len(selected)
         and all(row["audit"]["report"]["state"] not in {"pending", "generating"} or row["audit"]["report"].get("generation_request", {}).get("state") == "accepted" for row in selected)
     )
+    audits = [row["audit"] for row in selected if row.get("audit")]
+    failed = (
+        round["execution"] == "failed"
+        or has_execution_error(round["execution"], round.get("coverage") or {}, round.get("findings", []))
+        or any(audit["execution"] == "review_failed" for audit in audits)
+    )
+    # The round's standing, defined once: what writeback, release, the flow node and every page read.
+    standing = {
+        "conclusion": None if not finished else "ERROR" if failed else overall([audit["confirmed_conclusion"] for audit in audits]),
+        "machine_conclusion": None if not finished else "ERROR" if failed else overall([audit["conclusion"] for audit in audits]),
+        "objection": any(check["objected"] for audit in audits for check in audit["checks"]),
+    }
     return {
         **task,
+        **standing,
         "round_id": round["id"],
         # When the accepted Round was created: live views count elapsed time from here.
         "round_started_at": round.get("created_at"),

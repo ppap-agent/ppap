@@ -29,7 +29,17 @@ export type Check = {
   review: Review | null;
   evidence: Evidence[];
   finding: { status: FindingStatus; classification?: string; suggestions?: string; review?: Review | null } | null;
+  // The clause's standing as PPAP defines it, once, for every reader: the machine result, or the result
+  // recomputed from confirmed original facts; and whether it still needs a person.
+  outcome: Bucket;
+  attention: boolean;
+  objected: boolean;
+  confirmation?: Confirmation;
 };
+export type Confirmation = { status: FindingStatus; suggestions: string; confirmed_by: string[]; confirmed_at: string };
+/** An original fact the machine could not read, asked of a reviewer; answering recomputes its clauses without a model. */
+export type FactQuestion = { file_version_id: string; field: string; prompt: string; answer_type: 'boolean' | 'text'; locator: Locator | null; item_keys: string[]; fingerprint: string; answered: boolean };
+export type FactView = { round_id: string; revision: number; questions: FactQuestion[] };
 
 export type Report = { state: 'not_eligible' | 'pending' | 'generating' | 'ready' | 'failed'; report_id: string | null; artifact: { artifact_id: string; filename: string } | null; regenerate_allowed?: boolean; reason?: string | null };
 
@@ -40,6 +50,8 @@ export type FileAudit = {
   execution: 'queued' | 'running' | 'completed' | 'review_failed';
   progress: { completed: number; total: number };
   conclusion: 'PASS' | 'NG' | 'UNKNOWN' | null;
+  // The machine conclusion with clauses settled by confirmed original facts; what the file stands at.
+  confirmed_conclusion: 'PASS' | 'NG' | 'UNKNOWN' | null;
   counts: { pass_count: number; ng_count: number; unknown_count: number; not_covered_count: number; error_count: number };
   checks: Check[];
   report: Report;
@@ -78,6 +90,9 @@ export type Task = {
   deep_mode_option?: { available: boolean; reason?: string | null };
   execution?: 'queued' | 'running' | 'completed' | 'failed';
   has_execution_error?: boolean;
+  // The round's standing, defined by PPAP: what writeback, release and the flow node also read.
+  conclusion?: 'PASS' | 'NG' | 'UNKNOWN' | 'ERROR' | null;
+  objection?: boolean;
   progress?: { completed: number; total: number };
   files: TaskFile[];
 };
@@ -90,6 +105,8 @@ export type Precheck = { conclusion: 'pass' | 'fail' | 'not_run'; blocks: Preche
 export const resultLabel: Record<FindingStatus, string> = { PASS: '符合', NG: '不符合', UNABLE: '无法判断', ERR: '技术错误', NA: '不适用' };
 export const uncoveredLabel = '未覆盖';
 export const conclusionLabel: Record<string, string> = { PASS: '符合', NG: '不符合', UNKNOWN: '尚有未确定项' };
+/** A round's conclusion as this plugin says it, including no round yet; the one wording for every view. */
+export const verdictLabel = { PASS: '符合', NG: '不符合', UNKNOWN: '尚有未确定项', ERROR: '审核异常', NONE: '尚未审核' } as const;
 export const matchLabel: Record<string, string> = { matched: '已匹配规则', reference: '作为参考资料', unmatched: '没有可用规则', failed: '识别失败', pending: '识别中', matching: '识别中' };
 /** The file is fine but its type has no checker program yet (the web app's "暂不能审核"). */
 export const checkerUnavailable = (row: TaskFile) => Boolean(row.match?.gaps?.includes('checker_suite_unavailable'));
@@ -107,25 +124,14 @@ export const documentTypeLabel = (type: string) => sourceDocumentNames[type] ?? 
 
 export type Bucket = FindingStatus | 'uncovered' | 'running';
 
-/** The same sorting of a clause the web app uses when it counts results. */
-export function bucket(check: Check): Bucket {
-  if (check.execution === 'queued' || check.execution === 'running') return 'running';
-  if (check.execution === 'failed' || check.finding?.status === 'ERR') return 'ERR';
-  if (check.coverage !== 'executed') return 'uncovered';
-  if (!check.finding || check.finding.status === 'UNABLE') return 'UNABLE';
-  return check.finding.status;
-}
+/** Where a clause stands, as PPAP decided it. */
+export const bucket = (check: Check): Bucket => check.outcome;
 
 export const bucketLabel = (value: Bucket) => (value === 'uncovered' ? uncoveredLabel : value === 'running' ? '审核中' : resultLabel[value]);
 export const bucketColor = (value: Bucket | 'UNKNOWN' | null | undefined): 'red' | 'green' | 'orange' | 'grey' =>
   value === 'NG' ? 'red' : value === 'PASS' ? 'green' : value === 'UNABLE' || value === 'ERR' || value === 'uncovered' || value === 'UNKNOWN' ? 'orange' : 'grey';
 
 export const reviewOf = (check: Check): Review | null => check.review ?? check.finding?.review ?? null;
-/** A reviewer judged the clause not to hold, or still undecided; the machine result stays as found. */
-export const objected = (check: Check) => ['disagree', 'manual-unsatisfied', 'unknown'].includes(reviewOf(check)?.judgment || '');
-
-/** A clause needs a person's attention unless it conforms or does not apply, and no reviewer objects to it. */
-export const needsAttention = (check: Check) => !['PASS', 'NA', 'running'].includes(bucket(check)) || (bucket(check) !== 'running' && objected(check));
 const rank: Record<Bucket, number> = { NG: 0, ERR: 1, UNABLE: 2, uncovered: 3, PASS: 4, NA: 5, running: 6 };
 export const byUrgency = (left: Check, right: Check) => rank[bucket(left)] - rank[bucket(right)];
 

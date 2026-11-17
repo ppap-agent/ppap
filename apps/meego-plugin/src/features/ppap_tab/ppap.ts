@@ -137,6 +137,13 @@ const errorText: Record<string, string> = {
   release_not_needed: '结论已是“符合”，写回后流程会自动进入下一步，不需要放行。',
   release_older_round: '只能放行这个工作项最近一轮的审核。',
   release_no_waiting_node: '流程里没有等待 PPAP 的节点，不需要放行。',
+  release_round_incomplete: '这次审核出现技术错误或尚未完成，没有可放行的结论，请重新审核。',
+  fact_revision_conflict: '有人刚确认了这次审核的其他事实，请刷新后再确认。',
+  fact_question_changed: '这个问题已更新，请刷新后再确认。',
+  fact_question_expired: '这个问题已不需要确认，请刷新。',
+  fact_answer_conflict: '这个事实已经有人确认过，请刷新查看。',
+  fact_answers_requires_completed: '审核完成后才能确认原件事实。',
+  invalid_fact_answer_request: '回答内容无效，请检查后再确认。',
   meego_ai_node_disabled: '流程里的 PPAP 节点尚未配置完成，请联系管理员。',
   invalid_release: '请填写放行理由（500 字以内）。',
 };

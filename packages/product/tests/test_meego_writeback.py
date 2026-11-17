@@ -3,20 +3,38 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from product.meego import WorkItemRef
 from product.meego_writeback import marker, report_names, summary, task_link, writeback_state
+from product.store.task_view import overall
 
 
-def audited(name: str, conclusion: str | None, execution: str = "completed", **counts) -> dict:
+def audited(name: str, conclusion: str | None, execution: str = "completed", *, confirmed: str | None = None, **counts) -> dict:
+    """One audited file as the task view states it: machine counts, clause outcomes, and the confirmed conclusion."""
     full = {"pass_count": 0, "ng_count": 0, "unknown_count": 0, "not_covered_count": 0, "error_count": 0, **counts}
+    outcomes = ["PASS"] * full["pass_count"] + ["NG"] * full["ng_count"] + ["UNABLE"] * full["unknown_count"]
+    if confirmed == "PASS":
+        # Confirmed original facts settled every clause the machine could not decide.
+        outcomes = ["PASS" if outcome == "UNABLE" else outcome for outcome in outcomes]
     return {
         "file": {"original_filename": name},
         "selection": "selected",
         "match": {"state": "matched"},
-        "audit": {"execution": execution, "conclusion": conclusion, "counts": full},
+        "audit": {"execution": execution, "conclusion": conclusion, "confirmed_conclusion": confirmed or conclusion, "counts": full, "checks": [{"outcome": outcome} for outcome in outcomes]},
     }
 
 
 def task(*files: dict, **extra) -> dict:
-    return {"id": "t1", "round_id": "r1", "state": "completed", "execution": "completed", "has_execution_error": False, "round_started_at": "2026-11-16T07:30:00Z", "files": list(files), **extra}
+    audits = [row["audit"] for row in files if row.get("audit")]
+    standing = {"conclusion": overall([audit["confirmed_conclusion"] for audit in audits]), "machine_conclusion": overall([audit["conclusion"] for audit in audits]), "objection": False}
+    return {
+        "id": "t1",
+        "round_id": "r1",
+        "state": "completed",
+        "execution": "completed",
+        "has_execution_error": False,
+        "round_started_at": "2026-11-16T07:30:00Z",
+        "files": list(files),
+        **standing,
+        **extra,
+    }
 
 
 REFERENCE = {"file": {"original_filename": "图纸.pdf"}, "selection": "selected", "match": {"state": "reference"}, "reference_only": True, "audit": None}
@@ -38,6 +56,22 @@ def test_unknown_is_never_reported_as_passed():
     assert "B.xlsx：尚有未确定项" in lines
     assert "总体：尚有未确定项；不符合 0 项，尚未确定 5 项" in lines
     assert summary(task(audited("A.xlsx", "PASS", pass_count=3)), "https://ppap.example")[-2] == "总体：符合；不符合 0 项，尚未确定 0 项"
+
+
+def test_confirmed_original_facts_carry_the_comment_and_say_so():
+    lines = summary(task(audited("PFMEA.xlsx", "UNKNOWN", confirmed="PASS", pass_count=3, unknown_count=2)), "https://ppap.example")
+    assert "PFMEA.xlsx：符合（依据人工确认的原件事实）" in lines
+    assert "总体：符合；不符合 0 项，尚未确定 0 项" in lines
+    # Without confirmation the same file stays open.
+    assert "PFMEA.xlsx：尚有未确定项" in summary(task(audited("PFMEA.xlsx", "UNKNOWN", pass_count=3, unknown_count=2)), "https://ppap.example")
+
+
+def test_a_round_conclusion_never_turns_missing_or_unknown_into_pass():
+    assert overall(["PASS", None]) == "UNKNOWN"
+    assert overall([]) == "UNKNOWN"
+    assert overall(["PASS", "UNKNOWN"]) == "UNKNOWN"
+    assert overall(["UNKNOWN", "NG"]) == "NG"
+    assert overall(["PASS", "PASS"]) == "PASS"
 
 
 @pytest.mark.parametrize(

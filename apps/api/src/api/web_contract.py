@@ -905,6 +905,22 @@ class AuditClauseEvaluation(TypedDict):
     verification_scope: NotRequired[str | None]
     review_item_key: NotRequired[str]
     review: NotRequired[Review | None]
+    # The clause's standing, defined once by the server: the machine result, or the result
+    # recomputed from confirmed original facts; and whether it still needs a person.
+    outcome: NotRequired[Literal["PASS", "NG", "NA", "UNABLE", "ERR", "uncovered", "running"]]
+    attention: NotRequired[bool]
+    objected: NotRequired[bool]
+    confirmation: NotRequired["AuditFactConfirmation"]
+
+
+class AuditFactConfirmation(TypedDict):
+    """A clause the machine could not decide, settled by recomputation from confirmed original facts."""
+
+    status: Literal["PASS", "NG", "NA", "UNABLE", "ERR"]
+    suggestions: str
+    confirmed_by: list[str]
+    confirmed_at: str
+    sources: list[dict[str, Any]]
 
 
 class AuditResultCounts(TypedDict):
@@ -974,6 +990,8 @@ class AuditFileReview(TypedDict):
     progress: AuditProgress
     failure: RoundFailure | None
     conclusion: Literal["PASS", "NG", "UNKNOWN"] | None
+    # The machine conclusion with clauses settled by confirmed original facts; reports keep the machine one.
+    confirmed_conclusion: NotRequired[Literal["PASS", "NG", "UNKNOWN"] | None]
     counts: AuditResultCounts
     checks: list[AuditClauseEvaluation]
     unmapped_findings: NotRequired[list[Finding]]
@@ -1349,6 +1367,10 @@ class AuditTask(AuditTaskIdentity):
     files: list[AuditTaskFile]
     execution: NotRequired[Literal["queued", "running", "completed", "failed"]]
     has_execution_error: NotRequired[bool]
+    # The round's standing, defined once: what writeback, release, the flow node and every page read.
+    conclusion: NotRequired[Literal["PASS", "NG", "UNKNOWN", "ERROR"] | None]
+    machine_conclusion: NotRequired[Literal["PASS", "NG", "UNKNOWN", "ERROR"] | None]
+    objection: NotRequired[bool]
     acceptance: NotRequired[AuditAcceptance]
     progress: NotRequired[AuditProgress]
     completion_estimate: NotRequired[AuditCompletionEstimate | None]

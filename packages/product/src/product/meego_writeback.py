@@ -94,18 +94,13 @@ def report_names(filenames: list[str], round_started_at) -> list[str]:
     return names
 
 
-def overall(task: dict) -> str:
-    """The round's one conclusion: any NG is NG, any unknown keeps it open; only all PASS conforms."""
-    conclusions = {row["audit"]["conclusion"] for row in _selected(task) if row.get("audit")}
-    return "NG" if "NG" in conclusions else "UNKNOWN" if "UNKNOWN" in conclusions or not conclusions else "PASS"
-
-
 def summary(task: dict, web_url: str) -> list[str]:
+    """The comment states the round's standing as the task view defines it: the confirmed conclusion,
+    and which files reached it through confirmed original facts rather than the machine alone."""
     state = writeback_state(task)
     if state != "ready":
         raise ValueError(state)
     lines = [f"PPAP 审核结果（{marker(str(task['round_id']))}）", "审核时间：" + _clock(task.get("round_started_at"))]
-    conclusions: set[str] = set()
     ng = unsure = 0
     for row in _selected(task):
         name = str((row.get("file") or {}).get("original_filename") or "未命名资料")
@@ -113,12 +108,11 @@ def summary(task: dict, web_url: str) -> list[str]:
         if audit is None:
             lines.append(f"{name}：{REFERENCE_LABEL}")
             continue
-        conclusion = audit["conclusion"]
-        conclusions.add(conclusion)
-        counts = audit.get("counts") or {}
-        ng += int(counts.get("ng_count") or 0)
-        unsure += sum(int(counts.get(key) or 0) for key in ("unknown_count", "not_covered_count", "error_count"))
-        lines.append(f"{name}：{CONCLUSION_LABEL[conclusion]}")
-    lines.append(f"总体：{CONCLUSION_LABEL[overall(task)]}；不符合 {ng} 项，尚未确定 {unsure} 项")
+        outcomes = [check["outcome"] for check in audit["checks"]]
+        ng += outcomes.count("NG")
+        unsure += sum(outcome in {"UNABLE", "ERR", "uncovered"} for outcome in outcomes)
+        confirmed = audit["confirmed_conclusion"]
+        lines.append(f"{name}：{CONCLUSION_LABEL[confirmed]}" + ("（依据人工确认的原件事实）" if confirmed != audit["conclusion"] else ""))
+    lines.append(f"总体：{CONCLUSION_LABEL[task['conclusion']]}；不符合 {ng} 项，尚未确定 {unsure} 项")
     lines.append("查看详情：" + task_link(web_url, str(task["id"])))
     return lines

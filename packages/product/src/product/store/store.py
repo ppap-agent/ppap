@@ -2649,6 +2649,10 @@ class AuthStore:
             reports, report_updated = self._task_file_reports(conn, principal.tenant_id, task_id, round["id"], round["result_attempt"])
             if report_updated:
                 task["updated_at"] = max(datetime.fromisoformat(task["updated_at"]), report_updated).isoformat()
+            from .fact_answers import confirmed_results
+
+            # Confirmed original facts settle clauses the machine could not decide; the task view states both.
+            round["fact_results"] = confirmed_results(conn, round["id"])
             task = self._display_projection(conn, principal, task_round_view(task, round, reports))
             task["successor_tasks"] = [
                 {"id": str(row[0]), "number": f"PPAP-{row[1]:%Y%m%d}-{row[2]:03d}"}

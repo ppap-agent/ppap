@@ -105,6 +105,11 @@ def test_original_answer_persists_without_new_round_or_model_call(auth_store_fac
     assert reopened.read_fact_answer_operation(alice, rid, request["operation_id"]) == receipt
     assert reopened.read_fact_answers(alice, rid)["answers"] == [receipt["answer"]]
     assert reopened.get_round(rid) == original
+    # The task view reads the confirmed result per clause; the machine finding stays UNABLE.
+    from product.store.fact_answers import confirmed_results
+
+    with store._conn() as conn:
+        assert {key: result["status"] for key, result in confirmed_results(conn, rid).items()} == {"R1": "PASS"}
     exported = reopened.export_fact_answers(alice, rid)
     assert [item["status"] for item in exported["machine_findings"]] == ["UNABLE", "PASS"]
     assert exported["training_eligible"] is False

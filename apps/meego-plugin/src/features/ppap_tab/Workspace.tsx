@@ -9,11 +9,11 @@ import { itemPath, outsideText } from './data';
 import { Confirm, ConfirmRow, useRevise } from './Confirm';
 import type { Revise } from './Confirm';
 import { PdfView } from './Evidence';
-import { Issue } from './Issue';
+import { Issue, openFacts } from './Issue';
 import { buildPackage, currentTemplate, pendingStart, rectification, rememberedTemplate, rememberStart, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
 import type { Doc, OpenIssue, Package } from './ledger';
-import { bucket, bucketColor, bucketLabel, byUrgency, conclusionLabel, documentTypeLabel, objected, reviewOf, when } from './model';
-import type { FileVersion, Job, Task, TaskFile } from './model';
+import { bucket, bucketColor, bucketLabel, byUrgency, conclusionLabel, documentTypeLabel, reviewOf, verdictLabel, when } from './model';
+import type { FactView, FileVersion, Job, Task, TaskFile } from './model';
 import { bytes, call, newId, PpapError, save, say, taskLink, waitFor } from './ppap';
 
 const { Text } = Typography;
@@ -21,7 +21,6 @@ type Props = { item: Item; data: Data; user: string; stalled: boolean; refresh: 
 type Input = { file_version_id: string; validation_id: string; selection: 'selected'; removal_reason: null; preferred_rule_version_id?: string; reference_only?: boolean };
 type Carried = { file: FileVersion; validation_id?: string; validation?: { state?: string }; preferred_rule_version_id?: string; reference_only?: boolean };
 
-const verdictLabel = { PASS: '符合', NG: '不符合', UNKNOWN: '尚有未确定项', ERROR: '审核异常', NONE: '尚未审核' } as const;
 const reportReady = (row: TaskFile) => Boolean(row.audit?.report.state === 'ready' && row.audit.report.report_id && row.audit.report.artifact && row.audit.result_attempt !== null);
 const reportPath = (task: Task, row: TaskFile) => {
   const audit = row.audit!;
@@ -271,7 +270,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
   const released = latest?.round_id ? data.releases[latest.round_id] : undefined;
   // Only the latest, unchanged, written-back round of a waiting node can be released.
   // A reviewer's objection keeps a conforming round from completing the node on its own; the conclusion stays as found.
-  const objection = Boolean(latest?.files.some(row => row.selection === 'selected' && row.audit?.checks.some(objected)));
+  const objection = Boolean(latest?.objection);
   const releasable = nodeWaiting && !released && !pack.stale && (total === 'NG' || total === 'UNKNOWN' || (total === 'PASS' && objection));
   // Written back and conforming, the node completes itself, unless a reviewer objects.
   const waitingText =
@@ -329,7 +328,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
       ) : (
         <div className={current ? 'split has-detail' : 'split'}>
           <nav className="issues" aria-label="检查项">
-            <IssueList issues={shown} current={open} onOpen={issue => setOpen({ file: issue.row.file.id, clause: issue.check.rule_item.id })} />
+            <IssueList issues={shown} facts={data.facts} current={open} onOpen={issue => setOpen({ file: issue.row.file.id, clause: issue.check.rule_item.id })} />
             {view.resolved.length > 0 && (
               <Collapse>
                 <Collapse.Panel header={`已解决 ${view.resolved.length} 项`} itemKey="resolved">
@@ -340,7 +339,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
           </nav>
           <section className="detail">
             {current ? (
-              <Issue task={latest} row={current.row} check={current.check} position={current.row.audit!.checks.indexOf(current.check) + 1} stale={pack.stale} onBack={() => setOpen(null)} onChanged={refresh} />
+              <Issue task={latest} row={current.row} check={current.check} position={current.row.audit!.checks.indexOf(current.check) + 1} stale={pack.stale} facts={data.facts} onBack={() => setOpen(null)} onChanged={refresh} />
             ) : (
               <Text type="tertiary" className="placeholder">选择一项，对照原件核对并记录复核。</Text>
             )}
@@ -554,10 +553,11 @@ function DocStatus({ doc, onIssues, onReport, onDownload, onRegenerate }: { doc:
     case 'unread':
       return <Unaudited state={doc.state} />;
     case 'done': {
-      const open = audit!.counts.ng_count + audit!.counts.unknown_count + audit!.counts.not_covered_count + audit!.counts.error_count;
+      const open = audit!.checks.filter(check => check.attention).length;
+      const conclusion = audit!.confirmed_conclusion;
       return (
         <Space wrap>
-          <Tag color={bucketColor(audit!.conclusion)} type="light">{audit!.conclusion ? conclusionLabel[audit!.conclusion] : '尚有未确定项'}</Tag>
+          <Tag color={bucketColor(conclusion)} type="light">{conclusion ? conclusionLabel[conclusion] : '尚有未确定项'}</Tag>
           {open > 0 && <Text link onClick={onIssues}>{open} 项待处理</Text>}
           {reportReady(row!) && (
             <span className="row-actions">
@@ -590,7 +590,7 @@ function Unaudited({ state }: { state: string }) {
 
 // What needs a person ------------------------------------------------------
 
-function IssueList({ issues, current, onOpen }: { issues: OpenIssue[]; current: { file: string; clause: string } | null; onOpen: (issue: OpenIssue) => void }) {
+function IssueList({ issues, facts, current, onOpen }: { issues: OpenIssue[]; facts: FactView | null; current: { file: string; clause: string } | null; onOpen: (issue: OpenIssue) => void }) {
   const groups = useMemo(() => {
     const byFile = new Map<string, OpenIssue[]>();
     issues.forEach(issue => byFile.set(issue.row.file.id, [...(byFile.get(issue.row.file.id) || []), issue]));
@@ -618,7 +618,9 @@ function IssueList({ issues, current, onOpen }: { issues: OpenIssue[]; current: 
                       <Space spacing={4} wrap>
                         <Tag size="small" color={bucketColor(kind)} type="light">{bucketLabel(kind)}</Tag>
                         {issue.change && <Tag size="small" color={issue.change === 'added' ? 'red' : 'grey'} type="ghost">{issue.change === 'added' ? '新出现' : '仍存在'}</Tag>}
-                        {objected(issue.check) ? <Tag size="small" color="orange" type="ghost">复核有异议</Tag> : reviewOf(issue.check) && <Tag size="small" color="blue" type="ghost">已复核</Tag>}
+                        {openFacts(facts, issue.check).length > 0 && <Tag size="small" color="blue" type="ghost">待确认事实</Tag>}
+                        {issue.check.confirmation && <Tag size="small" color="grey" type="ghost">依据确认的事实</Tag>}
+                        {issue.check.objected ? <Tag size="small" color="orange" type="ghost">复核有异议</Tag> : reviewOf(issue.check) && <Tag size="small" color="blue" type="ghost">已复核</Tag>}
                       </Space>
                     </span>
                   }

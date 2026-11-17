@@ -2063,6 +2063,9 @@ export interface components {
         };
         /** AuditClauseEvaluation */
         AuditClauseEvaluation: {
+            /** Attention */
+            attention?: boolean;
+            confirmation?: components["schemas"]["AuditFactConfirmation"];
             /**
              * Coverage
              * @enum {string}
@@ -2078,6 +2081,13 @@ export interface components {
              */
             execution: "queued" | "running" | "completed" | "failed";
             finding: components["schemas"]["Finding"] | null;
+            /** Objected */
+            objected?: boolean;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome?: "PASS" | "NG" | "NA" | "UNABLE" | "ERR" | "uncovered" | "running";
             review?: components["schemas"]["Review"] | null;
             /** Review Item Key */
             review_item_key?: string;
@@ -2167,6 +2177,27 @@ export interface components {
              * @enum {string}
              */
             rendition: "original" | "derived";
+        };
+        /**
+         * AuditFactConfirmation
+         * @description A clause the machine could not decide, settled by recomputation from confirmed original facts.
+         */
+        AuditFactConfirmation: {
+            /** Confirmed At */
+            confirmed_at: string;
+            /** Confirmed By */
+            confirmed_by: string[];
+            /** Sources */
+            sources: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PASS" | "NG" | "NA" | "UNABLE" | "ERR";
+            /** Suggestions */
+            suggestions: string;
         };
         /**
          * AuditFileDisplayInfo
@@ -2262,6 +2293,8 @@ export interface components {
             checks: components["schemas"]["AuditClauseEvaluation"][];
             /** Conclusion */
             conclusion: ("PASS" | "NG" | "UNKNOWN") | null;
+            /** Confirmed Conclusion */
+            confirmed_conclusion?: ("PASS" | "NG" | "UNKNOWN") | null;
             counts: components["schemas"]["AuditResultCounts"];
             /**
              * Execution
@@ -2793,6 +2826,8 @@ export interface components {
             completion_estimate?: components["schemas"]["AuditCompletionEstimate"] | null;
             /** Completion Reason */
             completion_reason: ("no_matching_rules" | "processed") | null;
+            /** Conclusion */
+            conclusion?: ("PASS" | "NG" | "UNKNOWN" | "ERROR") | null;
             /** Confirmation Basis Digest */
             confirmation_basis_digest: string | null;
             confirmation_scope: components["schemas"]["AuditTaskConfirmationScope"] | null;
@@ -2818,12 +2853,16 @@ export interface components {
             id: string;
             /** Input Revision */
             input_revision?: number;
+            /** Machine Conclusion */
+            machine_conclusion?: ("PASS" | "NG" | "UNKNOWN" | "ERROR") | null;
             /** Notification Enabled */
             notification_enabled?: boolean;
             /** Notification Revision */
             notification_revision?: number;
             /** Number */
             number: string;
+            /** Objection */
+            objection?: boolean;
             /** Predecessor Id */
             predecessor_id?: string;
             /** Predecessor Task Id */

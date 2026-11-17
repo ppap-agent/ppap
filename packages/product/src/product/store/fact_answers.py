@@ -84,6 +84,11 @@ def _results(records):
     return list(latest.values())
 
 
+def confirmed_results(conn, round_id) -> dict:
+    """The round's latest result per clause recomputed from confirmed original facts, by item key."""
+    return {result["item_key"]: result for result in _results(_records(conn, round_id))}
+
+
 def _view(conn, round_id):
     versions = {str(row[0]) for row in conn.execute("SELECT file_version_id FROM product.round_inputs WHERE round_id=%s", (round_id,)).fetchall()}
     records = _records(conn, round_id)

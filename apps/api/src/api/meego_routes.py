@@ -23,7 +23,7 @@ from product.files import ObjectMissing
 from product.identity import SESSION_COOKIE, can_read, can_review, new_token
 from product.logs import emit
 from product.meego import MeegoClient, MeegoError, WorkItemRef, work_item
-from product.meego_writeback import CONCLUSION_LABEL, marker, overall, report_names, summary, task_link
+from product.meego_writeback import CONCLUSION_LABEL, marker, report_names, summary, task_link
 from product.store.meego import MeegoConnectError, MeegoStore
 from product.store.store import _as_uuid
 
@@ -431,7 +431,10 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         if isinstance(context, JSONResponse):
             return context
         session, binding, round_id, task, item = context
-        if overall(task) == "PASS" and not review_objects(task):
+        if task["conclusion"] not in CONCLUSION_LABEL:
+            # A round with technical errors (or unfinished) has no conclusion to release; it is re-audited.
+            return JSONResponse({"error": "release_round_incomplete"}, status_code=409)
+        if task["conclusion"] == "PASS" and not task["objection"]:
             return JSONResponse({"error": "release_not_needed"}, status_code=409)
         if not is_latest(session.principal, item, task):
             return JSONResponse({"error": "release_older_round"}, status_code=409)
@@ -449,7 +452,7 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
                 f"PPAP 人工放行（{release_marker(round_id)}）",
                 f"放行人：{release['released_by_name'] or '（未显示姓名）'}",
                 f"理由：{release['reason']}",
-                "审核结论为“符合”，复核人有异议，由人工放行。" if overall(task) == "PASS" else f"审核结论保持为“{CONCLUSION_LABEL[overall(task)]}”，未改为“符合”。",
+                "审核结论为“符合”，复核人有异议，由人工放行。" if task["conclusion"] == "PASS" else f"审核结论保持为“{CONCLUSION_LABEL[task['conclusion']]}”，未改为“符合”。",
                 "查看详情：" + task_link(web_base, str(task["id"])),
             ]
             try:
@@ -461,15 +464,6 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
                 return meego_failure(exc)
         released_at = release["created_at"].isoformat() if release.get("created_at") else None
         return JSONResponse({"state": state, "node": node, "release": {"by": release["released_by_name"], "reason": release["reason"], "at": released_at}})
-
-    def review_objects(task: dict) -> bool:
-        """A reviewer judged a clause of the audited files not to hold, or still undecided."""
-        return any(
-            ((check.get("review") or {}).get("judgment") in {"disagree", "manual-unsatisfied", "unknown"})
-            for row in task.get("files") or []
-            if row.get("selection") == "selected" and row.get("audit")
-            for check in row["audit"].get("checks") or []
-        )
 
     def release_marker(round_id: str) -> str:
         # Distinct from the writeback marker, so a release comment never reads as the round's own writeback.
@@ -492,11 +486,11 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             return "none"
         if not latest:
             return "older_round"
-        if overall(task) != "PASS" and not released:
+        # The task view's conclusion already counts confirmed original facts; reviews never change it.
+        if task["conclusion"] != "PASS" and not released:
             return "not_passed"
-        if not released and review_objects(task):
-            # Reviews never change the round's conclusion; a conforming round a reviewer objected to
-            # waits for a person to re-audit it or release it with a reason.
+        if not released and task["objection"]:
+            # A conforming round a reviewer objected to waits for a person to re-audit it or release it.
             return "review_objection"
         if not settings.meego_ai_node_enabled():
             return "not_configured"
@@ -595,7 +589,7 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             if found is None:
                 return "not_configured"
             field_key, options = found
-            label = CONCLUSION_LABEL[overall(task)]
+            label = CONCLUSION_LABEL[task["conclusion"]]
             option = options.get(label)
             if not option:
                 return "not_configured"

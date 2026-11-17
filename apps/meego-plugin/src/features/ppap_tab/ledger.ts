@@ -2,7 +2,7 @@
 // a round is frozen together, and cross-file requirements are checked against the others in
 // that round. So the conclusion shown here is always the latest finished round's own
 // conclusion, never a mix of rounds; this file only relates that round to today's attachments.
-import { bucket, checkerUnavailable, needsAttention, reviewOf } from './model';
+import { bucket, checkerUnavailable, reviewOf } from './model';
 import type { Attachment, Check, Task, TaskFile } from './model';
 
 export type DocState = 'unsupported' | 'new' | 'added' | 'matching' | 'confirm' | 'running' | 'done' | 'failed' | 'reference' | 'no_rule' | 'unavailable' | 'unread';
@@ -155,21 +155,14 @@ export function unaudited(row: TaskFile): DocState {
 
 export type Verdict = 'PASS' | 'NG' | 'UNKNOWN' | 'ERROR' | 'NONE';
 
-/** The latest round's own conclusion. Anything failed, unfinished or unknown is never conforming. */
-export function verdict(task: Task | null): Verdict {
-  if (!task) return 'NONE';
-  const audits = task.files.filter(row => row.selection === 'selected' && row.audit).map(row => row.audit!);
-  if (task.execution === 'failed' || task.has_execution_error || audits.some(audit => audit.execution === 'review_failed')) return 'ERROR';
-  if (!audits.length || task.execution !== 'completed' || audits.some(audit => !audit.conclusion)) return 'UNKNOWN';
-  if (audits.some(audit => audit.conclusion === 'NG')) return 'NG';
-  return audits.every(audit => audit.conclusion === 'PASS') ? 'PASS' : 'UNKNOWN';
-}
+/** The latest round's conclusion as PPAP states it; a round still running has none yet and reads as open. */
+export const verdict = (task: Task | null): Verdict => (task ? task.conclusion ?? 'UNKNOWN' : 'NONE');
 
 export type Change = 'added' | 'persisted' | null;
 export type OpenIssue = { row: TaskFile; check: Check; change: Change };
 export type Standing = { issues: OpenIssue[]; resolved: { row: TaskFile; check: Check }[] };
 
-const settled = (check: Check | undefined, status: string) => Boolean(check && check.execution === 'completed' && check.coverage === 'executed' && check.finding?.status === status);
+const settled = (check: Check | undefined, status: string) => check?.outcome === status;
 const sameRule = (left: Check, right: Check | undefined) => right?.rule_item.rule_to_check.trim() === left.rule_item.rule_to_check.trim();
 
 /** A document keeps its identity across rounds by its recognized type, when each round has exactly one of that type. */
@@ -193,7 +186,7 @@ export function standing(latest: Task | null, previous: Task | null): Standing {
       const earlier = before?.get(check.rule_item.id);
       const comparable = earlier && sameRule(check, earlier);
       if (comparable && settled(check, 'PASS') && settled(earlier, 'NG')) resolved.push({ row, check });
-      if (!needsAttention(check)) continue;
+      if (!check.attention) continue;
       const change: Change = comparable && settled(check, 'NG') ? (settled(earlier, 'NG') ? 'persisted' : settled(earlier, 'PASS') ? 'added' : null) : null;
       issues.push({ row, check, change });
     }
