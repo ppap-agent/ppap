@@ -5,8 +5,11 @@ import type { Attachment, AuditSummary, Task } from './model';
 import { call } from './ppap';
 
 export type Item = { project_key: string; work_item_type_key: string; work_item_id: string };
-// The work item's PPAP AI node, when its flow has one; null when it has none.
-export type AiNode = { status: 'idle' | 'running' | 'done' | 'stopped' | 'completed' | 'removed'; since?: string } | null;
+// The work item's PPAP AI node, when its flow has one; null when it has none. `outside`: a person
+// completed it in Feishu Project, without PPAP's writeback or release.
+export type AiNode = { status: 'idle' | 'running' | 'done' | 'stopped' | 'completed' | 'removed'; since?: string; outside?: boolean } | null;
+// Said the same way wherever the node is shown.
+export const outsideText = '这个节点是在飞书项目里直接完成的，没有经过 PPAP 的写回或人工放行。';
 // A person's release of a round's PPAP node; kept apart from the round's own conclusion.
 export type Release = { by: string; reason: string; at: string };
 export type Data = { attachments: Attachment[]; fields: Record<string, string>; tasks: Task[]; written: string[] | null; sources: Record<string, string>; rules: Rule[]; defaultCustomer: string | null; aiNode: AiNode; releases: Record<string, Release> };

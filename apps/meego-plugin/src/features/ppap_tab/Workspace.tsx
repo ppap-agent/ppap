@@ -4,11 +4,12 @@
 import { Banner, Button, Collapse, Empty, List, Modal, Progress, Radio, RadioGroup, Select, Space, Spin, Table, TabPane, Tabs, Tag, TextArea, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Data, Item } from './data';
+import { itemPath, outsideText } from './data';
 import { Confirm, ConfirmRow, useRevise } from './Confirm';
 import type { Revise } from './Confirm';
 import { PdfView } from './Evidence';
 import { Issue } from './Issue';
-import { buildPackage, currentTemplate, rectification, rememberedTemplate, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
+import { buildPackage, currentTemplate, pendingStart, rectification, rememberedTemplate, rememberStart, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
 import type { Doc, OpenIssue, Package } from './ledger';
 import { bucket, bucketColor, bucketLabel, byUrgency, conclusionLabel, documentTypeLabel, objected, reviewOf, when } from './model';
 import type { FileVersion, Job, Task, TaskFile } from './model';
@@ -108,7 +109,31 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
   // so cross-file requirements are checked against the complete set again.
   async function start() {
     setNotice('');
+    // The same start (same package, same earlier round, same customer) retried after its reply was lost
+    // or its link to the work item failed: read the audit back and link it, never create a second one.
+    const key = itemPath(item);
+    const from = [latest?.round_id ?? '', customer ?? '', ...chosen.map(doc => doc.attachment.uid).sort()].join('|');
     try {
+      const pending = pendingStart(key);
+      if (pending?.from === from) {
+        setBusy('正在提交…');
+        const found = await call<Task>(`/audit-tasks/${pending.task}`).then(
+          () => true,
+          failure => {
+            // PPAP answers a task that does not exist as not accessible; this id was this person's own.
+            if (failure instanceof PpapError && (failure.status === 403 || failure.status === 404)) return false;
+            throw failure;
+          },
+        );
+        if (found) {
+          await call(`/integrations/meego/tasks/${pending.task}/work-item`, { method: 'PUT', body: item });
+          rememberStart(key, null);
+          setReselect(false);
+          await refresh();
+          return;
+        }
+      }
+      rememberStart(key, null);
       const earlier = latest?.round_id ? await call<{ customer_preference: string | null; files: Carried[] }>(`/rounds/${latest.round_id}/reaudit-inputs`) : null;
       const carried = new Map((earlier?.files ?? []).map(entry => [entry.file.id, entry]));
       const inputs: Input[] = [];
@@ -131,8 +156,10 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       const taskId = newId();
       // Rules are matched for one customer. Without it the match falls on rules that have no checker program.
       const audited = earlier?.customer_preference ?? customer;
+      rememberStart(key, { task: taskId, from });
       await call<Task>('/audit-tasks', { method: 'POST', body: { request_id: taskId, customer_preference: audited, files: inputs, ...(earlier ? { predecessor_id: latest!.round_id } : {}) } });
       await call(`/integrations/meego/tasks/${taskId}/work-item`, { method: 'PUT', body: item });
+      rememberStart(key, null);
       setReselect(false);
       await refresh();
     } catch (failure) {
@@ -290,6 +317,7 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       {busy && <Text type="tertiary" role="status"><Spin size="small" /> {busy}</Text>}
       {notice && <Banner type="warning" fullMode={false} description={notice} onClose={() => setNotice('')} />}
       {nodeWaiting && <Banner type="info" fullMode={false} closeIcon={null} description={waitingText} />}
+      {data.aiNode?.status === 'completed' && data.aiNode.outside && <Banner type="warning" fullMode={false} closeIcon={null} description={`${outsideText}审核结论保持为“${verdictLabel[total]}”。`} />}
       {/* After a rollback the node is back here (waiting or stopped); the release is then only history. */}
       {released && <Banner type="warning" fullMode={false} closeIcon={null} description={`${released.by || '有人'} 于 ${when(released.at)} 人工放行了这次审核${data.aiNode?.status === 'completed' ? '，流程已进入下一步' : ''}。理由：${released.reason}。审核结论保持为“${verdictLabel[total]}”。`} />}
       <Modal

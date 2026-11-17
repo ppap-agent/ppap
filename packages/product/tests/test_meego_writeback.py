@@ -2,7 +2,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from product.meego import WorkItemRef
-from product.meego_writeback import marker, summary, task_link, writeback_state
+from product.meego_writeback import marker, report_names, summary, task_link, writeback_state
 
 
 def audited(name: str, conclusion: str | None, execution: str = "completed", **counts) -> dict:
@@ -73,3 +73,19 @@ def test_work_item_references_reject_paths():
     for bad in ("proj/story", "proj/story/abc", "../x/story/1", "proj/sto ry/1"):
         with pytest.raises(ValueError):
             WorkItemRef.parse(bad)
+
+
+def test_report_names_tell_same_named_files_of_one_round_apart_and_never_drift():
+    names = report_names(["PFMEA.xlsx", "控制计划.xlsx", "pfmea.xls", "PFMEA.xlsx"], "2026-11-16T07:30:00Z")
+    # The first keeps the plain name, so a report already attached under it is still recognised.
+    assert names == [
+        "PPAP 审核报告 · PFMEA · 2026-11-16 1530.pdf",
+        "PPAP 审核报告 · 控制计划 · 2026-11-16 1530.pdf",
+        "PPAP 审核报告 · pfmea · 第 2 份 · 2026-11-16 1530.pdf",
+        "PPAP 审核报告 · PFMEA · 第 3 份 · 2026-11-16 1530.pdf",
+    ]
+    assert len(set(names)) == len(names)
+    # A name decides whether a report was already attached, so a round without its start time has none.
+    for start in (None, ""):
+        with pytest.raises(ValueError):
+            report_names(["PFMEA.xlsx"], start)

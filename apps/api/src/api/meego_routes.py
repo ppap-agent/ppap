@@ -23,7 +23,7 @@ from product.files import ObjectMissing
 from product.identity import SESSION_COOKIE, can_read, can_review, new_token
 from product.logs import emit
 from product.meego import MeegoClient, MeegoError, WorkItemRef, work_item
-from product.meego_writeback import CONCLUSION_LABEL, marker, overall, report_name, summary, task_link
+from product.meego_writeback import CONCLUSION_LABEL, marker, overall, report_names, summary, task_link
 from product.store.meego import MeegoConnectError, MeegoStore
 from product.store.store import _as_uuid
 
@@ -229,7 +229,7 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         nodes = meego.ai_nodes(item)
         node = next((row for row in nodes if row["status"] in {"running", "done"}), nodes[0] if nodes else None)
         # "since" is when the node last changed; a node waiting since after the latest round means the flow came back to it.
-        ai_node = {"status": node["status"], "since": node["updated_at"].isoformat()} if node else None
+        ai_node = {"status": node["status"], "since": node["updated_at"].isoformat(), "outside": bool(node.get("completed_outside"))} if node else None
         # People's releases of these rounds, kept apart from the rounds' own conclusions.
         rounds = [str(task["round_id"]) for task in tasks if task.get("round_id")]
         releases = {
@@ -345,7 +345,10 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
                 raise ValueError("invalid_event")
         except ValueError:
             return JSONResponse({"error": "invalid_event"}, status_code=400)
-        await asyncio.to_thread(meego.record_ai_node, item, state_key, status)
+        # PPAP completes nodes only through the open API; a completion from anywhere else is a person
+        # finishing the node in Feishu Project, past PPAP. It cannot be stopped, so it is recorded.
+        outside = event_type == 8003 and body.get("source") != "openapi"
+        await asyncio.to_thread(meego.record_ai_node, item, state_key, status, outside=outside)
         return JSONResponse({})
 
     def round_context(round_id: str, request: Request, *, review: bool = False):
@@ -554,14 +557,14 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             if field_key is None:
                 return {"state": "not_configured", "written": 0, "total": len(rows)}
             present = client.field_file_names(user_key, item, field_key)
+            names = report_names([str(row["file"]["original_filename"]) for row in rows], task.get("round_started_at"))
             written = pending = 0
-            for row in rows:
+            for row, name in zip(rows, names):
                 audit, report = row["audit"], row["audit"].get("report") or {}
                 artifact = report.get("artifact") or {}
                 if report.get("state") != "ready" or not report.get("report_id") or not artifact.get("artifact_id"):
                     pending += 1
                     continue
-                name = report_name(str(row["file"]["original_filename"]), task.get("round_started_at"))
                 if name in present:
                     written += 1
                     continue

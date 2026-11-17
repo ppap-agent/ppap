@@ -531,12 +531,22 @@ def test_ai_node_events_only_keep_the_signed_nodes_status(auth_store_factory):
                 # PPAP's own completion reports back as openapi events; a late "done" never reopens a completed node.
                 assert post(client, 8003, source="openapi").status_code == 200
                 assert post(client, 8001, "done", source="openapi").status_code == 200
-                assert client.get(path, headers=bearer).json()["ai_node"]["status"] == "completed"
+                node = client.get(path, headers=bearer).json()["ai_node"]
+                assert node["status"] == "completed" and node["outside"] is False
                 # A rollback (8004, no status change in Meego) reaching the node again waits again;
                 # a removal without a node key changes nothing.
                 assert post(client, 8004).status_code == 200
                 assert post(client, 8005, state_key="").status_code == 200
                 assert client.get(path, headers=bearer).json()["ai_node"]["status"] == "running"
+                # A person completing the node in Feishu Project, past PPAP, is recorded as such; a late
+                # "done" keeps that record, and the flow coming back to the node clears it.
+                assert post(client, 8003).status_code == 200
+                assert post(client, 8001, "done").status_code == 200
+                node = client.get(path, headers=bearer).json()["ai_node"]
+                assert node["status"] == "completed" and node["outside"] is True
+                assert post(client, 8004).status_code == 200
+                node = client.get(path, headers=bearer).json()["ai_node"]
+                assert node["status"] == "running" and node["outside"] is False
                 assert post(client, 8001, "stopped").status_code == 200
                 assert client.get(path, headers=bearer).json()["ai_node"]["status"] == "stopped"
         finally:

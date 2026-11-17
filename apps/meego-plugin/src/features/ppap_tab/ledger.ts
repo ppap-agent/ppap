@@ -80,6 +80,31 @@ export function rememberTemplate(space: string, key: string): void {
   }
 }
 
+/**
+ * An audit this person began on a work item but whose start did not finish: its id and what it was
+ * started from. Kept across a reload, so a retry of the same start reads that audit back instead of
+ * creating another one.
+ */
+export type PendingStart = { task: string; from: string };
+
+export function pendingStart(item: string): PendingStart | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(`ppap.start.${item}`) || 'null');
+    return value && typeof value.task === 'string' && typeof value.from === 'string' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function rememberStart(item: string, value: PendingStart | null): void {
+  try {
+    if (value) localStorage.setItem(`ppap.start.${item}`, JSON.stringify(value));
+    else localStorage.removeItem(`ppap.start.${item}`);
+  } catch {
+    // Without storage a retry starts afresh; the earlier attempt stays in PPAP as an unconfirmed draft.
+  }
+}
+
 export type Package = {
   docs: Doc[];
   /** The audit still being recognized, confirmed or run. */

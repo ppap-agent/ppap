@@ -71,18 +71,27 @@ def _clock(raw) -> str:
     return stamp.astimezone(BEIJING).strftime("%Y 年 %m 月 %d 日 %H:%M（北京时间）")
 
 
-def report_name(filename: str, round_started_at) -> str:
-    """The attachment name of one file's report in one round: the file and the round's Beijing time."""
-    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
-    stamp = datetime.now(timezone.utc)
-    if isinstance(round_started_at, str) and round_started_at:
-        try:
-            stamp = datetime.fromisoformat(round_started_at.replace("Z", "+00:00"))
-        except ValueError:
-            pass
+def report_names(filenames: list[str], round_started_at) -> list[str]:
+    """The attachment names of one round's reports, in the round's frozen file order.
+
+    A name is the file and the round's Beijing time; it is how a writeback recognises a report
+    it already attached, so it must never change between calls: a round without its start time
+    has no names (ValueError). Files of one round that share a name are told apart by their
+    place among those files ("第 2 份"); the first keeps the plain name.
+    """
+    if not isinstance(round_started_at, str) or not round_started_at:
+        raise ValueError("round_start_missing")
+    stamp = datetime.fromisoformat(round_started_at.replace("Z", "+00:00"))
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
-    return f"PPAP 审核报告 · {stem} · {stamp.astimezone(BEIJING).strftime('%Y-%m-%d %H%M')}.pdf"
+    clock = stamp.astimezone(BEIJING).strftime("%Y-%m-%d %H%M")
+    seen: dict[str, int] = {}
+    names = []
+    for filename in filenames:
+        stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+        count = seen[stem.casefold()] = seen.get(stem.casefold(), 0) + 1
+        names.append(f"PPAP 审核报告 · {stem}{f' · 第 {count} 份' if count > 1 else ''} · {clock}.pdf")
+    return names
 
 
 def overall(task: dict) -> str:

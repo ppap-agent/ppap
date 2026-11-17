@@ -5,7 +5,7 @@ import { Button, Space, Spin, Tag, Typography } from '@douyinfe/semi-ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import '../ppap_tab/index.css';
-import { loadWorkItem } from '../ppap_tab/data';
+import { loadWorkItem, outsideText } from '../ppap_tab/data';
 import type { Data, Item } from '../ppap_tab/data';
 import { buildPackage, standing, verdict } from '../ppap_tab/ledger';
 import { bucket, bucketColor, when } from '../ppap_tab/model';
@@ -76,6 +76,7 @@ export default function Card({ context: where, lead, hint }: Props = {}) {
         {pack.latest && <Text>不符合 <Text strong>{ng}</Text> 项 · 待处理 <Text strong>{issues.length}</Text> 项</Text>}
         {pack.latest && <Text type="tertiary" size="small">{when(pack.latest.round_started_at ?? pack.latest.created_at)} 的审核{written ? '，已写回' : '，尚未写回'}</Text>}
       </Space>
+      {data.aiNode?.status === 'completed' && data.aiNode.outside && <Text type="warning" size="small">{outsideText}</Text>}
       {released && <Text type="warning" size="small">{released.by || '有人'} 人工放行了这次审核：{released.reason}</Text>}
       {pack.stale && <Text type="warning" size="small">资料在这次审核后有变化，结论针对的是变化前的资料。</Text>}
       {moving && <Text type="tertiary" size="small">{moving}。</Text>}
