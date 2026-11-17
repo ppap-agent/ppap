@@ -197,7 +197,7 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
 
     @app.get("/integrations/meego/work-items/{project_key}/{work_item_type_key}/{work_item_id}/audits", include_in_schema=False)
     def meego_audits(project_key: str, work_item_type_key: str, work_item_id: str, request: Request) -> JSONResponse:
-        """This person's audits of one work item, newest first, and which of them the work item already shows."""
+        """The enterprise's audits of one work item, newest first, and which of them the work item already shows."""
         session, binding, denied = host(request)
         if denied:
             return denied
@@ -220,7 +220,7 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         # None means the comments could not be read; the plugin must not show that as "not written".
         written = None if texts is None else [task["round_id"] for task in tasks if task.get("round_id") and any(marker(task["round_id"]) in text for text in texts)]
         # Which attachment of this work item each audited file was imported from, so the plugin can
-        # place every result next to the attachment it judged. Only this person's own tasks are read.
+        # place every result next to the attachment it judged. Only tasks this enterprise can read are used.
         prefix = item.object_ref() + "/"
         versions = [row["file"]["id"] for task in tasks for row in task.get("files") or []]
         sources = {vid: ref[len(prefix) :] for vid, ref in store.file_sources(versions, "meego").items() if ref.startswith(prefix)}
