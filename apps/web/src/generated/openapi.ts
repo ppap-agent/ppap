@@ -7391,7 +7391,9 @@ export interface operations {
     office_config_files__file_id__versions__version_id__office_get: {
         parameters: {
             query?: {
+                cell?: string | null;
                 round_id?: string | null;
+                sheet?: string | null;
             };
             header?: never;
             path: {

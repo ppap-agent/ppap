@@ -170,6 +170,12 @@ jobs:
             pnpm api-types
           )
           git diff --exit-code -- apps/web/src/generated/openapi.ts
+          # The Meego plugin ships outside the images; its type check is its only gate before release.
+          (
+            cd apps/meego-plugin
+            corepack yarn@1.22.22 install --frozen-lockfile --ignore-scripts
+            npx --yes -p typescript@5.6.3 tsc -p tsconfig.json --noEmit
+          )
           docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
           docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
           docker buildx bake --print >/dev/null
