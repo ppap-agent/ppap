@@ -761,8 +761,10 @@ def test_mcp_preparation_carries_writeback_target_through_restart_acceptance_and
                 _, other, _ = connection(restarted, store, person=person, scopes=" ".join(SCOPES))
                 if person == "carol":
                     assert call(restarted, other["access_token"], "get_draft", draft_id=task["id"])["status"] == "error"
-                # Writing back speaks for the round: only its creator does it.
-                assert call(restarted, other["access_token"], "writeback_feishu_report", **arguments)["status"] == "error"
+                # Writing back speaks for the round: only its creator does it. Bob reads the round, so he is
+                # asked to confirm; carol cannot read it. Neither write reaches Feishu (effects stay as sent).
+                expected = {"confirmation_required"} if person == "bob" else {"error"}
+                assert call(restarted, other["access_token"], "writeback_feishu_report", **{**arguments, "request_id": str(uuid4())})["status"] in expected
             assert restarted.post("/oauth/revoke", data={"client_id": cid, "token": token}).status_code == 200
             assert rpc(restarted, token, "tools/call", {"name": "writeback_feishu_report", "arguments": arguments}).status_code == 401
             assert effects == sent

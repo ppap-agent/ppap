@@ -114,10 +114,11 @@ def test_review_hints_are_read_by_the_enterprise_and_answered_only_by_the_round_
             assert client.get("/review-hints/responses").json() == {"accepted": 0, "ignored": 0, "responded": 0, "acceptance_ratio": None, "ignore_ratio": None}
             assert readback.status_code in {403, 404}
         else:
-            # Another member of the enterprise reads the round, its comparison and the enterprise's statistics.
+            # Another member of the enterprise reads the round and the enterprise's statistics, and sees it
+            # as the creator does: the hint the creator answered is no longer offered.
             assert client.get("/review-hints/responses").json() == counts
             assert readback.status_code == 200
-            assert readback.json()["findings"][0]["review_hint"]["item_key"] == hint["item_key"]
+            assert "review_hint" not in readback.json()["findings"][0]
         rejected = client.put(f"/rounds/{second['id']}/review-hints", json={"item_key": hint["item_key"], "action": "accepted", "hint": hint})
         assert rejected.status_code in {403, 404}
         assert a.counts() == before
