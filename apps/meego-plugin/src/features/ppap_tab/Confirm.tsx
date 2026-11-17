@@ -83,7 +83,7 @@ export function ConfirmRow({ task, row, revise, disabled }: { task: Task; row: T
             onChange={value => void change({ preferred_rule_version_id: String(value), reference_only: false })}
           />
         )}
-        <Dropdown trigger="click" position="bottomRight" menu={menu} disabled={disabled}>
+        <Dropdown trigger="click" clickToHide position="bottomRight" menu={menu} disabled={disabled}>
           <Button size="small" theme="borderless" disabled={disabled}>调整</Button>
         </Dropdown>
       </Space>

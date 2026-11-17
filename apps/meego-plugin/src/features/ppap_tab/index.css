@@ -100,4 +100,5 @@ body { margin: 0; background: transparent; }
 .node-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
 
 .guide-section { margin-bottom: 16px; }
-.guide-section ol { margin: 4px 0 0; padding-left: 20px; }
+.guide-section ol { margin: 4px 0 0; padding-left: 20px; list-style: decimal; }
+.guide-section li { display: list-item; }

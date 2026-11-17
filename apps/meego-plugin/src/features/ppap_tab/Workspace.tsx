@@ -267,6 +267,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
       <input ref={folderPicker} type="file" multiple hidden {...{ webkitdirectory: '' }} onChange={event => { void upload(event.target.files); event.target.value = ''; }} />
       <Dropdown
         trigger="click"
+        clickToHide
         position="bottomRight"
         render={
           <Dropdown.Menu>
@@ -468,6 +469,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
           {primary === 'write' && <Button theme="solid" type="primary" loading={Boolean(busy)} onClick={() => void writeBack()}>写回工作项</Button>}
           <Dropdown
             trigger="click"
+            clickToHide
             position="bottomRight"
             render={
               <Dropdown.Menu>
