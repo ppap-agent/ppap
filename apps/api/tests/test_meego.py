@@ -109,7 +109,10 @@ class FakeMeego:
                 fields.append({"field_key": "field_ppap", "field_type_key": "select", "field_value": {"label": "?", "value": self.conclusion}})
             return httpx.Response(200, json={"err_code": 0, "data": [{"id": 42, "name": "PPAP 交付", "fields": fields}]})
         if path.endswith("/field/all"):
-            fields = [{"field_key": "priority", "field_type_key": "select", "field_name": "优先级", "options": [{"label": "P0", "value": "0"}]}]
+            fields = [
+                {"field_key": "priority", "field_type_key": "select", "field_name": "优先级", "options": [{"label": "P0", "value": "0"}]},
+                {"field_key": "field_files", "field_alias": "", "field_type_key": "multi_file", "field_name": "附件"},
+            ]
             if self.conclusion_options is not None:
                 options = [{"label": label, "value": value, "is_disabled": 2} for label, value in self.conclusion_options.items()]
                 fields.append({"field_key": "field_ppap", "field_alias": "ppap_conclusion", "field_type_key": "select", "field_name": "PPAP 审核结论", "options": options})
@@ -126,10 +129,11 @@ class FakeMeego:
                 raise httpx.ReadTimeout("lost reply", request=request)
             return httpx.Response(200, json={"err_code": 0, "err": {}})
         if path.endswith("/work_item/story/42/file/upload"):
-            assert b'name="field_key"' in request.content and b"field_reports" in request.content
+            assert b'name="field_key"' in request.content
             name = re.search(rb'filename\*?=(?:utf-8\'\')?"?([^"\r\n]+)', request.content).group(1)
             self.uploads += 1
-            self.reports.append({"uid": "r" + str(self.uploads), "name": urllib.parse.unquote(name.decode())})
+            target = self.reports if b"field_reports" in request.content else self.files
+            target.append({"uid": "r" + str(self.uploads), "name": urllib.parse.unquote(name.decode())})
             if self.fail_upload_unknown:
                 raise httpx.ReadTimeout("lost reply", request=request)
             return httpx.Response(200, json={"err_code": 0, "data": ["https://file/r"]})
@@ -321,6 +325,35 @@ def test_writeback_reads_back_before_writing_and_never_rewrites_after_unknown(au
             unknown = lost_client.post(f"/integrations/meego/rounds/{newest[0]}/writeback", headers=bearer)
             assert unknown.status_code == 502 and unknown.json()["error"] == "meego_writeback_unknown"
         assert len(fake.comments) == 2
+
+
+def test_files_added_from_the_tab_join_the_package_once(auth_store_factory):
+    tenant = "meego-feishu-" + uuid.uuid4().hex
+    fake = FakeMeego()
+    store = auth_store_factory(settings_for(tenant, fake.tenant), reset=False, role="api")
+    _, browser = feishu_login(store, tenant)
+    path = "/integrations/meego/work-items/proj_1/story/42/files"
+    with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
+        bearer = {"Authorization": "Bearer " + connect(client, browser)}
+        # The space's only material attachment field takes the file; it then is part of the package.
+        added = client.post(path, params={"name": "控制计划.xlsx"}, content=b"workbook", headers={**bearer, "Content-Type": "application/vnd.ms-excel"})
+        assert (added.status_code, added.json()) == (201, {"state": "uploaded"})
+        assert "控制计划.xlsx" in [row["name"] for row in client.get(path, headers=bearer).json()["files"]]
+        # A name the package already holds is not sent again.
+        assert client.post(path, params={"name": "控制计划.xlsx"}, content=b"workbook", headers=bearer).json() == {"state": "exists"}
+        assert fake.uploads == 1
+        # A lost reply is settled by reading the field back.
+        fake.fail_upload_unknown = True
+        assert client.post(path, params={"name": "PSW.pdf"}, content=b"%PDF", headers=bearer).json() == {"state": "uploaded"}
+        assert fake.uploads == 2
+        # Paths and empty files are refused.
+        assert client.post(path, params={"name": "a/b.pdf"}, content=b"x", headers=bearer).status_code == 400
+        assert client.post(path, params={"name": "empty.pdf"}, content=b"", headers=bearer).status_code == 400
+        # The report field never takes material: with it present, the material field is still the one chosen.
+        fake.reports = []
+        assert client.post(path, params={"name": "x.pdf"}, content=b"x", headers=bearer).status_code == 201
+        assert fake.reports == [] and "x.pdf" in [row["name"] for row in fake.files]
+        assert client.post(path, params={"name": "x.pdf"}, content=b"x").status_code == 401
 
 
 def test_writeback_refuses_feishu_or_missing_targets(auth_store_factory, monkeypatch):

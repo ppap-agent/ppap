@@ -4,6 +4,7 @@
 import { IconDownload, IconEyeOpened, IconMore } from '@douyinfe/semi-icons';
 import { Banner, Button, Collapse, Dropdown, Empty, List, Modal, Progress, Radio, RadioGroup, Select, Space, Spin, Table, Tag, TextArea, Tooltip, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { Data, Item } from './data';
 import { itemPath, outsideText } from './data';
 import { Confirm, ConfirmRow, useRevise } from './Confirm';
@@ -220,6 +221,63 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
     }
   }
 
+  // Files and folders go into the work item's own attachment field with the person's Meego identity,
+  // so the work item stays the one place that holds the package; the list below then reads them as usual.
+  const filePicker = useRef<HTMLInputElement>(null);
+  const folderPicker = useRef<HTMLInputElement>(null);
+  async function upload(list: FileList | null) {
+    // Hidden and system files in a folder are not PPAP material.
+    const files = [...(list ?? [])].filter(file => !file.name.startsWith('.') && !['Thumbs.db', 'desktop.ini'].includes(file.name));
+    if (!files.length) return;
+    // A folder may hold two files of one name in different subfolders; the work item keeps names, so the first one goes.
+    const seen = new Set<string>();
+    const unique = files.filter(file => !seen.has(file.name) && Boolean(seen.add(file.name)));
+    const repeated = files.length - unique.length;
+    if (docs.length + unique.length > ATTACHMENT_LIMIT) {
+      setNotice(`一个附件字段最多 ${ATTACHMENT_LIMIT} 份文件，这次选了 ${unique.length} 份，已有 ${docs.length} 份。请分开上传或减少文件。`);
+      return;
+    }
+    setNotice('');
+    const existed: string[] = [];
+    const failed: string[] = [];
+    for (const [index, file] of unique.entries()) {
+      setBusy(`正在上传 ${index + 1}/${unique.length}…`);
+      try {
+        const reply = await call<{ state: string }>(`${itemPath(item)}/files?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
+        if (reply.state === 'exists') existed.push(file.name);
+      } catch (failure) {
+        failed.push(`${file.name}（${say(failure)}）`);
+      }
+    }
+    setBusy('');
+    const notes = [
+      `已上传 ${unique.length - existed.length - failed.length} 份。`,
+      existed.length ? `${existed.length} 份同名文件已在工作项里，没有重复上传。` : '',
+      repeated ? `文件夹里有 ${repeated} 份同名文件，只上传了第一份。` : '',
+      failed.length ? `没有上传成功：${failed.join('；')}` : '',
+    ];
+    setNotice(notes.filter(Boolean).join(''));
+    await refresh().catch(failure => setNotice(say(failure)));
+  }
+  const uploader = (
+    <>
+      <input ref={filePicker} type="file" multiple hidden onChange={event => { void upload(event.target.files); event.target.value = ''; }} />
+      <input ref={folderPicker} type="file" multiple hidden {...{ webkitdirectory: '' }} onChange={event => { void upload(event.target.files); event.target.value = ''; }} />
+      <Dropdown
+        trigger="click"
+        position="bottomRight"
+        render={
+          <Dropdown.Menu>
+            <Dropdown.Item onClick={() => filePicker.current?.click()}>选择文件</Dropdown.Item>
+            <Dropdown.Item onClick={() => folderPicker.current?.click()}>选择文件夹</Dropdown.Item>
+          </Dropdown.Menu>
+        }
+      >
+        <Button disabled={Boolean(busy)}>上传资料</Button>
+      </Dropdown>
+    </>
+  );
+
   async function download(row: TaskFile) {
     try {
       save(await bytes(reportPath(latest!, row)), row.audit!.report.artifact!.filename);
@@ -359,8 +417,9 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
     <section className="section" aria-labelledby="ppap-docs">
       <div className="section-head">
         <h3 id="ppap-docs">资料<span className="count">{docs.length}</span></h3>
+        {docs.length > 0 && uploader}
       </div>
-      <DocTable docs={docs} fields={data.fields} flight={flight} revise={revise} selectable={choosing && !busy} busy={Boolean(busy)} picked={picked} onPick={setPicked} onIssues={goToIssues} onReport={setReport} onDownload={row => void download(row)} onRegenerate={row => void regenerate(row)} onRefresh={() => void refresh().catch(failure => setNotice(say(failure)))} />
+      <DocTable uploader={uploader} docs={docs} fields={data.fields} flight={flight} revise={revise} selectable={choosing && !busy} busy={Boolean(busy)} picked={picked} onPick={setPicked} onIssues={goToIssues} onReport={setReport} onDownload={row => void download(row)} onRegenerate={row => void regenerate(row)} onRefresh={() => void refresh().catch(failure => setNotice(say(failure)))} />
       {customer && missing.length > 0 && (
         <div className="missing">
           <Text type="tertiary">{customer} 要求的资料中，还有 {missing.length} 类没有提交。</Text>
@@ -487,13 +546,24 @@ function staleWords(pack: Package): string {
   return parts.length ? `（${parts.join('，')}）` : '';
 }
 
+// Feishu Project keeps at most this many files in one attachment field.
+const ATTACHMENT_LIMIT = 50;
+
 // The documents ---------------------------------------------------------
 
-type DocTableProps = { docs: Doc[]; fields: Record<string, string>; flight: Task | null; revise: Revise; selectable: boolean; busy: boolean; picked: Set<string>; onPick: (next: Set<string>) => void; onIssues: () => void; onReport: (row: TaskFile) => void; onDownload: (row: TaskFile) => void; onRegenerate: (row: TaskFile) => void; onRefresh: () => void };
+type DocTableProps = { uploader: ReactNode; docs: Doc[]; fields: Record<string, string>; flight: Task | null; revise: Revise; selectable: boolean; busy: boolean; picked: Set<string>; onPick: (next: Set<string>) => void; onIssues: () => void; onReport: (row: TaskFile) => void; onDownload: (row: TaskFile) => void; onRegenerate: (row: TaskFile) => void; onRefresh: () => void };
 
 function DocTable(props: DocTableProps) {
   const { docs, fields, selectable, picked } = props;
-  if (!docs.length) return <Empty title="这个工作项还没有附件" description="先在工作项里上传 PPAP 文件，这里会自动出现。"><Button onClick={props.onRefresh}>刷新</Button></Empty>;
+  if (!docs.length)
+    return (
+      <Empty title="这个工作项还没有资料" description="上传这一包 PPAP 文件，可以一次选择整个文件夹。在工作项里直接添加的附件，刷新后也会出现。">
+        <Space>
+          {props.uploader}
+          <Button theme="borderless" onClick={props.onRefresh}>刷新</Button>
+        </Space>
+      </Empty>
+    );
   const columns = [
     {
       title: '资料',

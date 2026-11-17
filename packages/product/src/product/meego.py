@@ -23,6 +23,9 @@ CONCLUSION_FIELD_NAME = "PPAP 审核结论"
 # Report PDFs go to their own attachment field, never to the field the package is read from.
 REPORT_FIELD_ALIAS = "ppap_reports"
 REPORT_FIELD_NAME = "PPAP 审核报告"
+# The attachment field people put the PPAP package in; uploads from the PPAP tab go there.
+MATERIAL_FIELD_ALIAS = "ppap_files"
+MATERIAL_FIELD_NAME = "PPAP 资料"
 UPLOAD_TIMEOUT = httpx.Timeout(60.0, connect=20.0)
 
 
@@ -293,6 +296,16 @@ class MeegoClient:
         payload = self._post(f"/open_api/{item.project_key}/field/all", {"work_item_type_key": item.work_item_type_key}, user_key, "field")
         fields = [field for field in payload.get("data") or [] if isinstance(field, dict) and field.get("field_type_key") == "multi_file"]
         chosen = next((f for f in fields if f.get("field_alias") == REPORT_FIELD_ALIAS), None) or next((f for f in fields if f.get("field_name") == REPORT_FIELD_NAME), None)
+        return str(chosen["field_key"]) if chosen and chosen.get("field_key") else None
+
+    def material_field(self, user_key: str, item: WorkItemRef) -> str | None:
+        """The attachment field that holds the PPAP package: the one with the material alias or name,
+        else the only attachment field that is not for reports. None when the space has no clear one."""
+        payload = self._post(f"/open_api/{item.project_key}/field/all", {"work_item_type_key": item.work_item_type_key}, user_key, "field")
+        fields = [f for f in payload.get("data") or [] if isinstance(f, dict) and f.get("field_type_key") == "multi_file" and not _is_report_field(f)]
+        chosen = next((f for f in fields if f.get("field_alias") == MATERIAL_FIELD_ALIAS), None) or next((f for f in fields if f.get("field_name") == MATERIAL_FIELD_NAME), None)
+        if chosen is None and len(fields) == 1:
+            chosen = fields[0]
         return str(chosen["field_key"]) if chosen and chosen.get("field_key") else None
 
     def field_file_names(self, user_key: str, item: WorkItemRef, field_key: str) -> set[str]:

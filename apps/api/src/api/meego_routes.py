@@ -22,7 +22,7 @@ from product.feishu import authorize_url
 from product.files import ObjectMissing
 from product.identity import SESSION_COOKIE, can_modify, new_token
 from product.logs import emit
-from product.meego import MeegoClient, MeegoError, WorkItemRef, work_item
+from product.meego import MAX_DOWNLOAD_BYTES, MeegoClient, MeegoError, WorkItemRef, work_item
 from product.meego_writeback import CONCLUSION_LABEL, marker, report_names, summary, task_link
 from product.store.meego import MeegoConnectError, MeegoStore
 from product.store.store import _as_uuid
@@ -192,6 +192,51 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             return JSONResponse(client.work_item_files(binding["user_key"], item))
         except ValueError:
             return JSONResponse({"error": "invalid_work_item"}, status_code=400)
+        except MeegoError as exc:
+            return meego_failure(exc)
+
+    @app.post("/integrations/meego/work-items/{project_key}/{work_item_type_key}/{work_item_id}/files", include_in_schema=False)
+    async def meego_file_add(project_key: str, work_item_type_key: str, work_item_id: str, request: Request, name: str = "") -> JSONResponse:
+        """Add one file to the work item's PPAP package (its material attachment field) with the person's own Meego identity.
+
+        The body is the file's bytes. A name the field already holds is not sent again, and an upload
+        with an unknown outcome is settled by reading the field back, never by sending again.
+        """
+        _, binding, denied = host(request)
+        if denied:
+            return denied
+        name = name.strip()
+        if not name or len(name) > 255 or "/" in name or "\\" in name:
+            return JSONResponse({"error": "invalid_file_name"}, status_code=400)
+        try:
+            item = work_item(project_key, work_item_type_key, work_item_id)
+        except ValueError:
+            return JSONResponse({"error": "invalid_work_item"}, status_code=400)
+        chunks, total = [], 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > MAX_DOWNLOAD_BYTES:
+                return JSONResponse({"error": "file_too_large"}, status_code=413)
+            chunks.append(chunk)
+        if not total:
+            return JSONResponse({"error": "empty_file"}, status_code=400)
+        content = b"".join(chunks)
+        content_type = request.headers.get("content-type") or "application/octet-stream"
+        return await asyncio.to_thread(add_material, binding["user_key"], item, name, content, content_type)
+
+    def add_material(user_key: str, item: WorkItemRef, name: str, content: bytes, content_type: str) -> JSONResponse:
+        try:
+            field_key = client.material_field(user_key, item)
+            if field_key is None:
+                return JSONResponse({"error": "material_field_missing"}, status_code=409)
+            if name in client.field_file_names(user_key, item, field_key):
+                return JSONResponse({"state": "exists"})
+            try:
+                client.upload_file(user_key, item, field_key, name, content, content_type)
+            except MeegoError as exc:
+                if not exc.unknown or name not in client.field_file_names(user_key, item, field_key):
+                    raise
+            return JSONResponse({"state": "uploaded"}, status_code=201)
         except MeegoError as exc:
             return meego_failure(exc)
 

@@ -45,8 +45,9 @@ export async function startSession(): Promise<SessionReply> {
 async function send(path: string, init: { method?: string; body?: unknown }, retried = false, waited = 0): Promise<Response> {
   const response = await fetch(`${PPAP_API_URL}${path}`, {
     method: init.method || 'GET',
-    headers: { Authorization: `Bearer ${token}`, ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    // A file goes as its own bytes; everything else is JSON.
+    headers: { Authorization: `Bearer ${token}`, ...(init.body === undefined ? {} : { 'Content-Type': init.body instanceof Blob ? init.body.type || 'application/octet-stream' : 'application/json' }) },
+    body: init.body === undefined ? undefined : init.body instanceof Blob ? init.body : JSON.stringify(init.body),
   });
   if (response.status === 401 && !retried) {
     const renewed = await startSession();
@@ -136,6 +137,9 @@ const errorText: Record<string, string> = {
   task_not_zero_match: '还有可以审核的资料，不能直接结束。',
   release_not_needed: '结论已是“符合”，写回后流程会自动进入下一步，不需要放行。',
   release_older_round: '只能放行这个工作项最近一轮的审核。',
+  material_field_missing: '这个工作项没有可以放资料的附件字段，请让空间管理员添加“PPAP 资料”附件字段。',
+  empty_file: '文件是空的。',
+  invalid_file_name: '文件名不合法。',
   writeback_older_round: '这个工作项已有更新的审核，只能写回最近一轮。',
   release_no_waiting_node: '流程里没有等待 PPAP 的节点，不需要放行。',
   release_round_incomplete: '这次审核出现技术错误或尚未完成，没有可放行的结论，请重新审核。',
