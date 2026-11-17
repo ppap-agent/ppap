@@ -44,7 +44,9 @@ export async function receiveRequirement(entry: LocalUpload, stage?: (basis: Req
   return {...basis, server: {material, body}}
 }
 
-export function RuleExtraction({basis, onChange, readonly = false}: {basis: RequirementBasis; onChange: (basis: RequirementBasis) => void; readonly?: boolean}) {
+/** `onChange` receives an update of the draft's latest basis, never a whole basis: a read that lands
+ * after the person typed must not put back what the page showed before. */
+export function RuleExtraction({basis, onChange, readonly = false}: {basis: RequirementBasis; onChange: (update: (basis: RequirementBasis) => RequirementBasis) => void; readonly?: boolean}) {
   const types = useRemote<RuleTypes>(basis.server && !readonly ? '/rule-types' : null)
   const job = useRemote<RuleParseJob>(basis.server?.parseId && !['ready', 'manual'].includes(basis.source.state) ? `/rules/parse/${basis.server.parseId}` : null, 2000)
   const sources = useRemote<RuleSources>(basis.server && !readonly && basis.clauses.length ? `/files/${basis.server.material.file_id}/versions/${basis.server.material.file_version_id}/rule-sources` : null)
@@ -53,10 +55,10 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
   const observed = useRef<RuleParseJob | null>(null)
   if (job.value && matchesSource(job.value, basis)) observed.current = job.value
   useEffect(() => {
-    const current = latest.current, value = sources.value
-    if (readonly || !value || !current.server || value.file_version_id !== current.server.material.file_version_id || canonical(current.server.sources) === canonical(value)) return
-    const restored = restoreRequirementSources(current, value)
-    onChange({...restored, server: {...current.server, sources: value}})
+    const value = sources.value
+    const stale = (current: RequirementBasis) => !value || !current.server || value.file_version_id !== current.server.material.file_version_id || canonical(current.server.sources) === canonical(value)
+    if (readonly || stale(latest.current)) return
+    onChange(current => stale(current) ? current : {...restoreRequirementSources(current, value!), server: {...current.server!, sources: value!}})
   }, [sources.value, onChange, readonly])
   useEffect(() => {
     const result = job.value?.result
@@ -65,7 +67,7 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
     if (job.value?.status === 'failed' && consumed.current !== job.value.id) {
       consumed.current = job.value.id
       setError(result && 'error' in result ? result.error === 'rule_document_type_mismatch' ? extractionErrors.rule_document_type_mismatch : extractionError(result.error) : '要求提取失败，可重新提取或按原件补录条款。')
-      onChange({...latest.current, source: {...latest.current.source, state: 'failed'}})
+      onChange(current => ({...current, source: {...current.source, state: 'failed'}}))
       return
     }
     if (!result) {setError(''); return}
@@ -75,7 +77,8 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
       if (result.source_file_version_id !== current.material.file_version_id || result.body.type !== current.body.type) {setError(ruleParseReceiptError); return}
       consumed.current = job.value.id
       setError('')
-      onChange(parsedBasis(latest.current, result))
+      const parsed = job.value
+      onChange(current => matchesSource(parsed, current) && !['ready', 'manual'].includes(current.source.state) ? parsedBasis(current, result) : current)
     } else if ('error' in result) {consumed.current = job.value!.id; setError(extractionError(result.error))}
   }, [job.value, onChange, readonly])
   if (!basis.server || readonly) return null
@@ -91,8 +94,7 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
     working.current = true; setBusy(true); setError('')
     setRerun(false)
     const id = crypto.randomUUID()
-    const next = {...basis, source: {...basis.source, state: 'unparsed' as const}, server: {...basis.server, parseId: id}}
-    onChange(next)
+    onChange(current => current.server ? {...current, source: {...current.source, state: 'unparsed' as const}, server: {...current.server, parseId: id}} : current)
     try {
       // GET owns job state: a delayed acceptance receipt may predate its terminal result.
       await request<RuleParseJob>('/rules/parse', 'POST', {request_id: id, source_file_id: basis.server.material.file_id, source_file_version_id: basis.server.material.file_version_id, document_type: basis.server.body.type})
@@ -100,7 +102,7 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
     finally {working.current = false; setBusy(false)}
   }
   return <Dialog open={rerun} onOpenChange={setRerun}><section className={"flex flex-col gap-3 py-4"} aria-label="提取审核条款">
-    <div className={"flex flex-wrap items-end gap-3"}><label className={"flex flex-col gap-2 text-sm"}>适用资料类型<Select value={basis.server.body.type || undefined} disabled={Boolean(basis.server.parseId && status !== 'failed')} onValueChange={value => onChange({...basis, server: {...basis.server!, body: {...basis.server!.body, type: value}}})}><SelectTrigger className="w-56"><SelectValue placeholder="请选择"/></SelectTrigger><SelectContent>{types.value?.types.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent></Select></label>
+    <div className={"flex flex-wrap items-end gap-3"}><label className={"flex flex-col gap-2 text-sm"}>适用资料类型<Select value={basis.server.body.type || undefined} disabled={Boolean(basis.server.parseId && status !== 'failed')} onValueChange={value => onChange(current => current.server ? {...current, server: {...current.server, body: {...current.server.body, type: value}}} : current)}><SelectTrigger className="w-56"><SelectValue placeholder="请选择"/></SelectTrigger><SelectContent>{types.value?.types.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent></Select></label>
       {(!basis.server.parseId || status === 'failed') && <Button disabled={busy || !basis.server.body.type} onClick={() => void parse()}>{status === 'failed' ? '重新提取条款' : '提取条款'}</Button>}
       {basis.server.parseId && <Button variant="outline" onClick={job.refresh}>刷新提取进度</Button>}
       {unknown && <DialogTrigger asChild><Button variant="outline" disabled={busy}>重新提取条款</Button></DialogTrigger>}
