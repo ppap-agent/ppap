@@ -66,6 +66,8 @@ export type Task = {
   state: 'matching' | 'pending_confirm' | 'reviewing' | 'completed';
   created_at: string;
   customer_preference?: string | null;
+  // The earlier round a re-audit continues; every revision of the draft must name it again.
+  predecessor_id?: string | null;
   round_id: string | null;
   round_started_at?: string | null;
   completion_reason: 'no_matching_rules' | 'processed' | null;

@@ -27,7 +27,8 @@ export function useRevise(refresh: () => Promise<void>, setBusy: (text: string) 
         ...(row.reference_only ? { reference_only: true } : {}),
         ...(row.replacement_of_file_version_id ? { replacement_of_file_version_id: row.replacement_of_file_version_id } : {}),
       }));
-      await call('/audit-tasks', { method: 'POST', body: { request_id: newId(), task_id: task.id, expected_revision: task.input_revision, customer_preference: customer, files } });
+      // A re-audit keeps naming its earlier round; without it the server treats the draft as locked.
+      await call('/audit-tasks', { method: 'POST', body: { request_id: newId(), task_id: task.id, expected_revision: task.input_revision, customer_preference: customer, files, ...(task.predecessor_id ? { predecessor_id: task.predecessor_id } : {}) } });
       await refresh();
     } catch (failure) {
       setNotice(say(failure));
