@@ -3,6 +3,7 @@
 // person's decision in Feishu Project; the full work happens in the "PPAP 审核" tab.
 import { Button, Space, Spin, Tag, Typography } from '@douyinfe/semi-ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import '../ppap_tab/index.css';
 import { loadWorkItem } from '../ppap_tab/data';
 import type { Data, Item } from '../ppap_tab/data';
@@ -13,7 +14,12 @@ import { say, startSession } from '../ppap_tab/ppap';
 const { Text } = Typography;
 const label = { PASS: '符合', NG: '不符合', UNKNOWN: '尚有未确定项', ERROR: '审核异常', NONE: '尚未审核' } as const;
 
-export default function Card() {
+type Where = { spaceId: string; workObjectId: string; workItemId: number | string };
+// The node-form control reads its work item from the control context; the AI node card passes the AI
+// node's own context, a line about the node above the conclusion, and its own next step.
+type Props = { context?: () => Promise<Where>; lead?: ReactNode; hint?: string };
+
+export default function Card({ context: where, lead, hint }: Props = {}) {
   const [item, setItem] = useState<Item | null>(null);
   const [data, setData] = useState<Data | null>(null);
   const [state, setState] = useState<{ kind: 'loading' } | { kind: 'connect'; url: string } | { kind: 'error'; text: string } | { kind: 'ready' }>({ kind: 'loading' });
@@ -24,7 +30,7 @@ export default function Card() {
     try {
       const reply = await startSession();
       if (reply.state === 'connect_required') return setState({ kind: 'connect', url: reply.connect_url });
-      const context = await window.JSSDK.control.getContext();
+      const context = await (where ?? (() => window.JSSDK.control.getContext()))();
       if (!context.workItemId) return setState({ kind: 'error', text: '工作项创建后才能查看 PPAP 审核。' });
       const next = { project_key: context.spaceId, work_item_type_key: context.workObjectId, work_item_id: String(context.workItemId) };
       setItem(next);
@@ -33,7 +39,7 @@ export default function Card() {
     } catch (failure) {
       setState({ kind: 'error', text: say(failure) });
     }
-  }, []);
+  }, [where]);
   useEffect(() => void load(), [load]);
 
   if (state.kind === 'loading') return <Text type="tertiary" className="node-card"><Spin size="small" /> 正在读取 PPAP 审核…</Text>;
@@ -63,6 +69,7 @@ export default function Card() {
 
   return (
     <div className="node-card">
+      {lead}
       <Space wrap align="center">
         <Tag size="large" type="solid" color={total === 'NONE' ? 'grey' : total === 'ERROR' ? 'orange' : bucketColor(total)}>{label[total]}</Tag>
         {pack.latest && <Text>不符合 <Text strong>{ng}</Text> 项 · 待处理 <Text strong>{issues.length}</Text> 项</Text>}
@@ -71,7 +78,7 @@ export default function Card() {
       {pack.stale && <Text type="warning" size="small">资料在这次审核后有变化，结论针对的是变化前的资料。</Text>}
       {moving && <Text type="tertiary" size="small">{moving}。</Text>}
       <Space>
-        <Text type="tertiary" size="small">在工作项的“PPAP 审核”标签中发起审核和处理问题。</Text>
+        <Text type="tertiary" size="small">{hint ?? '在工作项的“PPAP 审核”标签中发起审核和处理问题。'}</Text>
         <Button size="small" theme="borderless" onClick={() => void load()}>刷新</Button>
       </Space>
     </div>

@@ -93,8 +93,15 @@ class MeegoClient:
         self.settings = settings
         self.base = settings.meego_base_url.rstrip("/")
         # The AI node app is a separate plugin; only its own token may change its nodes.
-        self.plugin_id = settings.meego_ai_node_plugin_id if ai_node else settings.meego_plugin_id
-        self.plugin_secret = settings.meego_ai_node_plugin_secret if ai_node else settings.meego_plugin_secret
+        self.ai_node = ai_node
+
+    @property
+    def plugin_id(self) -> str:
+        return self.settings.meego_ai_node_plugin_id if self.ai_node else self.settings.meego_plugin_id
+
+    @property
+    def plugin_secret(self) -> str:
+        return self.settings.meego_ai_node_plugin_secret if self.ai_node else self.settings.meego_plugin_secret
 
     def _json(self, response: httpx.Response, stage: str) -> dict:
         try:
@@ -146,7 +153,8 @@ class MeegoClient:
             raise MeegoError(f"meego_{stage}_failed", unknown=True) from None
         return self._json(response, stage)
 
-    def exchange_code(self, code: str) -> MeegoUser:
+    def exchange_code(self, code: str, profile: MeegoClient | None = None) -> MeegoUser:
+        """Exchange a host auth code issued to this client's app; ``profile`` reads the person's profile when this app cannot."""
         try:
             response = self.http.post(
                 self.base + "/open_api/authen/user_plugin_token",
@@ -161,8 +169,8 @@ class MeegoClient:
         tenant_key = str(data.get("saas_tenant_key") or "").strip()
         if not user_key or not tenant_key:
             raise MeegoError("meego_auth_failed")
-        profile = self.user(user_key)
-        return MeegoUser(user_key, tenant_key, profile.get("name", ""), profile.get("email", ""), profile.get("out_id", ""))
+        person = (profile or self).user(user_key)
+        return MeegoUser(user_key, tenant_key, person.get("name", ""), person.get("email", ""), person.get("out_id", ""))
 
     def user(self, user_key: str) -> dict[str, str]:
         payload = self._post("/open_api/user/query", {"user_keys": [user_key]}, user_key, "user")

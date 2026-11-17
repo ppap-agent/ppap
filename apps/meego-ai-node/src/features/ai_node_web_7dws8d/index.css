@@ -1,5 +1,0 @@
-body { margin: 0; font-family: -apple-system, "PingFang SC", sans-serif; font-size: 14px; color: #1f2329; background: transparent; }
-.card { margin: 0; padding: 8px 4px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-.badge { padding: 0 8px; border-radius: 4px; background: #e1eaff; color: #245bdb; line-height: 22px; }
-.muted { color: #8f959e; font-size: 12px; }
-p { margin: 0; line-height: 22px; }

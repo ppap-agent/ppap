@@ -8,3 +8,4 @@ dist
 .lpm-cache
 # Holds the plugin secret; copy plugin.config.example.json and fill it locally.
 plugin.config.json
+.plugin.config.json.keep

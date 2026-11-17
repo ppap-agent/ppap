@@ -76,8 +76,13 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         code = str(body.get("code") or "").strip()
         if not code or len(code) > 200:
             return JSONResponse({"error": "invalid_code"}, status_code=400)
+        # The AI node card is the AI node app's page: its code is issued to that app. The person and
+        # their PPAP connection are the same as in the plugin, so one connection serves both.
+        ai_node = body.get("app") == "ai_node"
+        if ai_node and not settings.meego_ai_node_enabled():
+            return JSONResponse({"error": "meego_ai_node_disabled"}, status_code=409)
         try:
-            user = client.exchange_code(code)
+            user = ai_client.exchange_code(code, profile=client) if ai_node else client.exchange_code(code)
         except MeegoError as exc:
             emit("meego_auth_failed", level=logging.WARNING, code=exc.code)
             return JSONResponse({"error": "meego_auth_failed"}, status_code=502 if exc.code == "meego_unavailable" else 401)

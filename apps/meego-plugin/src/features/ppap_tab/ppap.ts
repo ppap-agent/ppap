@@ -14,6 +14,13 @@ export class PpapError extends Error {
 
 let token = '';
 let webUrl = '';
+// Which Feishu Project app this page belongs to: the plugin, or the AI node app whose card reuses the plugin's.
+// Auth codes are issued per app; the person's PPAP connection is the same for both.
+let hostApp: 'plugin' | 'ai_node' = 'plugin';
+
+export function setHostApp(app: 'plugin' | 'ai_node'): void {
+  hostApp = app;
+}
 
 export function webBase(): string {
   return webUrl;
@@ -24,7 +31,7 @@ export async function startSession(): Promise<SessionReply> {
   const response = await fetch(`${PPAP_API_URL}/integrations/meego/session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ code, ...(hostApp === 'ai_node' ? { app: 'ai_node' } : {}) }),
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new PpapError(String(body.error || 'session_failed'), response.status);

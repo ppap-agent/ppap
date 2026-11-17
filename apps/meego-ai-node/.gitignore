@@ -1,5 +1,4 @@
 .DS_Store
-node_modules
 yarn-debug.log*
 yarn-error.log*
 dist
@@ -8,3 +7,4 @@ dist
 .lpm-cache
 # Holds the app secret; copy plugin.config.example.json and fill it locally.
 plugin.config.json
+node_modules

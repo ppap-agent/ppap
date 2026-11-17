@@ -66,6 +66,8 @@ class FakeMeego:
         self.node_state, self.ai_status = "DOING", "running"
         self.node_calls: list[str] = []
         self.fail_confirm_unknown = False
+        # Which app's token each auth-code exchange used.
+        self.code_tokens: list[str | None] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -91,6 +93,7 @@ class FakeMeego:
                 raise httpx.ReadTimeout("lost reply", request=request)
             return httpx.Response(200, json={"err_code": 0, "data": {}})
         if path == "/open_api/authen/user_plugin_token":
+            self.code_tokens.append(request.headers.get("X-Plugin-Token"))
             if body.get("code") != "good-code":
                 return httpx.Response(200, json={"data": {}, "error": {"code": 20006, "msg": "bad code"}})
             return httpx.Response(200, json={"data": {"token": "u-token", "user_key": self.user_key, "saas_tenant_key": self.tenant}, "error": {"code": 0}})
@@ -640,3 +643,25 @@ def test_a_reviewer_releases_a_non_conforming_latest_round_without_changing_its_
         fake.node_state, fake.ai_status = "DOING", "running"
         assert client.post("/integrations/meego/ai-node/events", json=node_event(8001, "running")).status_code == 200
         assert client.post(f"/integrations/meego/rounds/{round_id}/writeback", headers=bearer).json()["node"] == "completed"
+
+
+def test_the_ai_node_card_uses_the_plugin_connection_through_its_own_app(auth_store_factory):
+    tenant = "meego-feishu-" + uuid.uuid4().hex
+    fake = FakeMeego()
+    store = auth_store_factory(settings_for(tenant, fake.tenant), reset=False, role="api")
+    principal, browser = feishu_login(store, tenant)
+    with httpx.Client(transport=httpx.MockTransport(fake)) as http, TestClient(create_app(store.settings, auth_store=store, http=http)) as client:
+        assert client.post("/integrations/meego/session", json={"code": "good-code", "app": "ai_node"}).status_code == 409
+        connect(client, browser)
+        store.settings.meego_ai_node_plugin_id, store.settings.meego_ai_node_token, store.settings.meego_ai_node_plugin_secret = AI_APP, "node-token", "ai-secret"
+        try:
+            fake.code_tokens.clear()
+            reply = client.post("/integrations/meego/session", json={"code": "good-code", "app": "ai_node"})
+            # The same person, already connected in the plugin: no second connection.
+            assert reply.status_code == 200 and reply.json()["state"] == "connected"
+            assert fake.code_tokens == ["ai-token"]
+            bearer = {"Authorization": "Bearer " + reply.json()["token"]}
+            assert client.get("/integrations/meego/work-items/proj_1/story/42/audits", headers=bearer).status_code == 200
+            assert client.post("/integrations/meego/session", json={"code": "bad-code", "app": "ai_node"}).status_code == 401
+        finally:
+            store.settings.meego_ai_node_plugin_id, store.settings.meego_ai_node_token, store.settings.meego_ai_node_plugin_secret = "", "", ""

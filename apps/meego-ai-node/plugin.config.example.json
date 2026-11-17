@@ -5,7 +5,7 @@
   "resources": [
     {
       "id": "REPLACE_WITH_AI_NODE_CARD_RESOURCE_ID",
-      "entry": "./src/features/ai_node_web_7dws8d/index.tsx"
+      "entry": "./src/features/ai_node/index.tsx"
     }
   ]
 }
