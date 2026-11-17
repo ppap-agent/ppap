@@ -10,7 +10,7 @@ import { PdfView } from './Evidence';
 import { Issue } from './Issue';
 import { buildPackage, currentTemplate, rectification, rememberedTemplate, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
 import type { Doc, OpenIssue, Package } from './ledger';
-import { bucket, bucketColor, bucketLabel, byUrgency, conclusionLabel, documentTypeLabel, reviewOf, when } from './model';
+import { bucket, bucketColor, bucketLabel, byUrgency, conclusionLabel, documentTypeLabel, objected, reviewOf, when } from './model';
 import type { FileVersion, Job, Task, TaskFile } from './model';
 import { bytes, call, newId, PpapError, save, say, taskLink, waitFor } from './ppap';
 
@@ -243,8 +243,13 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
   const released = latest?.round_id ? data.releases[latest.round_id] : undefined;
   // Only the latest, unchanged, written-back round of a waiting node can be released.
   // A reviewer's objection keeps a conforming round from completing the node on its own; the conclusion stays as found.
-  const objected = Boolean(latest?.files.some(row => row.selection === 'selected' && row.audit?.checks.some(check => ['disagree', 'manual-unsatisfied', 'unknown'].includes(reviewOf(check)?.judgment || ''))));
-  const releasable = nodeWaiting && !released && !pack.stale && (total === 'NG' || total === 'UNKNOWN' || (total === 'PASS' && objected));
+  const objection = Boolean(latest?.files.some(row => row.selection === 'selected' && row.audit?.checks.some(objected)));
+  const releasable = nodeWaiting && !released && !pack.stale && (total === 'NG' || total === 'UNKNOWN' || (total === 'PASS' && objection));
+  // Written back and conforming, the node completes itself, unless a reviewer objects.
+  const waitingText =
+    total === 'PASS' && objection && !pack.stale
+      ? '流程正在等待 PPAP 审核：复核人对这次“符合”的结论有异议，写回后流程仍会等待。重新审核整包，或由有复核权限的人人工放行。'
+      : '流程正在等待 PPAP 审核：核对资料并确认后开始审核；结论为“符合”并写回后，流程自动进入下一步。';
 
   return (
     <div className="workspace">
@@ -284,8 +289,9 @@ export function Workspace({ item, data, stalled, refresh, onWritten }: Props) {
       </header>
       {busy && <Text type="tertiary" role="status"><Spin size="small" /> {busy}</Text>}
       {notice && <Banner type="warning" fullMode={false} description={notice} onClose={() => setNotice('')} />}
-      {nodeWaiting && <Banner type="info" fullMode={false} closeIcon={null} description="流程正在等待 PPAP 审核：核对资料并确认后开始审核；结论为“符合”并写回后，流程自动进入下一步。" />}
-      {released && <Banner type="warning" fullMode={false} closeIcon={null} description={`${released.by || '有人'} 于 ${when(released.at)} 人工放行了这次审核，流程已进入下一步。理由：${released.reason}。审核结论保持为“${verdictLabel[total]}”。`} />}
+      {nodeWaiting && <Banner type="info" fullMode={false} closeIcon={null} description={waitingText} />}
+      {/* A released round can come back to a waiting node (a rollback); the release is then only history. */}
+      {released && <Banner type="warning" fullMode={false} closeIcon={null} description={`${released.by || '有人'} 于 ${when(released.at)} 人工放行了这次审核${nodeWaiting ? '' : '，流程已进入下一步'}。理由：${released.reason}。审核结论保持为“${verdictLabel[total]}”。`} />}
       <Modal
         title="人工放行"
         visible={releasing}
@@ -512,7 +518,7 @@ function IssueList({ issues, current, onOpen }: { issues: OpenIssue[]; current: 
                       <Space spacing={4} wrap>
                         <Tag size="small" color={bucketColor(kind)} type="light">{bucketLabel(kind)}</Tag>
                         {issue.change && <Tag size="small" color={issue.change === 'added' ? 'red' : 'grey'} type="ghost">{issue.change === 'added' ? '新出现' : '仍存在'}</Tag>}
-                        {reviewOf(issue.check) && <Tag size="small" color="blue" type="ghost">已复核</Tag>}
+                        {objected(issue.check) ? <Tag size="small" color="orange" type="ghost">复核有异议</Tag> : reviewOf(issue.check) && <Tag size="small" color="blue" type="ghost">已复核</Tag>}
                       </Space>
                     </span>
                   }

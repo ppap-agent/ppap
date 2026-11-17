@@ -29,6 +29,8 @@ class OfficePreviewTests(unittest.TestCase):
         self.assertFalse(config["config"]["document"]["permissions"]["chat"])
         self.assertFalse(config["config"]["editorConfig"]["customization"]["anonymous"]["request"])
         self.assertFalse(config["config"]["editorConfig"]["customization"]["macros"])
+        # The viewer never takes focus, so a review form beside it keeps its place.
+        self.assertEqual(config["config"]["editorConfig"]["customization"]["integrationMode"], "embed")
         self.assertEqual(config["config"]["documentType"], "cell")
         self.assertNotIn(self.settings.onlyoffice_secret, str(config))
         claims = read_ticket(self.ticket(), self.settings.onlyoffice_secret)

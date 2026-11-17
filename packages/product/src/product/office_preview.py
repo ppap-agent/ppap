@@ -73,6 +73,9 @@ def preview_config(settings, version, *, sheet: str | None = None, cell: str | N
             "anonymous": {"request": False},
             "macros": False,
             "macrosMode": "disable",
+            # The viewer sits in a scrolling page beside a review form: it must not take focus, or the
+            # browser scrolls the page back to it whenever the person picks or types something.
+            "integrationMode": "embed",
         },
     }
     if OFFICE_TYPES[extension] == "cell" and (link := jump_link(sheet, cell)):

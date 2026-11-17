@@ -120,12 +120,14 @@ export const bucketLabel = (value: Bucket) => (value === 'uncovered' ? uncovered
 export const bucketColor = (value: Bucket | 'UNKNOWN' | null | undefined): 'red' | 'green' | 'orange' | 'grey' =>
   value === 'NG' ? 'red' : value === 'PASS' ? 'green' : value === 'UNABLE' || value === 'ERR' || value === 'uncovered' || value === 'UNKNOWN' ? 'orange' : 'grey';
 
-/** A clause needs a person's attention unless it conforms or does not apply. */
-export const needsAttention = (check: Check) => !['PASS', 'NA', 'running'].includes(bucket(check));
+export const reviewOf = (check: Check): Review | null => check.review ?? check.finding?.review ?? null;
+/** A reviewer judged the clause not to hold, or still undecided; the machine result stays as found. */
+export const objected = (check: Check) => ['disagree', 'manual-unsatisfied', 'unknown'].includes(reviewOf(check)?.judgment || '');
+
+/** A clause needs a person's attention unless it conforms or does not apply, and no reviewer objects to it. */
+export const needsAttention = (check: Check) => !['PASS', 'NA', 'running'].includes(bucket(check)) || (bucket(check) !== 'running' && objected(check));
 const rank: Record<Bucket, number> = { NG: 0, ERR: 1, UNABLE: 2, uncovered: 3, PASS: 4, NA: 5, running: 6 };
 export const byUrgency = (left: Check, right: Check) => rank[bucket(left)] - rank[bucket(right)];
-
-export const reviewOf = (check: Check): Review | null => check.review ?? check.finding?.review ?? null;
 
 /** Why the machine reached this result, in the words the web app shows. */
 export function observation(check: Check): string {
