@@ -2024,7 +2024,8 @@ class AuthStore:
                     "display_info": {"values": {key: match["metadata"].get(key) for key in DISPLAY_FIELDS}},
                 }
             )
-        return {"round_id": round_id, "files": projected}
+        mine = str(draft["created_by"]) == principal.user_id
+        return {"round_id": round_id, "files": projected, "creator": {"name": self._display_name(conn, draft["tenant_id"], draft["created_by"]), "mine": mine}}
 
     @staticmethod
     def _analysis_snapshot_bound(payload: dict, result: dict, task_id: str, revision: int, version_id: str) -> bool:

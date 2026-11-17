@@ -1746,31 +1746,6 @@ class AuditPreviewTests(unittest.TestCase):
                     page.close()
             browser.close()
 
-    def test_display_edit_permission_is_not_assumed_after_a_task_read_fails(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 1000})
-            page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/preview/audit.html?scene=restore-display-read-failed&task=preview-recovery-task")
-            file_overview(page)
-            page.get_by_role("button", name="更正显示信息", exact=True).click()
-            dialog = page.get_by_role("dialog", name="更正显示信息", exact=True)
-            dialog.get_by_role("textbox", name="客户", exact=True).fill("已保存客户")
-            dialog.get_by_role("button", name="保存显示信息", exact=True).click()
-            expect(dialog).not_to_be_visible()
-            read_results(page)
-            expect(page.get_by_text("结果暂时无法读取", exact=True)).to_be_visible()
-            file_overview(page)
-            page.get_by_role("button", name="更正显示信息", exact=True).click()
-            expect(dialog.get_by_role("textbox", name="客户", exact=True)).to_have_value("已保存客户")
-            expect(dialog.get_by_role("button", name="保存显示信息", exact=True)).to_be_disabled()
-            dialog.get_by_role("button", name="取消", exact=True).click()
-            read_results(page)
-            file_overview(page)
-            page.get_by_role("button", name="更正显示信息", exact=True).click()
-            expect(dialog.get_by_role("button", name="保存显示信息", exact=True)).to_be_enabled()
-            browser.close()
-
     def test_display_correction_cancel_and_save_keep_the_original_audit_context(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

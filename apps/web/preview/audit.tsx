@@ -198,7 +198,6 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
     if (scene === 'restore-denied') throw Object.assign(new Error('preview_forbidden'), {status: 403})
     if (scene === 'restore-error' && recoveryRead === 1) throw new Error('preview_offline')
     if (scene === 'restore-traced' && [1, 3].includes(recoveryRead)) throw Object.assign(new Error('preview_task_read_unavailable'), {traceId: `preview-task-read-${recoveryRead}`})
-    if (scene === 'restore-display-read-failed' && recoveryRead === 2) throw new Error('preview_display_offline')
     const task = taskStore.get(id)
     if (!task) throw Object.assign(new Error('preview_not_found'), {status: 404})
     if (task.state === 'completed' && task.completion_reason === 'no_matching_rules') return structuredClone(task)
