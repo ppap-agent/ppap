@@ -1,7 +1,7 @@
 """Render the plain-language report.md from what check.py found.
 
 The report is for the product owner: it uses only the clause's own words and the plain-language annotations
-written in the ontology (`:issue`, `:question`, `:example`, `rdfs:label`, `:says`, `:open`), never class names,
+written in the ontology (`:issue`, `:question`, `rdfs:label`, `:says`, `:open`, `:contradiction`), never class names,
 reading codes or reasoning vocabulary. A missing annotation shows as MISSING and is listed by check.py.
 Answers written back (`:chosen` + `:answered` on an ambiguity, `:answered` on an `:open`) and a proposed
 rewrite (`:rewrite`) turn the report into a check that the answers close every gap.
@@ -29,6 +29,7 @@ class Clause:
 class Found:
     clauses: list[Clause] = field(default_factory=list)
     unaligned: list[str] = field(default_factory=list)
+    incomplete: list[str] = field(default_factory=list)  # checks that failed: the conclusions below are not usable
     ids: list[str] = field(default_factory=list)
     letters: list[list[str]] = field(default_factory=list)  # readings still in play (one when answered)
     offered: list[list[str]] = field(default_factory=list)  # every reading written for each ambiguity
@@ -89,7 +90,9 @@ def condition(found: Found, combos: set, skip: int | None = None) -> str:
             parts.append(f"第 {position + 1} 处按{names}理解")
         sentences.append("，且".join(parts) if parts else "")
     if any(not sentence for sentence in sentences):
-        return "不论其他各处怎么理解" if skip is not None else "不论各处怎么理解"
+        if skip is not None:
+            return "不论其他各处怎么理解" if len(found.ids) > 1 else ""
+        return "不论各处怎么理解" if found.ids else ""
     return "；或者".join(sentences)
 
 
@@ -132,8 +135,13 @@ def render(found: Found) -> str:
     lines: list[str] = []
     rule_ids = "、".join(clause.rule_id for clause in found.clauses) or "条款"
     lines.append(f"# {rule_ids} 条款检查报告\n")
+    problems = list(found.incomplete)
     if found.unaligned:
-        lines.append("> 注意：原文下面这些部分还没有分析，报告不完整：" + "、".join(f"「{span}」" for span in found.unaligned) + "\n")
+        problems.insert(0, "原文这些部分还没有分析：" + "、".join(f"「{span}」" for span in found.unaligned))
+    if problems:
+        lines.append("> **检查还没完成，下面的结论不能直接使用：**")
+        lines += [f"> - {problem}" for problem in problems]
+        lines.append("")
     for clause in found.clauses:
         lines.append(f"- **规则文件**：{clause.title}：{clause.category}（{clause.rule_id}）")
         lines.append(f"- **规则原文**：{' '.join(clause.text.split())}")
@@ -166,11 +174,18 @@ def render(found: Found) -> str:
             lines.append(f"你的答复：「{found.answered[position]}」\n")
             continue
         any_divergence = False
-        for a, b in itertools.permutations(found.letters[position], 2):
-            contexts = found.divergences.get((position, a, b), set())
-            if contexts:
-                any_divergence = True
-                lines.append(when(condition(found, contexts, skip=position), f"同一份文件可能按{ordinal(found, position, a)}通过、按{ordinal(found, position, b)}不通过"))
+        for a, b in itertools.combinations(found.letters[position], 2):
+            forward = condition(found, found.divergences.get((position, a, b), set()), skip=position) if found.divergences.get((position, a, b)) else None
+            backward = condition(found, found.divergences.get((position, b, a), set()), skip=position) if found.divergences.get((position, b, a)) else None
+            first, second = ordinal(found, position, a), ordinal(found, position, b)
+            if forward is not None and forward == backward:
+                lines.append(when(forward, f"同一份文件按{first}和{second}可能得出相反的结论"))
+            else:
+                if forward is not None:
+                    lines.append(when(forward, f"同一份文件可能按{first}通过、按{second}不通过"))
+                if backward is not None:
+                    lines.append(when(backward, f"同一份文件可能按{second}通过、按{first}不通过"))
+            any_divergence = any_divergence or forward is not None or backward is not None
         if not any_divergence:
             lines.append("这几种理解对任何文件都给出相同的结论。")
         if position in found.example:
@@ -202,26 +217,24 @@ def render(found: Found) -> str:
         lines.append("")
 
     if found.files:
-        lines.append("## 现有文件按各种理解的结论\n")
-        lines.append("| 文件 | 通过 | 不通过 | 没有结论 | 现有判定 |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("## 现有文件\n")
+        lines.append("| 文件 | 现有判定 | 结论会随哪几处改变 | 有没有理解与现有判定一致 |")
+        lines.append("|---|---|---|---|")
         for name, (truth, verdicts) in found.files.items():
-            by_verdict: dict[str, set] = {}
-            for combo, verdict in verdicts.items():
-                by_verdict.setdefault(verdict, set()).add(combo)
-
-            def cell(verdict: str) -> str:
-                return condition(found, by_verdict[verdict]) or "是" if verdict in by_verdict else "—"
-
-            current = "—"
-            if truth:
-                agree = by_verdict.get(truth)
-                current = f"{VERDICT_WORDS.get(truth, truth)}，" + (f"对应：{condition(found, agree)}" if agree else "没有任何理解与之一致")
-            lines.append(f"| `{name}` | {cell('PASS')} | {cell('NG')} | {cell('无结论')} | {current} |")
-            odd = [verdict for verdict in by_verdict if verdict not in ("PASS", "NG", "无结论")]
+            changes = [
+                f"第 {position + 1} 处"
+                for position in range(len(found.ids))
+                if any(verdicts.get(combo) != verdicts.get(combo[:position] + (other,) + combo[position + 1 :]) for combo in found.combos for other in found.letters[position])
+            ]
+            outcomes = {verdicts[combo] for combo in found.combos} if found.combos else set(verdicts.values())
+            settled = "不随理解改变，一律" + VERDICT_WORDS.get(next(iter(outcomes)), "") if len(outcomes) == 1 else "、".join(changes)
+            agree = "—" if not truth else "有" if truth in verdicts.values() else "没有"
+            lines.append(f"| `{name}` | {VERDICT_WORDS.get(truth, truth) if truth else '—'} | {settled} | {agree} |")
+            odd = sorted({verdict for verdict in verdicts.values() if verdict not in ("PASS", "NG", "无结论")})
             for verdict in odd:
-                lines.append(f"\n`{name}`：{VERDICT_WORDS[verdict]}（{condition(found, by_verdict[verdict])}），需要检查对它的描述。")
-        lines.append("")
+                where = condition(found, {combo for combo, value in verdicts.items() if value == verdict})
+                lines.append(f"\n`{name}`：{VERDICT_WORDS[verdict]}（{where or '各种理解下都是'}），需要检查对它的描述。")
+        lines.append("\n每份文件在各处按不同理解时怎么变，见上面各处歧义下的“受影响的现有文件”。\n")
 
     if answers:
         lines += check_answers(found, gaps)

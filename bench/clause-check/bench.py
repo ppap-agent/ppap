@@ -2,12 +2,14 @@
 
     list                      the cases
     run   --name N [--case ID ...] [--jobs J] [--model M] [--thinking T] [--timeout MIN]
-                              one headless pi session per case runs the clause-check skill from scratch, with only
-                              that skill loaded and no context files, extensions or MCP; its work stays in
-                              .local/clause-check-bench/N/<case>/, the report, session summary and transcript go to
-                              bench/clause-check/runs/N/<case>/
-    score runs/N [--rejudge]  a judging Claude Code session (independent of the model under test) compares each report with the case's reference findings and the
-                              out-of-scope list; writes judge.json per case and summary.md for the run
+                              one headless pi session per case runs the clause-check skill from scratch. It starts in
+                              its own folder .local/clause-check-bench/N/<case>/ (its working directory), with only
+                              that skill loaded and no context files, extensions or MCP, inside sandbox-exec that
+                              hides bench/, earlier work and every other case folder. Afterwards the report,
+                              session summary and transcript are copied to bench/clause-check/runs/N/<case>/
+    score runs/N [--rejudge]  a judging Claude Code session (independent of the model under test) compares each
+                              report with the case's reference findings and the out-of-scope list, and lists wrong
+                              statements and repeated questions; writes judge.json per case and summary.md
 
 The reference findings are the starting point, not the truth: new findings the judge cannot match are listed for
 the product owner, whose verdicts are added to cases.json over time.
@@ -28,7 +30,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-SKILL = ".claude/skills/clause-check"
+SKILL = ROOT / ".claude" / "skills" / "clause-check"
 DEFAULT_MODEL = "xai/grok-4.7"
 WORK = ROOT / ".local" / "clause-check-bench"
 MISSING = "【待补白话说明】"
@@ -60,31 +62,29 @@ def claude(prompt: str, *options: str) -> dict:
     return result
 
 
-def hidden() -> list[Path]:
-    """What a bench session must not see: the references and other runs, earlier clause-check work, and this
-    machine's Claude Code sessions and scratch files."""
-    return [HERE, ROOT / ".local" / "clause-check", WORK, Path.home() / ".claude", Path("/private/tmp/claude-501")]
+def hidden(work: Path) -> list[Path]:
+    """What the session working in `work` must not see: the references and run results, earlier clause-check work,
+    every other case folder (of this run and earlier runs), and this machine's Claude Code sessions and scratch
+    files. None of them is an ancestor of `work`, so the session's own directory stays an ordinary place to work."""
+    others = [folder for folder in WORK.glob("*/*") if folder.is_dir() and folder.resolve() != work.resolve()]
+    return [HERE, ROOT / ".local" / "clause-check", *others, Path.home() / ".claude", Path("/private/tmp/claude-501")]
 
 
-def sandbox_profile(own: list[Path]) -> str:
-    """macOS Seatbelt profile: everything allowed except the hidden paths; the case's own folders reopened after."""
-    deny = " ".join(f'(subpath "{path.resolve()}")' for path in hidden())
-    allow = " ".join(f'(subpath "{path.resolve()}")' for path in own)
-    return f"(version 1)(allow default)(deny file-read* file-write* {deny})(allow file-read* file-write* {allow})"
+def sandbox_profile(work: Path) -> str:
+    """macOS Seatbelt profile: everything allowed except reading or writing the hidden paths."""
+    deny = " ".join(f'(subpath "{path.resolve()}")' for path in hidden(work))
+    return f"(version 1)(allow default)(deny file-read* file-write* {deny})"
 
 
-def pi(prompt: str, session_dir: Path, work: Path, model: str, thinking: str, timeout_minutes: int) -> dict:
-    """One headless pi session with only the clause-check skill, inside sandbox-exec; a summary of its event stream."""
-    command = ["sandbox-exec", "-p", sandbox_profile([session_dir, work])]
-    command += ["pi", "-p", "--mode", "json", "--session-dir", str(session_dir), "--no-skills", "--skill", SKILL]
+def pi(prompt: str, work: Path, session_dir: Path, model: str, thinking: str, timeout_minutes: int) -> dict:
+    """One headless pi session started in `work`, with only the clause-check skill, inside sandbox-exec."""
+    command = ["sandbox-exec", "-p", sandbox_profile(work)]
+    command += ["pi", "-p", "--mode", "json", "--session-dir", str(session_dir), "--no-skills", "--skill", str(SKILL)]
     command += ["--no-context-files", "--no-approve", "--no-extensions", "--no-mcp", "--model", model, "--thinking", thinking, prompt]
     started = time.monotonic()
-    summary: dict = {"model": model, "thinking": thinking, "models": [], "turns": 0, "tool_calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "result": "", "is_error": True}
-    # Temporary files go to the case's own folder: the default temp dir may sit under a hidden path.
-    temp = work / "tmp"
-    temp.mkdir(exist_ok=True)
-    environment = {**os.environ, "TMPDIR": str(temp)}
-    process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    summary: dict = {"model": model, "thinking": thinking, "models": [], "turns": 0, "tool_calls": 0, "input_tokens": 0, "output_tokens": 0, "result": "", "is_error": True}
+    environment = {**os.environ, "TMPDIR": str(session_dir)}
+    process = subprocess.Popen(command, cwd=work, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         stdout, stderr = process.communicate(timeout=timeout_minutes * 60)
     except subprocess.TimeoutExpired:
@@ -104,7 +104,6 @@ def pi(prompt: str, session_dir: Path, work: Path, model: str, thinking: str, ti
             summary["turns"] += 1
             summary["input_tokens"] += sum(usage.get(key) or 0 for key in ("input", "cacheRead", "cacheWrite"))
             summary["output_tokens"] += usage.get("output") or 0
-            summary["cost_usd"] += (usage.get("cost") or {}).get("total") or 0
             used = f"{message.get('provider')}/{message.get('model')}"
             if used not in summary["models"]:
                 summary["models"].append(used)
@@ -117,12 +116,12 @@ def pi(prompt: str, session_dir: Path, work: Path, model: str, thinking: str, ti
     return summary
 
 
-def hidden_reads(transcript: Path, own: list[Path]) -> list[str]:
+def hidden_reads(transcript: Path, work: Path) -> list[str]:
     """Tool calls in the transcript that reach for a hidden path; the sandbox refuses them, this records the attempt."""
-    marks = [str(path.resolve()) for path in hidden()]
-    marks += [str(path.resolve().relative_to(ROOT)) for path in hidden() if path.resolve().is_relative_to(ROOT)]
-    marks += ["~/" + str(path.relative_to(Path.home())) for path in hidden() if path.is_relative_to(Path.home())]
-    allowed = [str(path.resolve()) for path in own] + [str(path.resolve().relative_to(ROOT)) for path in own]
+    paths = hidden(work)
+    marks = [str(path.resolve()) for path in paths]
+    marks += [str(path.resolve().relative_to(ROOT)) for path in paths if path.resolve().is_relative_to(ROOT)]
+    marks += ["~/" + str(path.relative_to(Path.home())) for path in paths if path.is_relative_to(Path.home())]
     found = []
     for line in transcript.read_text(encoding="utf-8").splitlines() if transcript.exists() else []:
         message = json.loads(line).get("message") or {}
@@ -130,42 +129,44 @@ def hidden_reads(transcript: Path, own: list[Path]) -> list[str]:
             if not isinstance(block, dict) or block.get("type") in ("text", "thinking"):
                 continue
             text = json.dumps(block.get("arguments", block), ensure_ascii=False)
-            for allow in allowed:
-                text = text.replace(allow, "")
             if any(mark in text for mark in marks):
                 found.append(text[:200])
     return found
 
 
+def prompt_for(case: dict) -> str:
+    """The task: the clause and the inputs by absolute path. The working directory is where the session starts."""
+    lines = [
+        f"使用 clause-check 技能检查条款 {case['id']}。",
+        f"- 规则文件：{ROOT / case['rules']}",
+        "- 当前目录就是工作目录。",
+    ]
+    if case["files"]:
+        lines.append("- 要对照的真实文件：")
+        lines += [f"  - {ROOT / path}" for path in case["files"]]
+        lines.append(f"- 这些文件的现有判定在真值表 {ROOT / case['truth']} 里，按文件名查。")
+    lines.append("- 按技能把白话说明补到没有缺项、没有质量问题为止。最后只回复报告文件的路径。")
+    return "\n".join(lines)
+
+
 def run_case(case: dict, name: str, model: str, thinking: str, timeout_minutes: int) -> str:
+    """Run one case whose folders `main` already created; the session never touches bench/, results are copied after."""
     out = HERE / "runs" / name / slug(case["id"])
     work = WORK / name / slug(case["id"])
-    if out.exists() or work.exists():
-        return f"{case['id']}：已存在，跳过（换一个 --name）"
-    out.mkdir(parents=True)
-    work.mkdir(parents=True)
-    files = "、".join(f"`{name}`" for name in case["files"])
-    prompt = "\n".join(
-        [
-            f"使用 clause-check 技能（{SKILL}/SKILL.md）检查条款 {case['id']}（规则文件 {case['rules']}）。",
-            f"- 工作目录用 {work.relative_to(ROOT)}/，代替技能里的 .local/clause-check/<类型>/；形式化文件、推理结果和报告都放在这里。",
-            f"- 需要对照的真实文件：{files}。在 assets/ 下按文件名查找，现有判定见 assets/corpus/ 里的真值表。" if files else "- 这条不需要对照真实文件。",
-            "- 只用规则文件、上面列出的真实文件、真值表和技能本身；不要找也不要读以前的检查结果或参考答案。",
-            "- 不要修改仓库里已有的任何文件，不提交。",
-            "- 按技能把白话说明补到没有缺项、没有质量问题为止。最后只回复报告文件的路径。",
-        ]
-    )
-    result = pi(prompt, out, work, model, thinking, timeout_minutes)
-    sessions = sorted(out.glob("*.jsonl"))
+    session_dir = work / ".session"
+    session_dir.mkdir()
+    result = pi(prompt_for(case), work, session_dir, model, thinking, timeout_minutes)
+    sessions = sorted(session_dir.glob("*.jsonl"))
     if sessions:
-        sessions[-1].rename(out / "transcript.jsonl")
-    result["hidden_reads"] = hidden_reads(out / "transcript.jsonl", [out, work])
+        shutil.copy(sessions[-1], out / "transcript.jsonl")
+    result["hidden_reads"] = hidden_reads(out / "transcript.jsonl", work)
     (out / "session.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     reports = sorted(work.rglob("*.report.md")) or sorted(work.rglob("report.md"))
     for report in reports:
         shutil.copy(report, out / report.name)
-    for ontology in work.glob("*.ofn"):
-        shutil.copy(ontology, out / ontology.name)
+    for ontology in work.rglob("*.ofn"):
+        if ".robot" not in ontology.parent.name:
+            shutil.copy(ontology, out / ontology.name)
     state = "超时" if result.get("timed_out") else "失败" if result["is_error"] else "完成"
     return f"{case['id']}：{state}，报告 {len(reports)} 份，{result['duration_ms'] // 1000} 秒，{result['input_tokens'] + result['output_tokens']} tokens"
 
@@ -186,11 +187,15 @@ JUDGE = """你是条款检查报告的评判。只比对，不评价条款本身
 {report}
 >>>
 
-逐条判断每个参照发现在报告里是否被指出：found（意思相同即可，不要求措辞一致）、partial（只说到一部分）、missed。
-再列出报告里不对应任何参照发现的问题：kind 为 out_of_scope（属于上面的越界）或 new（其他新发现，留给人判断）。
+1. 逐条判断每个参照发现在报告里是否被指出：found（意思相同即可，不要求措辞一致）、partial（只说到一部分）、missed。
+2. 列出报告里不对应任何参照发现的问题：kind 为 out_of_scope（属于上面的越界）或 new（其他新发现，留给人判断）。
+3. 列出报告里按条款原文明显说错的结论，例如把能让同一份文件得出相反结论的几种理解说成“结论都相同”，把并不矛盾的情况说成“原文自相矛盾”。
+4. 列出“需要回答的问题”里与前面某个问题问的是同一件事的问题。
 只输出 JSON，不要其他文字：
 {{"references": [{{"reference": "...", "result": "found|partial|missed", "where": "报告中对应的句子，没有则为空"}}],
-  "extra": [{{"finding": "报告原句或概括", "kind": "new|out_of_scope", "why": "一句话"}}]}}"""
+  "extra": [{{"finding": "报告原句或概括", "kind": "new|out_of_scope", "why": "一句话"}}],
+  "wrong": [{{"statement": "报告原句", "why": "一句话"}}],
+  "repeated": [{{"question": "重复的问题", "same_as": "它重复的那个问题"}}]}}"""
 
 
 def judge(case: dict, report: str, out_of_scope: list[str]) -> dict:
@@ -214,7 +219,7 @@ def judge(case: dict, report: str, out_of_scope: list[str]) -> dict:
 
 def plain_problems(report: str, case: dict) -> tuple[list[str], int]:
     """(technical words or identifiers, number of missing plain descriptions) in a report."""
-    sources = [clause_text(case), *case["files"], case["id"]]
+    sources = [clause_text(case), *(Path(path).name for path in case["files"]), case["id"]]
     allowed = {word.casefold() for text in sources for word in re.findall(r"[A-Za-z][A-Za-z0-9_]*", text)}
     words = [word for word in TECH_WORDS if word in report]
     words += [word for word in re.findall(r"[A-Za-z][A-Za-z0-9_]*", report) if word.casefold() not in allowed and word not in ("PASS", "NG")]
@@ -223,7 +228,8 @@ def plain_problems(report: str, case: dict) -> tuple[list[str], int]:
 
 def score(run: Path, rejudge: bool) -> None:
     data = cases()
-    rows = ["| 条款 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 技术词 | 待补 | 越界读取 | 用时 | tokens | 模型 |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    header = "| 条款 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 说错 | 重复问题 | 技术词 | 待补 | 越界读取 | 用时 | tokens | 模型 |"
+    rows = [header, "|" + "---|" * (header.count("|") - 1)]
     details = []
     for case in data["cases"]:
         folder = run / slug(case["id"])
@@ -236,7 +242,7 @@ def score(run: Path, rejudge: bool) -> None:
         models = "、".join(session.get("models") or []) or "未知"
         reads = session.get("hidden_reads", [])
         if not reports:
-            rows.append(f"| {case['id']} | 没有报告 |  |  |  |  |  |  | {len(reads)} | {seconds}s | {tokens} | {models} |")
+            rows.append(f"| {case['id']} | 没有报告 |" + " |" * 8 + f" {len(reads)} | {seconds}s | {tokens} | {models} |")
             continue
         report = reports[0].read_text(encoding="utf-8")
         verdict_path = folder / "judge.json"
@@ -244,16 +250,18 @@ def score(run: Path, rejudge: bool) -> None:
             verdict_path.write_text(json.dumps(judge(case, report, data["out_of_scope"]), ensure_ascii=False, indent=2), encoding="utf-8")
         verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
         results = [item.get("result") for item in verdict.get("references", [])]
-        extra = verdict.get("extra", [])
+        extra, wrong, repeated = verdict.get("extra", []), verdict.get("wrong", []), verdict.get("repeated", [])
         words, missing = plain_problems(report, case)
         rows.append(
             f"| {case['id']} | {results.count('found')} | {results.count('partial')} | {results.count('missed')} | "
             f"{sum(1 for item in extra if item.get('kind') == 'new')} | {sum(1 for item in extra if item.get('kind') == 'out_of_scope')} | "
-            f"{len(words)} | {missing} | {len(reads)} | {seconds}s | {tokens} | {models} |"
+            f"{len(wrong)} | {len(repeated)} | {len(words)} | {missing} | {len(reads)} | {seconds}s | {tokens} | {models} |"
         )
         details.append(f"\n## {case['id']}\n")
         details += [f"- {item.get('result')}：{item.get('reference')}" for item in verdict.get("references", []) if item.get("result") != "found"]
         details += [f"- {item.get('kind')}：{item.get('finding')}（{item.get('why')}）" for item in extra]
+        details += [f"- 说错：{item.get('statement')}（{item.get('why')}）" for item in wrong]
+        details += [f"- 重复问题：{item.get('question')}（同：{item.get('same_as')}）" for item in repeated]
         details += [f"- 越界读取：{read}" for read in reads]
         if words:
             details.append(f"- 技术词：{'、'.join(sorted(set(words)))}")
@@ -292,6 +300,14 @@ def main(argv: list[str] | None = None) -> int:
     if not chosen:
         print("没有匹配的条款", file=sys.stderr)
         return 2
+    taken = [case["id"] for case in chosen if (HERE / "runs" / args.name / slug(case["id"])).exists() or (WORK / args.name / slug(case["id"])).exists()]
+    if taken:
+        print(f"运行 {args.name} 里已有 {'、'.join(taken)}，换一个 --name", file=sys.stderr)
+        return 2
+    # Every case folder exists before any session starts, so each session's sandbox can name the others.
+    for case in chosen:
+        (HERE / "runs" / args.name / slug(case["id"])).mkdir(parents=True)
+        (WORK / args.name / slug(case["id"])).mkdir(parents=True)
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         for line in pool.map(lambda case: run_case(case, args.name, args.model, args.thinking, args.timeout), chosen):
             print(line, flush=True)

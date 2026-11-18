@@ -36,10 +36,11 @@ from pathlib import Path
 from ofn import NOTHING, THING, Node, literal_text, local, parse, rename, walk, write
 from report import MISSING, Clause, Found, compress, render
 
-ROBOT = Path(__file__).with_name("robot")
+ROBOT = Path(__file__).resolve().with_name("robot")
 UNSAT = re.compile(r"unsatisfiable: (\S+)")
 UNSAT_COUNT = re.compile(r"There are (\d+) unsatisfiable classes")
 READING = re.compile(r"^(.+)__(\d+)([A-Z])$")
+EXAMPLE = re.compile(r"[#/]Example__(\d+)$")
 PUNCTUATION = set("，。；;？?、：:,.!！（）()“”\"'‘’《》【】[] 　")
 GEN = "urn:clause-check#"
 
@@ -282,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
                 changed = True
 
     # Answers written back: `:chosen "A"` (and the user's words in `:answered`) on any point of an ambiguity.
-    plain = {name: dict(annotation_values(base, name)) for name in ("issue", "question", "example", "label", "says", "chosen", "answered")}
+    plain = {name: dict(annotation_values(base, name)) for name in ("issue", "question", "label", "says", "chosen", "answered", "contradiction")}
     found.offered = [list(ls) for ls in letters]
     for point in points:
         position = ids.index(ambiguity_of[point])
@@ -302,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     found.ids, found.letters, found.combos = ids, letters, combos
     for point, readings in points.items():
         position = ids.index(ambiguity_of[point])
-        for name, target in (("issue", found.issue), ("question", found.question), ("example", found.example)):
+        for name, target in (("issue", found.issue), ("question", found.question)):
             if point in plain[name]:
                 target.setdefault(position, plain[name][point])
         for letter, reading in readings.items():
@@ -310,13 +311,24 @@ def main(argv: list[str] | None = None) -> int:
                 if reading in plain[name]:
                     target.setdefault((position, letter), plain[name][reading])
 
+    # Each ambiguity is shown by an example: a concrete file (class Example__<n>, closed facts like a real file)
+    # on which its readings must give opposite verdicts. That check is what catches a broken formalization.
+    examples: dict[str, str] = {}
+    for iri in classes:
+        match = EXAMPLE.search(iri.strip("<>"))
+        if match:
+            examples[match.group(1)] = iri
+    for position, i in enumerate(ids):
+        if i in examples and examples[i] in plain["says"]:
+            found.example[position] = plain["says"][examples[i]]
+
     # What the report needs from the writer, checked before reasoning: every ambiguity and reading described.
     texts: list[tuple[str, str, str, str | None]] = []  # (where, annotation, kind, text)
     for position, i in enumerate(ids):
         where = f"歧义 {i}（{'、'.join(local(p) for p in points if ambiguity_of[p] == i)}）"
         texts += [(where, ":issue", "title", found.issue.get(position)), (where, ":question", "question", found.question.get(position))]
-        if position in found.example:
-            texts.append((where, ":example", "sentence", found.example[position]))
+        if position not in found.answered:
+            texts.append((f"{where} 的例子 Example__{i}", ":says", "sentence", found.example.get(position)))
         for letter in found.offered[position]:
             texts += [(f"{where} 读法 {letter}", "rdfs:label", "label", found.label.get((position, letter))), (f"{where} 读法 {letter}", ":says", "sentence", found.says.get((position, letter)))]
     for _, quote, _, situations, says in limits(base):
@@ -353,6 +365,7 @@ def main(argv: list[str] | None = None) -> int:
     divergent: dict[str, tuple] = {}
     entail: dict[str, tuple] = {}
     cases = {subject: text for subject, text in annotation_values(base, "case")}
+    classified = [*cases, *examples.values()]
     truths = {subject: text for subject, text in annotation_values(base, "truth")}
     if len(verdicts["Pass"]) == 1 and len(verdicts["Fail"]) == 1:
         passed, failed = verdicts["Pass"][0], verdicts["Fail"][0]
@@ -362,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
                 probe = f"<{GEN}Diverge{len(divergent) + 1}>"
                 divergent[probe] = (position, combo[position], other[position], combo)
                 groups[group] += define(probe, Node("ObjectIntersectionOf", [names[combo][passed], names[other][failed]]))
-        for subject, combo, verdict in itertools.product(cases, combos, (passed, failed)):
+        for subject, combo, verdict in itertools.product(classified, combos, (passed, failed)):
             probe = f"<{GEN}Entail{len(entail) + 1}>"
             entail[probe] = (subject, combo, verdict == passed)
             groups[home[combo]] += define(probe, Node("ObjectIntersectionOf", [names[combo][subject], Node("ObjectComplementOf", [names[combo][verdict]])]))
@@ -398,7 +411,7 @@ def main(argv: list[str] | None = None) -> int:
             log = reasoned.stdout + reasoned.stderr
             if "inconsistent" in log.lower():
                 print(f"[整体矛盾] {target.name} 不一致，无法继续推理（条款或真实文件的描述自相矛盾）。解释用：")
-                print(f"scripts/robot explain --reasoner hermit --input {target} -M inconsistency --explanation <输出.md>")
+                print(f"{ROBOT} explain --reasoner hermit --input {target} -M inconsistency --explanation <输出.md>")
                 return 1
             listed = {f"<{iri}>" for iri in UNSAT.findall(log)}
             counted = UNSAT_COUNT.search(log)
@@ -406,25 +419,34 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"推理失败（{target.name}）：\n" + said(reasoned))
                 return 2
             unsat |= listed
-    explain = f"scripts/robot explain --reasoner hermit --input {targets[0]} -M entailment --axiom '<类 IRI> SubClassOf owl:Nothing' --explanation <输出.md>"
+    explain = f"{ROBOT} explain --reasoner hermit --input {targets[0]} -M entailment --axiom '<类 IRI> SubClassOf owl:Nothing' --explanation <输出.md>"
 
     def where(combo_set: set[tuple]) -> str:
         if not ids:
             return ""
         return "所有组合" if len(combo_set) == len(combos) else show(compress(combo_set, letters), ids, letters)
 
-    generated = set(outside) | set(divergent) | set(entail) | set(cases)
+    generated = set(outside) | set(divergent) | set(entail) | set(cases) | set(examples.values())
     generated |= set(points) | {reading for readings in points.values() for reading in readings.values()}
     contradictions: dict[str, set[tuple]] = {}
     for combo, mapping in names.items():
         for iri in classes - original_probes - generated:
             if mapping[iri] in unsat:
                 contradictions.setdefault(iri, set()).add(combo)
+    unchecked = 0
     for iri, combo_set in sorted(contradictions.items()):
         findings += 1
-        found.contradictions.append((plain["label"].get(iri, MISSING), combo_set))
-        texts.append((local(iri), "rdfs:label", "phrase", plain["label"].get(iri)))
-        print(f"[不可满足] {local(iri)}：按条款写法，这个类不可能有成员" + (f"（{where(combo_set)}）" if ids else "") + f"。解释用 {explain}")
+        confirmed = plain["contradiction"].get(iri)
+        if confirmed:
+            found.contradictions.append((confirmed, combo_set))
+            texts.append((local(iri), ":contradiction", "phrase", confirmed))
+            print(f"[自相矛盾] {local(iri)}：已确认是条款本身的矛盾" + (f"（{where(combo_set)}）" if ids else ""))
+        else:
+            unchecked += 1
+            scope = f"（{where(combo_set)}）" if ids else ""
+            print(f"[待查不可满足] {local(iri)}：这个类不可能有成员{scope}。用 {explain} 查清：写法错了就改；是条款本身的矛盾就在这个类上写 :contradiction")
+    if unchecked:
+        found.incomplete.append(f"有 {unchecked} 处推理结果还没查清是条款本身的矛盾还是分析写错了")
     if not contradictions:
         print("[不可满足的类] 无")
 
@@ -462,17 +484,39 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"[歧义 {i}] {a} 判通过、{b} 判不通过：已排除")
 
-    for subject, name in cases.items():
-        verdict_of: dict[str, set[tuple]] = {}
+    def verdicts_of(subject: str) -> dict[tuple, str]:
+        result = {}
         for combo in combos:
             if names[combo][subject] in unsat:
-                verdict_of.setdefault("事实与条款矛盾", set()).add(combo)
+                result[combo] = "事实与条款矛盾"
                 continue
             passes = next(probe for probe, value in entail.items() if value == (subject, combo, True)) in unsat
             fails = next(probe for probe, value in entail.items() if value == (subject, combo, False)) in unsat
-            verdict = "矛盾" if passes and fails else "PASS" if passes else "NG" if fails else "无结论"
+            result[combo] = "矛盾" if passes and fails else "PASS" if passes else "NG" if fails else "无结论"
+        return result
+
+    for position, i in enumerate(ids):
+        if position in found.answered or not entail:
+            continue
+        if i not in examples:
+            findings += 1
+            found.incomplete.append(f"第 {position + 1} 处歧义还没有例子来验证")
+            print(f"[例子缺项] 歧义 {i}：缺 Example__{i}，写一个让几种理解结论相反的具体文件情况")
+            continue
+        example = verdicts_of(examples[i])
+        flips = any({example[combo], example[combo[:position] + (other,) + combo[position + 1 :]]} == {"PASS", "NG"} for combo in combos for other in letters[position] if other != combo[position])
+        if not flips:
+            findings += 1
+            found.incomplete.append(f"第 {position + 1} 处歧义的例子在几种理解下没有得出相反的结论，分析可能写错了")
+            states = "；".join(f"{verdict} {where({c for c, v in example.items() if v == verdict})}" for verdict in sorted(set(example.values())))
+            print(f"[例子不分歧] 歧义 {i}：Example__{i} 在各读法下 {states}。多半是形式化写错了（例子的事实没写全、读法没接到判定上），也可能这不是会改变结论的歧义")
+
+    for subject, name in cases.items() if entail else []:
+        by_combo = verdicts_of(subject)
+        verdict_of: dict[str, set[tuple]] = {}
+        for combo, verdict in by_combo.items():
             verdict_of.setdefault(verdict, set()).add(combo)
-        found.files[name] = (truths.get(subject), {combo: verdict for verdict, combo_set in verdict_of.items() for combo in combo_set})
+        found.files[name] = (truths.get(subject), by_combo)
         parts = [f"{verdict} {where(combo_set)}".strip() for verdict, combo_set in sorted(verdict_of.items())]
         truth = truths.get(subject)
         tail = ""
@@ -480,6 +524,20 @@ def main(argv: list[str] | None = None) -> int:
             agree = verdict_of.get(truth, set())
             tail = f"；真值 {truth}，" + (f"与 {where(agree) or '本体'} 一致" if agree else "没有读法与之一致")
         print(f"[文件] {name}：{'；'.join(parts)}{tail}")
+
+    # One issue is written once: either as an ambiguity with readings, or as an undefined situation (:open).
+    ambiguity_quotes = {re.sub(r"\s+", "", text) for subject, text in annotation_values(base, "quote") if subject in points or any(subject in readings.values() for readings in points.values())}
+    for quote, pairs in found.undefined:
+        if re.sub(r"\s+", "", quote) in ambiguity_quotes:
+            findings += 1
+            print(f"[重复] 「{quote}」既写成了歧义，又写了原文没说的情况；同一处问题只写一次")
+    asked: dict[str, str] = {}
+    for question in [found.question.get(position) for position in range(len(ids))] + [q for _, pairs in found.undefined for q, _ in pairs]:
+        key = re.sub(r"[\s，。？?、“”「」]", "", question or "")
+        if key and key in asked:
+            findings += 1
+            print(f"[重复] 问题「{question}」问了两次")
+        asked.setdefault(key, question or "")
 
     text = render(found)
     report_path.write_text(text, encoding="utf-8")
