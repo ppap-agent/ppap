@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -59,13 +60,31 @@ def claude(prompt: str, *options: str) -> dict:
     return result
 
 
-def pi(prompt: str, session_dir: Path, model: str, thinking: str, timeout_minutes: int) -> dict:
-    """One headless pi session with only the clause-check skill; a summary of its event stream."""
-    command = ["pi", "-p", "--mode", "json", "--session-dir", str(session_dir), "--no-skills", "--skill", SKILL]
+def hidden() -> list[Path]:
+    """What a bench session must not see: the references and other runs, earlier clause-check work, and this
+    machine's Claude Code sessions and scratch files."""
+    return [HERE, ROOT / ".local" / "clause-check", WORK, Path.home() / ".claude", Path("/private/tmp/claude-501")]
+
+
+def sandbox_profile(own: list[Path]) -> str:
+    """macOS Seatbelt profile: everything allowed except the hidden paths; the case's own folders reopened after."""
+    deny = " ".join(f'(subpath "{path.resolve()}")' for path in hidden())
+    allow = " ".join(f'(subpath "{path.resolve()}")' for path in own)
+    return f"(version 1)(allow default)(deny file-read* file-write* {deny})(allow file-read* file-write* {allow})"
+
+
+def pi(prompt: str, session_dir: Path, work: Path, model: str, thinking: str, timeout_minutes: int) -> dict:
+    """One headless pi session with only the clause-check skill, inside sandbox-exec; a summary of its event stream."""
+    command = ["sandbox-exec", "-p", sandbox_profile([session_dir, work])]
+    command += ["pi", "-p", "--mode", "json", "--session-dir", str(session_dir), "--no-skills", "--skill", SKILL]
     command += ["--no-context-files", "--no-approve", "--no-extensions", "--no-mcp", "--model", model, "--thinking", thinking, prompt]
     started = time.monotonic()
     summary: dict = {"model": model, "thinking": thinking, "models": [], "turns": 0, "tool_calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "result": "", "is_error": True}
-    process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # Temporary files go to the case's own folder: the default temp dir may sit under a hidden path.
+    temp = work / "tmp"
+    temp.mkdir(exist_ok=True)
+    environment = {**os.environ, "TMPDIR": str(temp)}
+    process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         stdout, stderr = process.communicate(timeout=timeout_minutes * 60)
     except subprocess.TimeoutExpired:
@@ -98,14 +117,23 @@ def pi(prompt: str, session_dir: Path, model: str, thinking: str, timeout_minute
     return summary
 
 
-def bench_reads(transcript: Path) -> list[str]:
-    """Tool calls in the transcript that touch bench/ (the references and other runs the session must not see)."""
+def hidden_reads(transcript: Path, own: list[Path]) -> list[str]:
+    """Tool calls in the transcript that reach for a hidden path; the sandbox refuses them, this records the attempt."""
+    marks = [str(path.resolve()) for path in hidden()]
+    marks += [str(path.resolve().relative_to(ROOT)) for path in hidden() if path.resolve().is_relative_to(ROOT)]
+    marks += ["~/" + str(path.relative_to(Path.home())) for path in hidden() if path.is_relative_to(Path.home())]
+    allowed = [str(path.resolve()) for path in own] + [str(path.resolve().relative_to(ROOT)) for path in own]
     found = []
     for line in transcript.read_text(encoding="utf-8").splitlines() if transcript.exists() else []:
         message = json.loads(line).get("message") or {}
         for block in message.get("content") or [] if message.get("role") == "assistant" else []:
-            if isinstance(block, dict) and block.get("type") not in ("text", "thinking") and "bench/" in json.dumps(block, ensure_ascii=False):
-                found.append(json.dumps(block.get("arguments", block), ensure_ascii=False)[:200])
+            if not isinstance(block, dict) or block.get("type") in ("text", "thinking"):
+                continue
+            text = json.dumps(block.get("arguments", block), ensure_ascii=False)
+            for allow in allowed:
+                text = text.replace(allow, "")
+            if any(mark in text for mark in marks):
+                found.append(text[:200])
     return found
 
 
@@ -122,16 +150,16 @@ def run_case(case: dict, name: str, model: str, thinking: str, timeout_minutes: 
             f"使用 clause-check 技能（{SKILL}/SKILL.md）检查条款 {case['id']}（规则文件 {case['rules']}）。",
             f"- 工作目录用 {work.relative_to(ROOT)}/，代替技能里的 .local/clause-check/<类型>/；形式化文件、推理结果和报告都放在这里。",
             f"- 需要对照的真实文件：{files}。在 assets/ 下按文件名查找，现有判定见 assets/corpus/ 里的真值表。" if files else "- 这条不需要对照真实文件。",
-            "- 不要读取 bench/ 目录下的任何内容。",
+            "- 只用规则文件、上面列出的真实文件、真值表和技能本身；不要找也不要读以前的检查结果或参考答案。",
             "- 不要修改仓库里已有的任何文件，不提交。",
             "- 按技能把白话说明补到没有缺项、没有质量问题为止。最后只回复报告文件的路径。",
         ]
     )
-    result = pi(prompt, out, model, thinking, timeout_minutes)
+    result = pi(prompt, out, work, model, thinking, timeout_minutes)
     sessions = sorted(out.glob("*.jsonl"))
     if sessions:
         sessions[-1].rename(out / "transcript.jsonl")
-    result["bench_reads"] = bench_reads(out / "transcript.jsonl")
+    result["hidden_reads"] = hidden_reads(out / "transcript.jsonl", [out, work])
     (out / "session.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     reports = sorted(work.rglob("*.report.md")) or sorted(work.rglob("report.md"))
     for report in reports:
@@ -195,7 +223,7 @@ def plain_problems(report: str, case: dict) -> tuple[list[str], int]:
 
 def score(run: Path, rejudge: bool) -> None:
     data = cases()
-    rows = ["| 条款 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 技术词 | 待补 | 读了 bench | 用时 | tokens | 模型 |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    rows = ["| 条款 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 技术词 | 待补 | 越界读取 | 用时 | tokens | 模型 |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     details = []
     for case in data["cases"]:
         folder = run / slug(case["id"])
@@ -206,7 +234,7 @@ def score(run: Path, rejudge: bool) -> None:
         seconds = session.get("duration_ms", 0) // 1000
         tokens = session.get("input_tokens", 0) + session.get("output_tokens", 0)
         models = "、".join(session.get("models") or []) or "未知"
-        reads = session.get("bench_reads", [])
+        reads = session.get("hidden_reads", [])
         if not reports:
             rows.append(f"| {case['id']} | 没有报告 |  |  |  |  |  |  | {len(reads)} | {seconds}s | {tokens} | {models} |")
             continue
@@ -226,7 +254,7 @@ def score(run: Path, rejudge: bool) -> None:
         details.append(f"\n## {case['id']}\n")
         details += [f"- {item.get('result')}：{item.get('reference')}" for item in verdict.get("references", []) if item.get("result") != "found"]
         details += [f"- {item.get('kind')}：{item.get('finding')}（{item.get('why')}）" for item in extra]
-        details += [f"- 读了 bench：{read}" for read in reads]
+        details += [f"- 越界读取：{read}" for read in reads]
         if words:
             details.append(f"- 技术词：{'、'.join(sorted(set(words)))}")
         if "error" in verdict:

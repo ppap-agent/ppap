@@ -19,7 +19,14 @@
 
 每条条款启动一个无界面的 pi 会话，按技能从读条款开始完整走一遍。会话只加载 clause-check 一个技能，不读 AGENTS.md、CLAUDE.md 和项目里的配置，不带扩展和 MCP，pi 也没有用户记忆，所以会话只看得到技能和任务说明。模型默认 `xai/grok-4.7`、思考强度 high，可用 `--model`、`--thinking` 改；每条默认 60 分钟超时（`--timeout`）。
 
-会话被要求不读 `bench/`（参照和其他运行结果都在这里），但本机运行没有强制隔离；会话里碰到 `bench/` 的工具调用会被记下来，汇总里单列。
+pi 没有内置沙箱，所以每个会话用 macOS 的 `sandbox-exec` 包起来，禁止读写：
+
+- `bench/clause-check/`：参照和其他运行结果（本条的结果目录除外）；
+- `.local/clause-check/`：以前用技能检查条款留下的成果；
+- `.local/clause-check-bench/`：其他条款和其他运行的工作目录（本条的工作目录除外）；
+- `~/.claude/` 和 `/private/tmp/claude-501/`：本机 Claude Code 的会话、记忆和临时文件。
+
+其余文件照常可读，仓库里的规则文件、真实文件、真值表和技能都能用。这是按路径禁止的清单：以后再在别处放了参考答案或旧成果，要加进 `bench.py` 的 `hidden()`。会话里试图访问这些路径的工具调用会被记下来，汇总里单列。
 
 ```bash
 uv run --no-sync python bench/clause-check/bench.py list
@@ -54,7 +61,7 @@ uv run --no-sync python bench/clause-check/bench.py score bench/clause-check/run
 | 越界 | 报告里属于 `out_of_scope` 的分析，应为 0 |
 | 技术词 | 报告里的技术词汇和英文标识符（条款原文和文件名里的词除外），应为 0 |
 | 待补 | 报告里“待补白话说明”的处数，应为 0 |
-| 读了 bench | 会话里碰到 `bench/` 的工具调用次数，应为 0；不为 0 时这条结果不可信 |
+| 越界读取 | 会话试图访问禁止路径的工具调用次数。沙箱会拒绝这些访问，所以不影响结果，但说明会话在找参考答案，应为 0 |
 | 用时 / tokens | 技能会话的耗时和输入、输出 token 数，不含评判 |
 | 模型 | 技能会话实际用到的模型；比较两次运行前先确认模型和思考强度一致 |
 
