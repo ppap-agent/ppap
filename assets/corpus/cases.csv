@@ -187,8 +187,3 @@ nio,POC测试样本,f023,assets/nio/samples/POC测试样本/PFMEA-sample_v2.xlsx
 nio,Sirius Spoiler,f024,assets/nio/samples/Sirius Spoiler/Sirius-spolier+CP_v2.xlsx,Sirius-spolier+CP_v2.xlsx,target,nio/N03,蔚来:N03,N03:1;N03:2;N03:3;N03:4;N03:5;N03:6;N03:7;N03:8;N03:9;N03:10
 nio,Sirius Spoiler,f025,assets/nio/samples/Sirius Spoiler/Sirius-spolier+过程流程图-NIO+Sirius+Spoiler+Cross+ASM_03.xlsx,Sirius-spolier+过程流程图-NIO+Sirius+Spoiler+Cross+ASM_03.xlsx,target,nio/N05,蔚来:N05,N05:1;N05:2;N05:3;N05:4;N05:5;N05:6;N05:7;N05:8;N05:9
 nio,Sirius Spoiler,f026,assets/nio/samples/Sirius Spoiler/PFMEA-NIO+Sirius+Spoiler+Cross+ASM_02_v2.xlsx,PFMEA-NIO+Sirius+Spoiler+Cross+ASM_02_v2.xlsx,target,nio/N02,蔚来:N02,N02:1;N02:2;N02:3;N02:4;N02:5;N02:6;N02:7
-uaes,CP-PFMEA-PFD,f1,assets/uaes/samples/通用文件/表单模板/测试文件/10 控制计划/控制计划.xlsx,控制计划.xlsx,target,uaes/U08,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
-uaes,CP-PFMEA-PFD,f2,assets/uaes/samples/通用文件/表单模板/测试文件/09 潜在过程失效模式及后果分析/PFMEA.xls,PFMEA.xls,target,uaes/U07,UAES:U07,U07:1;U07:2;U07:3;U07:4
-uaes,CP-PFMEA-PFD,f3,assets/uaes/samples/F01R10DP4Z_名称待确认/测试文件/08 过程流程图/过程流程图.xls,过程流程图.xls,target,uaes/U16,UAES:U16,U16:1;U16:2;U16:3
-uaes,two-independent-CP-originals,f1,assets/uaes/samples/通用文件/表单模板/测试文件/10 控制计划/控制计划.xlsx,控制计划.xlsx,target,uaes/U08,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
-uaes,two-independent-CP-originals,f2,assets/uaes/samples/F01R20V040_磁性罩/测试文件/10 控制计划/控制计划-模板3 WY (1).pdf,控制计划-模板3 WY.pdf,target,uaes/U08,UAES:U08,U08:1;U08:2;U08:3;U08:4;U08:6;U08:7;U08:8;U08:9;U08:10;U08:11;U08:12;U08:13
