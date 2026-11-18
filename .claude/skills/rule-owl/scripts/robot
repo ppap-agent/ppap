@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Run the pinned ROBOT jar. Java comes from JAVA_HOME, else from PATH; no install path is guessed.
+set -euo pipefail
+
+VERSION=1.9.11
+SHA256=53cd275c8e4c0dad1fc2c1c34174876795cd7d6b6926e1444adcbb0cb3c7ab26
+URL="https://github.com/ontodev/robot/releases/download/v${VERSION}/robot.jar"
+
+skill_dir=$(cd "$(dirname "$0")/.." && pwd)
+jar="$skill_dir/bin/robot-${VERSION}.jar"
+
+if [[ -n "${JAVA_HOME:-}" ]]; then
+  java="$JAVA_HOME/bin/java"
+else
+  java=$(command -v java || true)
+fi
+if [[ -z "$java" ]] || ! version=$("$java" -version 2>&1 | head -n 1); then
+  echo "找不到可运行的 Java。请把 JAVA_HOME 设为 Java 11 或更高版本的主目录。" >&2
+  exit 2
+fi
+major=$(sed -E 's/.*version "(1\.)?([0-9]+).*/\2/' <<<"$version")
+if ! [[ "$major" =~ ^[0-9]+$ ]] || (( major < 11 )); then
+  echo "ROBOT 需要 Java 11 或更高版本，当前是：$version（$java）。请把 JAVA_HOME 设为更高版本的主目录。" >&2
+  exit 2
+fi
+
+if [[ ! -f "$jar" ]]; then
+  mkdir -p "$skill_dir/bin"
+  partial="$jar.partial"
+  echo "下载 ROBOT ${VERSION} ..." >&2
+  curl -fL --retry 3 -o "$partial" "$URL"
+  actual=$(shasum -a 256 "$partial" | cut -d ' ' -f 1)
+  if [[ "$actual" != "$SHA256" ]]; then
+    rm -f "$partial"
+    echo "ROBOT jar 校验和不符：期望 $SHA256，实际 $actual" >&2
+    exit 2
+  fi
+  mv "$partial" "$jar"
+fi
+
+quiet=()
+# Java 23+ warns on every run about a ROBOT dependency's sun.misc.Unsafe use.
+(( major >= 23 )) && quiet=(--sun-misc-unsafe-memory-access=allow)
+
+exec "$java" "${quiet[@]}" ${ROBOT_JAVA_ARGS:--Xmx4G} -jar "$jar" "$@"

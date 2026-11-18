@@ -13,6 +13,7 @@ __pycache__/
 .idea/
 .vscode/
 .local/
+.claude/skills/rule-owl/bin/
 .pi/
 apps/web/runtime-config.json
 .artifacts/
