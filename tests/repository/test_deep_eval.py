@@ -1,4 +1,4 @@
-"""deep-eval scoring, through its report command: what counts as right, fixed, broken and an unsafe PASS."""
+"""bench/deep-audit scoring, through its report command: what counts as right, fixed, broken and an unsafe PASS."""
 
 import json
 import subprocess
@@ -16,7 +16,7 @@ def _report(tmp_path, lines, meta=None) -> dict:
     (tmp_path / "cases.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
     if meta is not None:
         (tmp_path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
-    subprocess.run([sys.executable, str(ROOT / "deep-eval" / "deep_eval.py"), "report", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run([sys.executable, str(ROOT / "bench" / "deep-audit" / "deep_eval.py"), "report", str(tmp_path)], check=True, capture_output=True)
     return json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
 
 

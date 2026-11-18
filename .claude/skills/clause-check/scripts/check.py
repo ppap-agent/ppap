@@ -41,7 +41,7 @@ UNSAT = re.compile(r"unsatisfiable: (\S+)")
 UNSAT_COUNT = re.compile(r"There are (\d+) unsatisfiable classes")
 READING = re.compile(r"^(.+)__(\d+)([A-Z])$")
 PUNCTUATION = set("，。；;？?、：:,.!！（）()“”\"'‘’《》【】[] 　")
-GEN = "urn:rule-owl#"
+GEN = "urn:clause-check#"
 
 
 def robot(*args: str) -> subprocess.CompletedProcess:

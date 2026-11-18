@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Run deep mode over the corpus oracle in the deep image built from HEAD.
 #
-#   deep-eval/run.sh [--name NAME] [--jobs N] [-- deep_eval.py run options]
+#   bench/deep-audit/run.sh [--name NAME] [--jobs N] [-- deep_eval.py run options]
 #
 # Non-secret deep configuration comes from .env.production (as deployed); the model endpoints
-# and keys come from the repository-root .env. Results go to deep-eval/runs/<name>/.
+# and keys come from the repository-root .env. Results go to bench/deep-audit/runs/<name>/.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 NAME=""
 JOBS=3
 while [[ $# -gt 0 ]]; do
@@ -34,7 +34,7 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
 fi
 
 NAME=${NAME:-$(date +%Y%m%d-%H%M)-${SHA:0:8}}
-OUT="$ROOT/deep-eval/runs/$NAME"
+OUT="$ROOT/bench/deep-audit/runs/$NAME"
 mkdir -p "$OUT"
 chmod 0777 "$OUT"
 
@@ -54,7 +54,7 @@ for ((shard = 0; shard < JOBS; shard++)); do
     -e PYTHONPATH=/repo/tests/corpus/contracts/src \
     -v "$ROOT:/repo:ro" -v "$OUT:/out" -w /repo \
     --entrypoint /app/.venv/bin/python "$IMAGE" \
-    /repo/deep-eval/deep_eval.py run --out "/out/shard-$shard" --shard "$shard/$JOBS" "$@" \
+    /repo/bench/deep-audit/deep_eval.py run --out "/out/shard-$shard" --shard "$shard/$JOBS" "$@" \
     >"$OUT/shard-$shard.log" 2>&1 &
   pids+=($!)
 done
@@ -62,6 +62,6 @@ status=0
 for pid in "${pids[@]}"; do wait "$pid" || status=1; done
 
 cat "$OUT"/shard-*/cases.jsonl >"$OUT/cases.jsonl" 2>/dev/null || true
-uv run --no-sync python deep-eval/deep_eval.py report "$OUT" >/dev/null
+uv run --no-sync python bench/deep-audit/deep_eval.py report "$OUT" >/dev/null
 echo "$OUT/summary.md"
 exit $status

@@ -1,6 +1,6 @@
 """Deep mode against the human corpus oracle, through the production deep execution path.
 
-    run     inside the deep image, as root (deep-eval/run.sh starts it); one JSON line per case
+    run     inside the deep image, as root (bench/deep-audit/run.sh starts it); one JSON line per case
     report  anywhere; summarizes one run directory into summary.json and summary.md
 
 `run` builds each case's frozen round as the corpus does, freezes the platform model selection

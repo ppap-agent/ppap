@@ -34,7 +34,7 @@ Deep 的规则附录是明确输入，由用户确认的解释、映射或标准
 条款形式化是开发人员交付规则前的离线工作，用于发现规则缺陷，有两个入口：
 
 - 检查要点整理（用法见 [DEVELOPMENT](DEVELOPMENT.md)）：模型把条款改写为检查要点，列出原文没说清的待澄清问题并给出建议写法；“当 X 且 Y 则通过”这类句式另列 X 是要求还是检查范围的问题。改写丢失原文引号词或数字时拒收。
-- OWL 形式化（repo skill [`rule-owl`](../.claude/skills/rule-owl/SKILL.md)）：逐条写成 OWL 2，用 ROBOT（HermiT）做 DL 校验、一致性与探针推理，把写作中和推理报出的歧义、缺口、矛盾整理成缺陷清单交给用户决定。OWL 文件只是证据，不交付、不入库。
+- 条款检查（repo skill [`clause-check`](../.claude/skills/clause-check/SKILL.md)）：逐条写成 OWL 2，用 ROBOT（HermiT）推理，确认歧义的几种理解是否会让同一份文件得出相反结论、原文哪些情况没有定义或没给结论，生成白话报告交给用户决定；用户答复后回填核对。OWL 文件只是证据，不交付、不入库；效果用 [`bench/clause-check/`](../bench/clause-check/README.md) 长期对比。
 
 线上不存储、不排队、不读取形式化结果，检查程序不执行 OWL；线上规则总是已经修正过表达的版本。没有证据的检查不得显示为通过。
 

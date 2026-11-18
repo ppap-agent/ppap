@@ -13,7 +13,7 @@ __pycache__/
 .idea/
 .vscode/
 .local/
-.claude/skills/rule-owl/bin/
+.claude/skills/clause-check/bin/
 .pi/
 apps/web/runtime-config.json
 .artifacts/
@@ -27,5 +27,5 @@ ci-report/
 /deploy/tke/.build.lock
 .grok/
 
-# deep-eval run outputs
-deep-eval/runs/
+# bench run outputs
+bench/*/runs/

@@ -1,4 +1,4 @@
-# deep-eval：深度审核评估
+# deep-audit：深度审核评估
 
 用人工 Oracle 衡量深度模式：检查程序给出结论后，深度复核把多少条改对、改错，有没有把不该通过的改成 PASS，以及每例耗时和模型用量。
 
@@ -17,23 +17,23 @@
 需要 Docker、本仓 `.env` 中的平台模型配置，以及干净的工作区（镜像与语料必须是同一提交）。
 
 ```bash
-deep-eval/run.sh --jobs 3
+bench/deep-audit/run.sh --jobs 3
 ```
 
 ```bash
-deep-eval/run.sh --name trial --jobs 1 -- --case 0 --case 5
+bench/deep-audit/run.sh --name trial --jobs 1 -- --case 0 --case 5
 ```
 
 `--` 之后的参数传给 `deep_eval.py run`：`--dataset`、`--case`（可重复）。先看用例编号：
 
 ```bash
-uv run --no-sync python deep-eval/deep_eval.py run --dataset uaes --out /tmp/unused --list
+uv run --no-sync python bench/deep-audit/deep_eval.py run --dataset uaes --out /tmp/unused --list
 ```
 
-结果写在 `deep-eval/runs/<名称>/`（不入库）：`cases.jsonl` 每例一行（逐条真值、程序结论、复核后结论、复核决定与理由、文件复核状态、耗时与用量），`summary.json` 与 `summary.md` 为汇总。重算汇总：
+结果写在 `bench/deep-audit/runs/<名称>/`（不入库）：`cases.jsonl` 每例一行（逐条真值、程序结论、复核后结论、复核决定与理由、文件复核状态、耗时与用量），`summary.json` 与 `summary.md` 为汇总。重算汇总：
 
 ```bash
-uv run --no-sync python deep-eval/deep_eval.py report deep-eval/runs/<名称>
+uv run --no-sync python bench/deep-audit/deep_eval.py report bench/deep-audit/runs/<名称>
 ```
 
 ## 指标

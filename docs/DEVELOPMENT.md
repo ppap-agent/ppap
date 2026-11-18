@@ -138,7 +138,7 @@ PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e -k prev
 
 ## 深度审核评估
 
-深度模式的质量与成本用根目录 [`deep-eval/`](../deep-eval/README.md) 评估：在从 `HEAD` 构建的深度镜像里，按线上 Controller 的同一路径对人工 Oracle 逐例执行深度审核并汇总。
+深度模式的质量与成本用根目录 [`bench/deep-audit/`](../bench/deep-audit/README.md) 评估：在从 `HEAD` 构建的深度镜像里，按线上 Controller 的同一路径对人工 Oracle 逐例执行深度审核并汇总。
 
 ## Checker Core 官方发布
 

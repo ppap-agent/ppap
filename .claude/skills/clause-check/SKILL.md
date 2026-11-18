@@ -1,19 +1,19 @@
 ---
-name: rule-owl
-description: 交付规则前，把审核条款逐条写成 OWL 2，用 ROBOT（HermiT）校验和推理，借形式化过程找出规则缺陷（歧义、范围不清、覆盖缺口、自相矛盾、条款间冲突），产出缺陷清单和条款修改建议。用于离线优化 checkers/<公司>/<类型>/rules.json 等规则；线上审核不运行，检查程序不读 OWL。
+name: clause-check
+description: 交付规则前检查审核条款原文：把条款当逻辑题，逐条形式化（OWL 2 + ROBOT/HermiT），找出歧义、原文没定义的情况、没给结论的情况、自相矛盾和条款间冲突，确认哪些会让同一份文件得出相反结论、影响哪些真实文件，生成给产品负责人看的白话报告；用户答复后回填并核对缺口是否补上。用于离线优化 checkers/<公司>/<类型>/rules.json 等规则；线上审核不运行，检查程序不读形式化结果。
 ---
 
-# 规则 OWL 形式化
+# 条款检查
 
-目的是**发现规则缺陷**。把条款写成 OWL 时，每一处写不下去、要替规则做选择、或推理报出问题的地方，都是一条候选缺陷。OWL 文件只是证据，不交付、不入库、不提交。
+目的是**发现条款原文的缺陷**，交给用户决定。把条款写成 OWL 时，每一处写不下去、要替规则做选择、或推理报出问题的地方，都是一条候选缺陷。OWL 文件只是证据，不交付、不入库、不提交；交给用户的是脚本生成的白话报告。
 
 不做：CNL、CLIF、替规则做选择、直接修改 `rules.json` 或 `assets/` 下的规则原件。
 
 ## 输入与产出
 
 - 输入：一个规则文件（如 `packages/audit/src/audit/checkers/li/L05/rules.json`，取 `rules[].id` 与 `rules[].rule_to_check`），可只做用户点名的条款。
-- 工作目录：`.local/rule-owl/<类型>/`（已被 Git 忽略）。每条条款一个 `<条款序号>.ofn`，如 `L05-1.ofn`。
-- 产出：单条条款的白话报告 `.local/rule-owl/<类型>/<条款序号>.report.md`，合并检查时为 `.local/rule-owl/<类型>/report.md`，**由脚本根据 `.ofn` 里的白话注解生成，不手写**；在对话里给用户看摘要。
+- 工作目录：`.local/clause-check/<类型>/`（已被 Git 忽略）。每条条款一个 `<条款序号>.ofn`，如 `L05-1.ofn`。
+- 产出：单条条款的白话报告 `.local/clause-check/<类型>/<条款序号>.report.md`，合并检查时为 `.local/clause-check/<类型>/report.md`，**由脚本根据 `.ofn` 里的白话注解生成，不手写**；在对话里给用户看摘要。
 
 ## 步骤
 
@@ -132,10 +132,10 @@ EquivalentClasses(:Case574 ObjectIntersectionOf(:File :HasSummaryTable ObjectCom
 Java 取自 `JAVA_HOME`（没设才用 `PATH` 里的 `java`），需 11 及以上；首次运行会下载固定版本的 ROBOT jar 到本 skill 的 `bin/`。
 
 ```bash
-python3 .claude/skills/rule-owl/scripts/check.py .local/rule-owl/L05/L05-1.ofn
+python3 .claude/skills/clause-check/scripts/check.py .local/clause-check/L05/L05-1.ofn
 ```
 
-脚本依次做原文对齐、读法展开、OWL 2 DL 校验、推理（一致性、不可满足类、探针、完备性、读法分歧、文件分类）。展开后的本体留在 `<文件名>.robot/`：有歧义时每对比较的组合一个 `expanded-<n>.ofn`，并行推理，U06:3 这种 4 处歧义、24 种组合的条款约一分钟以内。脚本只列出不可满足的类，不生成解释；要看某个类为什么不可满足，用脚本输出里给的 `robot explain` 命令单独查。也可以直接用 `.claude/skills/rule-owl/scripts/robot <命令>` 调 ROBOT。
+脚本依次做原文对齐、读法展开、OWL 2 DL 校验、推理（一致性、不可满足类、探针、完备性、读法分歧、文件分类）。展开后的本体留在 `<文件名>.robot/`：有歧义时每对比较的组合一个 `expanded-<n>.ofn`，并行推理，U06:3 这种 4 处歧义、24 种组合的条款约一分钟以内。脚本只列出不可满足的类，不生成解释；要看某个类为什么不可满足，用脚本输出里给的 `robot explain` 命令单独查。也可以直接用 `.claude/skills/clause-check/scripts/robot <命令>` 调 ROBOT。
 
 **探针**：把要查的情况声明为名字以 `Probe_` 开头的类，用 `EquivalentClasses` 定义。探针不可满足表示条款排除了这种情况；仍可满足表示条款没有排除，是候选缺陷。常用两种：
 
@@ -160,7 +160,7 @@ EquivalentClasses(:Probe_Uncovered ObjectIntersectionOf(<范围> ObjectComplemen
 ### 7. 合并检查同一类型的全部条款
 
 ```bash
-python3 .claude/skills/rule-owl/scripts/check.py .local/rule-owl/L05/*.ofn --out .local/rule-owl/L05/merged.robot
+python3 .claude/skills/clause-check/scripts/check.py .local/clause-check/L05/*.ofn --out .local/clause-check/L05/merged.robot
 ```
 
 合并后再加跨条款探针（例如条款 1 判通过、条款 3 判不通过的同一情况）。条款间冲突和术语不统一只有这一步能发现。
