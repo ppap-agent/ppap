@@ -51,6 +51,7 @@ uv run --no-sync python bench/clause-check/bench.py score bench/clause-check/run
 | 技术词 | 报告里的技术词汇和英文标识符（条款原文和文件名里的词除外），应为 0 |
 | 待补 | 报告里“待补白话说明”的处数，应为 0 |
 | 用时 / 费用 | 技能会话的耗时和费用，不含评判 |
+| 模型 | 技能会话实际用到的模型。不传 `--model` 时用本机 Claude Code 的默认模型，比较两次运行前先确认模型一致 |
 
 表下列出每条条款没找到的参照和全部新发现、越界项。
 

@@ -88,9 +88,8 @@ def run_case(case: dict, name: str, model: str | None) -> str:
     reports = sorted(work.rglob("*.report.md")) or sorted(work.rglob("report.md"))
     for report in reports:
         shutil.copy(report, out / report.name)
-    for ontology in work.rglob("*.ofn"):
-        if ontology.parent == work or ontology.parent.parent == work:
-            shutil.copy(ontology, out / ontology.name)
+    for ontology in work.glob("*.ofn"):
+        shutil.copy(ontology, out / ontology.name)
     state = "失败" if result.get("is_error") else "完成"
     return f"{case['id']}：{state}，报告 {len(reports)} 份，{result.get('duration_ms', 0) // 1000} 秒，${result.get('total_cost_usd', 0):.2f}"
 
@@ -137,17 +136,18 @@ def judge(case: dict, report: str, out_of_scope: list[str]) -> dict:
     return verdict
 
 
-def plain_problems(report: str, case: dict) -> tuple[int, int]:
-    """(technical words or identifiers, missing plain descriptions) in a report."""
-    allowed = {word.casefold() for text in [clause_text(case), *case["files"]] for word in re.findall(r"[A-Za-z][A-Za-z0-9_]*", text)}
-    words = sum(report.count(word) for word in TECH_WORDS)
-    words += sum(1 for word in re.findall(r"[A-Za-z][A-Za-z0-9_]*", report) if word.casefold() not in allowed and word not in ("PASS", "NG"))
+def plain_problems(report: str, case: dict) -> tuple[list[str], int]:
+    """(technical words or identifiers, number of missing plain descriptions) in a report."""
+    sources = [clause_text(case), *case["files"], case["id"]]
+    allowed = {word.casefold() for text in sources for word in re.findall(r"[A-Za-z][A-Za-z0-9_]*", text)}
+    words = [word for word in TECH_WORDS if word in report]
+    words += [word for word in re.findall(r"[A-Za-z][A-Za-z0-9_]*", report) if word.casefold() not in allowed and word not in ("PASS", "NG")]
     return words, report.count(MISSING)
 
 
 def score(run: Path, rejudge: bool) -> None:
     data = cases()
-    rows = ["| 条款 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 技术词 | 待补 | 用时 | 费用 |", "|---|---|---|---|---|---|---|---|---|---|"]
+    rows = ["| 条款 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 技术词 | 待补 | 用时 | 费用 | 模型 |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     details = []
     for case in data["cases"]:
         folder = run / slug(case["id"])
@@ -156,8 +156,9 @@ def score(run: Path, rejudge: bool) -> None:
         reports = sorted(folder.glob("*report.md"))
         session = json.loads((folder / "session.json").read_text(encoding="utf-8")) if (folder / "session.json").exists() else {}
         seconds, cost = session.get("duration_ms", 0) // 1000, session.get("total_cost_usd", 0)
+        models = "、".join(sorted(session.get("modelUsage", {}))) or "未知"
         if not reports:
-            rows.append(f"| {case['id']} | 没有报告 |  |  |  |  |  |  | {seconds}s | ${cost:.2f} |")
+            rows.append(f"| {case['id']} | 没有报告 |  |  |  |  |  |  | {seconds}s | ${cost:.2f} | {models} |")
             continue
         report = reports[0].read_text(encoding="utf-8")
         verdict_path = folder / "judge.json"
@@ -170,11 +171,13 @@ def score(run: Path, rejudge: bool) -> None:
         rows.append(
             f"| {case['id']} | {results.count('found')} | {results.count('partial')} | {results.count('missed')} | "
             f"{sum(1 for item in extra if item.get('kind') == 'new')} | {sum(1 for item in extra if item.get('kind') == 'out_of_scope')} | "
-            f"{words} | {missing} | {seconds}s | ${cost:.2f} |"
+            f"{len(words)} | {missing} | {seconds}s | ${cost:.2f} | {models} |"
         )
         details.append(f"\n## {case['id']}\n")
         details += [f"- {item.get('result')}：{item.get('reference')}" for item in verdict.get("references", []) if item.get("result") != "found"]
         details += [f"- {item.get('kind')}：{item.get('finding')}（{item.get('why')}）" for item in extra]
+        if words:
+            details.append(f"- 技术词：{'、'.join(sorted(set(words)))}")
         if "error" in verdict:
             details.append(f"- 评判失败：{verdict['error'][:200]}")
     text = f"# clause-check bench：{run.name}\n\n" + "\n".join(rows) + "\n" + "\n".join(details) + "\n"
