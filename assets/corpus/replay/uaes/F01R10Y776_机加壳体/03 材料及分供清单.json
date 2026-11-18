@@ -128,5 +128,70 @@
   },
   "request_sha256": "2436cbc105c6d35d4508209b9983fedabe6fe22d3c68bea94aaef4755c4a7e68",
   "answer": "{\"drawing_number\": \"F 01R 10Y 776\", \"designation\": \"机加工壳体 MACHINED HOUSING\", \"version\": \"A0\"}"
+ },
+ {
+  "kind": "ocr",
+  "model": "deepseek/deepseek-v4.1-flash-1017",
+  "request": {
+   "input": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "input_text",
+       "text": "这是一份零件图纸右下角标题栏区域的图像。请按 JSON Schema 转写，只转写，不判断。\ndrawing_number：“图号 / DWG No.”栏中的编号；designation：“名称 / DESIGNATION”栏的内容；version：“版本 / VERSION”栏的内容。\n照原样转写，保留空格；栏位空白写空字符串；图中没有该栏或看不清写 null。不要转写“首次用于 / FIRST APPLICAT.”等其他栏的编号。"
+      },
+      {
+       "type": "input_image",
+       "image_url": "<png 2381x1123>",
+       "detail": "high"
+      }
+     ]
+    }
+   ],
+   "text": {
+    "format": {
+     "type": "json_schema",
+     "name": "transcription",
+     "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "drawing_number",
+       "designation",
+       "version"
+      ],
+      "properties": {
+       "drawing_number": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "designation": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "version": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "max_output_tokens": 4096,
+   "extra_body": {
+    "reasoning": {
+     "effort": "none"
+    }
+   }
+  },
+  "request_sha256": "840f04814fbc1b078c6fc4544e54523312f779615bd5c76f5a91ead79667d96f",
+  "answer": "{\"drawing_number\": \"F 01R 10Y 776\", \"designation\": \"机加工壳体\\nMACHINED HOUSING\", \"version\": \"01\"}"
  }
 ]
