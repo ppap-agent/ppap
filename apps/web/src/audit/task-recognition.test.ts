@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createTaskRecognition, type AuditRecognitionAdapter} from './task-recognition.ts'
+import {createTaskRecognition, ruleCustomer, type AuditRecognitionAdapter} from './task-recognition.ts'
 
 type Task = components['schemas']['AuditTask']
 const files: Task['files'] = [{file: {id: 'version-a', file_id: 'file-a', original_filename: 'a.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 10, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: null}]
@@ -140,4 +140,11 @@ test('an accepted recognition receipt for an ended task has a current-task confl
   await recognition.read('draft-a')
   assert.equal(recognition.get('draft-a')!.phase, 'conflict')
   assert.equal(recognition.get('draft-a')!.currentRevision, 0)
+})
+
+test('a matched rule is labelled with its own customer, never the customer a file writes', () => {
+  // A UAES flow chart may name the vehicle maker (GEELY) in its header; the rule it matched is still UAES's.
+  const rule = {id: 'rule-u16', title: '过程流程图（PFD）审核规则', body: {kind: 'engine', type: '过程流程图', customers: ['UAES'], rules: []}} as unknown as Parameters<typeof ruleCustomer>[0]
+  assert.equal(ruleCustomer(rule), 'UAES')
+  assert.equal(ruleCustomer(null), '')
 })

@@ -12,6 +12,10 @@ export type AuditRecognitionAdapter = {
 }
 type RecognitionInput = {files: Task['files']; customer: string | null; previous: Task | null; predecessorId?: string; preparation?: {id: string; revision: number}}
 export type RecognitionObservation = {requestId: string; taskId: string; phase: 'sending' | 'reading' | 'unknown' | 'accepted' | 'rejected' | 'conflict'; message: string; traceId?: string; currentRevision?: number; currentState?: Task['state']}
+/** A matched rule is labelled with its own customer; the customer a file writes is one of the file's recognized facts. */
+export function ruleCustomer(rule: NonNullable<Task['files'][number]['match']>['rule']): string {
+  return rule?.body.kind === 'engine' ? rule.body.customers?.[0] ?? '' : ''
+}
 const unknownMessage = '识别请求结果尚未确认。文件与选择已保留；请查看原请求结果，不要重复开始识别。'
 
 function acceptedInput(input: RecognitionInput, next: Task, requestId: string, taskId: string) {
