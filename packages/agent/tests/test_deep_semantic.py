@@ -79,62 +79,6 @@ class SemanticBoundaryTests(unittest.TestCase):
         self.assertEqual(cells["B1"]["value"], "2026-09-26T00:00:00")
         self.assertEqual(cells["C1"]["value"], "2026-09-26T09:15:00")
 
-    def test_checker_program_files_survive_a_missing_receipt(self) -> None:
-        from agent.execution.checker_guest import CheckerDraft
-
-        runner = PiRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "wall_seconds": 10})
-        with tempfile.TemporaryDirectory() as directory:
-            work = Path(directory)
-
-            def finish_file(work, prompt, deadline, **kwargs):
-                del work, deadline, kwargs
-                self.assertEqual(prompt, "develop")
-                (Path(directory) / "checker.py").write_text("def create_audit(audit_file, rule, group_context=None):\n    return None\n", encoding="utf-8")
-                (Path(directory) / "resources.py").write_text("RESOURCE = None\n", encoding="utf-8")
-                raise ModelProtocolError("Model stage failed")
-
-            with patch.object(runner, "_run", side_effect=finish_file):
-                draft = runner.run(work, "develop", CheckerDraft, 9999999999.0, reasoning_effort="medium")
-        self.assertEqual(draft.entrypoint, "checker:create_audit")
-        self.assertIn("create_audit", draft.files["checker.py"])
-        self.assertEqual(draft.files["resources.py"], "RESOURCE = None\n")
-        self.assertEqual(draft.clauses, [])
-
-    def test_checker_receipt_can_name_a_partial_trial(self) -> None:
-        from agent.execution.checker_guest import CheckerDraft
-
-        runner = PiRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "wall_seconds": 10})
-        with tempfile.TemporaryDirectory() as directory:
-            work = Path(directory)
-
-            def finish_file(*_args, **_kwargs):
-                (work / "checker.py").write_text("def create_audit(audit_file, rule, group_context=None):\n    return None\n", encoding="utf-8")
-                return {"result": '{"completed":true,"artifact":"checker.py","clauses":[" R4 "]}'}
-
-            with patch.object(runner, "_run", side_effect=finish_file):
-                draft = runner.run(work, "develop", CheckerDraft, 9999999999.0, reasoning_effort="medium")
-        self.assertEqual(draft.clauses, ["R4"])
-
-    def test_checker_receipt_rejects_a_malformed_clause_list(self) -> None:
-        from agent.execution.checker_guest import CheckerDraft
-
-        runner = PiRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "wall_seconds": 10})
-        for receipt in (
-            '{"completed":true,"artifact":"checker.py","clauses":[]}',
-            '{"completed":true,"artifact":"checker.py","clauses":[1]}',
-            '{"completed":true,"artifact":"checker.py","clauses":["R4"],"extra":true}',
-        ):
-            with tempfile.TemporaryDirectory() as directory:
-                work = Path(directory)
-
-                def finish_file(*_args, **_kwargs):
-                    (work / "checker.py").write_text("def create_audit(audit_file, rule, group_context=None):\n    return None\n", encoding="utf-8")
-                    return {"result": receipt}
-
-                with self.subTest(receipt=receipt), patch.object(runner, "_run", side_effect=finish_file):
-                    with self.assertRaisesRegex(ModelProtocolError, "trial clauses|completion receipt"):
-                        runner.run(work, "develop", CheckerDraft, 9999999999.0, reasoning_effort="medium")
-
     def test_narrow_field_checks_keep_typed_source_and_unknowns(self) -> None:
         result = check_fields(FIELD_DOCUMENT, CheckRequest.model_validate(field_check_request()))
         self.assertEqual(result.source["sha256"], "b" * 64)

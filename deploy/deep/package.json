@@ -4,8 +4,7 @@
   "type": "module",
   "description": "Pinned Pi SDK for the Deep guest.",
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.5.0",
-    "pyright": "1.1.407"
+    "@earendil-works/pi-coding-agent": "1.5.0"
   },
   "devDependencies": {
     "@types/node": "22.18.6",

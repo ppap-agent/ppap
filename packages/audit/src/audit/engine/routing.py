@@ -1,7 +1,6 @@
 """Historical class routing, not selection of a directory Checker Revision.
 
-Consumers are source rule declarations and the explicit from-scratch reference
-reader in agent.execution.checker_context. Frozen Suite execution uses Checker
+Tests construct a company agent through it. Frozen Suite execution uses Checker
 Core and does not choose a class here on failure.
 """
 

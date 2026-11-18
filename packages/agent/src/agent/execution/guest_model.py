@@ -15,7 +15,7 @@ from typing import Any, Literal, TypeVar, cast
 from urllib.parse import urlsplit
 
 from audit.models import Artifact
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from agent.execution.activity import ActivityRelay
 from agent.execution.secure_files import read_json, read_regular, reject_constant, unique_object
@@ -85,68 +85,6 @@ def sandbox_profile() -> str:
     raise ModelProtocolError("Unsupported guest isolation")
 
 
-def _draft_from_program_files(work: Path, schema: type[T]) -> T | None:
-    """The development guide writes Python files. A missing JSON receipt can still hold that program."""
-    checker = work / "checker.py"
-    if not checker.is_file() or checker.is_symlink():
-        return None
-    try:
-        source = checker.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return None
-    if not source.strip():
-        return None
-    files = {"checker.py": source}
-    resources = work / "resources.py"
-    if resources.is_file() and not resources.is_symlink():
-        try:
-            resource_source = resources.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            resource_source = ""
-        if resource_source.strip():
-            files["resources.py"] = resource_source
-    try:
-        return schema.model_validate({"entrypoint": "checker:create_audit", "files": files})
-    except ValidationError:
-        return None
-
-
-def _with_trial_clauses(drafted: T | None, receipt: object) -> T | None:
-    """Attach a named trial set. A malformed set must not become a full run."""
-    if not isinstance(receipt, dict) or "clauses" not in receipt:
-        return drafted
-    if drafted is None or receipt.get("completed") is not True or receipt.get("artifact") != "checker.py" or set(receipt) - {"completed", "artifact", "clauses"}:
-        raise ModelProtocolError("Invalid artifact completion receipt")
-    raw = receipt["clauses"]
-    if not isinstance(raw, list) or not raw or any(not isinstance(item, str) or not item.strip() for item in raw):
-        raise ModelProtocolError("invalid trial clauses")
-    return drafted.model_copy(update={"clauses": [item.strip() for item in raw]})
-
-
-def read_checker_draft(work: Path, schema: type[T], terminal: dict[str, Any] | None = None) -> T:
-    """Both the lab and isolated runner read exactly the submitted program bytes."""
-    drafted = _draft_from_program_files(work, schema)
-    raw_receipt = (terminal or {}).get("result", "")
-    narrative_completion = False
-    try:
-        receipt = json.loads(raw_receipt, object_pairs_hook=unique_object, parse_constant=reject_constant)
-    except (ValueError, TypeError):
-        receipt = None
-        if isinstance(raw_receipt, str) and raw_receipt.lstrip().startswith(("{", "[")):
-            raise ModelProtocolError("Invalid checker receipt") from None
-        narrative_completion = isinstance(raw_receipt, str) and bool(raw_receipt.strip())
-    if isinstance(receipt, dict) and "clauses" in receipt:
-        drafted = _with_trial_clauses(drafted, receipt)
-    if drafted is None:
-        subtype = str((terminal or {}).get("subtype") or "missing_artifact")
-        raise ModelProtocolError(f"checker.py missing or invalid ({subtype})")
-    if "submitted" in schema.model_fields:
-        valid_receipt = isinstance(receipt, dict) and receipt.get("completed") is True and receipt.get("artifact") == "checker.py" and not set(receipt) - {"completed", "artifact", "clauses"}
-        submitted = (terminal or {}).get("subtype") == "success" and (terminal or {}).get("is_error") is not True and (valid_receipt or narrative_completion)
-        drafted = drafted.model_copy(update={"submitted": submitted})
-    return drafted
-
-
 class ModelRunner:
     def __init__(self, grant: dict[str, Any]) -> None:
         self.grant = ModelGrant.model_validate(grant)
@@ -168,33 +106,18 @@ class ModelRunner:
         """Let the agent finish file work before it emits a small terminal receipt."""
         if reasoning_effort not in {"xhigh", "high", "medium", "low"}:
             raise ModelProtocolError("Invalid reasoning effort")
-        checker_stage = "entrypoint" in schema.model_fields and "files" in schema.model_fields
-        artifact = "checker.py" if checker_stage else "execution.json"
+        artifact = "execution.json"
         if (work / artifact).exists() or (work / artifact).is_symlink():
             raise ModelProtocolError("Stage artifact already exists")
         (work / "artifact_schema.json").write_text(json.dumps(schema.model_json_schema()))
-        if checker_stage:
-            artifact_prompt = prompt
-        else:
-            artifact_prompt = (
-                prompt + "\nRead the supplied inputs and artifact_schema.json, then write the complete output as valid JSON to execution.json. "
-                "Re-open execution.json and verify its required identities, frozen sources and full schema. Do not add fields outside that schema. "
-                'After finishing the work, your final response must be exactly {"completed":true,"artifact":"execution.json"}. '
-                "This is only a completion receipt; it must not contain the business output. "
-                "A receipt without a complete execution.json fails the stage."
-            )
-        try:
-            terminal = self._run(work, artifact_prompt, deadline, reasoning_effort=cast(ReasoningEffort, reasoning_effort))
-        except ModelProtocolError as failed:
-            if not checker_stage:
-                raise
-            try:
-                return read_checker_draft(work, schema)
-            except ModelProtocolError as missing:
-                # Keep why the model stage ended; "missing_artifact" alone hides it.
-                raise ModelProtocolError(f"{missing}; {failed}") from failed
-        if checker_stage:
-            return read_checker_draft(work, schema, terminal)
+        artifact_prompt = (
+            prompt + "\nRead the supplied inputs and artifact_schema.json, then write the complete output as valid JSON to execution.json. "
+            "Re-open execution.json and verify its required identities, frozen sources and full schema. Do not add fields outside that schema. "
+            'After finishing the work, your final response must be exactly {"completed":true,"artifact":"execution.json"}. '
+            "This is only a completion receipt; it must not contain the business output. "
+            "A receipt without a complete execution.json fails the stage."
+        )
+        terminal = self._run(work, artifact_prompt, deadline, reasoning_effort=cast(ReasoningEffort, reasoning_effort))
         try:
             receipt = json.loads(terminal.get("result", ""), object_pairs_hook=unique_object, parse_constant=reject_constant)
         except (ValueError, TypeError):

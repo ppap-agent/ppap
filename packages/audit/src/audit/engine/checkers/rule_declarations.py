@@ -23,23 +23,3 @@ def discover_declared_rules(agent_cls: type[object]) -> tuple[tuple[str, str], .
     numbered.sort(key=lambda item: item[0])
     named.sort(key=lambda item: item[0])
     return tuple((name, description) for _number, name, description in numbered) + tuple(named)
-
-
-def _agent_for_target(doc_type: str, filename: str, rule_profile: str, *, preset_key: str | None = None, preset_customer: str | None = None) -> type[object] | None:
-    from pathlib import Path as FilePath
-
-    from audit.engine.routing import resolve_engine_agent_class
-    from audit.kinds import PpapDocumentType
-
-    name = filename or "document.xlsx"
-    if FilePath(name).suffix.lower() == ".doc":
-        name = str(FilePath(name).with_suffix(".docx"))
-    agent_cls = resolve_engine_agent_class(
-        PpapDocumentType.from_string(doc_type or ""),
-        name,
-        rule_profile or "v2",
-        preset_key=preset_key,
-        preset_customer=preset_customer,
-    )
-    agent_cls = getattr(agent_cls, "TARGET_EXCEL_AGENT_CLASS", None) or agent_cls
-    return agent_cls

@@ -8,11 +8,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from agent.execution.checker_guest import CheckerDraft
 from agent.execution.guest_model import ModelProtocolError, PiRunner
+from pydantic import BaseModel
 
 GRANT = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 48, "model": "test-model", "wall_seconds": 10}
-SOURCE = "def create_audit(audit_file, rule, group_context=None): return None\n"
+
+
+class Receipt(BaseModel):
+    verdict: str
 
 
 def terminal(**changes):
@@ -21,7 +24,7 @@ def terminal(**changes):
         "subtype": "success",
         "stop_reason": "end_turn",
         "is_error": False,
-        "result": '{"completed":true,"artifact":"checker.py"}',
+        "result": '{"completed":true,"artifact":"execution.json"}',
         "num_turns": 2,
         "usage": {"input_tokens": 13, "output_tokens": 5},
         "tool_calls": 2,
@@ -38,10 +41,10 @@ def guest():
             yield
 
 
-def launch(events, *, returncode=0, write_checker=False):
+def launch(events, *, returncode=0, write_output=False):
     def start(command, **kwargs):
-        if write_checker:
-            (kwargs["cwd"] / "checker.py").write_text(SOURCE)
+        if write_output:
+            (kwargs["cwd"] / "execution.json").write_text('{"verdict": "PASS"}')
         for event in events:
             kwargs["stdout"].write((json.dumps(event) + "\n").encode())
         kwargs["stdout"].flush()
@@ -52,9 +55,9 @@ def launch(events, *, returncode=0, write_checker=False):
 
 def test_pi_uses_scoped_grant_and_accounts_for_completed_work(tmp_path, guest):
     runner = PiRunner(GRANT)
-    with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal()], write_checker=True)) as process:
-        draft = runner.run(tmp_path, "develop", CheckerDraft, 10**12, reasoning_effort="medium")
-    assert draft.submitted and draft.files == {"checker.py": SOURCE}
+    with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal()], write_output=True)) as process:
+        output = runner.run(tmp_path, "review", Receipt, 10**12, reasoning_effort="medium")
+    assert output == Receipt(verdict="PASS")
     assert (runner.input_tokens, runner.output_tokens, runner.usage_known) == (13, 5, True)
     assert (runner.tool_calls, runner.completed_tool_calls, runner.compactions) == (2, 1, 1)
     command = process.call_args.args[0]
@@ -84,21 +87,21 @@ def test_pi_uses_scoped_grant_and_accounts_for_completed_work(tmp_path, guest):
 def test_pi_rejects_missing_failed_or_invalid_completion(tmp_path, guest, events, returncode):
     with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch(events, returncode=returncode)):
         with pytest.raises(ModelProtocolError):
-            PiRunner(GRANT)._run(tmp_path, "develop", 10**12, reasoning_effort="low")
+            PiRunner(GRANT)._run(tmp_path, "review", 10**12, reasoning_effort="low")
 
 
-def test_failed_pi_can_recover_candidate_but_cannot_submit_it(tmp_path, guest):
-    with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal(is_error=True)], write_checker=True)):
-        draft = PiRunner(GRANT).run(tmp_path, "develop", CheckerDraft, 10**12, reasoning_effort="low")
-    assert draft.files == {"checker.py": SOURCE} and draft.submitted is False
+def test_failed_pi_output_is_not_accepted_even_when_written(tmp_path, guest):
+    with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal(is_error=True)], write_output=True)):
+        with pytest.raises(ModelProtocolError):
+            PiRunner(GRANT).run(tmp_path, "review", Receipt, 10**12, reasoning_effort="low")
 
 
 @pytest.mark.parametrize("usage", [None, {"input_tokens": True, "output_tokens": 2}, {"input_tokens": 3}])
 def test_missing_or_invalid_usage_does_not_reject_a_completed_stage(tmp_path, guest, usage):
     runner = PiRunner(GRANT)
-    with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal(usage=usage, tool_calls=-1)], write_checker=True)):
-        draft = runner.run(tmp_path, "develop", CheckerDraft, 10**12, reasoning_effort="low")
-    assert draft.submitted and draft.files == {"checker.py": SOURCE}
+    with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal(usage=usage, tool_calls=-1)], write_output=True)):
+        output = runner.run(tmp_path, "review", Receipt, 10**12, reasoning_effort="low")
+    assert output == Receipt(verdict="PASS")
     assert (runner.input_tokens, runner.output_tokens, runner.usage_known) == (0, 0, False)
 
 

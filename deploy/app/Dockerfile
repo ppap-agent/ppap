@@ -124,7 +124,6 @@ RUN mkdir -p /opt/agent/documents \
  && ln -s /app/packages/agent/src/agent/deep_agent /opt/agent/deep_agent \
  && ln -s /app/packages/documents/src/documents/pdf /opt/agent/documents/pdf
 RUN /usr/local/bin/ppap-pi --version \
- && /opt/ppap-pi/node_modules/.bin/pyright --version \
  && test -f /opt/agent/deep_agent/AGENTS.md \
  && /usr/bin/setpriv --help >/dev/null \
  && /usr/bin/prlimit --help >/dev/null \

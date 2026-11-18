@@ -54,7 +54,7 @@ Controller 进程是 `python -m agent`。生产工厂要求显式设置 `PPAP_DE
 
 规则检查、模型推断和文档抽取可以替换实现，但不能改变产品输入版本、授权和结果语义。只有真实当前需求证明价值时才新增服务、框架或隔离层。
 
-Deep 的检查程序开发接口与资源语义见 [Deep DESIGN](../packages/agent/DESIGN.md)，只用于平台离线开发。客户审核只执行已验证的 Suite；客户规则的 checker 由平台离线准备，采用后成为 Suite 新版本，产品内不生成、不修复 checker。Web 与原生 MCP 调用同一套 Product API，业务事实与审核语义保持单一拥有者。
+客户审核只执行已验证的 Suite；客户规则的 checker 由平台离线准备，采用后成为 Suite 新版本，产品内不生成、不修复 checker。Web 与原生 MCP 调用同一套 Product API，业务事实与审核语义保持单一拥有者。
 
 Deep 的受理端和执行端以 `audit.policy.DeepExecutionPolicy` 共用实际配置身份，不只比较同名版本标签。它是纯配置值，不启动 Controller、不存密钥、不增加策略 registry；实际 `RuntimeConfig` 继承相同字段及摘要计算。新受理在现有 Round/job 事务固定摘要，执行时由真实 runtime 再核对；旧策略不可用时明确失败，显式新轮次才采用新策略。Standard 不计算 Deep 策略，历史读取也不依赖当前配置。
 
