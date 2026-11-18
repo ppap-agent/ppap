@@ -31,14 +31,19 @@ Prefix(owl:=<http://www.w3.org/2002/07/owl#>)
 Prefix(rdfs:=<http://www.w3.org/2000/01/rdf-schema#>)
 Prefix(xsd:=<http://www.w3.org/2001/XMLSchema#>)
 Ontology(<https://ppap.example/rules/L05/1>
+  Annotation(:clause "packages/audit/src/audit/checkers/li/L05/rules.json#L05:1")
+  Declaration(AnnotationProperty(:clause)) Declaration(AnnotationProperty(:quote))
   Declaration(Class(:Pass))  Declaration(Class(:Fail))
   DisjointClasses(:Pass :Fail)
   ...
 )
 ```
 
-- 同一文件类型的条款共用一个前缀，共用词汇用同一个 IRI；这样第 6 步合并后能发现条款间冲突。
-- 名称用英文驼峰，加 `rdfs:label` 写条款原词；关键公理加 `rdfs:comment` 写对应的原文片段，方便把推理结果对回原文。
+- **原文对齐。** 本体上的 `:clause` 指向规则文件和条款 id；每段原文都要用 `:quote` 逐字引用在对应的类或公理上（`AnnotationAssertion(:quote :X "原文片段")`，或公理注解 `EquivalentClasses(Annotation(:quote "原文片段") ...)`）。脚本会报出没被引用的原文片段，以及与原文不符的引用。OWL 写不出的片段（如“判定依据需提醒用户”）也要引用，并在 `rdfs:comment` 里注明“表达局限”，不能不引用。
+- **互斥要写明是否穷尽。** 一组互斥的类（如取值“达标/低于/缺值”）放在同一个父类下：原文穷尽了就写 `DisjointUnion(:父类 :A :B :C)`；否则写 `SubClassOf(:A :父类)` 加 `DisjointClasses(:A :B :C)`，脚本会自动查“属于父类但不属于任何一类”的情况，报出就是候选缺陷。
+
+- 同一文件类型的条款共用一个前缀，共用词汇用同一个 IRI；这样第 7 步合并后能发现条款间冲突。
+- 名称用英文驼峰，加 `rdfs:label` 写条款原词；原文片段写在 `:quote` 上，自己的说明写在 `rdfs:comment` 上。
 - 被审的对象（文件、工作表、行、字段值）建成类；判定写成条件类表达式，用 `SubClassOf(<条件> :Pass)` / `SubClassOf(<条件> :Fail)` 连到结论。
 - 只用标准 OWL 2 构造，保持在 OWL 2 DL 之内。
 
@@ -72,29 +77,43 @@ Ontology(<https://ppap.example/rules/L05/1>
 
 ### 4. 多读法对比
 
-一份 OWL 只能表达一种读法，推理机只在这一种读法内部检查，查不出“一句话有两种读法”。所以第 3 步记下的每一处歧义，都要把各种读法并排写进同一个 `.ofn`，让推理机验证它们是否真会给出不同结论：
+一份 OWL 只能表达一种读法，推理机只在这一种读法内部检查，查不出“一句话有两种读法”。所以第 3 步记下的每一处歧义，都按下面的约定把各种读法写进同一个 `.ofn`，由脚本展开、比较：
 
-- 共用的对象、字段、条件照常只写一次；只有歧义处按读法分开，用后缀区分，如 `:Below_A` / `:Below_B`，并在 `rdfs:comment` 写明该读法对应的理解。
-- 每种读法有自己的判定类，`SubClassOf(:Pass_A :Pass)` 这种连法**不要写**；各读法的 `Pass_X` 与 `Fail_X` 互斥（`DisjointClasses(:Pass_A :Fail_A)`），读法之间不加互斥。
-- 对每两种读法加探针：
+- **歧义点。** 判定只引用一个不加定义的类，如 `:Remedy`（“反应计划或备注不为空”）。
+- **读法。** 每种读法是一个类 `<歧义点>__<歧义编号><读法字母>`，如 `:Remedy__3A`、`:Remedy__3B`，各自用 `EquivalentClasses` 定义，`rdfs:comment` 写明对应的理解。一处歧义可以涉及几个歧义点（如 `:RowOK__4C`、`:RowBad__4C`），每个歧义点都要有该歧义的全部读法；一个歧义点只属于一处歧义。读法里可以引用其他歧义点。
+- **判定。** 只写一个 `:Pass` 和一个 `:Fail`，不要按读法各写一份。
 
-```
-# 歧义确认：读法 A 判通过、读法 B 判不通过的情况
-EquivalentClasses(:Probe_Divergent_A_B ObjectIntersectionOf(:Pass_A :Fail_B))
-EquivalentClasses(:Probe_Divergent_B_A ObjectIntersectionOf(:Pass_B :Fail_A))
-```
+脚本把所有歧义的读法做笛卡儿积，每个组合生成一份判定（只复制依赖歧义点的类，事实类共享），然后：
 
-第 5 步的冲突、缺口探针也按读法各写一份（`:Probe_Uncovered_A`、`:Probe_Uncovered_B`）。检查用第 5 步的脚本，`Probe_` 开头的类都会被检查。
+- 对只差一处读法的每对组合，检查“这个组合判通过、那个组合判不通过”是否可能，按歧义汇总成 `[歧义 n] A 判通过、B 判不通过：可能（1A·2*·3*·4*）`。`2*` 表示歧义 2 取哪种读法都一样，`4A|B` 表示歧义 4 取 A 或 B。
+- 自己写的 `Probe_` 探针在每个组合里各查一次，报出它在哪些组合下仍可能，例如 `Probe_Uncovered` 只在某几种组合下出现缺口。这样能发现几处歧义叠加才出现的问题，不用手工拼组合。
 
 结果怎么用：
 
-- 探针仍可满足：两种读法确实会给出不同结论，歧义确认。按第 3 步写出让它们分歧的具体文件情况。
-- 两个方向的探针都不可满足：这几种读法在逻辑上等价，不是会改变结论的歧义，从缺陷清单删掉或降为措辞问题。
-- 某种读法下 `Probe_Uncovered` 可满足而另一种不可满足：说明歧义会决定是否出现覆盖缺口，一并写进该缺陷。
+- 可能：两种读法确实会给出不同结论，歧义确认。按第 3 步写出让它们分歧的具体文件情况。
+- 两个方向都已排除：这几种读法在逻辑上等价，不是会改变结论的歧义，从缺陷清单删掉或降为措辞问题。
+- 缺口只在部分组合下出现：说明是这几处歧义的组合决定是否有缺口，一并写进相关缺陷。
 
 提出“哪里有几种读法”仍靠第 1～3 步的人工分析，推理机只验证这些读法是否真的分歧。
 
-### 5. 用 ROBOT 检查单条
+### 5. 写入真实文件
+
+把会被条款影响的真实文件（尤其是有真值的语料文件）写成**类**，不要写成个体：带上个体后 HermiT 每次检查都要带着它们算，慢几十倍。
+
+```
+Declaration(Class(:Case574))
+AnnotationAssertion(:case :Case574 "574-PPK (1) (1).pdf")
+AnnotationAssertion(:truth :Case574 "PASS")
+EquivalentClasses(:Case574 ObjectIntersectionOf(:File :HasSummaryTable ObjectComplementOf(:Unidentifiable)
+  ObjectSomeValuesFrom(:hasRow ObjectIntersectionOf(:CharacteristicRow :ValueMissing))
+  ObjectAllValuesFrom(:hasRow ObjectIntersectionOf(:CharacteristicRow :ValueMissing))))
+```
+
+- 事实要封闭：列出存在的行（`ObjectSomeValuesFrom`），再用 `ObjectAllValuesFrom` 说明没有别的行；判定用到的否定事实（如“可辨识”）也要写明，否则开放世界下推不出结论。
+- 只写文件里实际有的事实，不写判定结论。
+- 脚本给每个文件在每个组合下分类：`PASS`、`NG`、`无结论`（条款对它没给结论）或`事实与条款矛盾`，并和 `:truth` 对比，报出与真值一致的组合。真值只代表当前的判定，不用它判断哪种读法正确。
+
+### 6. 用 ROBOT 检查单条
 
 Java 取自 `JAVA_HOME`（没设才用 `PATH` 里的 `java`），需 11 及以上；首次运行会下载固定版本的 ROBOT jar 到本 skill 的 `bin/`。
 
@@ -102,7 +121,7 @@ Java 取自 `JAVA_HOME`（没设才用 `PATH` 里的 `java`），需 11 及以�
 python3 .claude/skills/rule-owl/scripts/check.py .local/rule-owl/L05/L05-1.ofn
 ```
 
-脚本依次做 OWL 2 DL 校验、一致性检查、不可满足类检查和探针检查，完整报告留在 `<文件名>.robot/`。也可以直接用 `.claude/skills/rule-owl/scripts/robot <命令>` 调 ROBOT。
+脚本依次做原文对齐、读法展开、OWL 2 DL 校验、推理（一致性、不可满足类、探针、完备性、读法分歧、文件分类）。展开后的本体留在 `<文件名>.robot/`：有歧义时每对比较的组合一个 `expanded-<n>.ofn`，并行推理，U06:3 这种 4 处歧义、24 种组合的条款约一分钟以内。脚本只列出不可满足的类，不生成解释；要看某个类为什么不可满足，用脚本输出里给的 `robot explain` 命令单独查。也可以直接用 `.claude/skills/rule-owl/scripts/robot <命令>` 调 ROBOT。
 
 **探针**：把要查的情况声明为名字以 `Probe_` 开头的类，用 `EquivalentClasses` 定义。探针不可满足表示条款排除了这种情况；仍可满足表示条款没有排除，是候选缺陷。常用两种：
 
@@ -119,10 +138,12 @@ EquivalentClasses(:Probe_Uncovered ObjectIntersectionOf(<范围> ObjectComplemen
 
 - 读取失败：是自己的语法错误，改文件，不算规则缺陷。
 - 超出 OWL 2 DL：看是不是条款本身要求了 DL 表达不了的东西；是就记为表达局限并改写到 DL 内，否则改自己的写法。
-- 整体矛盾、不可满足的类：按解释里的公理和 `rdfs:comment` 对回原文，是条款自相矛盾就记缺陷，是自己写错就改。
+- 原文对齐报出片段：补写或补 `:quote`；与原文不符的引用要改成逐字一致。
+- 整体矛盾、不可满足的类：用 `robot explain` 查解释，按其中的公理和 `:quote` 对回原文，是条款自相矛盾就记缺陷，是自己写错就改。读法类定义成 `owl:Nothing`（如“缺值永不算满足”）是有意的，脚本不报。
+- 完备性报出：按第 2 步判断原文是否穷尽。
 - 探针仍可满足：按第 3 步写出反例，记缺陷。
 
-### 6. 合并检查同一类型的全部条款
+### 7. 合并检查同一类型的全部条款
 
 ```bash
 python3 .claude/skills/rule-owl/scripts/check.py .local/rule-owl/L05/*.ofn --out .local/rule-owl/L05/merged.robot
@@ -130,9 +151,9 @@ python3 .claude/skills/rule-owl/scripts/check.py .local/rule-owl/L05/*.ofn --out
 
 合并后再加跨条款探针（例如条款 1 判通过、条款 3 判不通过的同一情况）。条款间冲突和术语不统一只有这一步能发现。
 
-### 7. 写报告，交给用户决定
+### 8. 写报告，交给用户决定
 
-`report.md` 包含：每条条款的结论（无缺陷 / 有缺陷 / 只有表达局限）、缺陷清单（第 3 步的格式，注明第 4 步是否确认分歧）、需要用户回答的问题、建议改写。
+`report.md` 包含：每条条款的结论（无缺陷 / 有缺陷 / 只有表达局限）、缺陷清单（第 3 步的格式，注明第 4 步是否确认分歧、第 5 步哪些真实文件会因此改变结论）、需要用户回答的问题、建议改写。
 
 每条条款按下面的格式写：
 
