@@ -136,24 +136,9 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e -k preview -q
 ```
 
-## 本地 Deep checker 实验
+## 深度审核评估
 
-`scripts/deep_lab.py` 使用已有人工 checker、资源定义及 Fluent API 开发任务程序。用于平台离线开发检查程序；覆盖 Excel 与电子版 PDF，扫描版不纳入。使用 Pi 1.5.0，并从本地 `.env` 的完整 `PPAP_MODEL_CODING_*` 配置读取模型与认证；未提供覆盖时沿用 `PPAP_MODEL_TEXT_*`。先运行 `npm ci --ignore-scripts --prefix deploy/deep`，Node.js 必须至少为 22.19。不要提交认证配置或实验日志。
-
-```sh
-uv run --no-sync python scripts/deep_lab.py --seq 11 --effort high
-uv run --no-sync python scripts/deep_lab.py --seq 11 --effort high \
-  --variant shifted-table --prior /absolute/path/to/artifact.json
-uv run --no-sync python scripts/deep_lab.py --seq 11 --effort high \
-  --source /absolute/path/to/electronic.pdf
-uv run --no-sync python scripts/deep_lab.py --seq 11 --effort high \
-  --source /absolute/path/to/fixed.xlsx --rules /absolute/path/to/rule-input.json \
-  --expected /absolute/path/to/expected.json --prior /absolute/path/to/artifact.json
-```
-
-规则变化实验用 `--rules` 提供完整 `RuleInput` JSON，`--expected` 是独立的 `{条款ID: 状态}` 评分输入，只由宿主读取，不复制给模型；示例输入在 `tests/fixtures/deep_lab/real_rule_changes/`。每次运行在 `output/checker/` 下保留候选、诊断、`artifact.json`、`execution.json` 与独立进程的 `replay.json`；重放不继承模型凭据，完整结果须一致。模型服务 HTTP 错误以 `deep_model_http_<状态码>` 停止，候选不当作已固定产物。
-
-这是本地质量实验，默认使用本地 Pi 进程和现有短期授权网关；不证明产品 guest 隔离或生产端到端行为。固定执行只使用原生读取与明确的 `PdfSpec`，不自动转入 OCR。
+深度模式的质量与成本用根目录 [`deep-eval/`](../deep-eval/README.md) 评估：在从 `HEAD` 构建的深度镜像里，按线上 Controller 的同一路径对人工 Oracle 逐例执行深度审核并汇总。
 
 ## Checker Core 官方发布
 

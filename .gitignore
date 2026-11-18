@@ -26,3 +26,6 @@ ci-report/
 
 /deploy/tke/.build.lock
 .grok/
+
+# deep-eval run outputs
+deep-eval/runs/

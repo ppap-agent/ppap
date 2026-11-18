@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Run deep mode over the corpus oracle in the deep image built from HEAD.
+#
+#   deep-eval/run.sh [--name NAME] [--jobs N] [-- deep_eval.py run options]
+#
+# Non-secret deep configuration comes from .env.production (as deployed); the model endpoints
+# and keys come from the repository-root .env. Results go to deep-eval/runs/<name>/.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+NAME=""
+JOBS=3
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --name) NAME=$2; shift 2 ;;
+    --jobs) JOBS=$2; shift 2 ;;
+    --) shift; break ;;
+    *) echo "unknown option $1" >&2; exit 2 ;;
+  esac
+done
+[[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "--jobs must be a positive integer" >&2; exit 2; }
+
+cd "$ROOT"
+# The image and the corpus must be the same revision: a dirty tree would evaluate code that no
+# commit holds.
+if [[ -n "$(git status --porcelain --untracked-files=no -- packages apps deploy assets/corpus tests/corpus)" ]]; then
+  echo "commit or stash changes under packages, apps, deploy or the corpus first" >&2
+  exit 2
+fi
+SHA=$(git rev-parse HEAD)
+IMAGE="ppap-deep:${SHA}"
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  PPAP_BUILD_SHA="$SHA" docker buildx bake --load deep
+fi
+
+NAME=${NAME:-$(date +%Y%m%d-%H%M)-${SHA:0:8}}
+OUT="$ROOT/deep-eval/runs/$NAME"
+mkdir -p "$OUT"
+chmod 0777 "$OUT"
+
+ENV_FILE=$(mktemp)
+trap 'rm -f "$ENV_FILE"' EXIT
+grep -E '^PPAP_(MODEL_[A-Z_]+_(REASONING_EFFORT|EXTRA_BODY_JSON)|DEEP_SANDBOX_PROFILE|DEEP_MODEL_MAX_REQUESTS|DEEP_EXECUTOR_REVISION)=' .env.production >"$ENV_FILE"
+grep -E '^PPAP_MODEL_(TEXT|VISION|CODING)_(API_KEY|BASE_URL|MODEL)=' .env >>"$ENV_FILE"
+echo "PPAP_BUILD_SHA=$SHA" >>"$ENV_FILE"
+
+cat >"$OUT/meta.json" <<EOF
+{"name": "$NAME", "commit": "$SHA", "image": "$IMAGE", "jobs": $JOBS, "options": "$*", "started": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+EOF
+
+pids=()
+for ((shard = 0; shard < JOBS; shard++)); do
+  docker run --rm --user 0:0 --env-file "$ENV_FILE" \
+    -e PYTHONPATH=/repo/tests/corpus/contracts/src \
+    -v "$ROOT:/repo:ro" -v "$OUT:/out" -w /repo \
+    --entrypoint /app/.venv/bin/python "$IMAGE" \
+    /repo/deep-eval/deep_eval.py run --out "/out/shard-$shard" --shard "$shard/$JOBS" "$@" \
+    >"$OUT/shard-$shard.log" 2>&1 &
+  pids+=($!)
+done
+status=0
+for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+
+cat "$OUT"/shard-*/cases.jsonl >"$OUT/cases.jsonl" 2>/dev/null || true
+uv run --no-sync python deep-eval/deep_eval.py report "$OUT" >/dev/null
+echo "$OUT/summary.md"
+exit $status
