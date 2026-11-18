@@ -12,7 +12,7 @@ export type AuditRecognitionAdapter = {
 }
 type RecognitionInput = {files: Task['files']; customer: string | null; previous: Task | null; predecessorId?: string; preparation?: {id: string; revision: number}}
 export type RecognitionObservation = {requestId: string; taskId: string; phase: 'sending' | 'reading' | 'unknown' | 'accepted' | 'rejected' | 'conflict'; message: string; traceId?: string; currentRevision?: number; currentState?: Task['state']}
-/** A matched rule is labelled with its own customer; the customer a file writes is one of the file's recognized facts. */
+/** A matched rule is labelled with its rule set (the customer requirements it audits against); the customer a file writes stays one of the file's own recognized facts. */
 export function ruleCustomer(rule: NonNullable<Task['files'][number]['match']>['rule']): string {
   return rule?.body.kind === 'engine' ? rule.body.customers?.[0] ?? '' : ''
 }

@@ -142,8 +142,8 @@ test('an accepted recognition receipt for an ended task has a current-task confl
   assert.equal(recognition.get('draft-a')!.currentRevision, 0)
 })
 
-test('a matched rule is labelled with its own customer, never the customer a file writes', () => {
-  // A UAES flow chart may name the vehicle maker (GEELY) in its header; the rule it matched is still UAES's.
+test('a matched rule is labelled with its rule set, never the customer a file writes', () => {
+  // The rule set a file is audited against (UAES) is not a claim about the file; the file may write any customer name (GEELY).
   const rule = {id: 'rule-u16', title: '过程流程图（PFD）审核规则', body: {kind: 'engine', type: '过程流程图', customers: ['UAES'], rules: []}} as unknown as Parameters<typeof ruleCustomer>[0]
   assert.equal(ruleCustomer(rule), 'UAES')
   assert.equal(ruleCustomer(null), '')
