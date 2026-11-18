@@ -2,11 +2,13 @@
 
     list                      the cases
     run   --name N [--case ID ...] [--jobs J] [--model M] [--thinking T] [--timeout MIN]
-                              one headless pi session per case runs the clause-check skill from scratch. It starts in
-                              its own folder .local/clause-check-bench/N/<case>/ (its working directory), with only
-                              that skill loaded and no context files, extensions or MCP, inside sandbox-exec that
-                              hides bench/, earlier work and every other case folder. Afterwards the report,
-                              session summary and transcript are copied to bench/clause-check/runs/N/<case>/
+                              one headless pi session per case runs the clause-check skill from scratch. Each case
+                              gets a folder outside the repository, ~/.cache/clause-check-bench/N/<case>/, holding
+                              only its inputs: rules.json (this one clause) and files/ (the real files). The session
+                              starts there with only a copy of the skill loaded (no context files, extensions or
+                              MCP), inside sandbox-exec that hides the whole repository, every other case folder and
+                              this machine's Claude Code files. Afterwards the report, formalization, session summary
+                              and transcript are copied to bench/clause-check/runs/N/<case>/
     score runs/N [--rejudge]  a judging Claude Code session (independent of the model under test) compares each
                               report with the case's reference findings and the out-of-scope list, and lists wrong
                               statements and repeated questions; writes judge.json per case and summary.md
@@ -22,6 +24,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -32,7 +35,9 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SKILL = ROOT / ".claude" / "skills" / "clause-check"
 DEFAULT_MODEL = "xai/grok-4.7"
-WORK = ROOT / ".local" / "clause-check-bench"
+STAGE = Path.home() / ".cache" / "clause-check-bench"
+TOOLS = STAGE / "tools"
+TOOL_PACKAGES = ("openpyxl", "xlrd")
 MISSING = "【待补白话说明】"
 TECH_WORDS = ("OWL", "ROBOT", "HermiT", "本体", "公理", "探针", "推理机", "可满足", "Probe", "__")
 
@@ -62,12 +67,39 @@ def claude(prompt: str, *options: str) -> dict:
     return result
 
 
+def stage(case: dict, name: str) -> Path:
+    """The case folder: only this clause's rule and its real files. The session works here."""
+    folder = STAGE / name / slug(case["id"])
+    (folder / "files").mkdir(parents=True)
+    document = json.loads((ROOT / case["rules"]).read_text(encoding="utf-8"))
+    rule = next(rule for rule in document["rules"] if rule["id"] == case["id"])
+    (folder / "rules.json").write_text(json.dumps({"title": document.get("title", ""), "rules": [rule]}, ensure_ascii=False, indent=2), encoding="utf-8")
+    for path in case["files"]:
+        shutil.copy(ROOT / path, folder / "files" / Path(path).name)
+    return folder
+
+
+def stage_skill(name: str) -> Path:
+    """One copy of the skill per run, outside the repository."""
+    target = STAGE / name / "skill" / SKILL.name
+    shutil.copytree(SKILL, target, ignore=shutil.ignore_patterns("__pycache__"))
+    return target
+
+
+def tools() -> Path:
+    """A Python environment outside the repository with what reading the real files needs; built once."""
+    python = TOOLS / "bin" / "python"
+    if not python.exists():
+        subprocess.run(["uv", "venv", "--quiet", str(TOOLS)], check=True)
+        subprocess.run(["uv", "pip", "install", "--quiet", "--python", str(python), *TOOL_PACKAGES], check=True)
+    return TOOLS / "bin"
+
+
 def hidden(work: Path) -> list[Path]:
-    """What the session working in `work` must not see: the references and run results, earlier clause-check work,
-    every other case folder (of this run and earlier runs), and this machine's Claude Code sessions and scratch
-    files. None of them is an ancestor of `work`, so the session's own directory stays an ordinary place to work."""
-    others = [folder for folder in WORK.glob("*/*") if folder.is_dir() and folder.resolve() != work.resolve()]
-    return [HERE, ROOT / ".local" / "clause-check", *others, Path.home() / ".claude", Path("/private/tmp/claude-501")]
+    """What the session in `work` must not see: the whole repository, every other case folder (this run's and
+    earlier runs'), and this machine's Claude Code sessions and scratch files. None is an ancestor of `work`."""
+    others = [folder for folder in STAGE.glob("*/*") if folder.is_dir() and folder.name != "skill" and folder.parent != TOOLS and folder.resolve() != work.resolve()]
+    return [ROOT, *others, Path.home() / ".claude", Path("/private/tmp/claude-501")]
 
 
 def sandbox_profile(work: Path) -> str:
@@ -76,19 +108,30 @@ def sandbox_profile(work: Path) -> str:
     return f"(version 1)(allow default)(deny file-read* file-write* {deny})"
 
 
-def pi(prompt: str, work: Path, session_dir: Path, model: str, thinking: str, timeout_minutes: int) -> dict:
-    """One headless pi session started in `work`, with only the clause-check skill, inside sandbox-exec."""
+def environment(work: Path) -> dict[str, str]:
+    """The caller's environment without anything that points into the repository (uv puts its venv on PATH)."""
+    paths = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry and not Path(entry).resolve().is_relative_to(ROOT)]
+    temp = work / ".tmp"
+    temp.mkdir(exist_ok=True)
+    clean = {key: value for key, value in os.environ.items() if key not in ("VIRTUAL_ENV", "PYTHONPATH") and not key.startswith("UV_") and str(ROOT) not in value}
+    return {**clean, "PATH": os.pathsep.join([str(tools()), *paths]), "TMPDIR": str(temp)}
+
+
+def pi(prompt: str, work: Path, skill: Path, model: str, thinking: str, timeout_minutes: int) -> dict:
+    """One headless pi session started in `work`, with only the skill copy, inside sandbox-exec."""
+    session_dir = work / ".session"
+    session_dir.mkdir(exist_ok=True)
     command = ["sandbox-exec", "-p", sandbox_profile(work)]
-    command += ["pi", "-p", "--mode", "json", "--session-dir", str(session_dir), "--no-skills", "--skill", str(SKILL)]
+    command += ["pi", "-p", "--mode", "json", "--session-dir", str(session_dir), "--no-skills", "--skill", str(skill)]
     command += ["--no-context-files", "--no-approve", "--no-extensions", "--no-mcp", "--model", model, "--thinking", thinking, prompt]
     started = time.monotonic()
     summary: dict = {"model": model, "thinking": thinking, "models": [], "turns": 0, "tool_calls": 0, "input_tokens": 0, "output_tokens": 0, "result": "", "is_error": True}
-    environment = {**os.environ, "TMPDIR": str(session_dir)}
-    process = subprocess.Popen(command, cwd=work, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # Its own process group, so a timeout (or stopping the bench) ends pi and everything it started.
+    process = subprocess.Popen(command, cwd=work, env=environment(work), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
     try:
         stdout, stderr = process.communicate(timeout=timeout_minutes * 60)
     except subprocess.TimeoutExpired:
-        process.kill()
+        os.killpg(process.pid, signal.SIGKILL)
         stdout, stderr = process.communicate()
         summary["timed_out"] = True
     for line in stdout.splitlines():
@@ -119,9 +162,7 @@ def pi(prompt: str, work: Path, session_dir: Path, model: str, thinking: str, ti
 def hidden_reads(transcript: Path, work: Path) -> list[str]:
     """Tool calls in the transcript that reach for a hidden path; the sandbox refuses them, this records the attempt."""
     paths = hidden(work)
-    marks = [str(path.resolve()) for path in paths]
-    marks += [str(path.resolve().relative_to(ROOT)) for path in paths if path.resolve().is_relative_to(ROOT)]
-    marks += ["~/" + str(path.relative_to(Path.home())) for path in paths if path.is_relative_to(Path.home())]
+    marks = [str(path.resolve()) for path in paths] + ["~/" + str(path.relative_to(Path.home())) for path in paths if path.is_relative_to(Path.home())]
     found = []
     for line in transcript.read_text(encoding="utf-8").splitlines() if transcript.exists() else []:
         message = json.loads(line).get("message") or {}
@@ -135,28 +176,20 @@ def hidden_reads(transcript: Path, work: Path) -> list[str]:
 
 
 def prompt_for(case: dict) -> str:
-    """The task: the clause and the inputs by absolute path. The working directory is where the session starts."""
-    lines = [
-        f"使用 clause-check 技能检查条款 {case['id']}。",
-        f"- 规则文件：{ROOT / case['rules']}",
-        "- 当前目录就是工作目录。",
-    ]
+    """The task, in terms of the case folder only: the clause, its rule file and the real files beside it."""
+    lines = [f"使用 clause-check 技能检查条款 {case['id']}。", "- 规则文件：当前目录下的 rules.json。", "- 当前目录就是工作目录。"]
     if case["files"]:
-        lines.append("- 要对照的真实文件：")
-        lines += [f"  - {ROOT / path}" for path in case["files"]]
-        lines.append(f"- 这些文件的现有判定在真值表 {ROOT / case['truth']} 里，按文件名查。")
+        lines.append("- 要对照的真实文件在 files/ 下：" + "、".join(f"`{Path(path).name}`" for path in case["files"]) + "。")
     lines.append("- 按技能把白话说明补到没有缺项、没有质量问题为止。最后只回复报告文件的路径。")
     return "\n".join(lines)
 
 
-def run_case(case: dict, name: str, model: str, thinking: str, timeout_minutes: int) -> str:
-    """Run one case whose folders `main` already created; the session never touches bench/, results are copied after."""
+def run_case(case: dict, name: str, skill: Path, model: str, thinking: str, timeout_minutes: int) -> str:
+    """Run one case whose folders `main` already staged; results are copied to bench/ afterwards."""
     out = HERE / "runs" / name / slug(case["id"])
-    work = WORK / name / slug(case["id"])
-    session_dir = work / ".session"
-    session_dir.mkdir()
-    result = pi(prompt_for(case), work, session_dir, model, thinking, timeout_minutes)
-    sessions = sorted(session_dir.glob("*.jsonl"))
+    work = STAGE / name / slug(case["id"])
+    result = pi(prompt_for(case), work, skill, model, thinking, timeout_minutes)
+    sessions = sorted((work / ".session").glob("*.jsonl"))
     if sessions:
         shutil.copy(sessions[-1], out / "transcript.jsonl")
     result["hidden_reads"] = hidden_reads(out / "transcript.jsonl", work)
@@ -300,16 +333,17 @@ def main(argv: list[str] | None = None) -> int:
     if not chosen:
         print("没有匹配的条款", file=sys.stderr)
         return 2
-    taken = [case["id"] for case in chosen if (HERE / "runs" / args.name / slug(case["id"])).exists() or (WORK / args.name / slug(case["id"])).exists()]
-    if taken:
-        print(f"运行 {args.name} 里已有 {'、'.join(taken)}，换一个 --name", file=sys.stderr)
+    if (HERE / "runs" / args.name).exists() or (STAGE / args.name).exists():
+        print(f"运行 {args.name} 已存在，换一个 --name", file=sys.stderr)
         return 2
-    # Every case folder exists before any session starts, so each session's sandbox can name the others.
+    # Every case folder is staged before any session starts, so each session's sandbox can name the others.
+    tools()
+    skill = stage_skill(args.name)
     for case in chosen:
         (HERE / "runs" / args.name / slug(case["id"])).mkdir(parents=True)
-        (WORK / args.name / slug(case["id"])).mkdir(parents=True)
+        stage(case, args.name)
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        for line in pool.map(lambda case: run_case(case, args.name, args.model, args.thinking, args.timeout), chosen):
+        for line in pool.map(lambda case: run_case(case, args.name, skill, args.model, args.thinking, args.timeout), chosen):
             print(line, flush=True)
     score(HERE / "runs" / args.name, rejudge=False)
     return 0

@@ -17,16 +17,16 @@
 
 需要本机的 `pi`（已配置好模型）、评分用的已登录 `claude` 命令行，以及技能本身的运行条件（`JAVA_HOME` 指向 Java 11 及以上）。
 
-每条条款启动一个无界面的 pi 会话，按技能从读条款开始完整走一遍。会话在本条自己的目录 `.local/clause-check-bench/<名称>/<条款>/` 里启动，这就是它的工作目录；任务说明只给条款编号和输入文件（规则文件、真实文件、真值表）的绝对路径。会话只加载 clause-check 一个技能，不读 AGENTS.md、CLAUDE.md 和项目里的配置，不带扩展和 MCP，pi 也没有用户记忆，所以会话只看得到技能和任务说明。模型默认 `xai/grok-4.7`、思考强度 high，可用 `--model`、`--thinking` 改；每条默认 60 分钟超时（`--timeout`）。
+每条条款启动一个无界面的 pi 会话，按技能从读条款开始完整走一遍。会话只拿到任务需要的东西：
 
-pi 没有内置沙箱，所以每个会话用 macOS 的 `sandbox-exec` 包起来，禁止读写：
+- 每条条款在仓库外有自己的目录 `~/.cache/clause-check-bench/<名称>/<条款>/`，里面只有 `rules.json`（只含这一条条款）和 `files/`（要对照的真实文件）。会话在这里启动，这就是它的工作目录。
+- 技能是本次运行复制出的一份副本（`~/.cache/clause-check-bench/<名称>/skill/`）。会话只加载这一个技能，不读 AGENTS.md、CLAUDE.md 和项目配置，不带扩展和 MCP；pi 也没有用户记忆。
+- 读 Excel 等文件用的 Python 包装在仓库外的工具环境 `~/.cache/clause-check-bench/tools/`（第一次运行时建好）；会话的环境变量里去掉了所有指向仓库的路径。
+- 不给真值表：现有判定和判定理由都是别人对条款的理解。
 
-- `bench/clause-check/`：参照和运行结果；
-- `.local/clause-check/`：以前用技能检查条款留下的成果；
-- `.local/clause-check-bench/` 下除本条以外的每个条款目录（本次运行的和以前运行的）；
-- `~/.claude/` 和 `/private/tmp/claude-501/`：本机 Claude Code 的会话、记忆和临时文件。
+模型默认 `xai/grok-4.7`、思考强度 high，可用 `--model`、`--thinking` 改；每条默认 60 分钟超时（`--timeout`），超时会结束会话启动的全部进程。
 
-这些路径都不是会话工作目录的上级，所以工作目录是一个普通的、可以自由读写的目录。本次运行所有条款的目录在第一个会话启动前一次建好，好让每个会话的禁止清单能列出其他条款。其余文件照常可读，仓库里的规则文件、真实文件、真值表和技能都能用。这是按路径禁止的清单：以后再在别处放了参考答案或旧成果，要加进 `bench.py` 的 `hidden()`。会话里试图访问这些路径的工具调用会被记下来，汇总里单列。
+pi 没有内置沙箱，所以每个会话用 macOS 的 `sandbox-exec` 包起来，禁止读写**整个仓库**、其他每个条款的目录（本次运行的和以前运行的），以及 `~/.claude/`、`/private/tmp/claude-501/`（本机 Claude Code 的会话、记忆和临时文件）。这些都不是工作目录的上级，工作目录是一个普通的、可以自由读写的目录。所有条款的目录在第一个会话启动前一次建好，好让每个会话的禁止清单能列出其他条款。会话里试图访问这些路径的工具调用会被记下来，汇总里单列。
 
 ```bash
 uv run --no-sync python bench/clause-check/bench.py list
@@ -40,7 +40,7 @@ uv run --no-sync python bench/clause-check/bench.py run --name trial --case U06:
 uv run --no-sync python bench/clause-check/bench.py run --jobs 3
 ```
 
-会话结束后，报告、形式化文件、会话摘要（`session.json`）和完整会话记录（`transcript.jsonl`）复制到 `bench/clause-check/runs/<名称>/<条款>/`（不入库），回看技能每一步怎么走的就看会话记录。会话本身全程不碰 `bench/`。
+会话结束后，报告、形式化文件、会话摘要（`session.json`）和完整会话记录（`transcript.jsonl`）复制到 `bench/clause-check/runs/<名称>/<条款>/`（不入库），回看技能每一步怎么走的就看会话记录。会话的工作目录留在 `~/.cache/clause-check-bench/<名称>/`，用完可以删掉。
 
 评分由一个 Claude Code 会话完成，与被测的模型分开。
 

@@ -14,7 +14,6 @@
         "assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/07 过程能力研究/A40-机加工 (2).xlsx",
         "assets/uaes/samples/F01R10Y776_机加壳体/测试文件/07 过程能力研究/776-机加CPK.xlsx"
       ],
-      "truth": "assets/corpus/uaes-oracle.csv",
       "reference": [
         "结果值没有值（如“/”）时怎么比较：算不达标，还是不比较",
         "“所有行”指清单表的每一行，还是只指特性结果行",
