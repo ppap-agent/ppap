@@ -16,6 +16,8 @@ DOCUMENT = (
             header_anchors=("工序名称", "评价测量技术"),
             header_hit=2,
             row_anchors=("评价测量技术",),
+            # One evaluation cell merged over several characteristic rows (CPO-45 270-273) anchors each of them.
+            row_expand_merged_anchors=True,
             row_stop_on_first_blank=False,
             row_max_blank_streak=WHOLE_SHEET_ROWS,
         ),

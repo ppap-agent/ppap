@@ -9,13 +9,15 @@ from openpyxl import Workbook
 HEADER = ["工序号", "工序名称/操作描述", "设备/工装", "产品特性", "过程特性", "特殊特性", "产品/过程规格/公差", "评价/测量技术", "频率", "控制方法"]
 
 
-def _check(tmp_path, rows, rule):
+def _check(tmp_path, rows, rule, merged=()):
     book = Workbook()
     sheet = book.active
     sheet.title = "CP"
     sheet.append(HEADER)
     for row in rows:
         sheet.append(row)
+    for cells in merged:
+        sheet.merge_cells(cells)
     path = tmp_path / "cp.xlsx"
     book.save(path)
     body = preset_rule_body("UAES", "U08")
@@ -70,6 +72,25 @@ def test_race_track_dimensions_are_registered_dimensions_of_manufacturing(tmp_pa
     result = _check(tmp_path, rows, "rule_5")
     assert result.status == expected
     assert expected == "PASS" or ("第2行" in result.suggestions and "第3行" not in result.suggestions and "第4行" not in result.suggestions)
+
+
+def test_rows_under_one_merged_evaluation_cell_are_each_read(tmp_path):
+    rows = [
+        ["14", "装配灌封夹具", "灌封夹具", "IGBT电极尺寸", None, "◇", "平面度：0.3mm", "夹具适配", "每个", "自检"],
+        [None, None, None, "直流端电极尺寸", None, "◇", "孔径：8.2±0.1mm", None, None, None],
+        [None, None, None, "外壳安装孔", None, "◇", "孔径：5.15±0.05", None, None, None],
+    ]
+    result = _check(tmp_path, rows, "rule_5", merged=("A2:A4", "B2:B4", "H2:H4", "I2:I4", "J2:J4"))
+    assert result.status == "NG"
+    assert all(f"第{row}行" in result.suggestions for row in (2, 3, 4))
+
+
+def test_merged_capability_control_covers_every_row(tmp_path):
+    rows = [
+        ["90", "机加工", "加工中心", None, "28#距离尺寸", "3", "2X79.73±0.1", "CMM", "1次/4H", "SC尺寸SPC管控"],
+        [None, None, None, None, "4XR38", "3", "R38±0.5", "CMM", None, None],
+    ]
+    assert _check(tmp_path, rows, "rule_5", merged=("A2:A3", "B2:B3", "I2:I3", "J2:J3")).status == "PASS"
 
 
 def test_capability_written_in_the_evaluation_column_counts(tmp_path):

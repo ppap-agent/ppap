@@ -26,7 +26,6 @@ _COLUMNS = ("CP工序号", "CP生产资源", "CP特性编号", "CP产品特性",
 _CHARACTERISTIC = ("CP产品特性", "CP过程特性", "CP规格公差")
 # Words that make a header cell a label rather than a written value.
 _LABEL_WORDS = ("更改等级", "联系人", "电话", "小组", "批准", "日期", "编号", "approval", "核心", "代码", "代号", "名称", "零件号", "版本", "编制", "date")
-_NOT_DIMENSION = ("粗糙度", "泄漏", "测漏", "硬度", "清洁度", "材料", "成分")
 
 # U08:2 (customer ruling 2026-11-13): traceability and FIFO are read from the specification/tolerance column only,
 # and the traceability chain covers incoming, warehousing and shipping. Operation names place a row in a stage;
@@ -45,8 +44,12 @@ _STORAGE_LIMIT = ("库龄", "库存天数", "存放期", "最长存放")
 # Its row fills the characteristic, special characteristic and specification columns, names a dimension-like
 # characteristic, and belongs to a manufacturing operation; capability control is SPC, a control chart, Cpk or Ppk
 # in the evaluation, frequency or control method column. The word lists are our reading, not the customer's.
-_DIMENSION: tuple[str, ...] = ("尺寸", "直径", "孔径", "外径", "内径", "φ", "ø", "长度", "宽度", "厚度", "高度", "深度", "距离", "间距", "角度", "倒角", "r角")
-_DIMENSION += ("位置度", "同轴度", "圆度", "圆柱度", "平面度", "平行度", "垂直度", "跳动", "轮廓度", "⊥", "⊕", "//")
+# A dimension characteristic (U08:6 race tracks, U08:10 PGQP1 dimensions) names a size, a geometric tolerance or a
+# radius ("4XR38±0.5"); roughness, leakage, hardness, cleanliness and material are measured but are not dimensions.
+_DIMENSION: tuple[str, ...] = ("尺寸", "直径", "孔径", "外径", "内径", "半径", "φ", "ø", "长度", "宽度", "厚度", "高度", "深度", "距离", "间距", "角度", "倒角")
+_DIMENSION += ("位置度", "同轴度", "圆度", "圆柱度", "平面度", "平行度", "垂直度", "跳动", "轮廓度", "⊥", "⊕", "◎", "○", "//")
+_RADIUS = re.compile(r"(?<![a-wyz])r(?:角|\d)")
+_NOT_DIMENSION = ("粗糙度", "泄漏", "测漏", "硬度", "清洁度", "材料", "成分")
 # Operations that re-check a dimension rather than make it (inspections, tests, audits) or only hold and move parts.
 # An in-process inspection (过程检验, 巡检) belongs to the manufacturing it watches.
 _RECHECK = ("检验", "检查", "检测", "测试", "试验", "审核", "认可", "gp12", "iqc", "oqc", "inspection", "audit")
@@ -61,6 +64,14 @@ def _manufacturing(operation: str) -> bool:
     if not text or any(word in text for word in _NOT_MAKING):
         return False
     return any(word in text for word in _IN_PROCESS) or not any(word in text for word in _RECHECK)
+
+
+def _dimension(text: str) -> bool:
+    """Whether a characteristic (its name and specification) is a dimension."""
+    folded = compact(text)
+    if any(word in folded for word in _NOT_DIMENSION):
+        return False
+    return any(word in folded for word in _DIMENSION) or _RADIUS.search(folded) is not None
 
 
 def _trace_stage(operation: str) -> str | None:
@@ -543,8 +554,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
             return any(compact(self.spanned(row, name)) not in _PLACEHOLDERS for name in names)
 
         def dimension(row: PlanRow) -> bool:
-            text = compact(self.spanned(row, *_CHARACTERISTIC))
-            return any(word in text for word in _DIMENSION) and not any(word in text for word in _NOT_DIMENSION)
+            return _dimension(self.spanned(row, *_CHARACTERISTIC))
 
         def racetrack(row: PlanRow) -> bool:
             return filled(row, "CP产品特性", "CP过程特性") and filled(row, "CP特殊特性") and filled(row, "CP规格公差") and dimension(row) and any(_manufacturing(name) for name in row.owners())
@@ -746,7 +756,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
         plan, why = self.plan_only(ctx)
         if plan is None:
             return "NG", why + "，请补充后复审。"
-        dimensions = [(name, spec, where) for name, spec, where in self.important(ctx, plan) if not any(word in name + spec for word in _NOT_DIMENSION)]
+        dimensions = [(name, spec, where) for name, spec, where in self.important(ctx, plan) if _dimension(f"{name} {spec}")]
         if not dimensions:
             raise unable("PGQP1重要特性清单中没有读出尺寸类特性，不能按空范围通过，需人工复核。")
         plan_rows = self.plan(ctx)
