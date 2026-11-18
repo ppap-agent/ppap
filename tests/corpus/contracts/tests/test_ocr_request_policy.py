@@ -7,7 +7,7 @@ import json
 import documents.ai
 import pytest
 from audit.engine.checkers import ocr_visual_facts
-from corpus_contracts.replay import Recorder, install, ocr_request, replay_model_access
+from corpus_contracts.replay import Recorder, install, ocr_request, recording, replay_model_access
 from documents.ai import AIResult
 from documents.model_access import ModelAccess, model_access_scope
 from documents.ocr.env import ocr_extra_body
@@ -30,8 +30,8 @@ def test_replay_separates_actual_ocr_options_from_default_policy(tmp_path, monke
     plain = ModelAccess(SecretStr("k"), model="m", base_url="https://models.example.test/v1")
     explicit = ModelAccess(SecretStr("k"), model="m", base_url="https://models.example.test/v1", extra_body_json='{"reasoning":{"effort":"none"}}')
     with model_access_scope(plain):
-        recording = [{"kind": "ocr", "request": ocr_request([b"synthetic"], "Observe.", schema, 4096), "model": "recorded", "answer": '{"present":false}'}]
-    (tmp_path / "case.json").write_text(json.dumps(recording))
+        recorded = [recording("ocr", ocr_request([b"synthetic"], "Observe.", schema, 4096), '{"present":false}', "recorded")]
+    (tmp_path / "case.json").write_text(json.dumps(recorded))
     recorder = Recorder("case", tmp_path, tmp_path)
     install(monkeypatch, recorder)
 
@@ -46,7 +46,7 @@ def test_replay_separates_actual_ocr_options_from_default_policy(tmp_path, monke
     assert calls == [{"reasoning": {"effort": "none"}}]
     recorder.finish(keep=True)
     saved = json.loads((tmp_path / "case.json").read_text())
-    assert saved[0] == recording[0]
+    assert saved[0] == recorded[0]
     assert saved[-1]["request"]["extra_body"] == {"reasoning": {"effort": "none"}}
 
 

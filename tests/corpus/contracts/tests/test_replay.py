@@ -7,7 +7,7 @@ import struct
 
 import pytest
 from audit.engine.checkers import ocr_visual_facts
-from corpus_contracts.replay import LIVE, REPLAY, OfflineReplayMiss, Recorder, install, mode, ocr_request, shown_to_model
+from corpus_contracts.replay import LIVE, REPLAY, OfflineReplayMiss, Recorder, install, mode, ocr_request, recording, shown_to_model
 from documents.ai import AIError, AIResult, run_json
 from documents.ocr.observation import ocr_observation_scope
 
@@ -160,7 +160,7 @@ def test_offline_miss_never_calls_or_records_a_provider(kind, tmp_path, monkeypa
 def test_offline_recorded_observation_needs_no_provider(tmp_path, monkeypatch):
     calls = _answering_model(monkeypatch, AssertionError("must not run"))
     recorder = Recorder("offline", tmp_path, tmp_path, offline=True)
-    recorder.entries.append({"kind": "ocr", "request": ocr_request([b"synthetic-image"], "shown", SCHEMA, 4096), "answer": '{"seal": false}', "model": "recorded"})
+    recorder.entries.append(recording("ocr", ocr_request([b"synthetic-image"], "shown", SCHEMA, 4096), '{"seal": false}', "recorded"))
     install(monkeypatch, recorder)
     assert _read() == {"seal": False}
     assert recorder.misses == []
@@ -193,7 +193,7 @@ def test_offline_second_observation_cannot_use_the_first_or_an_untagged_answer(t
     recorder = Recorder("peer-offline", tmp_path, tmp_path, offline=True)
     request = ocr_request([b"synthetic-image"], "shown", SCHEMA, 4096)
     for identity in ({}, {"observation": 1}):
-        recorder.entries.append({"kind": "ocr", "request": {**request, **identity}, "answer": '{"seal":true}'})
+        recorder.entries.append(recording("ocr", {**request, **identity}, '{"seal":true}'))
     install(monkeypatch, recorder)
     with ocr_observation_scope(2), pytest.raises(OfflineReplayMiss):
         _read()

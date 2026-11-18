@@ -38,9 +38,9 @@ def offline() -> bool:
     return value in {"1", "true"}
 
 
-def _ocr_test_options() -> str:
-    raw = os.environ.get("PPAP_MODEL_VISION_EXTRA_BODY_JSON", "").strip()
-    return json.dumps(effective_vision_extra_body(raw), sort_keys=True) if raw else ""
+def _vision_options() -> str:
+    """The vision request options the platform model would send, so recordings match every mode."""
+    return json.dumps(effective_vision_extra_body(os.environ.get("PPAP_MODEL_VISION_EXTRA_BODY_JSON", "").strip()), sort_keys=True)
 
 
 def configured_model_access() -> ModelResolver | None:
@@ -58,7 +58,7 @@ def configured_model_access() -> ModelResolver | None:
 def replay_model_access() -> ModelAccess:
     # This inert grant lets recorded observations pass the same scope boundary.
     # Offline Recorder transports below reject every cache miss before sending.
-    return ModelAccess(SecretStr("corpus-replay-only"), provider="corpus-replay", model="recorded-model", base_url="http://127.0.0.1:1/v1", extra_body_json=_ocr_test_options())
+    return ModelAccess(SecretStr("corpus-replay-only"), provider="corpus-replay", model="recorded-model", base_url="http://127.0.0.1:1/v1", extra_body_json=_vision_options())
 
 
 class OfflineReplayMiss(AssertionError):
@@ -93,6 +93,12 @@ def _request_sha256(request: Any) -> str:
     return hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str).encode()).hexdigest()
 
 
+def recording(kind: str, request: Any, answer: Any, model: Any = None) -> dict[str, Any]:
+    """One recorded answer: what the model was shown (readable), the complete request identity and the answer."""
+    shown = json.loads(json.dumps(shown_to_model(request), ensure_ascii=False, default=str))
+    return {"kind": kind, "model": model, "request": shown, "request_sha256": _request_sha256(request), "answer": answer}
+
+
 class Recorder:
     """New answers wait for the case verdict, so a failed case asks again next run."""
 
@@ -117,14 +123,13 @@ class Recorder:
     def lookup(self, kind: str, request: Any) -> dict[str, Any] | None:
         digest = _request_sha256(request)
         with self.lock:
-            # An old complete text request still proves its own identity.
-            # A size-only image summary cannot match current image bytes.
-            return next((entry for entry in (*self.entries, *self.pending) if entry["kind"] == kind and entry.get("request_sha256", _request_sha256(entry["request"])) == digest), None)
+            # Only the complete request identity matches; a readable summary never does.
+            return next((entry for entry in (*self.entries, *self.pending) if entry["kind"] == kind and entry.get("request_sha256") == digest), None)
 
     def add(self, kind: str, request: Any, answer: Any, model: Any = None) -> None:
-        shown = json.loads(json.dumps(shown_to_model(request), ensure_ascii=False, default=str))
+        entry = recording(kind, request, answer, model)
         with self.lock:
-            self.pending.append({"kind": kind, "model": model, "request": shown, "request_sha256": _request_sha256(request), "answer": answer})
+            self.pending.append(entry)
 
     def finish(self, *, keep: bool) -> None:
         with self.lock:
@@ -139,10 +144,7 @@ class Recorder:
 
 
 def ocr_request(images: list[bytes], prompt: str, response_schema: dict, max_output_tokens: int) -> dict[str, Any]:
-    """The recorded identity of one vision call: what the model is shown and asked to return.
-
-    It keeps the shape recorded before the direct model layer, so existing answers stay valid.
-    """
+    """The recorded identity of one vision call: what the model is shown, asked to return and sent with."""
     from documents.model_access import current_model_access
     from documents.ocr.observation import current_ocr_observation
 
@@ -201,4 +203,18 @@ def current_model_access_name(purpose: ModelPurpose) -> str | None:
         return None
 
 
-__all__ = ["LIVE", "REPLAY", "REPLAY_DIR", "OfflineReplayMiss", "Recorder", "configured_model_access", "install", "mode", "ocr_request", "offline", "replay_model_access", "shown_to_model"]
+__all__ = [
+    "LIVE",
+    "REPLAY",
+    "REPLAY_DIR",
+    "OfflineReplayMiss",
+    "Recorder",
+    "configured_model_access",
+    "install",
+    "mode",
+    "ocr_request",
+    "offline",
+    "recording",
+    "replay_model_access",
+    "shown_to_model",
+]
