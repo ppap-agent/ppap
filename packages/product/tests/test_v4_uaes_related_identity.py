@@ -74,8 +74,9 @@ def test_identities_the_clause_does_not_name_do_not_pair_files(tmp_path, changes
 
 @pytest.mark.parametrize("part", ["无", "/", "TBD", "XXX", "待定"])
 def test_matching_part_placeholders_never_establish_a_formal_pair(tmp_path, part):
+    # A placeholder part number cannot be made out: U07:3 fails it ("无法辨识则不通过") and asks for a person.
     result = check(original(tmp_path, "target", target=True, part=part), [original(tmp_path, "reference", part=part)])
-    assert result.status == "UNABLE"
+    assert result.status == "NG" and "请人工复核" in result.suggestions, result.suggestions
 
 
 @pytest.mark.parametrize(("second", "expected"), [("CC", "PASS"), ("SC", "NG")])
@@ -226,13 +227,14 @@ def test_msa_broad_type_keeps_its_actual_kappa_subtype_available(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "field,value",
-    [("part", "待确认"), ("part", "none"), ("part", "-"), ("part", "工程更改版本"), ("part", "ＴＢＤ"), ("project", "待确认")],
+    "field,value,expected",
+    [("part", "待确认", "NG"), ("part", "none", "NG"), ("part", "-", "NG"), ("part", "工程更改版本", "NG"), ("part", "ＴＢＤ", "NG"), ("project", "待确认", "UNABLE")],
 )
-def test_equal_unknown_source_identity_cannot_certify_a_formal_pair(tmp_path, field, value):
+def test_equal_unknown_source_identity_cannot_certify_a_formal_pair(tmp_path, field, value, expected):
+    # An unidentifiable PFMEA part number fails the clause; equal unknown values never pair either way.
     target = original(tmp_path, "target", target=True, **{field: value})
     reference = original(tmp_path, "reference", **{field: value})
-    assert check(target, [reference]).status == "UNABLE"
+    assert check(target, [reference]).status == expected
 
 
 @pytest.mark.parametrize("part", ["P-123", "P/123", "P.123", "000123"])
