@@ -25,7 +25,7 @@ from audit.standard_suites import library_revision
 from product.suites import canonical_json, content_digest
 
 from corpus_contracts.official_models import LiveModels
-from corpus_contracts.oracle import CASES_PATH, ORACLE_PATH, REPO_ROOT, OracleFile, build_round, load_oracle
+from corpus_contracts.oracle import DATASETS, REPO_ROOT, OracleFile, build_round, load_oracle, table
 
 
 @dataclass(frozen=True)
@@ -57,11 +57,17 @@ def _semantics(files) -> dict:
     return RuleInput.model_validate({**rules, "appendix": json.loads(files.get("appendix.json", b"[]")), "rule_id": ""}).model_dump(mode="json", exclude={"rule_id"})
 
 
-def prepare(context: dict, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PATH, root: Path = REPO_ROOT, model_identity: dict[str, str] | None = None) -> OfficialPlan:
+def prepare(context: dict, *, cases: Path | None = None, oracle: Path | None = None, root: Path = REPO_ROOT, model_identity: dict[str, str] | None = None) -> OfficialPlan:
     """Freeze every corpus target judged under this revision's rules; callers cannot select easy cases."""
     suite = context["suite"]
     if suite.revision.tenant_id is not None:
         raise ValueError("official_validation_requires_official_suite")
+    if cases is None or oracle is None:
+        # A Suite belongs to one customer: its proof freezes that customer's tables.
+        owners = [name for name in DATASETS if any(file.checker_group == suite.revision.suite_key for case in load_oracle(name, root=root) for file in case.files)]
+        if len(owners) != 1:
+            raise ValueError("official_suite_has_no_single_corpus_customer")
+        cases, oracle = table(owners[0], "cases.csv"), table(owners[0], "oracle.csv")
     tables = {path: content_digest(path.read_bytes()) for path in (cases, oracle)}
     corpus = load_oracle(cases=cases, oracle=oracle, root=root)
     program = {key: value for key, value in suite.files.items() if key in {"checker.py", "resources.py"}}

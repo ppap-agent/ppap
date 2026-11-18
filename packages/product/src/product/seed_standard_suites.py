@@ -13,9 +13,9 @@ from typing import Any
 
 from audit.standard_suites import predefined_directory_suites
 
-# A predefined leaf path. Asset docx paths and the shared oracle.csv path are not
-# this identity: several historical suites share that csv path, and their rows
-# stay addressable by content digest.
+# A predefined leaf path. Asset docx paths and corpus table paths are not this
+# identity: several suites share one customer's tables, and their rows stay
+# addressable by content digest.
 _DIRECTORY_SOURCE = re.compile(r"^(?!v[0-9]+/)[^/]+/[^/]+$")
 
 

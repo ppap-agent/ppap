@@ -1,7 +1,6 @@
 """Malformed human tables must fail before any product execution."""
 
 import csv
-import json
 from collections import defaultdict
 from dataclasses import replace
 from pathlib import Path
@@ -120,7 +119,7 @@ def test_readable_source_selectors_freeze_content_addressed_execution():
 def test_reviewed_meaning_is_the_leaf_rules_not_its_program(monkeypatch):
     file = next(file for case in load_oracle() for file in case.files if file.role == "target")
     suite = file.suite()
-    historical = json.loads(oracle.REVIEWED_RULES_PATH.read_text(encoding="utf-8"))[file.suite_revision]
+    historical = oracle.reviewed_rules()[file.suite_revision]
     edited = replace(suite, files={**suite.files, "checker.py": suite.files["checker.py"] + b"\n# implementation only\n"})
     monkeypatch.setattr(oracle, "suite_sources", lambda: {file.suite_revision: edited})
 

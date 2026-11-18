@@ -7,7 +7,7 @@
 与线上 Controller 相同：在从 `HEAD` 构建的深度镜像里，以 root 启动本地模型网关和 `ContainerRuntime`，guest 降权为 uid 10001、在 `prlimit` 下运行，先执行已验证的 Suite 程序（允许模型读取），再由 Pi 按 `deep_agent/AGENTS.md` 复核，最后由 `CoreRuntime.execute_snapshot` 校验并合并订正。整次深度执行失败时，和线上一样回退为程序结论，对应文件记为未复核。
 
 - 模型：平台模型（`.env` 中的 `PPAP_MODEL_TEXT_*` / `VISION_*` / `CODING_*`），按未配置企业 Key 的租户冻结身份；复核强度、请求上限、沙箱配置取自 `.env.production`。
-- 用例：`assets/corpus` 中的 Oracle，默认 `cases.csv` / `oracle.csv`（与 CI 语料回归同一张表），`--dataset li|nio|uaes` 只选一个数据集。语料合同照常检查条款正文与人工复核（`reviewed-rules.json`）是否一致，不一致即报错，不评测过期真值。`--table uaes` 使用 `uaes-cases.csv` / `uaes-oracle.csv`，只有其中每个 Suite 都已记录人工复核语义时才能运行。
+- 用例：`assets/corpus` 中一家客户的人工 Oracle（`<客户>-cases.csv`、`<客户>-oracle.csv`、`<客户>-reviewed-rules.json`），`--dataset li|nio|uaes` 选择，默认 `uaes`；三家分开评估、分开汇总，不混在一起。语料合同照常检查条款正文与人工复核语义是否一致，不一致即报错，不评测过期真值。
 - 引用文件按上传流程识别（会调用模型），与线上冻结方式一致。
 
 它不证明产品的 guest 网络隔离、Worker 调度或计费，也不证明规则解释正确；只衡量同一批人工真值上的结论质量与成本。
@@ -24,10 +24,10 @@ deep-eval/run.sh --jobs 3
 deep-eval/run.sh --name trial --jobs 1 -- --case 0 --case 5
 ```
 
-`--` 之后的参数传给 `deep_eval.py run`：`--table`、`--dataset`、`--case`（可重复）。先看用例编号：
+`--` 之后的参数传给 `deep_eval.py run`：`--dataset`、`--case`（可重复）。先看用例编号：
 
 ```bash
-uv run --no-sync python deep-eval/deep_eval.py run --out /tmp/unused --list
+uv run --no-sync python deep-eval/deep_eval.py run --dataset uaes --out /tmp/unused --list
 ```
 
 结果写在 `deep-eval/runs/<名称>/`（不入库）：`cases.jsonl` 每例一行（逐条真值、程序结论、复核后结论、复核决定与理由、文件复核状态、耗时与用量），`summary.json` 与 `summary.md` 为汇总。重算汇总：

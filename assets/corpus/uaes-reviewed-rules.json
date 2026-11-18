@@ -1,0 +1,764 @@
+{
+  "uaes/U01": {
+    "appendix": [],
+    "document_type": "E01",
+    "entrypoints": {
+      "U01:1-1": "checker:create_audit",
+      "U01:1-2": "checker:create_audit",
+      "U01:2": "checker:create_audit",
+      "U01:3": "checker:create_audit"
+    },
+    "related_suite_keys": [],
+    "rules": {
+      "checker_binding": {
+        "U01:1-1": "checker:create_audit",
+        "U01:1-2": "checker:create_audit",
+        "U01:2": "checker:create_audit",
+        "U01:3": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U01",
+      "rules": [
+        {
+          "category": "尺寸测量报告覆盖性检查",
+          "id": "U01:1-1",
+          "priority": "P0",
+          "rule_to_check": "识别文件中是否存在尺寸报告，如果不存在则不通过，并提醒“缺少尺寸报告”；如果存在则继续识别实测值的列数是否是3或3的倍数，如果是则通过，否则不通过；\n注意：当实测值列数超过5列时，判定依据中提醒用户复核是否覆盖多产线/多模穴。",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "报告实测值与要求比对",
+          "id": "U01:2",
+          "priority": "P0",
+          "rule_to_check": "识别文件中是否包含尺寸报告、材料报告、功能报告、可靠性报告四份报告内容，如果不存在则不通过；\n分别检测尺寸报告、材料报告、功能报告、可靠性报告，当报告中存在要求列且要求列下存在内容，则继续识别该报告中的每一个要求项对应的实测值是否在要求范围内，如果每个实测值都在要求范围内且同行的结果为OK则通过，否则不通过；\n注意：\n如果要求为定性类要求，则直接检查同行的结果是否为OK，如果为OK则继续识别其他定量类要求；\n识别报告中实测值是否在要求范围内，且要求对应的所有实测值都接近要求范围的上限，则需要在判定依据中提醒用户关注过程能力分析报告；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "签字审核",
+          "id": "U01:3",
+          "priority": "P0",
+          "rule_to_check": "识别文件中是否包含尺寸报告、材料报告、功能报告、可靠性报告四份报告内容，如果不存在则不通过；\n分别检测尺寸报告、材料报告、功能报告、可靠性报告，当报告中存在要求列且要求列下存在内容，则继续识别报告下方的供应商负责人区域是否有对应的签字，如果有则通过，否则不通过；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "是否提供了定义完整的测量用气泡图？",
+          "id": "U01:1-2",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同物料编号、同物料名称的气泡图独立文件，如果不存在则不通过，并提示用户复审或提交气泡图文件一起审核；\n如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "初始样品检验报告审核规则",
+      "type": "E01"
+    }
+  },
+  "uaes/U04": {
+    "appendix": [],
+    "document_type": "材料产品及分供清单",
+    "entrypoints": {
+      "U04:1": "checker:create_audit",
+      "U04:2": "checker:create_audit",
+      "U04:3": "checker:create_audit"
+    },
+    "related_suite_keys": [],
+    "rules": {
+      "checker_binding": {
+        "U04:1": "checker:create_audit",
+        "U04:2": "checker:create_audit",
+        "U04:3": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U04",
+      "rules": [
+        {
+          "category": "模板内容",
+          "id": "U04:1",
+          "priority": "P0",
+          "rule_to_check": "除备注外其余字段不为空则通过，否则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "签字审核",
+          "id": "U04:2",
+          "priority": "P0",
+          "rule_to_check": "当供应商负责工程师签字、UAES NE工程师签字、UAES SQD/SQE工程师签字均完成则通过，否则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "信息匹配",
+          "id": "U04:3",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同项目、同物料编号的图纸独立文件，如果不存在则不通过，并提示用户复审或提交图纸文件一起审核；\n如果图纸文件存在，识别图纸文件中的零件名称、零件号是否与分供方清单文件中的零件名称、零件号内容一致；不一致则不通过；\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "材料产品及分供清单审核规则",
+      "type": "材料产品及分供清单"
+    }
+  },
+  "uaes/U05": {
+    "appendix": [],
+    "document_type": "测量系统分析评价",
+    "entrypoints": {
+      "U05:1-1": "checker:create_audit",
+      "U05:1-2": "checker:create_audit",
+      "U05:2": "checker:create_audit",
+      "U05:3": "checker:create_audit"
+    },
+    "related_suite_keys": [
+      "UAES:U08"
+    ],
+    "rules": {
+      "checker_binding": {
+        "U05:1-1": "checker:create_audit",
+        "U05:1-2": "checker:create_audit",
+        "U05:2": "checker:create_audit",
+        "U05:3": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U05",
+      "related_suite_keys": [
+        "UAES:U08"
+      ],
+      "rules": [
+        {
+          "category": "测量系统分析计划内容必填校验",
+          "id": "U05:1-1",
+          "priority": "P0",
+          "rule_to_check": "识别是否包含“测量系统分析计划”或“MSA计划表”表，如果包含则继续识别；当序号/NO列下内容不为空，且对应行中除备注之外的所有列内容均不为空则通过，否则不通过",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "计划与报告一致性比对",
+          "id": "U05:1-2",
+          "priority": "P0",
+          "rule_to_check": "识别文件中或同批次提交的文件集中是否包含测量系统分析计划表或独立文件，如果都不存在则不通过；\n识别文件中或同批次提交的文件集中是否包含重复性及再现性报告的内容或独立文件或kappa，如果都不存在则不通过；\n读取测量系统分析计划表中每一行量具名称，识别量具名称是否为人工/目视/通止规/塞规/塞尺这类计数型量具：\n如果是则识别是否有编号相同的kappa报告内容或独立文件；不存在则不通过；\n如果不是则识别检查是否有编号相同的重复性及再现性分析报告内容或独立文件；不存在则不通过；\n其他情况不通过，并提醒用户；\n识别每个重复性及再现性分析报告的结论是否都是“测量系统可以接受”，有一份不是则不通过；\n识别每个kappa文件或kappa报告最后的结论是否都是“Acceptable”；\n以上五项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "PGQP1中定义的MSA项是否落实",
+          "id": "U05:2",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的文件集中是否存在《采购件质量计划》文件且文件中包含PGQP1，不包含则不通过；\n识别PGQP1的重要特性下是否存在项目对应的测量设备为通止规/塞规/塞尺这类计数型量具，如果存在则继续识别是否同批次提交的审核文件中是否存在同零件号、同量具编号的kappa独立文件，如果不存在则不通过，并提示用户复审或提交kappa文件一起审核；如果存在则通过；\n如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "判定控制计划中检验方法为人工/目测类型的措施是否有KAPPA独立文件",
+          "id": "U05:3",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的文件集中是否存在《控制计划》文件，不包含则不通过；\n识别控制计划中是否存在出货检验/GP12类工序，如果存在则继续识别该工序下是否存在评价测量技术为人工/目测等人为检测的方法，如果不存在则直接通过，否则继续识别同批次提交的审核文件中是否存在同零件号、量具名称相同或量具名称为“综合检具”的kappa独立文件，如果不存在则不通过，并提示用户复审或提交kappa文件一起审核；如果存在则通过；\n如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "测量系统分析评价审核规则",
+      "type": "测量系统分析评价"
+    }
+  },
+  "uaes/U06": {
+    "appendix": [],
+    "document_type": "过程能力研究",
+    "entrypoints": {
+      "U06:1": "checker:create_audit",
+      "U06:2": "checker:create_audit",
+      "U06:3": "checker:create_audit",
+      "U06:4": "checker:create_audit",
+      "U06:5": "checker:create_audit"
+    },
+    "related_suite_keys": [],
+    "rules": {
+      "checker_binding": {
+        "U06:1": "checker:create_audit",
+        "U06:2": "checker:create_audit",
+        "U06:3": "checker:create_audit",
+        "U06:4": "checker:create_audit",
+        "U06:5": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U06",
+      "rules": [
+        {
+          "category": "样品数量是否大于125件，Cpk值是否满足要求",
+          "id": "U06:1",
+          "priority": "P0",
+          "rule_to_check": "识别所有工艺能力认证报告中的读数次数是否大于等于125或实测结果区域数量大于等于125，都小于则不通过；\n识别所有工艺能力认证报告中的Process Capability  (Cpk)值是否大于1.33；\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "PPK项是否大于1.67",
+          "id": "U06:2",
+          "priority": "P0",
+          "rule_to_check": "识别所有工艺能力认证报告中的Performance index (Ppk)值是否大于1.67；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "能力不足项是否有措施计划",
+          "id": "U06:3",
+          "priority": "P0",
+          "rule_to_check": "识别文件中是否存在能力值汇总相关的清单表格，不存在则不通过；\n识别能力值汇总清单表中是否所有行的CPK、PPK的结果值都大于等于目标值？如果有行小于，则继续识别同行的反应计划或备注内容是否不为空\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "是否包含PGQP1中定义的特殊特性",
+          "id": "U06:4",
+          "priority": "P0",
+          "rule_to_check": "识别过程能力分析报告中是否包含目录页，如果不存在则直接不通过，并提醒用户补充过程能力分析报告的目录页内容；如果存在则继续识别；\n识别同批次提交的审核文件中是否存在同零件号的采购件质量计划独立文件且文件中包含PGQP1表，缺项则不通过，并提示用户有缺项文件；\n如果采购件质量计划文件存在且文件中包含PGQP1表则继续识别PGQP1表中所有被标记为特殊特性的特性是否都在过程能力分析报告目录中存在；缺项则不通过；\n以上三项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "所有过程特性是否都进行过程能力研究（与PGQP1对比）",
+          "id": "U06:5",
+          "priority": "P0",
+          "rule_to_check": "识别过程能力分析报告中是否包含目录页，如果不存在则直接不通过，并提醒用户补充过程能力分析报告的目录页内容；如果存在则继续识别；\n识别同批次提交的审核文件中是否存在同零件号的采购件质量计划独立文件且文件中包含PGQP1表，缺项则不通过，并提示用户有缺项文件；\n如果采购件质量计划文件存在且文件中包含PGQP1表则继续识别PGQP1表中所有过程特性是否都在过程能力分析报告目录中存在；缺项则不通过；\n以上三项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "过程能力研究审核规则",
+      "type": "过程能力研究"
+    }
+  },
+  "uaes/U07": {
+    "appendix": [],
+    "document_type": "潜在过程失效模式及后果分析",
+    "entrypoints": {
+      "U07:1": "checker:create_audit",
+      "U07:2": "checker:create_audit",
+      "U07:3": "checker:create_audit",
+      "U07:4": "checker:create_audit"
+    },
+    "related_suite_keys": [
+      "UAES:U12"
+    ],
+    "rules": {
+      "checker_binding": {
+        "U07:1": "checker:create_audit",
+        "U07:2": "checker:create_audit",
+        "U07:3": "checker:create_audit",
+        "U07:4": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U07",
+      "related_suite_keys": [
+        "UAES:U12"
+      ],
+      "rules": [
+        {
+          "category": "是否结合过往经验教训追加失效模式",
+          "id": "U07:1",
+          "priority": "P0",
+          "rule_to_check": "PFMEA中须体现\"经验教训\"作为输入（表头/附录/变更履历/修订说明中引用历史问题、客户抱怨、过往失效案例、类似产品问题）；无任何引用则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "FMEA中S、O、D打分是否合理",
+          "id": "U07:2",
+          "priority": "P0",
+          "rule_to_check": "PFMEA中S/O/D均为1~10的整数；超出范围或为空则不通过；\nS与失效后果匹配（安全/法规后果应为9~10；仅外观轻微2~4）；后果与S明显不符（导致整车召回，但S=3）则不通过；\nO与失效起因+预防控制匹配（有效预防控制存在时O为低值；无预防控制时O为高值）；O与预防控制描述矛盾则不通过；\nD与探测控制方法+时机匹配（下线检测 D 较高，在线自动检测 D 较低，无法探测 D=10）；无探测措施但D<10不通过；\n相同失效模式/相同控制条件下S/O/D应一致；同失效原因但分值不同；\n以上五项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "关键特性是否在FMEA中明确标识",
+          "id": "U07:3",
+          "priority": "P0",
+          "rule_to_check": "PFMEA “特殊特性”列或“分类”列下须存在行标注关键/重要/特殊特性符号；任一已知关键特性未标识则不通过；\n识别同批次提交的审核文件中是否存在同项目、同物料编号的特殊特性清单独立文件，如果不存在则不通过，并提示用户复审或提交特殊特性清单文件一起审核；\n如果特殊特性清单存在，识别特殊特性清单中的所有产品特性是否都在PFMEA的功能/要求/功能/产品特性列下出现并分析或在失效模式中存在与特性相关的失效模式，且对应的特性标识一致；缺项或标识不一致则不通过；\n如果特殊特性清单存在，识别特殊特性清单中的所有过程特性是否都在PFMEA的功能/要求/功能/过程特性列下出现并分析或在失效模式/失效原因中存在与特性相关的失效模式，且对应的特性标识一致；缺项或标识不一致则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "是否覆盖PGQP1的产品特性",
+          "id": "U07:4",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同零件号的采购件质量计划独立文件且文件中包含PGQP1表，如果不存在则不通过，并提示用户用户有缺项文件；\n如果采购件质量计划文件存在且包含PGQP1表则继续识别PGQP1表中的所有重要特性是否都在PFMEA的功能/要求/功能/过程特性列下出现或在失效模式中存在与特性相关的失效模式；缺项则不通过；\n以上三项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "潜在过程失效模式及后果分析（PFMEA）审核规则",
+      "type": "潜在过程失效模式及后果分析"
+    }
+  },
+  "uaes/U08": {
+    "appendix": [],
+    "document_type": "控制计划",
+    "entrypoints": {
+      "U08:1": "checker:create_audit",
+      "U08:10": "checker:create_audit",
+      "U08:11": "checker:create_audit",
+      "U08:12": "checker:create_audit",
+      "U08:13": "checker:create_audit",
+      "U08:2": "checker:create_audit",
+      "U08:3": "checker:create_audit",
+      "U08:4": "checker:create_audit",
+      "U08:6": "checker:create_audit",
+      "U08:7": "checker:create_audit",
+      "U08:8": "checker:create_audit",
+      "U08:9": "checker:create_audit"
+    },
+    "related_suite_keys": [
+      "UAES:U07",
+      "UAES:U16"
+    ],
+    "rules": {
+      "checker_binding": {
+        "U08:1": "checker:create_audit",
+        "U08:10": "checker:create_audit",
+        "U08:11": "checker:create_audit",
+        "U08:12": "checker:create_audit",
+        "U08:13": "checker:create_audit",
+        "U08:2": "checker:create_audit",
+        "U08:3": "checker:create_audit",
+        "U08:4": "checker:create_audit",
+        "U08:6": "checker:create_audit",
+        "U08:7": "checker:create_audit",
+        "U08:8": "checker:create_audit",
+        "U08:9": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U08",
+      "related_suite_keys": [
+        "UAES:U07",
+        "UAES:U16"
+      ],
+      "rules": [
+        {
+          "category": "生产及检测设备、模具等生产资源在CP中是否有明确定义",
+          "id": "U08:1",
+          "priority": "P0",
+          "rule_to_check": "识别机器装置夹具工装列下是否写明每个工序对应的生产资源信息，或者表格中是否有列专用于阐述生产资源信息且列下内容不为空则通过，否则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "零件生产过程追溯性，及过程先进先出是否满足要求",
+          "id": "U08:2",
+          "priority": "P0",
+          "rule_to_check": "零件生产过程追溯性，及过程先进先出是否满足要求？具体（2026-11-13 客户裁决）：追溯性与先进先出只看“产品/过程规格/公差”列（客户原话“产品/工序规范/公差”，同义），其他列的内容不作为依据；进料、出入库、出货三个环节对应的行均须在该列写明追溯标识方式，任一环节未写明则不通过；该列须写明先进先出要求，只写“库龄不超过N天”等存放时限不算先进先出，判不通过；以上两项均满足则通过，否则不通过。",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "量产CP是否受控",
+          "id": "U08:3",
+          "priority": "P0",
+          "rule_to_check": "当CP文件的类型为量产或SOP，且文件中存在受控章则通过，否则不通过；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "特性类型检查",
+          "id": "U08:4",
+          "priority": "P0",
+          "rule_to_check": "识别是否包含“特性类型”或“特殊特性”列，如果不包含则不通过，否则继续识别；当“特性类型”或“特殊特性”列下存在内容，且内容包含特性标记（非空白）则通过，否则不通过。",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "跑道尺寸需要有过程能力管控（X-R图/SPC控制）",
+          "id": "U08:6",
+          "priority": "P0",
+          "rule_to_check": "跑道尺寸需要有过程能力管控（X-R图/SPC控制）。具体（2026-11-13 客户裁决）：跑道尺寸指控制计划中登记的具体尺寸名和尺寸值，不按是否出现“跑道”二字识别；加工/制造类工序中，“产品/过程特性”“特殊特性”“产品/过程规格/公差”三列均有内容、且特性主要为尺寸、位置度等定量特性的行即为跑道尺寸行；每个跑道尺寸行的“评价测量技术”“频率”“控制方法”三列中任一列含SPC、控制图、Cpk或Ppk则通过，否则不通过；未发现跑道尺寸时不判通过也不判不通过，提示“未发现跑道尺寸，请核实”，由人工确认。",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "表头必填字段校验",
+          "id": "U08:7",
+          "priority": "P0",
+          "rule_to_check": "识别表头存在供应商名称、供应商代码、编制人、版本号、受控日期/创建日期/修订日期、零件名称、零件号字段，有一项不存在则不通过；\n识别供应商名称、供应商代码、编制人、版本号、零件名称、零件号内容都不为空，有一项为空则不通过；\n识别同批次提交的审核文件中是否存在同项目、同物料编号、同零件名称的图纸独立文件，如果不存在则不通过，并提示用户复审或提交过程流程图文件一起审核；\n如果图纸文件存在，且控制计划的变更履历的最后一条履历的日期晚于图纸文件中的日期，早于则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "与过程流程图、PFMEA、采购件质量计划-PGQP1的工艺流程保持一致，没有错漏",
+          "id": "U08:8",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同零件号的过程流程图、PFMEA、采购件质量计划这三类独立文件，缺项则不通过，并提示用户有缺项文件；\n如果过程流程图文件存在，识别过程流程图文件中工序列下内容是否都在CP的工序名称/操作描述列下出现并分析；缺项则不通过；\n如果PFMEA文件存在，识别PFMEA文件中工序/功能/要求或过程项或过程步骤列下内容是否都在CP的工序名称/操作描述列下出现并分析；缺项则不通过；\n如果采购件质量计划文件存在且文件中包含PGQP1表则继续识别PGQP1表中的所有工艺是否都在CP的工序名称/操作描述列下出现并分析；缺项则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "与过程流程图、PFMEA、采购件质量计划-PGQP1的特殊特性保持一致，没有错漏",
+          "id": "U08:9",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同零件号的过程流程图、PFMEA、采购件质量计划这三类独立文件，缺项则不通过，并提示用户有缺项文件；\n如果过程流程图文件存在，识别过程流程图文件中所有被标识的特性是否都在CP的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n如果PFMEA文件存在，识别PFMEA文件中所有分类或特殊特性列下存在内容的行对应的功能/要求或产品特性或过程特性列下内容是否都在CP的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n如果采购件质量计划文件存在且包含PGQP1表则继续识别PGQP1表中的所有重要特性是否都在CP的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "PGQP1中的所有尺寸需包含在控制计划的出货检验项内",
+          "id": "U08:10",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同零件号的采购件质量计划独立文件且文件中包含PGQP1表，缺项则不通过，并提示用户有缺项文件或缺项内容；\n如果采购件质量计划文件存在且包含PGQP1表则继续识别PGQP1表中所有尺寸类特性是否都在CP文件内出货检验工序行对应的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "PGQP1中定义的年度材质检测及型式试验是否在CP中有定义",
+          "id": "U08:11",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同零件号的采购件质量计划独立文件且文件中包含PGQP1表，缺项则不通过，并提示用户有缺项文件或缺项内容；\n如果采购件质量计划文件存在且包含PGQP1表则继续识别PGQP1表中产品审核要求表中是否有型式试验相关内容，如果存在则继续识别是否所有的型式试验都在CP文件内的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "与图纸比对，有过程能力要求的尺寸，需要有SPC管控",
+          "id": "U08:12",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同项目、同物料编号的图纸独立文件，如果不存在则不通过，并提示用户复审或提交图纸文件一起审核；\n如果图纸文件存在，提取图纸文件中标注为特殊特性且检验方法有CPK要求的所有尺寸，并与CP进行比对，识别图纸中提取的尺寸在CP中是否有对应行，如果有则继续识别同行的频率内容是否有SPC管控；如果图纸中提取的尺寸CP中有缺项或对应频率不包含SPC管控则不通过；\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "与图纸特殊特性保持一致，没有错漏",
+          "id": "U08:13",
+          "priority": "P0",
+          "rule_to_check": "识别同批次提交的审核文件中是否存在同项目、同物料编号的图纸独立文件，如果不存在则不通过，并提示用户复审或提交图纸文件一起审核；\n如果图纸文件存在，识别图纸文件中所有被标记为特殊特性的尺寸和要求是否都在CP的产品、过程、产品/过程规格/公差列下出现并分析；缺项则不通过；\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "控制计划（CP）审核规则",
+      "type": "控制计划"
+    }
+  },
+  "uaes/U10": {
+    "appendix": [],
+    "document_type": "E05",
+    "entrypoints": {
+      "U10:1": "checker:create_audit"
+    },
+    "related_suite_keys": [],
+    "rules": {
+      "checker_binding": {
+        "U10:1": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U10",
+      "rules": [
+        {
+          "category": "材料规范版本最新版本及受控判定",
+          "id": "U10:1",
+          "priority": "P0",
+          "rule_to_check": "当材料规范中包含受控章即通过，否则不通过；",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "材料规范审核规则",
+      "type": "E05"
+    }
+  },
+  "uaes/U11": {
+    "appendix": [],
+    "document_type": "E06",
+    "entrypoints": {
+      "U11:1": "checker:create_audit"
+    },
+    "related_suite_keys": [],
+    "rules": {
+      "checker_binding": {
+        "U11:1": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U11",
+      "rules": [
+        {
+          "category": "内容基础检查",
+          "id": "U11:1",
+          "priority": "P0",
+          "rule_to_check": "当文件中存在工程更改一览表，且表中包含项目、零件号、变更内容简述、变更原因、时间等字段或列则通过，否则不通过\n注意：字段或列名意思相近也通过",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "样品阶段履历审核规则",
+      "type": "E06"
+    }
+  },
+  "uaes/U12": {
+    "appendix": [],
+    "document_type": "过程特殊特性清单",
+    "entrypoints": {
+      "U12:1": "checker:create_audit",
+      "U12:2": "checker:create_audit"
+    },
+    "related_suite_keys": [],
+    "rules": {
+      "checker_binding": {
+        "U12:1": "checker:create_audit",
+        "U12:2": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U12",
+      "rules": [
+        {
+          "category": "必填字段检查",
+          "id": "U12:1",
+          "priority": "P0",
+          "rule_to_check": "识别是否包含“物料名称”、“物料编号”两个字段，如果都不包含则不通过，否则继续识别；当“物料名称”、“物料编号”内容都不为空则通过，否则不通过",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "必填列检查",
+          "id": "U12:2",
+          "priority": "P0",
+          "rule_to_check": "识别是否包含编号/序号、产品特性/过程特性/特殊特性名称、特性及公差/特性值、特性类型/特性类别四列，缺列则不通过，否则继续识别；当编号/序号列下内容不为空，且同行的产品特性/过程特性/特殊特性名称、特性及公差/特性值、特性类型/特性类别三列内容均不为空则通过，否则不通过。",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "特殊特性清单审核规则",
+      "type": "过程特殊特性清单"
+    }
+  },
+  "uaes/U14": {
+    "appendix": [],
+    "document_type": "E08",
+    "entrypoints": {
+      "U14:1": "checker:create_audit"
+    },
+    "related_suite_keys": [],
+    "rules": {
+      "checker_binding": {
+        "U14:1": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U14",
+      "rules": [
+        {
+          "category": "订货规范（BV）版本最新版本及受控判定",
+          "id": "U14:1",
+          "priority": "P0",
+          "rule_to_check": "当订货规范（BV）中包含受控章即通过，否则不通过；",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "订货规范审核规则",
+      "type": "E08"
+    }
+  },
+  "uaes/U16": {
+    "appendix": [],
+    "document_type": "过程流程图",
+    "entrypoints": {
+      "U16:1": "checker:create_audit",
+      "U16:2": "checker:create_audit",
+      "U16:3": "checker:create_audit"
+    },
+    "related_suite_keys": [],
+    "rules": {
+      "checker_binding": {
+        "U16:1": "checker:create_audit",
+        "U16:2": "checker:create_audit",
+        "U16:3": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U16",
+      "rules": [
+        {
+          "category": "关键工序及关键特性是否被标识",
+          "id": "U16:1",
+          "priority": "P0",
+          "rule_to_check": "文件中须有关键工序标记；无任何标识则不通过；\n产品特性/过程特性列中，关键/重要/特殊特性须有符号标注；所有特性描述无标识则不通过；\n须有图例或注释定义关键标识含义（如「K 表示关键过程」）；有符号无解释则不通过；\n以上三项全部满足则通过，任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "过程流程图是否按物流规范采用标示图",
+          "id": "U16:2",
+          "priority": "P0",
+          "rule_to_check": "工序活动须以标准化图形符号表达；纯文字框/文字列表则不通过；\n图内须有图例且覆盖全部使用符号；无图例或不完整则不通过；\n同一活动类型须全图使用同一符号；同义混用则不通过；\n检验类活动（进货/过程/最终/巡检/自检）须以检验符号表达，图中无法识别则不通过；\n以上四项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，但判定依据需提醒用户进行人工复核。",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "过程流程图是否受控",
+          "id": "U16:3",
+          "priority": "P0",
+          "rule_to_check": "当过程流程图中包含受控章则通过，否则不通过；如果无法辨识则不通过，但判定依据需提醒用户进行人工复核",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "过程流程图（PFD）审核规则",
+      "type": "过程流程图"
+    }
+  },
+  "uaes/U17": {
+    "appendix": [],
+    "document_type": "零件提交保证书",
+    "entrypoints": {
+      "U17:1": "checker:create_audit",
+      "U17:2": "checker:create_audit",
+      "U17:3": "checker:create_audit",
+      "U17:4": "checker:create_audit",
+      "U17:5": "checker:create_audit"
+    },
+    "related_suite_keys": [],
+    "rules": {
+      "checker_binding": {
+        "U17:1": "checker:create_audit",
+        "U17:2": "checker:create_audit",
+        "U17:3": "checker:create_audit",
+        "U17:4": "checker:create_audit",
+        "U17:5": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U17",
+      "rules": [
+        {
+          "category": "基础信息识别",
+          "id": "U17:1",
+          "priority": "P0",
+          "rule_to_check": "当文件中存在零件名称、客户零件号、图纸号、供应商零件号、工程更改级别、日期、其他工程更改、日期、安全及政府条例字段，缺项则不通过；\n识别零件名称、客户零件号、图纸号、供应商零件号、工程更改级别、日期、其他工程更改、日期字段对应内容是否都不为空，如果有一项为空则不通过；\n识别安全及政府条例对应的选项是否有一项被勾选，如果都未勾选或多个都被勾选则不通过；\n以上三项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "供方制造信息区域识别",
+          "id": "U17:2",
+          "priority": "P0",
+          "rule_to_check": "识别文件中是否存在供方制造厂资料、买方资料两个区域，缺项则不通过；\n识别供方制造厂资料下是否存在公司名称字段且公司名称对应内容不为空，不存在或内容为空则不通过；\n识别买方资料下是否存在采购方及部门、采购方代码、应用字段，缺项或有项内容为空则不通过；\n识别文件中是否包含“是否报告了受客户关注的材料信息”，且字段对应的选项有一项被勾选，如果字段不存在或字段对应选项都未勾选或有多项被勾选则不通过；\n识别文件中是否包含“以IMDS或者其它客户格式递交”字段，且字段对应的内容不为空，如果字段不存在或内容为空则不通过；\n以上五项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "签字和盖章检查",
+          "id": "U17:3",
+          "priority": "P0",
+          "rule_to_check": "识别零件提交保证书中是否包含“供方代表签字”字段，如果不包含则不通过，判定依据为“零件提交保证书中缺少供方代表签字字段”；如果包含则继续识别；当“供方代表签字”内容存在且为手写签，同时文件中也包含印章则通过，否则不通过",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "提交原因检查",
+          "id": "U17:4",
+          "priority": "P0",
+          "rule_to_check": "识别是否包含“提交原因”字段，如果不包含则不通过，判定依据为“缺少提交原因”，否则继续识别；\n当“提交原因”区域选项都没有被选择则不通过，判定依据为“请勾选提交原因”，否则继续识别；\n当“提交原因”区域选项中的“其它----请说明”选项被选中且“其它----请说明”旁边的内容不为空，或者“其它----请说明”未被勾选且有其他选项被勾选则通过，否则不通过。",
+          "type_of_rule": "text"
+        },
+        {
+          "category": "要求提交的等级识别",
+          "id": "U17:5",
+          "priority": "P0",
+          "rule_to_check": "识别是否包含“要求提交的等级”字段，如果不包含则不通过，判定依据为“缺少要求提交的等级”，否则继续识别；\n当“缺少要求提交的等级”区域选项有一项被勾选则通过，否则不通过。",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "零件提交保证书（PSW）审核规则",
+      "type": "零件提交保证书"
+    }
+  },
+  "uaes/U18": {
+    "appendix": [],
+    "document_type": "E10",
+    "entrypoints": {
+      "U18:1": "checker:create_audit"
+    },
+    "related_suite_keys": [],
+    "rules": {
+      "checker_binding": {
+        "U18:1": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U18",
+      "rules": [
+        {
+          "category": "内容确认",
+          "id": "U18:1",
+          "priority": "P0",
+          "rule_to_check": "识别文件中是否包含“供应商零件追溯”表，且表内“基本信息”、“分供方追溯”、“生产过程追溯”、“交付追溯”、“追溯状态总结”区域都存在内容则通过，否则不通过。",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "零件追溯说明审核规则",
+      "type": "E10"
+    }
+  },
+  "uaes/U19": {
+    "appendix": [],
+    "document_type": "E11",
+    "entrypoints": {
+      "U19:1": "checker:create_audit"
+    },
+    "related_suite_keys": [],
+    "rules": {
+      "checker_binding": {
+        "U19:1": "checker:create_audit"
+      },
+      "customers": [
+        "UAES"
+      ],
+      "directory_coverage": "complete",
+      "kind": "engine",
+      "models": [],
+      "parts": [],
+      "preset_key": "U19",
+      "rules": [
+        {
+          "category": "报告认可结论判定",
+          "id": "U19:1",
+          "priority": "P0",
+          "rule_to_check": "检查封面表格中“否决 / Reject”列。若尺寸、材料、性能、试装任一行在「否决」列有标记（打×/勾），则该文件为否决件直接判定为不通过；否则继续执行；\n读取封面「UAES 批准的前提/备注」栏文字\n如果文字内容含\"完全认可\"且无偏差/整改表述则继续识别组长（Team Leader）、审核（Checked by）、批准（Approved by）三处签名+日期齐全且日期递增（组长≤审核≤批准）则通过，任一缺失或颠倒则不通过；\n如果文字内容含\"偏差认可/条件认可\"或描述超差/不合格整改承诺与期限则继续识别文件中或同批次提交的文件集中是否包含同零件编号、同零件名称的偏差认可汇总清单表或独立文件，且清单中包含零件号、偏差项、UAES评估确认、是否需要偏差等字段，缺失则不通过，否则继续识别；\n取封面的“UAES 批准的前提/备注”内容中整改承诺最晚期限（匹配\"…前完成…/截止…\"等句式，不取\"预计整改时间\"），若小于等于当前时间则判定不通过，并提醒\"封面条件认可时间(XX)早于当前(YY)，请确认整改是否逾期或已闭环\"；否则继续识别；\n逐行提取偏差认可汇总清单中的备注列信息（匹配\"临时偏差至<日期>\"等），任一行小于等于当前时间则不通过，并对该行提醒\"XX偏差项有效期(YY)已过期，请确认已更新批准或整改闭环\"，多条取最早为最需关注项；否则继续识别\n封面页提取的最晚期限和偏差认可汇总清单中提取的日期不一致，如果一致则通过，否则不通过，且判定依据需要合并列出两者并提示“封面条件认可时间与偏差汇总认可清单承诺时间不一致，请复核”\n如果文字内容无法归类或两类表述冲突则不通过，并提醒用户人工复核（以备注文字为首要依据，打×列仅交叉校验）。\n以上两项全部满足则通过；任一不满足则不通过；如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核；",
+          "type_of_rule": "text"
+        }
+      ],
+      "title": "顾客工程批准审核规则",
+      "type": "E11"
+    }
+  }
+}

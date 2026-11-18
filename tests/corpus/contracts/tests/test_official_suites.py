@@ -348,9 +348,9 @@ def test_corpus_selector_is_the_installed_u08_leaf():
     assert oracle.suite_sources()["uaes/U08"] is directory or oracle.suite_sources()["uaes/U08"] == directory
 
 
-def test_shared_oracle_path_is_not_stored_as_directory_identity():
+def test_corpus_table_path_is_not_stored_as_directory_identity():
     from product.seed_standard_suites import official_source_suites, persisted_source_path
 
-    assert persisted_source_path("assets/corpus/oracle.csv") is None
+    assert persisted_source_path("assets/corpus/uaes-oracle.csv") is None
     assert all(persisted_source_path(suite.source_path) == suite.source_path for suite in official_source_suites())
     assert persisted_source_path("uaes/U08") == "uaes/U08"

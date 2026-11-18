@@ -1,17 +1,12 @@
 """File recognition regression: every corpus target matches its own customer rule."""
 
-import csv
-
-from corpus_contracts.oracle import CASES_PATH, REPO_ROOT, customer_rules
+from corpus_contracts.oracle import REPO_ROOT, case_rows, customer_rules
 from worker.intake.file_analysis import analyze_file
 
 
 def _targets() -> list[tuple[str, object, str]]:
     # Recognition runs no Suite, so it reads the case table, not the reviewed rules.
-    rows = []
-    for path in (CASES_PATH, REPO_ROOT / "assets/corpus/uaes-cases.csv"):
-        with path.open(encoding="utf-8-sig", newline="") as source:
-            rows += [row for row in csv.DictReader(source) if row["角色"] == "target"]
+    rows = [row for row in case_rows() if row["角色"] == "target"]
     return sorted({(row["Checker组"], REPO_ROOT / row["原件"], row["提交文件名"]) for row in rows})
 
 

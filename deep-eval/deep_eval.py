@@ -24,18 +24,13 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-TABLES = {"main": ("cases.csv", "oracle.csv"), "uaes": ("uaes-cases.csv", "uaes-oracle.csv")}
-
-
 # ---- run (inside the deep image) ------------------------------------------------------------
 
 
-def _cases(table: str, dataset: str | None):
+def _cases(dataset: str):
     from corpus_contracts import oracle
 
-    cases_name, oracle_name = TABLES[table]
-    corpus = oracle.REPO_ROOT / "assets" / "corpus"
-    return oracle.load_oracle(dataset, cases=corpus / cases_name, oracle=corpus / oracle_name)
+    return oracle.load_oracle(dataset)
 
 
 class _Usage(logging.Handler):
@@ -85,7 +80,7 @@ def _rows(case, result: dict, deep: dict | None, reviews: dict) -> list[dict]:
     return rows
 
 
-def run_cases(table: str, dataset: str | None, indexes: list[int], out: Path) -> int:
+def run_cases(dataset: str, indexes: list[int], out: Path) -> int:
     from agent.core_program import CoreRuntime
     from agent.execution.isolation import ContainerRuntime, RuntimeConfig, local_gateway
     from agent.run import ExecutionContext
@@ -101,7 +96,7 @@ def run_cases(table: str, dataset: str | None, indexes: list[int], out: Path) ->
     usage = _Usage()
     logging.getLogger("agent.deep_review").addHandler(usage)
     logging.getLogger("agent.deep_review").setLevel(logging.INFO)
-    cases = _cases(table, dataset)
+    cases = _cases(dataset)
     out.mkdir(parents=True, exist_ok=True)
     state = Path("/run/ppap-isolation")
 
@@ -249,8 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="execute cases inside the deep image")
     run.add_argument("--out", type=Path, required=True)
-    run.add_argument("--table", choices=sorted(TABLES), default="main")
-    run.add_argument("--dataset", help="li, nio or uaes; default every dataset of the table")
+    run.add_argument("--dataset", choices=("li", "nio", "uaes"), default="uaes", help="one customer's corpus; customers are evaluated apart")
     run.add_argument("--shard", default="0/1", help="k/n: run cases whose position modulo n is k")
     run.add_argument("--case", type=int, action="append", help="only this case index (repeatable)")
     run.add_argument("--list", action="store_true", help="print the selected cases and stop")
@@ -260,14 +254,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "report":
         print(json.dumps(report(args.run), ensure_ascii=False, indent=1))
         return 0
-    cases = _cases(args.table, args.dataset)
+    cases = _cases(args.dataset)
     if args.list:
         for index, case in enumerate(cases):
             print(index, case.id)
         return 0
     shard, shards = (int(part) for part in args.shard.split("/"))
     indexes = [index for index in (args.case or range(len(cases))) if index % shards == shard]
-    return run_cases(args.table, args.dataset, indexes, args.out)
+    return run_cases(args.dataset, indexes, args.out)
 
 
 if __name__ == "__main__":

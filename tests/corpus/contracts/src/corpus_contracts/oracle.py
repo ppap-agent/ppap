@@ -15,9 +15,8 @@ from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, Rul
 from audit.standard_suites import StandardSuite, library_revision, predefined_directory_suites
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
-CASES_PATH = REPO_ROOT / "assets/corpus/cases.csv"
-ORACLE_PATH = REPO_ROOT / "assets/corpus/oracle.csv"
-REVIEWED_RULES_PATH = REPO_ROOT / "assets/corpus/reviewed-rules.json"
+CORPUS = REPO_ROOT / "assets/corpus"
+# Each customer keeps its own cases, human truth and reviewed rules; materials never mix.
 DATASETS = ("li", "nio", "uaes")
 FILE_COLUMNS = ("数据集", "组合ID", "文件ID", "原件", "提交文件名", "角色", "Suite版本", "Checker组", "Binding")
 EXPECTED_COLUMNS = ("数据集", "组合ID", "文件ID", "条款ID", "人工真值", "条款说明", "人工判定依据", "判定人", "判定日期", "已知差距")
@@ -26,6 +25,13 @@ TRUTHS = frozenset({"PASS", "NG", "UNABLE", "NA"})
 _KNOWN_GAP = re.compile(r"^(PASS|NG|UNABLE|NA|ERR) \S.*$")
 # A Suite is named by its checker leaf path, e.g. ``li/L08``.
 _REVISION = re.compile(r"^[^/@\s]+/[^/@\s]+$")
+
+
+def table(dataset: str, kind: str, *, corpus: Path = CORPUS) -> Path:
+    """One customer's table: kind is cases.csv, oracle.csv or reviewed-rules.json."""
+    if dataset not in DATASETS or kind not in {"cases.csv", "oracle.csv", "reviewed-rules.json"}:
+        raise ValueError(f"Unknown corpus table: {dataset}-{kind}")
+    return corpus / f"{dataset}-{kind}"
 
 
 @lru_cache(maxsize=1)
@@ -48,7 +54,13 @@ def reviewed_contract(suite: StandardSuite) -> dict:
 @lru_cache(maxsize=1)
 def reviewed_rules() -> dict:
     # Never regenerate this historical human-review evidence from current code.
-    return json.loads(REVIEWED_RULES_PATH.read_text(encoding="utf-8"))
+    merged: dict = {}
+    for dataset in DATASETS:
+        reviewed = json.loads(table(dataset, "reviewed-rules.json").read_text(encoding="utf-8"))
+        if any(not key.startswith(dataset + "/") for key in reviewed):
+            raise ValueError(f"{dataset}-reviewed-rules.json holds another customer's Suite")
+        merged.update(reviewed)
+    return merged
 
 
 @dataclass(frozen=True)
@@ -123,7 +135,22 @@ def _rows(path: Path, columns: tuple[str, ...]) -> list[dict[str, str]]:
     return result
 
 
-def load_oracle(dataset: str | None = None, *, cases: Path = CASES_PATH, oracle: Path = ORACLE_PATH, root: Path = REPO_ROOT) -> list[OracleCase]:
+def load_oracle(dataset: str | None = None, *, cases: Path | None = None, oracle: Path | None = None, root: Path = REPO_ROOT) -> list[OracleCase]:
+    """One customer's tables, or each customer's in turn; explicit tables are loaded as given."""
+    if cases is not None or oracle is not None:
+        if cases is None or oracle is None:
+            raise ValueError("Explicit corpus tables come in pairs")
+        return [case for case in _load_table(cases, oracle, root) if dataset is None or case.dataset == dataset]
+    result = []
+    for name in (dataset,) if dataset is not None else DATASETS:
+        loaded = _load_table(table(name, "cases.csv"), table(name, "oracle.csv"), root)
+        if any(case.dataset != name for case in loaded):
+            raise ValueError(f"{name} tables hold another customer's cases")
+        result += loaded
+    return result
+
+
+def _load_table(cases: Path, oracle: Path, root: Path) -> list[OracleCase]:
     """Validate the whole table before selecting cases; missing assets cannot skip."""
     files = _rows(cases, FILE_COLUMNS)
     expected = _rows(oracle, EXPECTED_COLUMNS)
@@ -167,12 +194,18 @@ def load_oracle(dataset: str | None = None, *, cases: Path = CASES_PATH, oracle:
         groups.setdefault(key[:2], []).append(file)
     if any(not any(file.role == "target" for file in group) for group in groups.values()):
         raise ValueError("Oracle case has no targets")
-    return [OracleCase(key[0], key[1], tuple(items)) for key, items in groups.items() if dataset is None or key[0] == dataset]
+    return [OracleCase(key[0], key[1], tuple(items)) for key, items in groups.items()]
 
 
-def original(filename: str, *, cases: Path = CASES_PATH, root: Path = REPO_ROOT) -> Path:
+def case_rows(dataset: str | None = None) -> list[dict[str, str]]:
+    """File rows of one customer's case table, or of every customer's."""
+    return [row for name in ((dataset,) if dataset else DATASETS) for row in _rows(table(name, "cases.csv"), FILE_COLUMNS)]
+
+
+def original(filename: str, *, cases: Path | None = None, root: Path = REPO_ROOT) -> Path:
     """Content-addressed path of one submitted file, for regressions that pin a specific original."""
-    paths = {row["原件"] for row in _rows(cases, FILE_COLUMNS) if row["提交文件名"] == filename}
+    rows = _rows(cases, FILE_COLUMNS) if cases is not None else case_rows()
+    paths = {row["原件"] for row in rows if row["提交文件名"] == filename}
     if len(paths) != 1:
         raise ValueError(f"Expected one original named {filename}, found {len(paths)}")
     return root / paths.pop()
