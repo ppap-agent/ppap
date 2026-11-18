@@ -1,0 +1,605 @@
+[
+ {
+  "kind": "ocr",
+  "model": "deepseek/deepseek-v4.1-flash-1017",
+  "request": {
+   "input": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "input_text",
+       "text": "这是一页零件提交保证书（PSW）的原件图像。请把图中可见内容按 JSON Schema 转写，只转写，不判断是否合格。\npresent：表单上印有该栏位、区域或选项组的标签为 true，没有为 false，看不清为 null。\nvalue：照原样转写栏中填写的内容（打印或手写均可），栏位空白写空字符串，看不清写 null。\noptions：按表单顺序列出该组的每一个选项；实际被勾选（√、×、涂黑等）为 true，明确未勾选为 false，看不清为 null。\n供方代表签字：handwritten 只在签字栏中有实际手写签名时为 true；打印姓名、电子/数字签名文字或空白为 false；value 转写签字栏中的可见文字。\nink_seal：页面上任何位置有用印泥盖的实际印章为 true；表头印刷的品牌标志、电子/数字签名文字框、勾选框不算印章；确认没有为 false，看不清为 null。\n字段与表单标签的对应：\npart_name: 零件名称（Part Name）\ncustomer_part_number: 客户零件号（Cust. Part Number）\ndrawing_number: 图纸号（Shown on Drawing No.）\norganization_part_number: 供应商零件号（Org. Part Number）\nengineering_change_level: 工程更改级别（Engineering Change Level / Technical change status）\nengineering_change_level_date: 工程更改级别的日期（Date）\nadditional_engineering_changes: 其他工程更改（Additional Engineering Changes）\nadditional_engineering_changes_date: 其他工程更改的日期（Date）\nsafety_government_regulation: 安全及政府条例（Safety and/or Government Regulation）\norganization_area: 供方制造厂资料（Organization Manufacturing Information）\nsupplier_name: 公司名称（Supplier Name）\ncustomer_area: 买方资料（Customer Submittal Information）\ncustomer_name_division: 采购方及部门（Customer Name/Division）\nbuyer_code: 采购方代码（Buyer/Buyer Code）\napplication: 应用（Application）\nsubstances_of_concern_reported: 是否报告了受客户关注的材料信息（Substances of Concern）\nimds_submission: 以IMDS或者其它客户格式递交（Submitted by IMDS or other customer format）\nsupplier_authorized_signature: 供方代表签字（Supplier Authorized Signature）\nreason_for_submission: 提交原因（Reason for Submission）\nreason_other_text: “其它----请说明（Other - please specify）”旁边的说明\nrequested_submission_level: 要求提交的等级（Requested Submission Level）"
+      },
+      {
+       "type": "input_image",
+       "image_url": "<png 1654x2339>",
+       "detail": "high"
+      }
+     ]
+    }
+   ],
+   "text": {
+    "format": {
+     "type": "json_schema",
+     "name": "transcription",
+     "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "part_name",
+       "customer_part_number",
+       "drawing_number",
+       "organization_part_number",
+       "engineering_change_level",
+       "engineering_change_level_date",
+       "additional_engineering_changes",
+       "additional_engineering_changes_date",
+       "safety_government_regulation",
+       "organization_area",
+       "supplier_name",
+       "customer_area",
+       "customer_name_division",
+       "buyer_code",
+       "application",
+       "substances_of_concern_reported",
+       "imds_submission",
+       "supplier_authorized_signature",
+       "reason_for_submission",
+       "reason_other_text",
+       "requested_submission_level",
+       "ink_seal"
+      ],
+      "properties": {
+       "part_name": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "customer_part_number": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "drawing_number": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "organization_part_number": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "engineering_change_level": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "engineering_change_level_date": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "additional_engineering_changes": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "additional_engineering_changes_date": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "safety_government_regulation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "options"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "options": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "additionalProperties": false,
+           "required": [
+            "label",
+            "checked"
+           ],
+           "properties": {
+            "label": {
+             "type": [
+              "string",
+              "null"
+             ]
+            },
+            "checked": {
+             "type": [
+              "boolean",
+              "null"
+             ]
+            }
+           }
+          }
+         }
+        }
+       },
+       "organization_area": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         }
+        }
+       },
+       "supplier_name": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "customer_area": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         }
+        }
+       },
+       "customer_name_division": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "buyer_code": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "application": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "substances_of_concern_reported": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "options"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "options": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "additionalProperties": false,
+           "required": [
+            "label",
+            "checked"
+           ],
+           "properties": {
+            "label": {
+             "type": [
+              "string",
+              "null"
+             ]
+            },
+            "checked": {
+             "type": [
+              "boolean",
+              "null"
+             ]
+            }
+           }
+          }
+         }
+        }
+       },
+       "imds_submission": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "supplier_authorized_signature": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "handwritten",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "handwritten": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "reason_for_submission": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "options"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "options": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "additionalProperties": false,
+           "required": [
+            "label",
+            "checked"
+           ],
+           "properties": {
+            "label": {
+             "type": [
+              "string",
+              "null"
+             ]
+            },
+            "checked": {
+             "type": [
+              "boolean",
+              "null"
+             ]
+            }
+           }
+          }
+         }
+        }
+       },
+       "reason_other_text": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "value"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "value": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "requested_submission_level": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "present",
+         "options"
+        ],
+        "properties": {
+         "present": {
+          "type": [
+           "boolean",
+           "null"
+          ]
+         },
+         "options": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "additionalProperties": false,
+           "required": [
+            "label",
+            "checked"
+           ],
+           "properties": {
+            "label": {
+             "type": [
+              "string",
+              "null"
+             ]
+            },
+            "checked": {
+             "type": [
+              "boolean",
+              "null"
+             ]
+            }
+           }
+          }
+         }
+        }
+       },
+       "ink_seal": {
+        "type": [
+         "boolean",
+         "null"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "max_output_tokens": 4096,
+   "extra_body": {
+    "reasoning": {
+     "effort": "none"
+    }
+   }
+  },
+  "request_sha256": "92c72a30a565a85142c0570aade921c49ed18d18eefcdf2f304abf023f8200cb",
+  "answer": "{\"part_name\": {\"present\": true, \"value\": \"Halterahmen\"}, \"customer_part_number\": {\"present\": true, \"value\": \"1271321139\"}, \"drawing_number\": {\"present\": true, \"value\": \"1 271 321 139\"}, \"organization_part_number\": {\"present\": true, \"value\": \"1 271 321 139\"}, \"engineering_change_level\": {\"present\": true, \"value\": \"1039R1257301 /01\"}, \"engineering_change_level_date\": {\"present\": true, \"value\": \"22.6.2018\"}, \"additional_engineering_changes\": {\"present\": true, \"value\": \"BOM ECR:1039K06187\"}, \"additional_engineering_changes_date\": {\"present\": true, \"value\": \"17.03.2022\"}, \"safety_government_regulation\": {\"present\": true, \"options\": [{\"label\": \"Yes\", \"checked\": false}, {\"label\": \"No\", \"checked\": true}]}, \"organization_area\": {\"present\": true}, \"supplier_name\": {\"present\": true, \"value\": \"Swoboda Technologies CZ /360593958\"}, \"customer_area\": {\"present\": true}, \"customer_name_division\": {\"present\": true, \"value\": \"Robert Bosch GmbH 6580\"}, \"buyer_code\": {\"present\": true, \"value\": \"Frentz, Andreas (M/PUR21.2)\"}, \"application\": {\"present\": true, \"value\": \"\"}, \"substances_of_concern_reported\": {\"present\": true, \"options\": [{\"label\": \"Yes\", \"checked\": false}, {\"label\": \"No\", \"checked\": false}, {\"label\": \"n/a\", \"checked\": true}]}, \"imds_submission\": {\"present\": true, \"value\": \"522944908\"}, \"supplier_authorized_signature\": {\"present\": true, \"handwritten\": true, \"value\": \"\"}, \"reason_for_submission\": {\"present\": true, \"options\": [{\"label\": \"Initial submission\", \"checked\": false}, {\"label\": \"Engineering change(s)\", \"checked\": false}, {\"label\": \"Tooling: Transfer, Replacement, Refurbishment, or additional\", \"checked\": false}, {\"label\": \"Correction of discrepancy\", \"checked\": false}, {\"label\": \"Tooling Inactive > than 1 year\", \"checked\": false}, {\"label\": \"Change to optional construction or material\", \"checked\": false}, {\"label\": \"Supplier or Material Source Change\", \"checked\": false}, {\"label\": \"Change in part processing\", \"checked\": true}, {\"label\": \"Parts produced at additional location\", \"checked\": false}, {\"label\": \"Other - please specify\", \"checked\": false}]}, \"reason_other_text\": {\"present\": true, \"value\": \"\"}, \"requested_submission_level\": {\"present\": true, \"options\": [{\"label\": \"Level 1 - Warrant only (and for designated appearance items, an Appearance Approval Report) submitted to customer.\", \"checked\": false}, {\"label\": \"Level 2 - Warrant with product samples and limited supporting data submitted to customer.\", \"checked\": false}, {\"label\": \"Level 3 - Warrant with product samples and complete supporting data submitted to customer.\", \"checked\": false}, {\"label\": \"Level 4 - Warrant and other requirements as defined by customer.\", \"checked\": true}, {\"label\": \"Level 5 - Warrant with product samples and complete supporting data reviewed at organization's manufacturing location.\", \"checked\": false}]}, \"ink_seal\": false}"
+ }
+]
