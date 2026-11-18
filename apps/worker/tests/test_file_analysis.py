@@ -102,7 +102,8 @@ def test_customer_preference_selects_an_actual_rule_without_replacing_recognized
     )
 
 
-def test_missing_preferred_scope_falls_back_to_the_customer_identified_in_the_file() -> None:
+def test_a_chosen_rule_set_never_falls_back_to_the_customer_name_a_file_writes() -> None:
+    # The customer name in a file is the file's own fact, not a rule set: without a rule of the chosen set the file stays unmatched.
     result = analyze_file(
         "供应商资料.xlsx",
         workbook_bytes(("客户", "乙客户"), ("文件类型", "过程流程图")),
@@ -113,7 +114,7 @@ def test_missing_preferred_scope_falls_back_to_the_customer_identified_in_the_fi
         scoped=True,
     )
 
-    assert (result["matched_rule_id"], result["matching_status"], result["document_type"]) == ("identified", "matched", "过程流程图")
+    assert (result["matched_rule_id"], result["matching_status"], result["document_type"], result["notices"]) == (None, "unmatched", "过程流程图", ["matching_customer_rules_missing"])
 
 
 @pytest.mark.parametrize(

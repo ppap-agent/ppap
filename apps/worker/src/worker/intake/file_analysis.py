@@ -198,7 +198,11 @@ def analyze_file(
     elif scoped and inferred == PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST and not v4_mode:
         matching = "reference"
     elif scoped:
-        customers = tuple(dict.fromkeys(value.strip().casefold() for value in (selected_customer if v4_mode else customer_preference, metadata["customer"]) if value and value.strip()))
+        # The chosen rule set is the only scope; the customer name a file writes is one of its facts, not a rule set.
+        # Only when no rule set is chosen ("自动识别") does that name pick the rules.
+        chosen = (selected_customer if v4_mode else customer_preference or "").strip().casefold()
+        written = (metadata["customer"] or "").strip().casefold()
+        customers = (chosen,) if chosen else ((written,) if written else ())
         typed_rules = [
             rule
             for rule in candidates

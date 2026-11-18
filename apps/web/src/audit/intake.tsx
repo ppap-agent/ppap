@@ -22,7 +22,7 @@ import {FileTypeBadge} from './file-type-badge'
 import {AccountMenu, useAccess} from '../journey/access'
 import {FeishuPicker, FeishuFolderPicker, type DrivePickerSource} from './feishu-picker'
 import {checkerSuiteUnavailable, confirmationScope, suiteAdmissionBlocks, useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
-import {ruleCustomer, useTaskRecognition, type AuditRecognitionAdapter} from './task-recognition'
+import {ruleChoicesFor, ruleCustomer, useTaskRecognition, type AuditRecognitionAdapter} from './task-recognition'
 import {AuditExcludedFiles, AuditWorkspace} from './workspace'
 import {useMinWidth, type OriginalRenderer} from './review-content'
 import {clauseLabel, sameFrozenInputs, sameSnapshot, progressRegressed, reconcileTaskNotification} from './result-projection'
@@ -88,7 +88,7 @@ export type AuditIntakeAdapter = AuditAcceptanceAdapter & AuditRecognitionAdapte
   prepareReaudit?: (roundId: string) => Promise<components['schemas']['AuditReauditInputs']>
   readRound?: ReadRound
 }
-type RuleChoice = {id: string; title: string; type?: string; template?: string}
+type RuleChoice = {id: string; title: string; type?: string; template?: string; customers?: string[]; customer_scope?: string}
 const lastTemplateKey = 'ppap.rule-template'
 const lastTemplate = () => {try {return localStorage.getItem(lastTemplateKey) ?? ''} catch {return ''}}
 const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewing: executionLabel.running, completed: executionLabel.completed}
@@ -905,7 +905,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     const match = row.match
     if (!match || matchPending(row) || match.state === 'reference') return []
     const candidates = match.candidates ?? []
-    const options = [...candidates.map(rule => ({id: rule.id, title: rule.title})), ...ruleChoices.filter(rule => !candidates.some(item => item.id === rule.id))]
+    const options = [...candidates.map(rule => ({id: rule.id, title: rule.title})), ...ruleChoicesFor(ruleChoices, task?.customer_preference).filter(rule => !candidates.some(item => item.id === rule.id))]
     return options.length < (match.state === 'matched' ? 2 : 1) ? [] : options
   }
   const ruleChoiceOpen = (row: AuditTaskFile) => (row.match?.candidates?.length ?? 0) > 1 || ruleChanging.includes(row.file.id)

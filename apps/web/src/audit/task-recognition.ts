@@ -16,6 +16,18 @@ export type RecognitionObservation = {requestId: string; taskId: string; phase: 
 export function ruleCustomer(rule: NonNullable<Task['files'][number]['match']>['rule']): string {
   return rule?.body.kind === 'engine' ? rule.body.customers?.[0] ?? '' : ''
 }
+/**
+ * The rules a person may point a file at by hand. With a rule set chosen only that set's rules and the explicitly
+ * unrestricted ones qualify (any other set would be refused when the audit starts); in 自动识别 every rule is offered,
+ * each titled with its rule set so two rules of the same name stay apart.
+ */
+export function ruleChoicesFor<T extends {id: string; title: string; customers?: string[]; customer_scope?: string}>(choices: T[], customer: string | null | undefined): {id: string; title: string}[] {
+  const chosen = customer?.trim().toLowerCase()
+  const sets = (rule: T) => (rule.customers ?? []).map(name => name.trim()).filter(Boolean)
+  return choices
+    .filter(rule => !chosen || (rule.customer_scope === 'all' && !sets(rule).length) || sets(rule).some(name => name.toLowerCase() === chosen))
+    .map(rule => ({id: rule.id, title: !chosen && sets(rule).length ? `${sets(rule).join('、')} · ${rule.title}` : rule.title}))
+}
 const unknownMessage = '识别请求结果尚未确认。文件与选择已保留；请查看原请求结果，不要重复开始识别。'
 
 function acceptedInput(input: RecognitionInput, next: Task, requestId: string, taskId: string) {

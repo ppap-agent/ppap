@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createTaskRecognition, ruleCustomer, type AuditRecognitionAdapter} from './task-recognition.ts'
+import {createTaskRecognition, ruleChoicesFor, ruleCustomer, type AuditRecognitionAdapter} from './task-recognition.ts'
 
 type Task = components['schemas']['AuditTask']
 const files: Task['files'] = [{file: {id: 'version-a', file_id: 'file-a', original_filename: 'a.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 10, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: null}]
@@ -147,4 +147,15 @@ test('a matched rule is labelled with its rule set, never the customer a file wr
   const rule = {id: 'rule-u16', title: '过程流程图（PFD）审核规则', body: {kind: 'engine', type: '过程流程图', customers: ['UAES'], rules: []}} as unknown as Parameters<typeof ruleCustomer>[0]
   assert.equal(ruleCustomer(rule), 'UAES')
   assert.equal(ruleCustomer(null), '')
+})
+
+test('a hand-picked rule comes from the chosen rule set; 自动识别 names each rule set', () => {
+  const choices = [
+    {id: 'uaes', title: '过程流程图（PFD）审核规则', customers: ['UAES'], customer_scope: 'restricted'},
+    {id: 'li', title: '08 过程流程图', customers: ['理想'], customer_scope: 'restricted'},
+    {id: 'any', title: '通用存在性检查', customers: [], customer_scope: 'all'},
+    {id: 'unconfirmed', title: '未确认分类', customers: [], customer_scope: 'unconfirmed'},
+  ]
+  assert.deepEqual(ruleChoicesFor(choices, 'UAES').map(rule => rule.id), ['uaes', 'any'])
+  assert.deepEqual(ruleChoicesFor(choices, null).map(rule => rule.title), ['UAES · 过程流程图（PFD）审核规则', '理想 · 08 过程流程图', '通用存在性检查', '未确认分类'])
 })

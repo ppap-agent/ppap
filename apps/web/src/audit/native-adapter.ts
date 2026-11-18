@@ -326,7 +326,7 @@ export function createNativeAuditAdapter(options: {customers: string[]; personal
       // Recognition accepts only the newest version of a rule: one no other version names as its predecessor.
       const replaced = new Set(rules.map(rule => rule.predecessor_id))
       // The same template keys the rules page shows, so a person picks a template by the name they already know.
-      return rules.filter(rule => rule.kind === 'engine' && !replaced.has(rule.id)).map(rule => ({id: rule.id, title: rule.title, type: rule.type ?? undefined, template: ruleTemplateKey(rule)}))
+      return rules.filter(rule => rule.kind === 'engine' && !replaced.has(rule.id)).map(rule => ({id: rule.id, title: rule.title, type: rule.type ?? undefined, template: ruleTemplateKey(rule), customers: rule.customers ?? [], customer_scope: rule.customer_scope}))
     },
     prepareReaudit: roundId => request(`/rounds/${encoded(roundId)}/reaudit-inputs`),
     match: (files, customer, previous, requestId, predecessorId, preparation) => request<AuditTask>('/audit-tasks', 'POST', {
