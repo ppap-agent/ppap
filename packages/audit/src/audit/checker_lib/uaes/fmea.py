@@ -150,14 +150,13 @@ class UaesPfmeaAgent(UaesExcelAgent):
         table = next((table for table in legacy.native().tables() if table["id"] == sheet.title), None)
         return None if table is None else legacy.table_footer(table, row)
 
-    def part_number(self, ctx: RuleContext) -> str:
-        """The PFMEA part number, read beside its label; an unlabelled value is not identified."""
+    def part_number(self, ctx: RuleContext) -> tuple[str | None, str]:
+        """(part number, why none): read beside its label only; an unlabelled or ambiguous value is not identified."""
         # A part number has no spaces; V040 writes several "label：value" fields in one header cell.
         found = {compact(value.split()[0]).upper() for sheet in self.sheets(ctx) for value in self.labelled(sheet, _PART_LABELS) if compact(value)}
-        if len(found) != 1 or not pair_identity(next(iter(found))):
-            described = "零件号有多个取值：" + "、".join(sorted(found)) if found else "未标注零件号"
-            raise unable(f"PFMEA{described}，尚不能确认本文件零件号，需人工复核。")
-        return next(iter(found))
+        if len(found) == 1 and pair_identity(next(iter(found))):
+            return next(iter(found)), ""
+        return None, "PFMEA零件号有多个取值：" + "、".join(sorted(found)) if found else "PFMEA表头未标注零件号"
 
     def project(self, sheets: list[Sheet]) -> str | None:
         """The one project the sheets state; unstated, placeholder or several projects leave it unknown."""
@@ -368,7 +367,10 @@ class UaesPfmeaAgent(UaesExcelAgent):
             if unknown:
                 raise unable(f"同批次没有已识别的特殊特性清单，另有{len(unknown)}份原件类型未识别，尚不能确认是否缺少特殊特性清单，需人工复核。")
             return "NG", "同批次没有特殊特性清单，请提交同项目、同物料编号的特殊特性清单后一起复审。"
-        part = self.part_number(ctx)
+        part, unread = self.part_number(ctx)
+        if part is None:
+            # The clause fails what cannot be made out ("无法辨识则不通过") and asks for a person.
+            return "NG", f"{unread}，无法辨识本文件物料编号，不能按条款配对同项目、同物料编号的特殊特性清单，判不通过，请人工复核。"
         project = self.project(self.sheets(ctx))
         characteristics, undetermined, unstated = self.batch_lists(ctx, part, project)
         if not characteristics:
@@ -412,7 +414,10 @@ class UaesPfmeaAgent(UaesExcelAgent):
             if unknown := self.untyped():
                 raise unable(f"同批次没有已识别的采购件质量计划，另有{len(unknown)}份原件类型未识别，尚不能确认是否缺少PGQP1，需人工复核。")
             return "NG", "同批次没有采购件质量计划（含PGQP1表），存在缺项文件，请补充后复审。"
-        part = self.part_number(ctx)
+        part, unread = self.part_number(ctx)
+        if part is None:
+            # The clause fails what cannot be made out ("无法辨识则不通过") and asks for a person.
+            return "NG", f"{unread}，无法辨识本文件零件号，不能按条款配对同零件号的采购件质量计划，判不通过，请人工复核。"
         others, characteristics = [], []
         for plan in plans:
             with self.reading(ctx, plan, pgqp1):
