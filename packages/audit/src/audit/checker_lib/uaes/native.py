@@ -743,4 +743,10 @@ class UaesSourceAgent(BaseAgent):
                 return "PASS", "原件中盖有受控章（图片内文字“" + text.strip() + "”）。"
         observed = self.visual_pdf({"controlled_stamp": "文件中存在真实盖上的受控章；只有“受控章/受控/盖章处”文字标签、空白盖章栏时不算。"}, existential_fields=("controlled_stamp",))
         fact = observed["controlled_stamp"]
-        return ("PASS", "已从原件核实受控章。") if fact is True else ("NG", "原件没有受控章。") if fact is False else ("UNABLE", "受控章尚未核实，需人工核对。")
+        if fact is True:
+            return "PASS", "已从原件核实受控章。"
+        if fact is False:
+            return "NG", "原件没有受控章。"
+        # UAES rules are fail-closed here (customer): a stamp that cannot be made out fails and goes to a person.
+        # A failed model request is not this case; it surfaces as a technical error before reaching here.
+        return "NG", "无法辨识受控章，判不通过，请人工复核。"
