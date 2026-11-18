@@ -34,6 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ofn import NOTHING, THING, Node, literal_text, local, parse, rename, walk, write
+from report import MISSING, Clause, Found, compress, render
 
 ROBOT = Path(__file__).with_name("robot")
 UNSAT = re.compile(r"unsatisfiable: (\S+)")
@@ -64,21 +65,23 @@ def annotation_values(nodes, name: str):
             yield item.args[-2], literal_text(item.args[-1])
 
 
-def alignment(path: Path, ontology) -> list[str]:
-    """Problems with how the ontology quotes its clause; empty when every part of the clause is quoted."""
+def alignment(path: Path, ontology) -> tuple[list[str], Clause | None, list[str]]:
+    """(problems, the clause, unquoted spans) for how the ontology quotes its clause."""
     sources = [text for _, text in annotation_values(ontology.annotations, "clause")]
     if not sources:
-        return ['没有 Annotation(:clause "<rules.json 路径>#<条款 id>")，无法对齐原文']
+        return ['没有 Annotation(:clause "<rules.json 路径>#<条款 id>")，无法对齐原文'], None, []
     file_name, _, rule_id = sources[0].partition("#")
     rules = next((parent / file_name for parent in [Path.cwd(), *path.resolve().parents] if (parent / file_name).exists()), None)
     if rules is None:
-        return [f"找不到规则文件 {file_name}"]
-    clause = next((rule["rule_to_check"] for rule in json.loads(rules.read_text(encoding="utf-8"))["rules"] if rule["id"] == rule_id), None)
-    if clause is None:
-        return [f"{file_name} 里没有条款 {rule_id}"]
-    text = re.sub(r"\s+", "", clause)
+        return [f"找不到规则文件 {file_name}"], None, []
+    document = json.loads(rules.read_text(encoding="utf-8"))
+    rule = next((rule for rule in document["rules"] if rule["id"] == rule_id), None)
+    if rule is None:
+        return [f"{file_name} 里没有条款 {rule_id}"], None, []
+    info = Clause(document.get("title", ""), rule_id, rule.get("category", ""), rule["rule_to_check"])
+    text = re.sub(r"\s+", "", rule["rule_to_check"])
     covered = [False] * len(text)
-    problems = []
+    problems, spans = [], []
     for _, quote in annotation_values(ontology.axioms + ontology.annotations, "quote"):
         fragment = re.sub(r"\s+", "", quote)
         starts = [match.start() for match in re.finditer(re.escape(fragment), text)] if fragment else []
@@ -90,14 +93,16 @@ def alignment(path: Path, ontology) -> list[str]:
         span = "".join(char for _, char in group)
         if not is_covered and set(span) - PUNCTUATION:
             problems.append(f"原文未写进本体：「{span}」")
-    return problems
+            spans.append(span)
+    return problems, info, spans
 
 
 LIMIT_KINDS = {"predicate": "写不出的谓词", "open-world": "开放世界", "output": "对检查程序的要求"}
 
 
-def limits(base: list[Node]) -> list[tuple[str, str, str | None, list[str]]]:
-    """(kind, quoted fragment, subject class or None, undefined situations) for every quote marked with :limit."""
+def limits(base: list[Node]) -> list[tuple[str | None, str, str | None, list[str], str | None]]:
+    """(kind or None, quoted fragment, subject class or None, undefined situations, plain sentence or None)
+    for every quote marked with :limit or :open."""
     found = []
     for item in (sub for node in base for sub in walk(node)):
         if not isinstance(item, Node) or item.head not in ("Annotation", "AnnotationAssertion"):
@@ -107,31 +112,15 @@ def limits(base: list[Node]) -> list[tuple[str, str, str | None, list[str]]]:
             continue
         meta = [arg for arg in item.args if isinstance(arg, Node) and arg.head == "Annotation"]
         kinds = [literal_text(arg.args[-1]) for arg in meta if local(arg.args[-2]) == "limit"]
-        if kinds:
-            situations = [literal_text(arg.args[-1]) for arg in meta if local(arg.args[-2]) == "open"]
-            found.append((kinds[0], literal_text(item.args[-1]), item.args[-2] if assertion else None, situations))
+        situations = [literal_text(arg.args[-1]) for arg in meta if local(arg.args[-2]) == "open"]
+        says = next((literal_text(arg.args[-1]) for arg in meta if local(arg.args[-2]) == "says"), None)
+        if kinds or situations:
+            found.append((kinds[0] if kinds else None, literal_text(item.args[-1]), item.args[-2] if assertion else None, situations, says))
     return found
 
 
 def mentions(axiom: Node, iris: set[str]) -> bool:
     return any(isinstance(item, str) and item in iris for item in walk(axiom))
-
-
-def compress(combos: set[tuple], letters: list[list[str]]) -> list[tuple]:
-    """Merge combinations that differ in one position until nothing merges; each result is a tuple of letter sets."""
-    patterns = {tuple(frozenset([letter]) for letter in combo) for combo in combos}
-    merged = True
-    while merged:
-        merged = False
-        for left, right in itertools.combinations(sorted(patterns, key=str), 2):
-            differ = [i for i in range(len(left)) if left[i] != right[i]]
-            if len(differ) == 1:
-                i = differ[0]
-                patterns -= {left, right}
-                patterns.add(left[:i] + (left[i] | right[i],) + left[i + 1 :])
-                merged = True
-                break
-    return sorted(patterns, key=lambda pattern: [sorted(part) for part in pattern])
 
 
 def show(patterns: list[tuple], ids: list[str], letters: list[list[str]]) -> str:
@@ -145,7 +134,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("inputs", nargs="+", type=Path)
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--report", type=Path, help="plain-language report (default: <clause>.report.md for one input, report.md beside merged inputs)")
     args = parser.parse_args(argv)
+    report_path: Path = args.report or (args.inputs[0].with_suffix(".report.md") if len(args.inputs) == 1 else args.inputs[0].parent / "report.md")
     files: list[Path] = args.inputs
     out: Path = args.out or files[0].with_suffix(".robot")
     out.mkdir(parents=True, exist_ok=True)
@@ -157,8 +148,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     findings = 0
+    found = Found()
     for path, ontology in zip(files, ontologies):
-        problems = alignment(path, ontology)
+        problems, clause, spans = alignment(path, ontology)
+        if clause:
+            found.clauses.append(clause)
+        found.unaligned += spans
         findings += len(problems)
         for problem in problems:
             print(f"[原文对齐] {path.name}：{problem}")
@@ -190,7 +185,16 @@ def main(argv: list[str] | None = None) -> int:
 
     exhaustive = {member for node in base if node.head == "DisjointUnion" for member in node.args[1:] if isinstance(member, str)}
     probed = {member for _, members in outside.values() for member in members}
-    for kind, quote, subject, situations in limits(base):
+    for kind, quote, subject, situations, says in limits(base):
+        undefined = [text for text in situations if text != "无"]
+        if undefined:
+            found.undefined.append((quote, undefined))
+        if kind is None:
+            continue
+        if kind == "output":
+            found.requirements.append(says or f"原文要求：{quote}。")
+        if kind == "open-world":
+            found.requirements.append(says or f"判断「{quote}」时，要能确认文件里确实没有，才能判“不存在”。")
         if kind not in LIMIT_KINDS:
             findings += 1
             print(f"[表达局限] 「{quote}」：未知类别 {kind}，只能是 {'、'.join(LIMIT_KINDS)}")
@@ -201,7 +205,6 @@ def main(argv: list[str] | None = None) -> int:
             if not subject or subject not in exhaustive | probed:
                 findings += 1
                 line += "；抽象出的类不在穷尽或受完备性检查的互斥组里"
-            undefined = [text for text in situations if text != "无"]
             if not situations:
                 findings += 1
                 line += '；没有列出原文没定义的情况（全部有定义就写 :open "无"）'
@@ -253,6 +256,17 @@ def main(argv: list[str] | None = None) -> int:
                 changed = True
 
     combos = list(itertools.product(*letters))
+    found.ids, found.letters, found.combos = ids, letters, combos
+    plain = {name: dict(annotation_values(base, name)) for name in ("issue", "question", "example", "label", "says")}
+    for point, readings in points.items():
+        position = ids.index(ambiguity_of[point])
+        for name, target in (("issue", found.issue), ("question", found.question), ("example", found.example)):
+            if point in plain[name]:
+                target.setdefault(position, plain[name][point])
+        for letter, reading in readings.items():
+            for name, target in (("label", found.label), ("says", found.says)):
+                if reading in plain[name]:
+                    target.setdefault((position, letter), plain[name][reading])
     names: dict[tuple, dict[str, str]] = {}
     shared: list[Node] = [axiom for axiom in base if not mentions(axiom, dependent)]
     copies: dict[tuple, list[Node]] = {}
@@ -329,12 +343,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[整体矛盾] {target.name} 不一致，无法继续推理（条款或真实文件的描述自相矛盾）。解释用：")
                 print(f"scripts/robot explain --reasoner hermit --input {target} -M inconsistency --explanation <输出.md>")
                 return 1
-            found = {f"<{iri}>" for iri in UNSAT.findall(log)}
+            listed = {f"<{iri}>" for iri in UNSAT.findall(log)}
             counted = UNSAT_COUNT.search(log)
-            if (reasoned.returncode and not counted) or (counted and int(counted.group(1)) != len(found)):
+            if (reasoned.returncode and not counted) or (counted and int(counted.group(1)) != len(listed)):
                 print(f"推理失败（{target.name}）：\n" + said(reasoned))
                 return 2
-            unsat |= found
+            unsat |= listed
     explain = f"scripts/robot explain --reasoner hermit --input {targets[0]} -M entailment --axiom '<类 IRI> SubClassOf owl:Nothing' --explanation <输出.md>"
 
     def where(combo_set: set[tuple]) -> str:
@@ -351,6 +365,7 @@ def main(argv: list[str] | None = None) -> int:
                 contradictions.setdefault(iri, set()).add(combo)
     for iri, combo_set in sorted(contradictions.items()):
         findings += 1
+        found.contradictions.append((plain["label"].get(iri, MISSING), combo_set))
         print(f"[不可满足] {local(iri)}：按条款写法，这个类不可能有成员" + (f"（{where(combo_set)}）" if ids else "") + f"。解释用 {explain}")
     if not contradictions:
         print("[不可满足的类] 无")
@@ -359,6 +374,7 @@ def main(argv: list[str] | None = None) -> int:
         open_in = {combo for combo in combos if names[combo][iri] not in unsat}
         if open_in:
             findings += 1
+            found.gaps.append((plain["says"].get(iri, MISSING), open_in))
             print(f"[探针 仍可能] :{local(iri)}：条款没有排除这种情况" + (f"（{where(open_in)}）" if ids else ""))
         else:
             print(f"[探针 已排除] :{local(iri)}")
@@ -370,6 +386,8 @@ def main(argv: list[str] | None = None) -> int:
         group = "、".join(local(member) for member in members)
         if open_in:
             findings += 1
+            labels = "、".join(f"“{plain['label'].get(member, MISSING)}”" for member in members)
+            found.gaps.append((f"原文没说{plain['label'].get(parent, MISSING)}只有{labels}这几种，其他情况", open_in))
             print(f"[完备性] {local(parent)} 中可能有不属于 {group} 任何一类的情况" + (f"（{where(open_in)}）" if ids else "") + "：原文是否穷尽？穷尽就写成 DisjointUnion，否则记缺陷")
         else:
             print(f"[完备性] {group} 穷尽 {local(parent)}")
@@ -377,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
     for position, i in enumerate(ids):
         for a, b in itertools.permutations(letters[position], 2):
             contexts = {combo for probe, (p, x, y, combo) in divergent.items() if (p, x, y) == (position, a, b) and probe not in unsat}
+            found.divergences[(position, a, b)] = contexts
             if contexts:
                 findings += 1
                 print(f"[歧义 {i}] {a} 判通过、{b} 判不通过：可能（{where(contexts)}）")
@@ -393,6 +412,7 @@ def main(argv: list[str] | None = None) -> int:
             fails = next(probe for probe, value in entail.items() if value == (subject, combo, False)) in unsat
             verdict = "矛盾" if passes and fails else "PASS" if passes else "NG" if fails else "无结论"
             verdict_of.setdefault(verdict, set()).add(combo)
+        found.files[name] = (truths.get(subject), {combo: verdict for verdict, combo_set in verdict_of.items() for combo in combo_set})
         parts = [f"{verdict} {where(combo_set)}".strip() for verdict, combo_set in sorted(verdict_of.items())]
         truth = truths.get(subject)
         tail = ""
@@ -401,7 +421,14 @@ def main(argv: list[str] | None = None) -> int:
             tail = f"；真值 {truth}，" + (f"与 {where(agree) or '本体'} 一致" if agree else "没有读法与之一致")
         print(f"[文件] {name}：{'；'.join(parts)}{tail}")
 
-    print(f"完整报告：{out}")
+    text = render(found)
+    report_path.write_text(text, encoding="utf-8")
+    missing = text.count(MISSING)
+    if missing:
+        findings += 1
+        print(f"[白话] 报告里有 {missing} 处缺少白话说明（:issue/:question/rdfs:label/:says），补上再跑")
+    print(f"报告：{report_path}")
+    print(f"完整推理文件：{out}")
     return 1 if findings else 0
 
 
