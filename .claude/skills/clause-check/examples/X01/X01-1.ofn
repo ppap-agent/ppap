@@ -4,20 +4,26 @@ Prefix(rdfs:=<http://www.w3.org/2000/01/rdf-schema#>)
 Prefix(xsd:=<http://www.w3.org/2001/XMLSchema#>)
 Ontology(<https://ppap.example/rules/X01/1>
   # 虚构条款 X01:1 的完整示例。运行：python3 <技能目录>/scripts/check.py <技能目录>/examples/X01/X01-1.ofn
+  # 只写原文说了什么；通过、不通过、没有结论、冲突都由脚本从 :PassWhen / :FailWhen 推出。
   Annotation(:clause "X01/rules.json#X01:1")
   Declaration(AnnotationProperty(:clause)) Declaration(AnnotationProperty(:quote))
   Declaration(AnnotationProperty(:limit)) Declaration(AnnotationProperty(:open))
   Declaration(AnnotationProperty(:issue)) Declaration(AnnotationProperty(:question))
-  Declaration(AnnotationProperty(:says)) Declaration(AnnotationProperty(:contradiction))
-  Declaration(AnnotationProperty(:case)) Declaration(AnnotationProperty(:truth))
+  Declaration(AnnotationProperty(:says)) Declaration(AnnotationProperty(:case))
+  Declaration(AnnotationProperty(:chosen)) Declaration(AnnotationProperty(:answered)) Declaration(AnnotationProperty(:rewrite))
   Declaration(ObjectProperty(:hasRole))
 
-  # 词汇：文件、签字栏里的角色、签名方式（穷尽）、日期
+  # 词汇。签名的样子只列原文提到或明显存在的几种，不写成穷尽：原文没说只有这几种。
   Declaration(Class(:File)) Declaration(Class(:RoleEntry))
   Declaration(Class(:Author)) Declaration(Class(:Reviewer)) Declaration(Class(:Approver))
   SubClassOf(:Author :RoleEntry) SubClassOf(:Reviewer :RoleEntry) SubClassOf(:Approver :RoleEntry)
   Declaration(Class(:HandSignature)) Declaration(Class(:ElectronicSignature)) Declaration(Class(:NoSignature))
-  DisjointUnion(:RoleEntry :HandSignature :ElectronicSignature :NoSignature)
+  SubClassOf(:HandSignature :RoleEntry) SubClassOf(:ElectronicSignature :RoleEntry) SubClassOf(:NoSignature :RoleEntry)
+  DisjointClasses(:HandSignature :ElectronicSignature :NoSignature)
+  AnnotationAssertion(rdfs:label :RoleEntry "一栏签名")
+  AnnotationAssertion(rdfs:label :HandSignature "手写签名")
+  AnnotationAssertion(rdfs:label :ElectronicSignature "电子签名")
+  AnnotationAssertion(rdfs:label :NoSignature "没有签名")
   Declaration(Class(:HasDate))
 
   Declaration(Class(:HasSignatureBlock))
@@ -25,26 +31,25 @@ Ontology(<https://ppap.example/rules/X01/1>
     Annotation(:says "判断“签字栏不存在”时，要能确认封面上确实没有签字栏，才能判不通过。")
     :quote :HasSignatureBlock "签字栏不存在则不通过")
 
-  # 写不出的比较：批准日期不早于编制日期。抽象成三个互斥且穷尽的类，原文没定义的情况写成 :open
+  # 写不出的比较：批准日期和编制日期的先后。三种情况按定义就穷尽了（没法比较也是一种）。
   Declaration(Class(:ApprovedInOrder)) Declaration(Class(:ApprovedEarly)) Declaration(Class(:DatesNotComparable))
   DisjointUnion(:File :ApprovedInOrder :ApprovedEarly :DatesNotComparable)
   AnnotationAssertion(Annotation(:limit "predicate")
     Annotation(:open "日期只写到月份（如“2024.05”）时，“不得早于”怎么比较？")
+    Annotation(:open "批准日期早于编制日期时，判不通过吗？")
     :quote :ApprovedInOrder "批准日期不得早于编制日期")
 
-  # 判定：只引用歧义点 :Signed
-  Declaration(Class(:Pass)) Declaration(Class(:Fail)) DisjointClasses(:Pass :Fail)
-  Declaration(Class(:Signed)) Declaration(Class(:RoleOK))
-  EquivalentClasses(:RoleOK ObjectIntersectionOf(:Signed :HasDate))
-  EquivalentClasses(Annotation(:quote "识别封面签字栏中编制、审核、批准是否都已签名并填写日期") :Pass
-    ObjectIntersectionOf(:File :HasSignatureBlock :ApprovedInOrder
+  # 判定：被判定的是文件；通过、不通过的条件只写原文说的
+  Declaration(Class(:Judged)) EquivalentClasses(:Judged :File)
+  Declaration(Class(:PassWhen)) Declaration(Class(:FailWhen))
+  Declaration(Class(:Signed)) Declaration(Class(:Empty))
+  EquivalentClasses(Annotation(:quote "识别封面签字栏中编制、审核、批准是否都已签名并填写日期") Annotation(:quote "都已签名并填写日期则通过") :PassWhen
+    ObjectIntersectionOf(:File :HasSignatureBlock
       ObjectSomeValuesFrom(:hasRole :Author) ObjectSomeValuesFrom(:hasRole :Reviewer) ObjectSomeValuesFrom(:hasRole :Approver)
-      ObjectAllValuesFrom(:hasRole :RoleOK)))
-  EquivalentClasses(Annotation(:quote "任一为空则不通过") :Fail
-    ObjectIntersectionOf(:File ObjectUnionOf(ObjectComplementOf(:HasSignatureBlock) :ApprovedEarly
-      ObjectComplementOf(ObjectSomeValuesFrom(:hasRole :Author)) ObjectComplementOf(ObjectSomeValuesFrom(:hasRole :Reviewer))
-      ObjectComplementOf(ObjectSomeValuesFrom(:hasRole :Approver)) ObjectSomeValuesFrom(:hasRole ObjectComplementOf(:RoleOK)))))
-  AnnotationAssertion(Annotation(:limit "output") Annotation(:says "判定不通过时，提示用户补签。") :quote :Fail "并提示用户补签")
+      ObjectAllValuesFrom(:hasRole ObjectIntersectionOf(:Signed :HasDate))))
+  EquivalentClasses(Annotation(:quote "任一为空则不通过") :FailWhen
+    ObjectIntersectionOf(:File ObjectUnionOf(ObjectComplementOf(:HasSignatureBlock) ObjectSomeValuesFrom(:hasRole :Empty))))
+  AnnotationAssertion(Annotation(:limit "output") Annotation(:says "判定不通过时，提示用户补签。") :quote :FailWhen "并提示用户补签")
 
   # 歧义 1：“已签名”包括哪些签法
   AnnotationAssertion(:issue :Signed "“已签名”包括哪些签法")
@@ -56,25 +61,45 @@ Ontology(<https://ppap.example/rules/X01/1>
   AnnotationAssertion(:says :Signed__1B "只有手写签名才算已签名。")
   EquivalentClasses(:Signed__1A ObjectUnionOf(:HandSignature :ElectronicSignature))
   EquivalentClasses(:Signed__1B :HandSignature)
-
-  # 歧义 1 的例子：一份具体文件，事实写封闭，两种理解在它上面必须结论相反
   Declaration(Class(:Example__1))
-  AnnotationAssertion(:says :Example__1 "签字栏三栏都有日期，编制、审核是手写签名，批准是电子签名，批准日期不早于编制日期。")
-  EquivalentClasses(:Example__1 ObjectIntersectionOf(:File :HasSignatureBlock :ApprovedInOrder
+  AnnotationAssertion(:says :Example__1 "三栏都填了日期，编制、审核是手写签名，批准是电子签名。")
+  EquivalentClasses(:Example__1 ObjectIntersectionOf(:File :HasSignatureBlock
     ObjectSomeValuesFrom(:hasRole ObjectIntersectionOf(:Author :HandSignature :HasDate))
     ObjectSomeValuesFrom(:hasRole ObjectIntersectionOf(:Reviewer :HandSignature :HasDate))
     ObjectSomeValuesFrom(:hasRole ObjectIntersectionOf(:Approver :ElectronicSignature :HasDate))
     ObjectAllValuesFrom(:hasRole ObjectIntersectionOf(:HasDate ObjectUnionOf(:HandSignature :ElectronicSignature)))))
 
-  # 缺口：日期没法比较、签字都齐全的文件
-  Declaration(Class(:Probe_DatesUnclear))
-  AnnotationAssertion(:says :Probe_DatesUnclear "批准日期和编制日期没法比较、签字都齐全的文件")
-  EquivalentClasses(:Probe_DatesUnclear ObjectIntersectionOf(:File :DatesNotComparable :HasSignatureBlock
-    ObjectComplementOf(:Pass) ObjectComplementOf(:Fail)))
+  # 歧义 2：“任一为空”指什么为空
+  AnnotationAssertion(:issue :Empty "“任一为空”指什么为空")
+  AnnotationAssertion(:question :Empty "签了名但没填日期，算不算“为空”？")
+  Declaration(Class(:Empty__2A)) Declaration(Class(:Empty__2B))
+  AnnotationAssertion(rdfs:label :Empty__2A "签名或日期为空")
+  AnnotationAssertion(:says :Empty__2A "某一栏没有签名或没填日期，就算为空。")
+  AnnotationAssertion(rdfs:label :Empty__2B "只看签名")
+  AnnotationAssertion(:says :Empty__2B "只有某一栏没有签名才算为空，没填日期不算。")
+  EquivalentClasses(:Empty__2A ObjectIntersectionOf(:RoleEntry ObjectUnionOf(:NoSignature ObjectComplementOf(:HasDate))))
+  EquivalentClasses(:Empty__2B :NoSignature)
+  Declaration(Class(:Example__2))
+  AnnotationAssertion(:says :Example__2 "三栏都是手写签名，编制、审核填了日期，批准没填日期。")
+  EquivalentClasses(:Example__2 ObjectIntersectionOf(:File :HasSignatureBlock
+    ObjectSomeValuesFrom(:hasRole ObjectIntersectionOf(:Author :HandSignature :HasDate))
+    ObjectSomeValuesFrom(:hasRole ObjectIntersectionOf(:Reviewer :HandSignature :HasDate))
+    ObjectSomeValuesFrom(:hasRole ObjectIntersectionOf(:Approver :HandSignature ObjectComplementOf(:HasDate)))
+    ObjectAllValuesFrom(:hasRole :HandSignature)))
+
+  # 脚本报出“原文没有给出结论”的情况后，用白话把它们写出来；脚本核对写的确实是这种情况、并且写全了。
+  Declaration(Class(:Gap__1)) Declaration(Class(:Gap__2))
+  AnnotationAssertion(:says :Gap__1 "签字栏里缺了编制、审核、批准中的某一栏，其余各栏都不为空的封面")
+  EquivalentClasses(:Gap__1 ObjectIntersectionOf(:File :HasSignatureBlock ObjectAllValuesFrom(:hasRole ObjectComplementOf(:Empty))
+    ObjectUnionOf(ObjectComplementOf(ObjectSomeValuesFrom(:hasRole :Author)) ObjectComplementOf(ObjectSomeValuesFrom(:hasRole :Reviewer))
+      ObjectComplementOf(ObjectSomeValuesFrom(:hasRole :Approver)))))
+  AnnotationAssertion(:says :Gap__2 "各栏都不为空，但有一栏的签法不算已签名或没填日期的封面")
+  EquivalentClasses(:Gap__2 ObjectIntersectionOf(:File :HasSignatureBlock ObjectAllValuesFrom(:hasRole ObjectComplementOf(:Empty))
+    ObjectSomeValuesFrom(:hasRole ObjectComplementOf(ObjectIntersectionOf(:Signed :HasDate)))))
 
   # 真实文件（虚构）：三栏手写签名、都有日期
   Declaration(Class(:CaseCover1))
-  AnnotationAssertion(:case :CaseCover1 "封面-样例.pdf") AnnotationAssertion(:truth :CaseCover1 "PASS")
+  AnnotationAssertion(:case :CaseCover1 "封面-样例.pdf")
   EquivalentClasses(:CaseCover1 ObjectIntersectionOf(:File :HasSignatureBlock :ApprovedInOrder
     ObjectSomeValuesFrom(:hasRole ObjectIntersectionOf(:Author :HandSignature :HasDate))
     ObjectSomeValuesFrom(:hasRole ObjectIntersectionOf(:Reviewer :HandSignature :HasDate))
