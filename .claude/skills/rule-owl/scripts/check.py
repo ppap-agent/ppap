@@ -112,11 +112,37 @@ def limits(base: list[Node]) -> list[tuple[str | None, str, str | None, list[str
             continue
         meta = [arg for arg in item.args if isinstance(arg, Node) and arg.head == "Annotation"]
         kinds = [literal_text(arg.args[-1]) for arg in meta if local(arg.args[-2]) == "limit"]
-        situations = [literal_text(arg.args[-1]) for arg in meta if local(arg.args[-2]) == "open"]
+        situations = []
+        for arg in meta:
+            if local(arg.args[-2]) == "open":
+                answers = [literal_text(n.args[-1]) for n in arg.args if isinstance(n, Node) and n.head == "Annotation" and local(n.args[-2]) == "answered"]
+                situations.append((literal_text(arg.args[-1]), answers[0] if answers else None))
         says = next((literal_text(arg.args[-1]) for arg in meta if local(arg.args[-2]) == "says"), None)
         if kinds or situations:
             found.append((kinds[0] if kinds else None, literal_text(item.args[-1]), item.args[-2] if assertion else None, situations, says))
     return found
+
+
+ASCII_WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+TECH_WORDS = ("本体", "公理", "探针", "推理", "可满足", "读法", "类名", "类型表达式", "OWL", "ROBOT", "HermiT", "Probe", "__", ":")
+
+
+def lint(text: str, kind: str, allowed: set[str]) -> list[str]:
+    """Plain-language problems in a text that goes into the report."""
+    problems = [f"有技术词“{word}”" for word in TECH_WORDS if word in text]
+    problems += [f"有英文标识符“{word}”" for word in ASCII_WORD.findall(text) if word.casefold() not in allowed]
+    if kind == "rewrite":
+        return problems
+    ending = text.rstrip()[-1:] if text.strip() else ""
+    if kind == "question" and ending not in "？?":
+        problems.append("问题要以“？”结尾")
+    if kind == "sentence" and ending != "。":
+        problems.append("要写成以“。”结尾的完整句子")
+    if kind in ("title", "label", "phrase") and ending in "。？?":
+        problems.append("是短语，不加句末标点")
+    if kind == "label" and len(text) > 12:
+        problems.append("短名超过 12 个字，放进条件句会难读")
+    return problems
 
 
 def mentions(axiom: Node, iris: set[str]) -> bool:
@@ -186,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     exhaustive = {member for node in base if node.head == "DisjointUnion" for member in node.args[1:] if isinstance(member, str)}
     probed = {member for _, members in outside.values() for member in members}
     for kind, quote, subject, situations, says in limits(base):
-        undefined = [text for text in situations if text != "无"]
+        undefined = [(text, answer) for text, answer in situations if text != "无"]
         if undefined:
             found.undefined.append((quote, undefined))
         if kind is None:
@@ -209,8 +235,8 @@ def main(argv: list[str] | None = None) -> int:
                 findings += 1
                 line += '；没有列出原文没定义的情况（全部有定义就写 :open "无"）'
             elif undefined:
-                findings += len(undefined)
-                line += "；原文没定义：" + "；".join(undefined)
+                findings += sum(1 for _, answer in undefined if not answer)
+                line += "；原文没定义：" + "；".join(text + ("（已答复）" if answer else "") for text, answer in undefined)
             else:
                 line += "；原文定义了全部情况"
         print(line)
@@ -255,9 +281,25 @@ def main(argv: list[str] | None = None) -> int:
                 dependent |= grown
                 changed = True
 
+    # Answers written back: `:chosen "A"` (and the user's words in `:answered`) on any point of an ambiguity.
+    plain = {name: dict(annotation_values(base, name)) for name in ("issue", "question", "example", "label", "says", "chosen", "answered")}
+    found.offered = [list(ls) for ls in letters]
+    for point in points:
+        position = ids.index(ambiguity_of[point])
+        chosen = plain["chosen"].get(point)
+        if chosen is None:
+            continue
+        if chosen not in found.offered[position]:
+            print(f"[答复] {local(point)} 选了不存在的读法 {chosen}")
+            return 2
+        letters[position] = [chosen]
+        found.answered[position] = plain["answered"].get(point, MISSING)
+    if found.answered:
+        print("[答复] " + "；".join(f"歧义 {ids[p]} 取 {letters[p][0]}" for p in sorted(found.answered)))
+    found.rewrites = [text for ontology in ontologies for _, text in annotation_values(ontology.annotations, "rewrite")]
+
     combos = list(itertools.product(*letters))
     found.ids, found.letters, found.combos = ids, letters, combos
-    plain = {name: dict(annotation_values(base, name)) for name in ("issue", "question", "example", "label", "says")}
     for point, readings in points.items():
         position = ids.index(ambiguity_of[point])
         for name, target in (("issue", found.issue), ("question", found.question), ("example", found.example)):
@@ -267,6 +309,21 @@ def main(argv: list[str] | None = None) -> int:
             for name, target in (("label", found.label), ("says", found.says)):
                 if reading in plain[name]:
                     target.setdefault((position, letter), plain[name][reading])
+
+    # What the report needs from the writer, checked before reasoning: every ambiguity and reading described.
+    texts: list[tuple[str, str, str, str | None]] = []  # (where, annotation, kind, text)
+    for position, i in enumerate(ids):
+        where = f"歧义 {i}（{'、'.join(local(p) for p in points if ambiguity_of[p] == i)}）"
+        texts += [(where, ":issue", "title", found.issue.get(position)), (where, ":question", "question", found.question.get(position))]
+        if position in found.example:
+            texts.append((where, ":example", "sentence", found.example[position]))
+        for letter in found.offered[position]:
+            texts += [(f"{where} 读法 {letter}", "rdfs:label", "label", found.label.get((position, letter))), (f"{where} 读法 {letter}", ":says", "sentence", found.says.get((position, letter)))]
+    for _, quote, _, situations, says in limits(base):
+        texts += [(f"「{quote}」", ":open", "question", text) for text, _ in situations if text != "无"]
+        if says:
+            texts.append((f"「{quote}」", ":says", "sentence", says))
+    texts += [("条款", ":rewrite", "rewrite", text) for text in found.rewrites]
     names: dict[tuple, dict[str, str]] = {}
     shared: list[Node] = [axiom for axiom in base if not mentions(axiom, dependent)]
     copies: dict[tuple, list[Node]] = {}
@@ -366,6 +423,7 @@ def main(argv: list[str] | None = None) -> int:
     for iri, combo_set in sorted(contradictions.items()):
         findings += 1
         found.contradictions.append((plain["label"].get(iri, MISSING), combo_set))
+        texts.append((local(iri), "rdfs:label", "phrase", plain["label"].get(iri)))
         print(f"[不可满足] {local(iri)}：按条款写法，这个类不可能有成员" + (f"（{where(combo_set)}）" if ids else "") + f"。解释用 {explain}")
     if not contradictions:
         print("[不可满足的类] 无")
@@ -375,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
         if open_in:
             findings += 1
             found.gaps.append((plain["says"].get(iri, MISSING), open_in))
+            texts.append((local(iri), ":says", "phrase", plain["says"].get(iri)))
             print(f"[探针 仍可能] :{local(iri)}：条款没有排除这种情况" + (f"（{where(open_in)}）" if ids else ""))
         else:
             print(f"[探针 已排除] :{local(iri)}")
@@ -388,6 +447,7 @@ def main(argv: list[str] | None = None) -> int:
             findings += 1
             labels = "、".join(f"“{plain['label'].get(member, MISSING)}”" for member in members)
             found.gaps.append((f"原文没说{plain['label'].get(parent, MISSING)}只有{labels}这几种，其他情况", open_in))
+            texts += [(local(member), "rdfs:label", "phrase", plain["label"].get(member)) for member in [parent, *members]]
             print(f"[完备性] {local(parent)} 中可能有不属于 {group} 任何一类的情况" + (f"（{where(open_in)}）" if ids else "") + "：原文是否穷尽？穷尽就写成 DisjointUnion，否则记缺陷")
         else:
             print(f"[完备性] {group} 穷尽 {local(parent)}")
@@ -423,10 +483,19 @@ def main(argv: list[str] | None = None) -> int:
 
     text = render(found)
     report_path.write_text(text, encoding="utf-8")
-    missing = text.count(MISSING)
-    if missing:
+    allowed = {word.casefold() for clause in found.clauses for word in ASCII_WORD.findall(clause.text)}
+    allowed |= {word.casefold() for name in found.files for word in ASCII_WORD.findall(name)}
+    for where, annotation, kind, value in texts:
+        if value is None:
+            findings += 1
+            print(f"[白话缺项] {where}：缺 {annotation}")
+            continue
+        for problem in lint(value, kind, allowed):
+            findings += 1
+            print(f"[白话质量] {where} {annotation}「{value}」：{problem}")
+    if found.answered and any(answer == MISSING for answer in found.answered.values()):
         findings += 1
-        print(f"[白话] 报告里有 {missing} 处缺少白话说明（:issue/:question/rdfs:label/:says），补上再跑")
+        print("[白话缺项] 有 :chosen 的歧义没写 :answered（用户的原话）")
     print(f"报告：{report_path}")
     print(f"完整推理文件：{out}")
     return 1 if findings else 0

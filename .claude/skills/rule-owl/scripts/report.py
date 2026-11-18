@@ -3,6 +3,8 @@
 The report is for the product owner: it uses only the clause's own words and the plain-language annotations
 written in the ontology (`:issue`, `:question`, `:example`, `rdfs:label`, `:says`, `:open`), never class names,
 reading codes or reasoning vocabulary. A missing annotation shows as MISSING and is listed by check.py.
+Answers written back (`:chosen` + `:answered` on an ambiguity, `:answered` on an `:open`) and a proposed
+rewrite (`:rewrite`) turn the report into a check that the answers close every gap.
 """
 
 from __future__ import annotations
@@ -28,19 +30,22 @@ class Found:
     clauses: list[Clause] = field(default_factory=list)
     unaligned: list[str] = field(default_factory=list)
     ids: list[str] = field(default_factory=list)
-    letters: list[list[str]] = field(default_factory=list)
+    letters: list[list[str]] = field(default_factory=list)  # readings still in play (one when answered)
+    offered: list[list[str]] = field(default_factory=list)  # every reading written for each ambiguity
     combos: list[tuple] = field(default_factory=list)
     # ambiguity position -> plain texts
     issue: dict[int, str] = field(default_factory=dict)
     question: dict[int, str] = field(default_factory=dict)
     example: dict[int, str] = field(default_factory=dict)
+    answered: dict[int, str] = field(default_factory=dict)  # the user's own words
     # (position, letter) -> short label / full sentence
     label: dict[tuple, str] = field(default_factory=dict)
     says: dict[tuple, str] = field(default_factory=dict)
     # (position, a, b) -> combinations where reading a passes and b fails the same file
     divergences: dict[tuple, set] = field(default_factory=dict)
-    # (quote, [questions]) for every quote with :open
-    undefined: list[tuple[str, list[str]]] = field(default_factory=list)
+    # (quote, [(question, answer or None)]) for every quote with :open
+    undefined: list[tuple[str, list[tuple[str, str | None]]]] = field(default_factory=list)
+    rewrites: list[str] = field(default_factory=list)
     # (sentence, combinations where it is still possible)
     gaps: list[tuple[str, set]] = field(default_factory=list)
     contradictions: list[tuple[str, set]] = field(default_factory=list)
@@ -67,7 +72,7 @@ def compress(combos: set[tuple], letters: list[list[str]]) -> list[tuple]:
 
 
 def ordinal(found: Found, position: int, letter: str) -> str:
-    return "理解" + ORDINALS[found.letters[position].index(letter)]
+    return "理解" + ORDINALS[found.offered[position].index(letter)]
 
 
 def condition(found: Found, combos: set, skip: int | None = None) -> str:
@@ -97,6 +102,32 @@ def when(condition_text: str, sentence: str) -> str:
     return f"当{condition_text}时，{sentence}。"
 
 
+def check_answers(found: Found, gaps: list) -> list[str]:
+    """Whether the answers written back close the clause: what is still open, and what the current verdicts become."""
+    lines = ["## 答复核对\n"]
+    still = [found.question.get(p, MISSING) for p in range(len(found.ids)) if p not in found.answered]
+    still += [question for _, pairs in found.undefined for question, answer in pairs if not answer]
+    lines.append(f"- 还有 {len(still)} 个问题待答复。" if still else "- 所有问题都已答复。")
+    lines.append(f"- 按目前的答复，仍有 {len(gaps)} 种情况原文没有给出结论，见上文。" if gaps else "- 按目前的答复，没有原文不给结论的情况。")
+    if found.contradictions:
+        lines.append("- 按目前的答复，原文有自相矛盾的地方，见上文。")
+    for name, (truth, verdicts) in found.files.items():
+        outcomes = set(verdicts.values())
+        if len(outcomes) > 1:
+            lines.append(f"- `{name}`：结论还取决于待答复的问题。")
+            continue
+        outcome = next(iter(outcomes))
+        words = VERDICT_WORDS.get(outcome, outcome)
+        if truth and outcome != truth:
+            lines.append(f"- `{name}`：按答复{words}，与现有判定（{VERDICT_WORDS.get(truth, truth)}）不一致，需要改现有判定或复查答复。")
+        else:
+            lines.append(f"- `{name}`：按答复{words}" + ("，与现有判定一致。" if truth else "。"))
+    if not still and not found.rewrites:
+        lines.append("- 所有问题都已答复，还没有按答复写出建议改写的条款原文。")
+    lines.append("")
+    return lines
+
+
 def render(found: Found) -> str:
     lines: list[str] = []
     rule_ids = "、".join(clause.rule_id for clause in found.clauses) or "条款"
@@ -107,11 +138,14 @@ def render(found: Found) -> str:
         lines.append(f"- **规则文件**：{clause.title}：{clause.category}（{clause.rule_id}）")
         lines.append(f"- **规则原文**：{' '.join(clause.text.split())}")
     unclear = len(found.ids) + sum(len(questions) for _, questions in found.undefined)
+    answers = len(found.answered) + sum(1 for _, questions in found.undefined for _, answer in questions if answer)
     confirmed = sum(1 for position in range(len(found.ids)) if any(found.divergences.get((position, a, b)) for a, b in itertools.permutations(found.letters[position], 2)))
     gaps = [gap for gap in found.gaps if gap[1]]
     summary = f"有 {unclear} 处原文没有说清楚"
-    if found.ids:
-        summary += f"，其中 {confirmed} 处已确认会让同一份文件得出相反的结论"
+    if answers:
+        summary += f"，已答复 {answers} 处、还有 {unclear - answers} 处待答复"
+    if found.ids and confirmed:
+        summary += f"，{'待答复的歧义中' if answers else '其中'}有 {confirmed} 处已确认会让同一份文件得出相反的结论"
     if gaps:
         summary += f"；另有 {len(gaps)} 种情况原文没有给出结论"
     if found.contradictions:
@@ -123,10 +157,14 @@ def render(found: Found) -> str:
     for position in range(len(found.ids)):
         number += 1
         lines.append(f"### {number}. {found.issue.get(position, MISSING)}\n")
-        for letter in found.letters[position]:
+        for letter in found.offered[position]:
             short = found.label.get((position, letter), MISSING)
-            lines.append(f"- {ordinal(found, position, letter)}（{short}）：{found.says.get((position, letter), MISSING)}")
+            mark = "【已按你的答复选定】" if position in found.answered and letter in found.letters[position] else ""
+            lines.append(f"- {ordinal(found, position, letter)}（{short}）{mark}：{found.says.get((position, letter), MISSING)}")
         lines.append("")
+        if position in found.answered:
+            lines.append(f"你的答复：「{found.answered[position]}」\n")
+            continue
         any_divergence = False
         for a, b in itertools.permutations(found.letters[position], 2):
             contexts = found.divergences.get((position, a, b), set())
@@ -151,7 +189,7 @@ def render(found: Found) -> str:
         number += 1
         lines.append(f"### {number}. 「{quote}」\n")
         lines.append("原文没有说：\n")
-        lines += [f"- {question}" for question in questions]
+        lines += [f"- {question}" + (f"\n  你的答复：「{answer}」" if answer else "") for question, answer in questions]
         lines.append("")
 
     if gaps:
@@ -185,9 +223,15 @@ def render(found: Found) -> str:
                 lines.append(f"\n`{name}`：{VERDICT_WORDS[verdict]}（{condition(found, by_verdict[verdict])}），需要检查对它的描述。")
         lines.append("")
 
-    questions = [found.question.get(position, MISSING) for position in range(len(found.ids))] + [q for _, qs in found.undefined for q in qs]
+    if answers:
+        lines += check_answers(found, gaps)
+    if found.rewrites:
+        lines.append("## 建议改写的条款原文\n")
+        lines += [f"> {rewrite}\n" for rewrite in found.rewrites]
+    questions = [found.question.get(position, MISSING) for position in range(len(found.ids)) if position not in found.answered]
+    questions += [question for _, pairs in found.undefined for question, answer in pairs if not answer]
     if questions:
-        lines.append("## 需要回答的问题\n")
+        lines.append("## 需要回答的问题\n" if not answers else "## 还需要回答的问题\n")
         lines += [f"{index}. {question}" for index, question in enumerate(questions, 1)]
         lines.append("")
     if found.requirements:
