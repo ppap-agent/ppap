@@ -11,11 +11,15 @@ description: 交付规则前检查审核条款原文：把条款当逻辑题，�
 
 ## 输入与产出
 
-- 输入：一个规则文件（如 `packages/audit/src/audit/checkers/li/L05/rules.json`，取 `rules[].id` 与 `rules[].rule_to_check`），可只做用户点名的条款。
-- 工作目录：`.local/clause-check/<类型>/`（已被 Git 忽略）。每条条款一个 `<条款序号>.ofn`，如 `L05-1.ofn`。
+- 输入：一个规则文件（`packages/audit/src/audit/checkers/<公司>/<类型>/rules.json`，取 `rules[].id` 与 `rules[].rule_to_check`），可只做用户点名的条款。
+- 工作目录：`.local/clause-check/<类型>/`（已被 Git 忽略）。每条条款一个 `<条款序号>.ofn`，如 `X01-1.ofn`。
 - 产出：单条条款的白话报告 `.local/clause-check/<类型>/<条款序号>.report.md`，合并检查时为 `.local/clause-check/<类型>/report.md`，**由脚本根据 `.ofn` 里的白话注解生成，不手写**；在对话里给用户看摘要。
 
 ## 步骤
+
+下文的例子都来自一条**虚构条款** X01:1，不对应任何真实规则：
+
+> 识别封面签字栏中编制、审核、批准是否都已签名并填写日期，任一为空则不通过；批准日期不得早于编制日期；签字栏不存在则不通过，并提示用户补签。
 
 ### 1. 读条款，先列词汇
 
@@ -26,12 +30,12 @@ description: 交付规则前检查审核条款原文：把条款当逻辑题，�
 模板：
 
 ```
-Prefix(:=<https://ppap.example/rules/L05#>)
+Prefix(:=<https://ppap.example/rules/X01#>)
 Prefix(owl:=<http://www.w3.org/2002/07/owl#>)
 Prefix(rdfs:=<http://www.w3.org/2000/01/rdf-schema#>)
 Prefix(xsd:=<http://www.w3.org/2001/XMLSchema#>)
-Ontology(<https://ppap.example/rules/L05/1>
-  Annotation(:clause "packages/audit/src/audit/checkers/li/L05/rules.json#L05:1")
+Ontology(<https://ppap.example/rules/X01/1>
+  Annotation(:clause "packages/audit/src/audit/checkers/<公司>/X01/rules.json#X01:1")
   Declaration(AnnotationProperty(:clause)) Declaration(AnnotationProperty(:quote))
   Declaration(Class(:Pass))  Declaration(Class(:Fail))
   DisjointClasses(:Pass :Fail)
@@ -75,15 +79,15 @@ Ontology(<https://ppap.example/rules/L05/1>
 
 ```
 AnnotationAssertion(Annotation(:limit "predicate")
-    Annotation(:open "目标值写成“>1.67”这样的条件时，结果值等于 1.67 算不算达到目标？")
-    :quote :ValueMeets "的CPK、PPK的结果值都大于等于目标值")
+    Annotation(:open "日期只写到月份（如“2024.05”）时，“不得早于”怎么比较？")
+    :quote :ApprovedInOrder "批准日期不得早于编制日期")
 ```
 
 | 类别 | 例子 | 处理 |
 |---|---|---|
-| `predicate` 写不出的谓词：比较、跨记录相等、计数、字符串运算 | “结果值都大于等于目标值” | 抽象成类，放进穷尽（`DisjointUnion`）或受完备性检查的互斥组。再做一张谓词卡：列出谓词的输入，逐一过各种情况（两边都有值、一边缺值、不是数字、带符号或单位、恰好相等、多个值时取哪个），原文没定义的每种情况写一条 `:open`，写成能用一句话回答的问句；都有定义就写 `:open "无"`。不是表达局限、但原文没说清的片段（如“如果无法辨识”没写主语），也直接在它的 `:quote` 上写 `:open`。`:open` 的情况按第 3 步记成缺陷，会改变结论的放进第 4 步的读法对比。 |
-| `open-world` 开放世界：“不存在”“找不到” | “是否存在……清单表格，不存在则不通过” | OWL 推不出“没有”，在第 5 步的真实文件里把事实写封闭。“什么算存在”仍按原文检查。用 `:says` 写一句对检查程序的要求。 |
-| `output` 不影响判定的要求 | “判定依据需提醒用户进行人工复核” | 不写进判定，用 `:says` 写成对检查程序的要求。只有要求本身不清楚时才记缺陷。 |
+| `predicate` 写不出的谓词：比较、跨记录相等、计数、字符串运算 | “批准日期不得早于编制日期” | 抽象成类，放进穷尽（`DisjointUnion`）或受完备性检查的互斥组。再做一张谓词卡：列出谓词的输入，逐一过各种情况（两边都有值、一边缺值、不是数字、带符号或单位、恰好相等、多个值时取哪个），原文没定义的每种情况写一条 `:open`，写成能用一句话回答的问句；都有定义就写 `:open "无"`。不是表达局限、但原文没说清的片段（如“任一为空”没说是签名为空还是日期为空），也直接在它的 `:quote` 上写 `:open`。`:open` 的情况按第 3 步记成缺陷，会改变结论的放进第 4 步的读法对比。 |
+| `open-world` 开放世界：“不存在”“找不到” | “签字栏不存在则不通过” | OWL 推不出“没有”，在第 5 步的真实文件里把事实写封闭。“什么算存在”仍按原文检查。用 `:says` 写一句对检查程序的要求。 |
+| `output` 不影响判定的要求 | “并提示用户补签” | 不写进判定，用 `:says` 写成对检查程序的要求。只有要求本身不清楚时才记缺陷。 |
 
 脚本会列出全部表达局限：谓词没进穷尽或受检查的互斥组、没写 `:open`，都会报出；每条原文没定义的情况各算一条发现。
 
@@ -93,8 +97,8 @@ AnnotationAssertion(Annotation(:limit "predicate")
 
 一份 OWL 只能表达一种读法，推理机只在这一种读法内部检查，查不出“一句话有两种读法”。所以第 3 步记下的每一处歧义，都按下面的约定把各种读法写进同一个 `.ofn`，由脚本展开、比较：
 
-- **歧义点。** 判定只引用一个不加定义的类，如 `:Remedy`（“反应计划或备注不为空”）。
-- **读法。** 每种读法是一个类 `<歧义点>__<歧义编号><读法字母>`，如 `:Remedy__3A`、`:Remedy__3B`，各自用 `EquivalentClasses` 定义。一处歧义可以涉及几个歧义点（如 `:RowOK__4C`、`:RowBad__4C`），每个歧义点都要有该歧义的全部读法；一个歧义点只属于一处歧义。读法里可以引用其他歧义点。
+- **歧义点。** 判定只引用一个不加定义的类，如 `:Signed`（“已签名”）。
+- **读法。** 每种读法是一个类 `<歧义点>__<歧义编号><读法字母>`，如 `:Signed__1A`、`:Signed__1B`，各自用 `EquivalentClasses` 定义。一处歧义可以涉及几个歧义点（如 `:RoleOK__2C`、`:RoleBad__2C`），每个歧义点都要有该歧义的全部读法；一个歧义点只属于一处歧义。读法里可以引用其他歧义点。
 - **判定。** 只写一个 `:Pass` 和一个 `:Fail`，不要按读法各写一份。
 
 脚本把所有歧义的读法做笛卡儿积，每个组合生成一份判定（只复制依赖歧义点的类，事实类共享），然后：
@@ -115,15 +119,15 @@ AnnotationAssertion(Annotation(:limit "predicate")
 把会被条款影响的真实文件（尤其是有真值的语料文件）写成**类**，不要写成个体：带上个体后 HermiT 每次检查都要带着它们算，慢几十倍。
 
 ```
-Declaration(Class(:Case574))
-AnnotationAssertion(:case :Case574 "574-PPK (1) (1).pdf")
-AnnotationAssertion(:truth :Case574 "PASS")
-EquivalentClasses(:Case574 ObjectIntersectionOf(:File :HasSummaryTable ObjectComplementOf(:Unidentifiable)
-  ObjectSomeValuesFrom(:hasRow ObjectIntersectionOf(:CharacteristicRow :ValueMissing))
-  ObjectAllValuesFrom(:hasRow ObjectIntersectionOf(:CharacteristicRow :ValueMissing))))
+Declaration(Class(:CaseCover1))
+AnnotationAssertion(:case :CaseCover1 "封面-样例.pdf")
+AnnotationAssertion(:truth :CaseCover1 "PASS")
+EquivalentClasses(:CaseCover1 ObjectIntersectionOf(:File :HasSignatureBlock
+  ObjectSomeValuesFrom(:hasRole ObjectIntersectionOf(:Approver :ElectronicSignature :HasDate))
+  ObjectAllValuesFrom(:hasRole ObjectIntersectionOf(:HasDate ObjectUnionOf(:HandSignature :ElectronicSignature)))))
 ```
 
-- 事实要封闭：列出存在的行（`ObjectSomeValuesFrom`），再用 `ObjectAllValuesFrom` 说明没有别的行；判定用到的否定事实（如“可辨识”）也要写明，否则开放世界下推不出结论。
+- 事实要封闭：列出存在的对象（`ObjectSomeValuesFrom`），再用 `ObjectAllValuesFrom` 说明没有别的；判定用到的否定事实（如“某栏为空”“某项不存在”）也要写明，否则开放世界下推不出结论。
 - 只写文件里实际有的事实，不写判定结论。
 - 脚本给每个文件在每个组合下分类：`PASS`、`NG`、`无结论`（条款对它没给结论）或`事实与条款矛盾`，并和 `:truth` 对比，报出与真值一致的组合。真值只代表当前的判定，不用它判断哪种读法正确。
 
@@ -132,10 +136,10 @@ EquivalentClasses(:Case574 ObjectIntersectionOf(:File :HasSummaryTable ObjectCom
 Java 取自 `JAVA_HOME`（没设才用 `PATH` 里的 `java`），需 11 及以上；首次运行会下载固定版本的 ROBOT jar 到本 skill 的 `bin/`。
 
 ```bash
-python3 .claude/skills/clause-check/scripts/check.py .local/clause-check/L05/L05-1.ofn
+python3 .claude/skills/clause-check/scripts/check.py .local/clause-check/X01/X01-1.ofn
 ```
 
-脚本依次做原文对齐、读法展开、OWL 2 DL 校验、推理（一致性、不可满足类、探针、完备性、读法分歧、文件分类）。展开后的本体留在 `<文件名>.robot/`：有歧义时每对比较的组合一个 `expanded-<n>.ofn`，并行推理，U06:3 这种 4 处歧义、24 种组合的条款约一分钟以内。脚本只列出不可满足的类，不生成解释；要看某个类为什么不可满足，用脚本输出里给的 `robot explain` 命令单独查。也可以直接用 `.claude/skills/clause-check/scripts/robot <命令>` 调 ROBOT。
+脚本依次做原文对齐、读法展开、OWL 2 DL 校验、推理（一致性、不可满足类、探针、完备性、读法分歧、文件分类）。展开后的本体留在 `<文件名>.robot/`：有歧义时每对比较的组合一个 `expanded-<n>.ofn`，并行推理，4 处歧义、24 种组合的条款约一分钟以内。脚本只列出不可满足的类，不生成解释；要看某个类为什么不可满足，用脚本输出里给的 `robot explain` 命令单独查。也可以直接用 `.claude/skills/clause-check/scripts/robot <命令>` 调 ROBOT。
 
 **探针**：把要查的情况声明为名字以 `Probe_` 开头的类，用 `EquivalentClasses` 定义。探针不可满足表示条款排除了这种情况；仍可满足表示条款没有排除，是候选缺陷。常用两种：
 
@@ -160,7 +164,7 @@ EquivalentClasses(:Probe_Uncovered ObjectIntersectionOf(<范围> ObjectComplemen
 ### 7. 合并检查同一类型的全部条款
 
 ```bash
-python3 .claude/skills/clause-check/scripts/check.py .local/clause-check/L05/*.ofn --out .local/clause-check/L05/merged.robot
+python3 .claude/skills/clause-check/scripts/check.py .local/clause-check/X01/*.ofn --out .local/clause-check/X01/merged.robot
 ```
 
 合并后再加跨条款探针（例如条款 1 判通过、条款 3 判不通过的同一情况）。条款间冲突和术语不统一只有这一步能发现。
@@ -173,16 +177,16 @@ python3 .claude/skills/clause-check/scripts/check.py .local/clause-check/L05/*.o
 
 | 注解 | 写在哪里 | 写什么 | 例子 |
 |---|---|---|---|
-| `:issue` | 歧义点（任一个） | 这一处歧义的标题 | “所有行”指哪些行 |
-| `:question` | 歧义点 | 要用户回答的问题，一句话能答 | “所有行”包不包括不是特性结果的行？ |
-| `:example` | 歧义点（可选） | 让几种理解分歧的文件情况 | 表里有一行不是特性结果、也没有结果值。 |
-| `rdfs:label` | 每个读法 | 理解的短名，用在条件句里 | 只限特性结果行 |
-| `:says` | 每个读法 | 这种理解的完整说法 | 只指填了特性结果的行。 |
-| `:says` | 每个 `Probe_` 探针 | 探针描述的情况，名词短语 | 低于目标、反应计划或备注不为空的行 |
-| `rdfs:label` | 受完备性检查的父类和成员 | 取值的白话名称 | 结果值 / 达到目标 |
-| `rdfs:label` | 不可满足的类（报出时） | 这种情况的白话名称 | 低于目标且已填措施的行 |
-| `:open` | `:quote` 的元注解 | 原文没定义的情况，问句 | 一行中只有一项低于目标时，这一行算不算“小于”？ |
-| `:says` | `open-world`、`output` 引用的元注解 | 对检查程序的要求 | 判定为“无法辨识则不通过”时，判定依据要提醒用户进行人工复核。 |
+| `:issue` | 歧义点（任一个） | 这一处歧义的标题 | “已签名”包括哪些签法 |
+| `:question` | 歧义点 | 要用户回答的问题，一句话能答 | 电子签名算不算“已签名”？ |
+| `:example` | 歧义点（可选） | 让几种理解分歧的文件情况 | 批准栏是电子签名。 |
+| `rdfs:label` | 每个读法 | 理解的短名，用在条件句里 | 只认手写签名 |
+| `:says` | 每个读法 | 这种理解的完整说法 | 只有手写签名才算已签名。 |
+| `:says` | 每个 `Probe_` 探针 | 探针描述的情况，名词短语 | 签了名但没写日期的角色 |
+| `rdfs:label` | 受完备性检查的父类和成员 | 取值的白话名称 | 签名方式 / 手写签名 |
+| `rdfs:label` | 不可满足的类（报出时） | 这种情况的白话名称 | 已签名但签名栏为空的角色 |
+| `:open` | `:quote` 的元注解 | 原文没定义的情况，问句 | 签名人只写了工号时，算不算已签名？ |
+| `:says` | `open-world`、`output` 引用的元注解 | 对检查程序的要求 | 判定不通过时，提示用户补签。 |
 
 #### 补全白话说明（由执行技能的人补）
 
@@ -206,8 +210,8 @@ python3 .claude/skills/clause-check/scripts/check.py .local/clause-check/L05/*.o
 
 规则内容的缺失（歧义、原文没定义的情况、原文没给结论的情况）只能由用户回答，**技能不替规则选择，也不补原文没有的意思**。用户回答后，把答复写回 `.ofn`，重跑，由脚本核对答复是否真把缺口补上：
 
-- **歧义的答复**：在该歧义的任一歧义点上写 `AnnotationAssertion(:chosen :Remedy "A")`（用户选的读法），并用 `:answered` 逐字记下用户的原话。脚本只保留这一种读法再做组合；没写 `:answered` 会报缺项。用户的答复不在已列的读法里时，先按答复新增一种读法（含白话说明），再选它。
-- **原文没定义的情况的答复**：在对应的 `:open` 上加元注解 `Annotation(Annotation(:answered "用户原话") :open "……？")`，并按答复改写本体（例如补上“达到目标”的定义、给真实文件补上相应的事实），让推理用上这条答复。
+- **歧义的答复**：在该歧义的任一歧义点上写 `AnnotationAssertion(:chosen :Signed "A")`（用户选的读法），并用 `:answered` 逐字记下用户的原话。脚本只保留这一种读法再做组合；没写 `:answered` 会报缺项。用户的答复不在已列的读法里时，先按答复新增一种读法（含白话说明），再选它。
+- **原文没定义的情况的答复**：在对应的 `:open` 上加元注解 `Annotation(Annotation(:answered "用户原话") :open "……？")`，并按答复改写本体（例如补上“已签名”的定义、给真实文件补上相应的事实），让推理用上这条答复。
 - **建议改写**：全部答复后，按答复写出建议改写的条款原文，放在本体注解 `Annotation(:rewrite "……")` 上，尽量少改原文。脚本会检查其中有没有技术词，并原样写进报告。
 
 `:chosen`、`:answered` 只能来自用户本人在对话里的答复，不能由模型推断或替用户填。
