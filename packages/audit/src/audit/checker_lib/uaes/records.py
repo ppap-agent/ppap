@@ -26,17 +26,30 @@ from .resources import records as resources
 _NUMBERING = re.compile(r"^[\(（]?\d+[\.．、\)）]?")
 
 
-def _chosen(text: str, positive: str, negative: str) -> bool | None:
-    """The one option a mark selects in `text`; None when neither or both are marked."""
+def _marks(text: str, positive: str, negative: str) -> tuple[bool, bool]:
+    """Whether a mark right before or after each option selects it in `text`.
+
+    The negative option writes the positive one ("未通过" holds "通过"), so the positive one is looked
+    for only outside the negative one: "未通过√" selects 未通过 alone. Options written box-first
+    ("□通过 ☑未通过") take only the mark before them, and box-last ones only the mark after them."""
     text = "".join(str(text).split())
     marks = f"[{resources.SELECTED}]"
-    yes = bool(re.search(f"(?:{marks}{positive}|{positive}{marks})", text))
-    no = bool(re.search(f"(?:{marks}{negative}|{negative}{marks})", text))
-    if yes and not no:
-        return True
-    if no and not yes:
-        return False
-    return None
+    boxes = resources.SELECTED + resources.UNSELECTED
+    before, after = text[:1] in boxes, text[-1:] in boxes
+    if before == after:
+        before = after = True
+
+    def marked(option: str, written: str) -> bool:
+        return bool(before and re.search(f"{marks}{option}", written) or after and re.search(f"{option}{marks}", written))
+
+    return marked(positive, text.replace(negative, "\0")), marked(negative, text)
+
+
+def _lab_reminder(group_context: Any) -> str:
+    """The clause's reminder when the round also holds a part design verification report."""
+    if group_context and any(any(term in str(item.file_metadata.get("original_filename", "")) for term in resources.LAB_REPORT_NAMES) for item in group_context.by_audit_id.values()):
+        return "同批有试验或验证报告，请比对测试机构。"
+    return ""
 
 
 class UaesRecordAgent(UaesExcelAgent):
@@ -137,31 +150,36 @@ class UaesRecordAgent(UaesExcelAgent):
                 return own[len(wanted) :] + "".join(self.text(other) for other in right)
         return None
 
+    def titled(self, ctx: RuleContext, phrase: str, *, block: str = "") -> bool:
+        """`phrase` as a title: a sheet name, a cell of a sheet's first rows, or the opening text of a PDF.
 
-class UaesPackagingAgent(UaesRecordAgent):
-    def titled(self, ctx: RuleContext) -> bool:
-        """ "包装方案" as a title: a sheet name, a cell of a sheet's first rows, or the opening text of a PDF."""
-        wanted = compact(resources.PACKAGING_TITLE)
-        # The 包装方案信息 block repeats the title words; it is not the title.
-        block = compact("包装方案信息")
+        `block` is a body heading that repeats the title words; it is not the title."""
+        wanted, block = compact(phrase), compact(block)
+
+        def holds(text: str) -> bool:
+            return wanted in (text.replace(block, "") if block else text)
+
         for sheet in self.sheets(ctx):
-            if wanted in compact(sheet.title).replace(block, ""):
+            if holds(compact(sheet.title)):
                 return True
             for cell in self.cells(sheet, row_max=8):
-                if wanted in self.text(cell).replace(block, ""):
+                if holds(self.text(cell)):
                     cell.value()
                     return True
         if str(self.audit_file.file_url).lower().endswith(".pdf"):
             import fitz
 
             with fitz.open(str(self.audit_file.file_url)) as document:
-                opening = "".join(block[4] for block in document[0].get_text("blocks")[:3]) if len(document) else ""
-            return wanted in compact(opening).replace(block, "")
+                opening = "".join(item[4] for item in document[0].get_text("blocks")[:3]) if len(document) else ""
+            return holds(compact(opening))
         return False
 
+
+class UaesPackagingAgent(UaesRecordAgent):
     @rule("包装方案标题与六个内容块")
     def rule_1(self, ctx: RuleContext):
-        if not self.titled(ctx):
+        # The 包装方案信息 block repeats the title words; it is not the title.
+        if not self.titled(ctx, resources.PACKAGING_TITLE, block="包装方案信息"):
             if self.mentioned(ctx, resources.PACKAGING_TITLE):
                 raise unable("原件提到“包装方案”，但标题位置（工作表名、各表前8行或PDF首页开头）未见；正文提及不能代替文件标题，需人工复核。")
             return self.absent("“包装方案”标题")
@@ -288,14 +306,22 @@ class UaesTrialAgent(UaesRecordAgent):
         missing = [state for state in resources.TRIAL_FLOW if not self.mentioned(ctx, state)]
         if missing:
             return self.absent("流转记录中的" + "、".join(f"“{state}”" for state in missing))
-        unknown = []
+        unknown, unmarked = [], []
         for label, positive, negative in resources.TRIAL_CHOICES:
             written = self.choice(ctx, label)
-            selected = None if written is None else _chosen(written, compact(positive), compact(negative))
-            if selected is False:
+            if written is None:
+                unknown.append(f"{label}（未读到选项）")
+                continue
+            yes, no = _marks(written, compact(positive), compact(negative))
+            if no and not yes:
                 return "NG", f"{label}勾选的是“{negative}”。"
-            if selected is None:
-                unknown.append(f"{label}（读到“{written}”）" if written else f"{label}（未读到选项）")
+            if not yes and not no:
+                unmarked.append(label)
+            elif yes and no:
+                unknown.append(f"{label}（读到“{written}”）")
+        if unmarked:
+            # The clause fails an unticked conclusion; a mark the reader cannot see is not proof of none.
+            return self.absent("、".join(unmarked) + "的勾选")
         if unknown:
             raise unable("尚不能唯一确认" + "、".join(unknown) + "的实际勾选；文字标签不代表已选择，需人工复核。")
         return "PASS", "原件有流转记录、试装结论、检验结论区域及“流程结束”“流程完成”，试装结论勾选“通过”，检验结论勾选“合格”。"
@@ -332,15 +358,15 @@ class UaesLabQualificationAgent(UaesRecordAgent):
         missing = [phrase for phrase in (resources.LAB_BODY, resources.LAB_MARK) if not self.mentioned(ctx, phrase)]
         if missing:
             return self.absent("、".join(f"“{phrase}”" for phrase in missing))
+        if not self.titled(ctx, resources.LAB_BODY):
+            raise unable(f"原件提到“{resources.LAB_BODY}”，但标题位置（工作表名、各表前8行或PDF首页开头）未见；正文提及不能代替标题，需人工复核。")
         deadlines = self.deadlines(ctx)
         if len(deadlines) > 1:
             raise unable(f"原件写有多个截止日期（{'、'.join(sorted(map(str, deadlines)))}），尚不能确定证书截止日期，需人工复核。")
         deadline = next(iter(deadlines))
         if deadline <= date.today():
-            return "NG", f"实验室资质截止日期{deadline}不晚于当前日期，资质已到期。"
-        message = f"资质截止日期{deadline}晚于当前日期；CNAS标识文字及认可委员会名称已读取。"
-        if self.group_context and any(any(term in str(item.file_metadata.get("original_filename", "")) for term in resources.LAB_REPORT_NAMES) for item in self.group_context.by_audit_id.values()):
-            message += "同批有试验报告，需人工比对测试机构与资质实验室是否一致。"
+            return "NG", f"实验室资质截止日期{deadline}不晚于当前日期，资质已到期。" + _lab_reminder(self.group_context)
+        message = f"资质截止日期{deadline}晚于当前日期；CNAS标识文字及标题中的认可委员会名称已读取。" + _lab_reminder(self.group_context)
         status, visual = self.visual({"cnas_mark": "资质证书存在实际CNAS认可标识，不能仅有提及CNAS或空标识占位。"}, "证书实际CNAS认可标识")
         return status, message + visual
 
@@ -438,10 +464,12 @@ class UaesTrialDocxAgent(UaesSourceAgent):
         facts = self.native()
         for phrase in (*resources.TRIAL_AREAS, *resources.TRIAL_FLOW):
             facts.require_text(phrase)
-        results = [_chosen(facts.field((label,)), positive, negative) for label, positive, negative in resources.TRIAL_CHOICES]
-        if False in results:
+        results = [_marks(facts.field((label,)), positive, negative) for label, positive, negative in resources.TRIAL_CHOICES]
+        if (False, True) in results:
             return "NG", "试装或检验结论选中了未通过/不合格。"
-        if None in results:
+        if (False, False) in results and not facts.has_unread_content():
+            return "NG", "试装结论或检验结论未勾选。"
+        if (True, True) in results or (False, False) in results:
             return "UNABLE", "尚不能唯一确认两个结论的实际勾选状态，文字标签不代表已选择。"
         return "PASS", "已核实流程结束/完成和两类通过结论的实际勾选。"
 
@@ -452,14 +480,13 @@ class UaesLabQualificationDocxAgent(UaesSourceAgent):
         facts = self.native()
         facts.require_text(resources.LAB_BODY)
         facts.require_text(resources.LAB_MARK)
+        facts.require_title(resources.LAB_BODY)
         deadline = normalize_excel_date(facts.field(resources.LAB_DEADLINE))
         if deadline is None:
             raise UnknownFact("认可证书的截止日期未能可靠识别，需人工复核。")
         if deadline <= date.today():
-            return "NG", "实验室资质已到期，截止日期必须晚于当前日期。"
-        message = "资质截止日期晚于当前日期；CNAS标识及认可委员会名称已读取。"
-        if self.group_context and any(any(term in str(file.file_metadata.get("original_filename", "")) for term in resources.LAB_REPORT_NAMES) for file in self.group_context.by_audit_id.values()):
-            message += "同批有试验报告，需人工比对测试机构与资质实验室是否一致。"
+            return "NG", "实验室资质已到期，截止日期必须晚于当前日期。" + _lab_reminder(self.group_context)
+        message = "资质截止日期晚于当前日期；CNAS标识及标题中的认可委员会名称已读取。" + _lab_reminder(self.group_context)
         status, visual_message = self.visual_result({"cnas_mark": "资质证书存在实际CNAS认可标识，不能仅有提及CNAS或空标识占位。"}, "证书实际CNAS认可标识")
         return status, message + visual_message
 

@@ -1,7 +1,7 @@
-"""U08:2 and U08:6 follow the customer's 2026-11-13 rulings on the control plan."""
+"""U08:2 and U08:6 follow the customer's 2026-11-13 rulings on the control plan; U08:9-11 read control plan cells apart."""
 
 import pytest
-from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent
+from audit.checker_lib.uaes.control_plan import PlanRow, UaesControlPlanAgent, _written
 from audit.contracts import AuditInput, RuleInput
 from audit.presets import preset_rule_body
 from openpyxl import Workbook
@@ -9,7 +9,7 @@ from openpyxl import Workbook
 HEADER = ["工序号", "工序名称/操作描述", "设备/工装", "产品特性", "过程特性", "特殊特性", "产品/过程规格/公差", "评价/测量技术", "频率", "控制方法"]
 
 
-def _check(tmp_path, rows, rule, merged=()):
+def _agent(tmp_path, rows, merged=()):
     book = Workbook()
     sheet = book.active
     sheet.title = "CP"
@@ -21,7 +21,12 @@ def _check(tmp_path, rows, rule, merged=()):
     path = tmp_path / "cp.xlsx"
     book.save(path)
     body = preset_rule_body("UAES", "U08")
-    agent = UaesControlPlanAgent(AuditInput(audit_id="cp", file_url=str(path)), RuleInput(rule_id="u08", **{key: value for key, value in body.items() if key != "kind"}))
+    rule = RuleInput(rule_id="u08", **{key: value for key, value in body.items() if key != "kind"})
+    return UaesControlPlanAgent(AuditInput(audit_id="cp", file_url=str(path)), rule)
+
+
+def _check(tmp_path, rows, rule, merged=()):
+    agent = _agent(tmp_path, rows, merged)
     names = [name for name, _ in agent.declared_rules()]
     return agent.check(names.index(rule))
 
@@ -46,6 +51,12 @@ def test_traceability_written_only_in_another_column_does_not_count(tmp_path):
     result = _check(tmp_path, rows, "rule_2")
     assert result.status == "NG"
     assert "进料环节" in result.suggestions and "出货环节" not in result.suggestions
+
+
+def test_traceable_without_naming_its_identifier_is_not_written(tmp_path):
+    result = _check(tmp_path, _traced(incoming="ALSI12FE，可追溯"), "rule_2")
+    assert result.status == "NG"
+    assert "进料环节" in result.suggestions
 
 
 def test_a_storage_age_limit_is_not_fifo(tmp_path):
@@ -107,3 +118,14 @@ def test_no_race_track_dimension_is_left_to_a_person(tmp_path):
     result = _check(tmp_path, rows, "rule_5")
     assert result.status == "UNABLE"
     assert "未发现跑道尺寸，请核实" in result.suggestions and "特性列为空" in result.suggestions
+
+
+def test_a_number_ending_one_cell_does_not_hide_the_name_in_the_next(tmp_path):
+    # 776 I211 "平面度 0.05" precedes G212 "102#螺栓孔直径"; joined, the name read as the tail of "0.05102#".
+    rows = [
+        PlanRow(row=211, where="第211行", operation="出货检验", cells={"CP产品特性": "平面度", "CP规格公差": "平面度 0.05"}),
+        PlanRow(row=212, where="第212行", operation="出货检验", cells={"CP产品特性": "102#螺栓孔直径", "CP规格公差": "Φ10.5±0.1"}),
+    ]
+    text = _agent(tmp_path, []).characteristics(None, rows)
+    assert _written("102#螺栓孔直径", text)
+    assert not _written("2#螺栓孔直径", text)

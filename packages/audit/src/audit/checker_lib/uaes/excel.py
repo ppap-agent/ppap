@@ -147,9 +147,12 @@ class UaesExcelAgent(ExcelAgent):
         self.legacy().witness(locator, title.get("drawing_number") or "", version, visual=True)
         return title
 
-    def stamp(self) -> tuple[str, str]:
-        """A controlled stamp: the words an EMF picture draws, else an image of the original read by the image model."""
-        return self._from_legacy(lambda agent: agent.controlled_stamp())
+    def stamp(self, *, fails_unidentified: bool = False) -> tuple[str, str]:
+        """A controlled stamp: the words an EMF picture draws, else an image of the original read by the image model.
+
+        An unreadable stamp fails only for a clause that says "无法辨识则不通过"; otherwise it is left to a person.
+        """
+        return self._from_legacy(lambda agent: agent.controlled_stamp(fails_unidentified=fails_unidentified))
 
     def _from_legacy(self, read: Any) -> Any:
         from documents.model_access import ModelUnavailable

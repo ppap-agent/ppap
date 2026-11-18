@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from audit.checker_lib.nio.excel_agent import rule
-from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
+from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 
 from .excel import UaesExcelAgent, compact, unable
 from .identity import pair_identity
@@ -20,7 +20,7 @@ from .resources import pfmea as resources
 _LISTS, _PGQP1 = ("过程特殊特性清单", "T12"), "E12"
 _PART_LABELS = ("零件号", "零件编号", "零件号码", "物料编号", "客户零件号", "Part Number", "Part No", "产品件号 Part No.")
 _PROJECT_LABELS = ("项目", "项目名称", "项目号", "UAES项目编号", "车型项目")
-_LESSONS = ("历史问题", "客户抱怨", "过往失效案例", "类似产品问题")
+_LESSONS = ("经验教训", "lessons learned", "历史问题", "客户抱怨", "过往失效案例", "类似产品问题")
 _TEMPLATE_WORDS = ("例如", "示例", "请填写", "填写指南")
 _SCORES = {"严重度": "S", "频度": "O", "探测度": "D"}
 _REJECTED = (
@@ -185,32 +185,62 @@ class UaesPfmeaAgent(UaesExcelAgent):
 
     @rule("经验教训的实际输入引用")
     def rule_1(self, ctx: RuleContext):
+        # The clause looks in the header, appendices, change history and revision notes; a failure item's
+        # effect ("客户抱怨…") is analysis, not an input citation.
+        failure_sheets = {id(sheet.ws) for sheet in Table(ctx).find_sheets("PFMEA", on_missing=Decision.IGNORE)}
         for sheet in (Sheet(ctx, ws) for ws in ctx.workbook.worksheets):
             rows, columns = self.extent(sheet)
+            body = self.failure_body(sheet) if id(sheet.ws) in failure_sheets else range(0)
             for cell in sheet.scan_non_empty(row_min=1, row_max=rows, col_min=1, col_max=columns):
-                text = str(cell.value())
-                if cited := self.lesson(text):
+                if cell.row_index not in body and (cited := self.lesson(str(cell.value()))):
                     return "PASS", f"PFMEA“{sheet.title}”第{cell.row_index}行引用经验教训：{cited}"
         if str(self.audit_file.file_url).lower().endswith(".pdf"):
             import fitz
 
             with fitz.open(str(self.audit_file.file_url)) as document:
                 for page in document:
-                    for block in page.get_text("blocks"):
+                    for block in self.outside_failure_table(page.get_text("blocks")):
                         if cited := self.lesson(block[4]):
                             return "PASS", f"PFMEA第{page.number + 1}页引用经验教训：{cited}"
         if reason := self.unreadable():
             raise unable(f"{reason}，可读文字中没有经验教训引用，其余内容尚未读取，需人工复核。")
         if pictured := self.header_pictures(ctx):
             raise unable(f"可读文字中没有经验教训引用，但表头区域{pictured}有图片，图片内容尚未核对，需人工复核。")
-        return "NG", "PFMEA表头、修订记录及全部内容均未引用历史问题、客户抱怨、过往失效案例或类似产品问题等经验教训输入，不通过，请人工复核。"
+        return "NG", "PFMEA表头、附录、变更履历及修订说明均未引用经验教训、历史问题、客户抱怨、过往失效案例或类似产品问题等输入，不通过，请人工复核。"
+
+    @staticmethod
+    def failure_body(sheet: Sheet) -> range:
+        """Rows from the failure table header to its last scored item; the whole sheet when the header is not found."""
+        try:
+            section = sheet.section("PFMEA失效区")
+        except GuardStop:
+            return range(0)
+        columns = section.columns(optional=tuple(spec.canonical_name for spec in resources.DOCUMENT[2]))
+        header = section.resolved.header_row
+        scored = [row.row_index for row in section.rows_from(columns) if any(meaningful(row.value(name)) for name in _SCORES if name in columns)]
+        return range(header, max(scored, default=header) + 1)
+
+    @staticmethod
+    def outside_failure_table(blocks: list) -> list:
+        """Text blocks of a PDF page above its S/O/D header row or from its revision/legend footer on."""
+        header = min((block[1] for block in blocks if any(name in block[4] for name in _SCORES)), default=None)
+        if header is None:
+            return blocks
+        words = [word.casefold() for word in resources.FOOTER_MARKERS]
+        footer = min((block[1] for block in blocks if block[1] > header and any(word in " ".join(block[4].split()).casefold() for word in words)), default=float("inf"))
+        return [block for block in blocks if block[3] <= header or block[1] >= footer]
 
     @staticmethod
     def lesson(text: str) -> str | None:
+        folded = text.casefold()
         for term in _LESSONS:
-            if term not in text or any(word in text for word in _TEMPLATE_WORDS):
+            if term not in folded or any(word in text for word in _TEMPLATE_WORDS):
                 continue
-            if len(re.sub(r"[\W_]", "", text.split(term, 1)[1])) >= 4:
+            # A bilingual label ("经验教训 Lessons Learned") is not a citation: what follows must name something.
+            rest = folded.split(term, 1)[1]
+            for other in _LESSONS:
+                rest = rest.replace(other, "")
+            if len(re.sub(r"[\W_]", "", rest)) >= 4:
                 return " ".join(text.split())[:200]
         return None
 

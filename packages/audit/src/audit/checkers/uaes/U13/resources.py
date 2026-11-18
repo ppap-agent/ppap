@@ -6,7 +6,6 @@ RESOURCE = {
     "carriers": {
         ".jpeg": "audit.checker_lib.uaes.records:UaesPhotoAgent",
         ".jpg": "audit.checker_lib.uaes.records:UaesPhotoAgent",
-        ".pdf": "audit.checker_lib.uaes.records:UaesPhotoAgent",
         ".png": "audit.checker_lib.uaes.records:UaesPhotoAgent",
         ".webp": "audit.checker_lib.uaes.records:UaesPhotoAgent",
     },

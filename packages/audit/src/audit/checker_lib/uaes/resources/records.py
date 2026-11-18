@@ -101,6 +101,8 @@ TRIAL_FLOW = ("流程结束", "流程完成")
 TRIAL_CHOICES = (("试装结论", "通过", "未通过"), ("检验结论", "合格", "不合格"))
 # Marks that select an option when written right before or after it.
 SELECTED = "☑✓√✔■"
+# Empty boxes: options written box-first take their marks before them.
+UNSELECTED = "□☐"
 
 # 实验室资质 (U03): the accreditation body, its mark, and the certificate deadline labels.
 LAB_BODY = "中国合格评定国家认可委员会"

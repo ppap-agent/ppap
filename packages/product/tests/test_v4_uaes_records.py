@@ -51,7 +51,48 @@ def test_laboratory_expiry_uses_the_actual_deadline(tmp_path, date_text, expecte
     assert result.status == expected
 
 
-@pytest.mark.parametrize(("trial", "inspection", "expected"), [("☑通过", "☑合格", "PASS"), ("☑未通过", "☑合格", "NG"), ("通过", "合格", "UNABLE")])
+def test_laboratory_body_counts_only_in_the_title(tmp_path):
+    # U03:1 wants the accreditation body in the certificate's title; a body mention is not the title.
+    rows = [["实验室认可证书"]] + [["正文"]] * 8 + [["本证书由中国合格评定国家认可委员会颁发"], ["CNAS"], ["截止日期", "2000-01-01"]]
+    result = checked(tmp_path, UaesLabQualificationAgent, "U03", rows)
+    assert result.status == "UNABLE", result.suggestions
+    assert "标题" in result.suggestions
+
+
+def test_expired_laboratory_still_reminds_to_compare_the_test_body(tmp_path):
+    from audit.contracts import GroupContextInput
+
+    report = AuditInput(audit_id="report", file_url=str(tmp_path / "report.pdf"), file_metadata={"original_filename": "DV报告.pdf"})
+    book = Workbook()
+    for row in [["中国合格评定国家认可委员会"], ["CNAS"], ["截止日期", "2000-01-01"]]:
+        book.active.append(row)
+    path = tmp_path / "source.xlsx"
+    book.save(path)
+    book.close()
+    body = preset_rule_body("UAES", "U03")
+    target = AuditInput(audit_id="version", file_url=str(path))
+    rules = RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"})
+    result = UaesLabQualificationAgent(target, rules, GroupContextInput(by_audit_id={"version": target, "report": report})).check(0)
+    assert result.status == "NG"
+    assert "请比对测试机构" in result.suggestions
+
+
+@pytest.mark.parametrize(
+    ("trial", "inspection", "expected"),
+    [
+        ("☑通过", "☑合格", "PASS"),
+        ("☑未通过", "☑合格", "NG"),
+        # A mark after the option: "未通过√" selects 未通过 alone, never also 通过.
+        ("□通过 未通过√", "☑合格", "NG"),
+        ("☑通过", "□合格 不合格√", "NG"),
+        ("通过√ □未通过", "合格√ □不合格", "PASS"),
+        # Box-first options: the mark between two options belongs to the one after it.
+        ("□通过 ☑未通过", "☑合格 □不合格", "NG"),
+        # Fully read, nothing ticked: the clause fails an unticked conclusion.
+        ("□通过 □未通过", "☑合格", "NG"),
+        ("通过", "合格", "NG"),
+    ],
+)
 def test_trial_requires_actual_unambiguous_selections(tmp_path, trial, inspection, expected):
     result = checked(tmp_path, UaesTrialAgent, "U15", [["流转记录", "流程结束 流程完成"], ["试装结论", trial], ["检验结论", inspection]])
     assert result.status == expected
@@ -69,16 +110,29 @@ def test_photo_success_does_not_claim_correct_part_content(tmp_path):
 
 # U04:3 names 同项目、同物料编号 only; customer and revision do not pair the drawing.
 # A fully read drawing of another part number is not this part's drawing: the clause fails.
-@pytest.mark.parametrize(("variant", "expected"), [("same", "PASS"), ("wrong_part", "NG"), ("wrong_customer", "PASS"), ("wrong_revision", "PASS"), ("duplicate", "UNABLE"), ("unreadable", "ERR")])
+# Identities match exactly: a longer number or name that merely contains the list's is another part.
+@pytest.mark.parametrize(
+    ("variant", "expected"),
+    [
+        ("same", "PASS"),
+        ("wrong_part", "NG"),
+        ("longer_part", "NG"),
+        ("longer_name", "UNABLE"),
+        ("wrong_customer", "PASS"),
+        ("wrong_revision", "PASS"),
+        ("duplicate", "UNABLE"),
+        ("unreadable", "ERR"),
+    ],
+)
 def test_materials_only_pairs_current_unique_matching_originals(tmp_path, variant, expected):
     from audit.checker_lib.uaes.materials import UaesMaterialsAgent
     from audit.contracts import GroupContextInput
 
-    def original(filename, *, part="P12345", customer="UAES", revision="A"):
+    def original(filename, *, part="P12345", name="支架", customer="UAES", revision="A"):
         book = Workbook()
         if "图纸" in filename:
             book.active.title = "图纸"
-            rows = [["零件号", part], ["零件名称", "支架"], ["客户名称", customer], ["版本", revision], ["项目", "M1"]]
+            rows = [["零件号", part], ["零件名称", name], ["客户名称", customer], ["版本", revision], ["项目", "M1"]]
         else:
             # The UAES list template: each header label written "中文:\nEnglish:" with its value beside it.
             book.active.title = "M1项目 材料及分供方清单"
@@ -92,7 +146,11 @@ def test_materials_only_pairs_current_unique_matching_originals(tmp_path, varian
 
     target = original("清单.xlsx")
     reference = original(
-        "图纸.xlsx", part="WRONG" if variant == "wrong_part" else "P12345", customer="理想" if variant == "wrong_customer" else "UAES", revision="B" if variant == "wrong_revision" else "A"
+        "图纸.xlsx",
+        part={"wrong_part": "WRONG", "longer_part": "P1234501"}.get(variant, "P12345"),
+        name="加强支架" if variant == "longer_name" else "支架",
+        customer="理想" if variant == "wrong_customer" else "UAES",
+        revision="B" if variant == "wrong_revision" else "A",
     )
     references = {target.audit_id: target, reference.audit_id: reference}
     if variant == "duplicate":
@@ -351,12 +409,13 @@ def _flow_chart(*operations, legend=("加工", "搬运", "贮存", "检验"), sy
     "operations,status",
     [
         ([(10, "进料检验", 3), (20, "机加工", 0), (30, "入库", 2)], "PASS"),
-        # A test is an inspection activity and must use the inspection symbol.
-        ([(10, "进料检验", 3), (20, "气密", 0)], "NG"),
+        # The clause names its inspection activities (进货/过程/最终检验, 巡检, 自检); a test is not one of them.
+        ([(10, "进料检验", 3), (20, "气密", 0)], "PASS"),
+        ([(10, "进料检验", 3), (20, "巡检", 0)], "NG"),
         # One activity column holds one symbol.
         ([(10, "机加工", 0), (20, "清洗", 3)], "PASS"),
     ],
-    ids=["symbols-follow-legend", "test-with-machining-symbol", "plain-operations"],
+    ids=["symbols-follow-legend", "test-is-not-inspection", "patrol-inspection-with-machining-symbol", "plain-operations"],
 )
 def test_flow_chart_symbols_are_read_from_cells(tmp_path, operations, status):
     from audit.checker_lib.uaes.engineering import UaesProcessFlowAgent

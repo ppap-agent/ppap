@@ -82,7 +82,7 @@ class UaesProcessFlowAgent(UaesExcelAgent):
             used = {symbol for operation in operations for lane, symbol in operation.marks if lane == column}
             if len(used) > 1:
                 return "NG", f"{where}“{name}”列使用了多种符号：{'、'.join(sorted(used))}，同类活动符号混用。"
-        # Inspection activities, as decided for this clause: inspection and test operations.
+        # Only the inspection activities the clause names; a test such as 气密 is judged by its own lane above.
         inspected = [operation for operation in operations if _INSPECTION.search(operation.description)]
         symbols = [symbol for symbol, name in legend.items() if re.search(flow_resources.INSPECTION_NAME, name, re.I)]
         if inspected and len(symbols) != 1:
@@ -109,7 +109,8 @@ class UaesProcessFlowAgent(UaesExcelAgent):
             # A stamp is a picture or the words "受控"; a spreadsheet with neither has none.
             if not pictures and not self.mentions_controlled(ctx):
                 return "NG", "原件没有任何图片（媒体、图片库或页眉页脚中均无），单元格中也没有“受控”字样，过程流程图没有受控章。"
-        return self.stamp()
+        # U16:3: "如果无法辨识则不通过，但判定依据需提醒用户进行人工复核".
+        return self.stamp(fails_unidentified=True)
 
     def mentions_controlled(self, ctx: RuleContext) -> bool:
         for worksheet in ctx.workbook.worksheets:

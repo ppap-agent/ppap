@@ -30,12 +30,13 @@ _LABEL_WORDS = ("更改等级", "联系人", "电话", "小组", "批准", "日�
 # U08:2 (customer ruling 2026-11-13): traceability and FIFO are read from the specification/tolerance column only,
 # and the traceability chain covers incoming, warehousing and shipping. Operation names place a row in a stage;
 # the stage words and identifier words are our reading of the originals, the customer did not list them.
+# An identifier names its carrier (batch, heat, serial number, code, card); "可追溯" alone does not say how.
 _STAGES = (
     ("进料", ("进料", "来料", "收货", "原材料", "原料", "物料检验", "入库检验", "iqc", "incoming")),
     ("出入库", ("入库", "出库", "仓", "库存", "储存", "存储", "存放", "领用", "发料", "storage", "stock", "warehouse")),
     ("出货", ("出货", "发货", "发运", "出荷", "交付", "delivery", "shipping", "outgoing")),
 )
-_TRACE = ("批次", "批号", "炉号", "序列号", "流水号", "条码", "条形码", "二维码", "追溯", "流转卡", "随工单", "lot", "batch", "serial")
+_TRACE = ("批次", "批号", "炉号", "序列号", "流水号", "条码", "条形码", "二维码", "流转卡", "随工单", "lot", "batch", "serial")
 _FIFO = ("先进先出", "先入先出", "先到期先出", "fifo", "按批次先后", "批次先后")
 # "库龄不超过N天" limits how long a part is stored; it does not say which batch leaves first.
 _STORAGE_LIMIT = ("库龄", "库存天数", "存放期", "最长存放")
@@ -688,8 +689,12 @@ class UaesControlPlanAgent(UaesExcelAgent):
         return sheets
 
     def characteristics(self, ctx: RuleContext, rows: list[PlanRow] | None = None) -> str:
-        """The product, process and specification text of control plan rows, comparable."""
-        return compact(" ".join(row.text(*_CHARACTERISTIC) for row in (self.plan(ctx) if rows is None else rows)))
+        """The product, process and specification cells of control plan rows, each comparable, one per line.
+
+        Cells stay apart: a number ending one cell ("平面度 0.05") must not read as the head of the next ("102#").
+        """
+        rows = self.plan(ctx) if rows is None else rows
+        return "\n".join(compact(row.cells.get(name, "")) for row in rows for name in _CHARACTERISTIC)
 
     @rule("PFD PFMEA PGQP1全部特殊特性覆盖")
     def rule_8(self, ctx: RuleContext):

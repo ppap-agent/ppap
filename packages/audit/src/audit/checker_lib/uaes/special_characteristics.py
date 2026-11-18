@@ -77,7 +77,7 @@ class UaesSpecialCharacteristicsAgent(UaesExcelAgent):
         if not sheets:
             if reason := self.unreadable():
                 raise unable(f"{reason}，尚不能确认特殊特性清单的四列，需人工复核。")
-            raise unable("未能定位特殊特性清单的表头（编号/序号、特性名称、特性值、特性类别），检查程序未能读取，需人工复核。")
+            return "NG", "原件中未见编号/序号、产品特性/过程特性/特殊特性名称、特性及公差/特性值、特性类型/特性类别四列表头，缺列不通过。"
         rows = characteristic_rows(self, ctx)
         for sheet in sheets:
             section = self.section(sheet, "特殊特性区")
@@ -86,7 +86,9 @@ class UaesSpecialCharacteristicsAgent(UaesExcelAgent):
             if missing:
                 return "NG", f"特殊特性清单“{sheet.title}”缺少{'、'.join(missing)}列。"
         if not rows:
-            raise unable("特殊特性清单没有可读取的特性行，不能按空范围通过。")
+            if reason := self.unreadable():
+                raise unable(f"{reason}，尚不能确认特殊特性清单的特性行，需人工复核。")
+            return "NG", "特殊特性清单四列齐全，但编号/序号列下没有内容（没有特性行）。"
         for title, row, columns in rows:
             name = next((str(row.value(column)).strip() for column in _NAMES if filled(row, column, columns)), "")
             value = str(row.value("特性值")).strip() if filled(row, "特性值", columns) else ""

@@ -732,7 +732,7 @@ class UaesSourceAgent(BaseAgent):
             raise unknown
         return sources
 
-    def controlled_stamp(self):
+    def controlled_stamp(self, *, fails_unidentified=False):
         facts = self.native()
         # A placed picture that draws the words 受控 is the stamp itself, not a printed label.
         for table, visual, text in facts.drawn_texts():
@@ -747,6 +747,8 @@ class UaesSourceAgent(BaseAgent):
             return "PASS", "已从原件核实受控章。"
         if fact is False:
             return "NG", "原件没有受控章。"
-        # UAES rules are fail-closed here (customer): a stamp that cannot be made out fails and goes to a person.
+        # Whether an unreadable stamp fails is the clause's: only a clause that says so ("无法辨识则不通过") fails it.
         # A failed model request is not this case; it surfaces as a technical error before reaching here.
-        return "NG", "无法辨识受控章，判不通过，请人工复核。"
+        if fails_unidentified:
+            return "NG", "无法辨识受控章，判不通过，请人工复核。"
+        raise UnknownFact("无法辨识受控章，需人工复核。")

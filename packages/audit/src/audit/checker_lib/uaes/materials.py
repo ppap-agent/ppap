@@ -25,6 +25,13 @@ def _identity(value: Any) -> str:
     return re.sub(r"^(\d+)\.0+$", r"\1", compact(value))
 
 
+def _names(text: str) -> set[str]:
+    """The identities a cell or text line writes: the whole text and each part after a label colon.
+
+    Identities match exactly: "加工壳体" is not "机加工壳体", "F01R10Y776" is not "F01R10Y77601"."""
+    return {_identity(part) for part in [text, *re.split(r"[:：]", text)[1:]]} - {""}
+
+
 def _placeholder(value: str) -> bool:
     from .identity import pair_identity
 
@@ -269,7 +276,9 @@ class UaesMaterialsAgent(UaesExcelAgent):
         return "PASS", f"同批次图纸{Related([drawing]).names[0]}与清单同项目“{project}”、零件号“{part}”、零件名称“{name}”一致。"
 
     def drawing_cells(self, ctx: RuleContext, item: Any) -> list[str] | None:
-        """Every cell value of a spreadsheet drawing (read as evidence of its version); None for a PDF."""
+        """Every cell value of a spreadsheet drawing (read as evidence of its version); None for a PDF.
+
+        Values keep their spaces; `_names` compares them as identities."""
         if str(item.file_url).lower().endswith(".pdf"):
             return None
         values: list[Any] = []
@@ -277,18 +286,19 @@ class UaesMaterialsAgent(UaesExcelAgent):
             for worksheet in ctx.workbook.worksheets:
                 sheet = Sheet(ctx, worksheet)
                 rows, columns = self.extent(sheet)
-                values.extend(_identity(cell.value()) for cell in sheet.scan_non_empty(row_min=1, row_max=rows, col_min=1, col_max=columns))
+                values.extend(str(cell.value()) for cell in sheet.scan_non_empty(row_min=1, row_max=rows, col_min=1, col_max=columns))
         return values
 
     def drawing_mentions(self, ctx: RuleContext, item: Any, value: str) -> bool:
+        """Whether a cell (or PDF text line) of the drawing writes exactly `value`, alone or after a label."""
         wanted = _identity(value)
         cells = self.drawing_cells(ctx, item)
-        if cells is not None:
-            return any(wanted in cell for cell in cells)
-        import fitz
+        if cells is None:
+            import fitz
 
-        with fitz.open(str(item.file_url)) as document:
-            return wanted in _identity("".join(page.get_text() for page in document))
+            with fitz.open(str(item.file_url)) as document:
+                cells = "".join(page.get_text() for page in document).splitlines()
+        return any(wanted in _names(cell) for cell in cells)
 
     def drawing_shows(self, ctx: RuleContext, item: Any, part: str) -> bool | None:
         """Whether a same-round drawing is of this part number; None when its identity cannot be read."""
@@ -311,4 +321,4 @@ class UaesMaterialsAgent(UaesExcelAgent):
         number = self.drawing_title(item).get("drawing_number")
         if not number:
             return None
-        return _identity(part) in _identity(number)
+        return _identity(part) == _identity(number)

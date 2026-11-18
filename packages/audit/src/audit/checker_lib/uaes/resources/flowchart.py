@@ -43,5 +43,6 @@ SYMBOLS = "◇○△□▽"
 KEY_MARK = r"(?<![A-Za-z])K\d*(?![A-Za-z])|[★◆☆]"
 # A legend entry naming the inspection symbol: "检验" (776, DP4Z), "检验 Inspection" (V040).
 INSPECTION_NAME = r"检验|inspection"
-# Operations that inspect or test the product (U16:2, clarified with the user).
-INSPECTION_ACTIVITY = r"检验|检查|检测|测试|试验|气密|泄漏|inspect|check|test|GP12"
+# U16:2 names its inspection activities: 进货/过程/最终检验, 巡检, 自检 ("inspection" on bilingual charts).
+# Nothing else is classed as inspection: a test such as 气密 is not (product owner, 2026-11-18).
+INSPECTION_ACTIVITY = r"检验|巡检|自检|inspect"

@@ -77,7 +77,8 @@ PDF_SPECS = (
 # Report header labels, as written beside their values.
 GAUGE_NAME = ("量具名称", "Measure name", "gauge name 量具名称", "Applicable Gage", "Gage Name")
 GAUGE_NUMBER = ("量具编号", "Measure no", "量具编号 gauge No.", "Gage Number", "Gage No")
-GRR_VERDICT = ("判定",)
+# V040 双性分析 writes the same field in English, "Judgement：".
+GRR_VERDICT = ("判定", "Judgement")
 # Each appraiser's conclusion row of a Kappa study (written without a colon).
 KAPPA_CONCLUSION = ("Conclusion", "Conclusion结论")
 # The closing conclusion of a 计数型MSA sheet without appraiser rows.

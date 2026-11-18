@@ -272,3 +272,29 @@ def test_wheel_and_container_context_keep_the_same_leaf_bytes(tmp_path):
                 for path in (_CHECKERS_ROOT / source.path).glob("*.py"):
                     archived = "audit/checkers/" + path.relative_to(_CHECKERS_ROOT).as_posix()
                     assert package.read(archived) == path.read_bytes()
+
+
+def test_u13_accepts_image_formats_only(tmp_path):
+    # U13:1 "提交文件为图片格式": a PDF is not an image format, so no implementation reads it.
+    import importlib.util
+    import io
+
+    from audit.checker_lib.agents import AgentAudit
+    from audit.contracts import AuditInput, RuleInput
+    from audit.presets import preset_rule_body
+    from PIL import Image
+
+    spec = importlib.util.spec_from_file_location("u13_resources", _CHECKERS_ROOT / "uaes" / "U13" / "resources.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    body = preset_rule_body("UAES", "U13")
+    rule = RuleInput(rule_id="u13", **{key: value for key, value in body.items() if key != "kind"})
+    stream = io.BytesIO()
+    Image.new("RGB", (2, 2), "white").save(stream, format="PNG")
+    statuses = {}
+    for suffix in (".png", ".pdf"):
+        path = tmp_path / f"photo{suffix}"
+        path.write_bytes(stream.getvalue())
+        statuses[suffix] = AgentAudit(AuditInput(audit_id=suffix, file_url=str(path)), rule, None, resource=module.RESOURCE).evaluate("U13:1").status
+    assert statuses == {".png": "PASS", ".pdf": "UNABLE"}

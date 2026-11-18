@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
 from audit.checker_lib.nio.excel_agent import rule
-from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
+from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 
-from .control_plan import operation_owners
+from .control_plan import UaesControlPlanAgent, operation_owners
 from .excel import UaesExcelAgent, compact, unable
-from .resources import combine, control_plan, pgqp1
+from .resources import capability, combine, control_plan, pgqp1
 from .resources import msa as resources
 
 _COUNTING = ("人工", "目视", "目测", "通止规", "塞规", "塞尺")
@@ -24,6 +25,15 @@ _MSA, _PGQP1, _CP = "测量系统分析评价", "E12", "控制计划"
 def _identity(value) -> str:
     """A gauge number or part number as written; a spreadsheet number keeps no trailing .0."""
     return re.sub(r"^(\d+)\.0+$", r"\1", compact(value))
+
+
+def _exact(value) -> str:
+    """A name or part number as written: only spaces and full/half width are normalized."""
+    return "".join(unicodedata.normalize("NFKC", "" if value is None else str(value)).split())
+
+
+def _written(values) -> set[str]:
+    return {exact for value in values if (exact := _exact(value)).casefold() not in _PLACEHOLDERS}
 
 
 @dataclass
@@ -67,9 +77,9 @@ class UaesMsaAgent(UaesExcelAgent):
         for kind, name in (("GRR", "GRR报告"), ("Kappa", "Kappa报告")):
             for sheet in Table(ctx).find_sheets(name, on_missing=Decision.IGNORE):
                 report = Report(kind, f"“{sheet.title}”")
-                report.names = {_identity(value) for value in self.labelled(sheet, resources.GAUGE_NAME)} - _PLACEHOLDERS
+                report.names = _written(self.labelled(sheet, resources.GAUGE_NAME))
                 report.numbers = {_identity(value) for value in self.labelled(sheet, resources.GAUGE_NUMBER)} - _PLACEHOLDERS
-                report.parts = {_identity(value) for value in self.labelled(sheet, resources.PART_NUMBER)} - _PLACEHOLDERS
+                report.parts = _written(self.labelled(sheet, resources.PART_NUMBER))
                 report.conclusions = self.labelled(sheet, resources.GRR_VERDICT) if kind == "GRR" else self.kappa_conclusions(sheet)
                 found.append(report)
         return found
@@ -159,6 +169,21 @@ class UaesMsaAgent(UaesExcelAgent):
     def kappas(self, ctx: RuleContext) -> list[Report]:
         return [report for report in self.reports(ctx) if report.kind == "Kappa"]
 
+    @staticmethod
+    def by_part(kappas: list[Report], part: str) -> tuple[list[Report], list[Report]]:
+        """(the Kappa reports of exactly `part`, those that state no part number)."""
+        return [report for report in kappas if part in report.parts], [report for report in kappas if not report.parts]
+
+    def plan_part(self, ctx: RuleContext, plan) -> str | None:
+        """The one part number the same-round control plan states; None when it is not legible."""
+        with self.reading(ctx, plan, control_plan):
+            agent = UaesControlPlanAgent(plan, self.rule)
+            assert agent._rule_resource is not None
+            try:
+                return agent.part_number(RuleContext(None, ctx.workbook, agent._rule_resource))
+            except GuardStop:
+                return None
+
     def only(self, kind: str, label: str):
         files = self.batch_files(kind)
         if not files:
@@ -172,9 +197,10 @@ class UaesMsaAgent(UaesExcelAgent):
         plan = self.only(_PGQP1, "采购件质量计划")
         if plan is None:
             return "NG", "同批次没有包含PGQP1的采购件质量计划。"
-        gauges = []
+        gauges, parts = [], set()
         with self.reading(ctx, plan, pgqp1):
             for sheet in Table(ctx).find_sheets("PGQP1", on_missing=Decision.IGNORE):
+                parts |= _written(self.labelled(sheet, capability.PGQP1_PART))
                 for row in self.section(sheet, "重要特性区").rows("特性项目", "特殊特性", "测量设备"):
                     if row.is_present("特殊特性") and any(term in str(row.value("测量设备") or "") for term in _GO_NO_GO):
                         gauges.append((str(row.value("特性项目") or "").strip(), str(row.value("测量设备")).strip()))
@@ -182,8 +208,17 @@ class UaesMsaAgent(UaesExcelAgent):
                 return "NG", "同批次采购件质量计划中没有PGQP1表。"
         if not gauges:
             return "PASS", "PGQP1重要特性中没有通止规、塞规、塞尺类计数型量具。"
-        if not self.kappas(ctx):
-            return "NG", "PGQP1重要特性使用计数型量具，但同批次没有Kappa报告。"
+        if not (kappas := self.kappas(ctx)):
+            return "NG", "PGQP1重要特性使用计数型量具，但同批次没有Kappa报告，请复审或提交kappa文件一起审核。"
+        # "同零件号": exactly the part number the PGQP1 states; an unreadable one is "无法辨识则不通过".
+        if len(parts) != 1:
+            return "NG", f"采购件质量计划PGQP1的零件号未能唯一读取（读到：{'、'.join(sorted(parts)) or '无'}），无法辨识同零件号的Kappa报告，判不通过，请人工复核。"
+        part = next(iter(parts))
+        same, unknown = self.by_part(kappas, part)
+        if not same:
+            if unknown:
+                return "NG", f"同批次Kappa报告{'、'.join(report.where for report in unknown)}未写零件号，无法辨识是否与PGQP1零件号{part}相同，判不通过，请人工复核。"
+            return "NG", f"同批次没有零件号为{part}的Kappa报告，请复审或提交kappa文件一起审核。"
         # PGQP1 names the gauge type only: without a gauge number no same-number Kappa study can be paired,
         # and the clause fails what cannot be established ("无法辨识则不通过").
         item, gauge = gauges[0]
@@ -221,13 +256,21 @@ class UaesMsaAgent(UaesExcelAgent):
             if all(between for *_rest, between in manual):
                 raise unable(f"控制计划{manual[0][2]}“{manual[0][0]}”采用{manual[0][1]}，同批次没有Kappa报告{open_}。")
             return "NG", "控制计划出货检验/GP12有人为检测，但同批次没有Kappa报告。"
+        # "同零件号": exactly the control plan's part number; an unreadable one is "无法辨识则不通过".
+        if (part := self.plan_part(ctx, plan)) is None:
+            return "NG", "控制计划未能读出唯一的零件号，无法辨识同零件号的Kappa报告，判不通过，请人工复核。"
+        same, unknown = self.by_part(kappas, part)
         for operation, method, where, between in manual:
-            if any(compact("综合检具") in report.names or any(name and name in compact(method) for name in report.names) for report in kappas):
+            # "量具名称相同": the whole written name, not a part of it.
+            if any("综合检具" in report.names or _exact(method) in report.names for report in same):
                 continue
             if between:
-                raise unable(f"控制计划{where}“{operation}”采用{method}，同批次没有量具名称相同或为综合检具的Kappa报告{open_}。")
-            if any(not report.names for report in kappas):
+                raise unable(f"控制计划{where}“{operation}”采用{method}，同批次没有零件号为{part}、量具名称相同或为综合检具的Kappa报告{open_}。")
+            if unknown:
+                unread = "、".join(report.where for report in unknown)
+                return "NG", f"控制计划{where}“{operation}”采用{method}，同批次Kappa报告{unread}未写零件号，无法辨识是否与控制计划零件号{part}相同，判不通过，请人工复核。"
+            if any(not report.names for report in same):
                 # A Kappa report read without any gauge name cannot be the same-name one: "无法辨识则不通过".
-                return "NG", f"控制计划{where}“{operation}”采用{method}，同批次Kappa报告未写量具名称，无法确认量具名称相同或为综合检具；请人工复核Kappa与该检测的对应关系。"
-            return "NG", f"控制计划{where}“{operation}”采用{method}，同批次没有量具名称相同或为综合检具的Kappa报告。"
+                return "NG", f"控制计划{where}“{operation}”采用{method}，同批次零件号为{part}的Kappa报告未写量具名称，无法确认量具名称相同或为综合检具；请人工复核Kappa与该检测的对应关系。"
+            return "NG", f"控制计划{where}“{operation}”采用{method}，同批次没有零件号为{part}、量具名称相同或为综合检具的Kappa报告，请复审或提交kappa文件一起审核。"
         return "PASS", "控制计划出货检验/GP12的人为检测均有量具名称相同或为综合检具的Kappa报告。"

@@ -201,8 +201,10 @@ class UaesApprovalAgent(UaesExcelAgent):
         remarks, _cell = self.remark(sheet)
         full = _FULL in remarks
         conditional = [term for term in _CONDITIONAL if term in remarks]
-        if full == bool(conditional):
-            raise unable(f"封面备注“{remarks}”{'同时含完全认可与偏差/整改表述' if full else '无法归类为完全认可或偏差认可'}，需人工复核。")
+        if full and conditional:
+            return "NG", f"封面备注“{remarks}”同时含“{_FULL}”与“{'、'.join(conditional)}”，两类表述冲突，不通过，请人工复核。"
+        if not full and not conditional:
+            return "NG", f"封面备注“{remarks}”无法归类为完全认可或偏差/条件认可，不通过，请人工复核。"
         if full:
             return self.full_approval()
         return self.conditional_approval(ctx, sheet, remarks)
@@ -282,8 +284,6 @@ class UaesApprovalAgent(UaesExcelAgent):
         expired, unequal = [], []
         for row in rows:
             item = str(row.value("偏差项") or "").strip() or f"第{row.row_index}行"
-            if not row.is_present("UAES评估确认") or not row.is_present("是否需要偏差"):
-                return "NG", f"偏差认可汇总清单{item}的UAES评估确认或是否需要偏差为空。"
             found = deadlines(str(row.value("偏差备注") or ""))
             if len(found) != 1 or found[0] is None:
                 raise unable(f"偏差认可汇总清单{item}的备注未能唯一读取临时偏差有效期，需人工复核。")
