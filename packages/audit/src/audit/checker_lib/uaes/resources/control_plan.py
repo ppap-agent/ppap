@@ -22,6 +22,8 @@ DOCUMENT = (
     ),
     (
         ColumnModel(canonical_name="工序名称", section_name="控制计划区", aliases=("工序名称/操作描述", "过程名称操作描述", "过程名称/操作描述")),
+        # 工序号 is a bare number in 776/A40 but names the operation in CPO-45 ("1.物料检验" over 金属化膜检验 ...).
+        ColumnModel(canonical_name="CP工序号", section_name="控制计划区", aliases=("工序号", "产品/过程编号")),
         # 776/A40 head it "EVALUATION/ MEASUREMENT TECHNIQUE" over three rows with 量具/编号 below.
         ColumnModel(canonical_name="评价测量技术", section_name="控制计划区", aliases=("评价/测量技术", "量具/编号", "评价测量技术")),
         # 设备/工装 (776/A40), 机器、装置、夹具、工装 (CPO-45), "生产设备\ndevice\njig" (V040).
@@ -52,17 +54,3 @@ VERSION = ("版本号", "版本")
 DATES = ("受控日期", "创建日期", "修订日期", "修改日期", "日期(编制)", "日期(修订)", "首次编制日期", "最近修订日期")
 PART_NAME = ("零件名称", "产品名称", "零件名称/描述", "产品名称/描述")
 PART_NUMBER = ("零件号",)
-
-# The footnote legend of the 776/A40 plans: "内部过程特性符号" beside pictures of each symbol framed as a race track.
-LEGEND_TITLE = "内部过程特性符号"
-LEGEND_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["symbol", "racetrack_frame"],
-    "properties": {"symbol": {"type": ["string", "null"]}, "racetrack_frame": {"type": ["boolean", "null"]}},
-}
-LEGEND_PROMPT = (
-    "这是控制计划表尾图例里的一个特性符号图片。请按 JSON Schema 转写，只转写，不判断。\n"
-    "symbol：图中符号的文字或数字（如 3、5、SC），照原样转写；看不清写 null。\n"
-    "racetrack_frame：符号外框是跑道形（两端为半圆、上下为直线的长圆形框）为 true，是其他形状或没有外框为 false，看不清为 null。"
-)

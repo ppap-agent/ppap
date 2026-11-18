@@ -22,12 +22,51 @@ _PLACEHOLDERS = {"", "/", "-", "--", "—", "n/a", "na", "无", "none", "tbd", "
 _PART = re.compile(r"(?<![0-9A-Za-z])F[0-9A-Z]{9}(?![0-9A-Za-z])")
 _MARKS = "■☑✓√✔□☐"
 _UNCHECKED = "□☐"
-_COLUMNS = ("CP生产资源", "CP特性编号", "CP产品特性", "CP过程特性", "CP特殊特性", "CP规格公差", "CP频率", "CP控制方法")
+_COLUMNS = ("CP工序号", "CP生产资源", "CP特性编号", "CP产品特性", "CP过程特性", "CP特殊特性", "CP规格公差", "评价测量技术", "CP频率", "CP控制方法")
 _CHARACTERISTIC = ("CP产品特性", "CP过程特性", "CP规格公差")
 # Words that make a header cell a label rather than a written value.
 _LABEL_WORDS = ("更改等级", "联系人", "电话", "小组", "批准", "日期", "编号", "approval", "核心", "代码", "代号", "名称", "零件号", "版本", "编制", "date")
-_SPC = ("spc", "x-r", "xbar-r", "x̄-r", "xbar", "均值极差")
 _NOT_DIMENSION = ("粗糙度", "泄漏", "测漏", "硬度", "清洁度", "材料", "成分")
+
+# U08:2 (customer ruling 2026-11-13): traceability and FIFO are read from the specification/tolerance column only,
+# and the traceability chain covers incoming, warehousing and shipping. Operation names place a row in a stage;
+# the stage words and identifier words are our reading of the originals, the customer did not list them.
+_STAGES = (
+    ("进料", ("进料", "来料", "收货", "原材料", "原料", "物料检验", "入库检验", "iqc", "incoming")),
+    ("出入库", ("入库", "出库", "仓", "库存", "储存", "存储", "存放", "领用", "发料", "storage", "stock", "warehouse")),
+    ("出货", ("出货", "发货", "发运", "出荷", "交付", "delivery", "shipping", "outgoing")),
+)
+_TRACE = ("批次", "批号", "炉号", "序列号", "流水号", "条码", "条形码", "二维码", "追溯", "流转卡", "随工单", "lot", "batch", "serial")
+_FIFO = ("先进先出", "先入先出", "先到期先出", "fifo", "按批次先后", "批次先后")
+# "库龄不超过N天" limits how long a part is stored; it does not say which batch leaves first.
+_STORAGE_LIMIT = ("库龄", "库存天数", "存放期", "最长存放")
+
+# U08:6 (customer ruling 2026-11-13): a race-track dimension is a dimension registered in the plan, not the word 跑道.
+# Its row fills the characteristic, special characteristic and specification columns, names a dimension-like
+# characteristic, and belongs to a manufacturing operation; capability control is SPC, a control chart, Cpk or Ppk
+# in the evaluation, frequency or control method column. The word lists are our reading, not the customer's.
+_DIMENSION: tuple[str, ...] = ("尺寸", "直径", "孔径", "外径", "内径", "φ", "ø", "长度", "宽度", "厚度", "高度", "深度", "距离", "间距", "角度", "倒角", "r角")
+_DIMENSION += ("位置度", "同轴度", "圆度", "圆柱度", "平面度", "平行度", "垂直度", "跳动", "轮廓度", "⊥", "⊕", "//")
+# Operations that re-check a dimension rather than make it (inspections, tests, audits) or only hold and move parts.
+# An in-process inspection (过程检验, 巡检) belongs to the manufacturing it watches.
+_RECHECK = ("检验", "检查", "检测", "测试", "试验", "审核", "认可", "gp12", "iqc", "oqc", "inspection", "audit")
+_IN_PROCESS = ("过程检验", "过程检查", "巡检", "inprocess")
+_NOT_MAKING = ("入库", "出库", "仓", "储存", "存储", "包装", "出货", "发货", "出荷", "交付", "storage", "stock", "packag", "delivery", "shipping")
+_CAPABILITY = ("spc", "控制图", "cpk", "ppk", "x-r", "x̄-r", "xbar", "均值极差", "单值移动极差", "i-mr")
+
+
+def _manufacturing(operation: str) -> bool:
+    """Whether an operation makes or changes the part; an empty name says nothing."""
+    text = compact(operation)
+    if not text or any(word in text for word in _NOT_MAKING):
+        return False
+    return any(word in text for word in _IN_PROCESS) or not any(word in text for word in _RECHECK)
+
+
+def _trace_stage(operation: str) -> str | None:
+    """The traceability stage an operation name stands for, if any."""
+    text = compact(operation)
+    return next((stage for stage, words in _STAGES if any(word in text for word in words)), None)
 
 
 def _stage(value: str) -> str | None:
@@ -80,9 +119,15 @@ class PlanRow:
     columns: dict[str, int] = field(default_factory=dict)
     # The two operations a row lies between when the original draws no line separating them.
     candidates: tuple[str, ...] = ()
+    # The operation number cell that owns the row ("10", or "1.物料检验" when it also names the operation).
+    step: str = ""
 
     def text(self, *names: str) -> str:
         return " ".join(self.cells.get(name, "") for name in names)
+
+    def owners(self) -> tuple[str, ...]:
+        """The operation(s) the row belongs to, each read with its operation number."""
+        return tuple(f"{self.step} {name}" for name in ((self.operation,) if self.operation else self.candidates))
 
 
 def operation_owners(sheet: Sheet, column: int, rows: range, skipped: set[int]) -> dict[int, tuple[str, ...]]:
@@ -158,18 +203,35 @@ class UaesControlPlanAgent(UaesExcelAgent):
                     kept.append(row)
             if not kept:
                 continue
-            owners = operation_owners(sheet, columns["工序名称"].header_col, range(kept[0].row_index, kept[-1].row_index + 1), repeated)
+            span = range(kept[0].row_index, kept[-1].row_index + 1)
+            owners = operation_owners(sheet, columns["工序名称"].header_col, span, repeated)
+            steps = operation_owners(sheet, columns["CP工序号"].header_col, span, repeated) if "CP工序号" in columns else {}
             for row in kept:
                 names = owners.get(row.row_index, ())
                 values = {name: str(row.value(name) or "").strip() for name in columns if name != "工序名称"}
                 where = f"“{sheet.title}”第{row.row_index}行"
                 operation, between = (names[0], ()) if len(names) == 1 else ("", names)
-                rows.append(PlanRow(row.row_index, where, operation, values, sheet, {name: column.header_col for name, column in columns.items()}, between))
+                numbers = steps.get(row.row_index, ())
+                step = numbers[0] if len(numbers) == 1 else ""
+                rows.append(PlanRow(row.row_index, where, operation, values, sheet, {name: column.header_col for name, column in columns.items()}, between, step))
         return rows
 
     @staticmethod
     def _cells(sheet: Sheet, row: int, width: int) -> frozenset[tuple[int, str]]:
         return frozenset((cell.col_index, compact(cell.value())) for cell in sheet.scan_non_empty(row_min=row, row_max=row, col_min=1, col_max=width))
+
+    @staticmethod
+    def spanned(row: PlanRow, *names: str) -> str:
+        """The row's text in `names`, a blank cell inside a merged one reading the merged cell's value."""
+        texts = []
+        for name in names:
+            value = row.cells.get(name, "")
+            if not value and name in row.columns and row.sheet is not None:
+                merged = row.sheet.ctx.ops.get_detailed_merge_info(row.sheet.ws, row.row, row.columns[name])
+                if merged:
+                    value = str(row.sheet.cell(merged.min_row, merged.min_col).value() or "").strip()
+            texts.append(value)
+        return " ".join(texts)
 
     def graphic_in_blank(self, rows: list[PlanRow], name: str) -> str | None:
         """Where a blank `name` cell of a PDF original is filled by a picture or strokes (or cannot be placed on its page)."""
@@ -376,12 +438,45 @@ class UaesControlPlanAgent(UaesExcelAgent):
 
     @rule("生产追溯及先进先出实际措施")
     def rule_2(self, ctx: RuleContext):
-        # Rejected with the user: the clause states no checkable standard.
-        return "UNABLE", (
-            "条款原文只有“零件生产过程追溯性，及过程先进先出是否满足要求？”一句，"
-            "没有说明满足要求的判定标准（须追溯哪些信息、以何种方式标识或记录、先进先出须在哪些工序以何种方式体现），"
-            "本条款已拒绝自动判定，请人工复核。"
-        )
+        rows = self.plan(ctx)
+        if not self.plan_column(ctx, "CP规格公差"):
+            if any("规格" in text or "规范" in text or "公差" in text for text in self.header_texts(ctx)):
+                raise unable("控制计划表头有规格/公差字样，但检查程序未能定位“产品/过程规格/公差”列，需人工复核。")
+            return "NG", "控制计划没有“产品/过程规格/公差”列，追溯标识与先进先出要求无处写明。"
+
+        def spec(row: PlanRow) -> str:
+            return compact(self.spanned(row, "CP规格公差"))
+
+        problems, open_, unread = [], [], []
+        for stage, _words in _STAGES:
+            mine = [row for row in rows if row.operation and _trace_stage(row.owners()[0]) == stage]
+            # A row drawn between two operations counts only when neither reading could change the outcome.
+            shared = [row for row in rows if not row.operation and any(_trace_stage(name) == stage for name in row.owners())]
+            if any(word in spec(row) for row in mine for word in _TRACE):
+                continue
+            if any(word in spec(row) for row in shared for word in _TRACE):
+                open_.append(f"{stage}环节的追溯标识只写在{shared[0].where}等行，这些行位于两个工序之间且原件没有分隔线")
+            elif not mine and not shared:
+                problems.append(f"控制计划中没有识别出{stage}环节的工序")
+            else:
+                where = f"（{mine[0].where}起）" if mine else ""
+                problems.append(f"{stage}环节{where}的“产品/过程规格/公差”列没有写明追溯标识方式")
+                unread += mine
+        fifo = [row for row in rows if any(word in spec(row) for word in _FIFO)]
+        if not fifo:
+            limits = [row for row in rows if any(word in spec(row) for word in _STORAGE_LIMIT)]
+            if limits:
+                problems.append(f"“产品/过程规格/公差”列只写了存放时限（{limits[0].where}“{self.spanned(limits[0], 'CP规格公差')}”），不算先进先出要求")
+            else:
+                problems.append("“产品/过程规格/公差”列没有写明先进先出要求")
+        if problems:
+            # A stage whose blank specification cell holds a picture may have written its identifier there.
+            if drawn := self.graphic_in_blank(unread, "CP规格公差"):
+                raise unable(f"控制计划{drawn}规格/公差格内有图形或无法对应原页位置，检查程序未能读取，需人工复核。")
+            return "NG", "；".join(problems) + "。"
+        if open_:
+            raise unable("；".join(open_) + "，检查程序不能确定其归属，需人工复核。")
+        return "PASS", f"控制计划进料、出入库、出货环节的“产品/过程规格/公差”列均写明追溯标识方式，{fifo[0].where}写明先进先出要求。"
 
     def plan_type(self, ctx: RuleContext) -> tuple[list[str], list[str], str]:
         """(checked options, options whose mark is unreadable, where): a form checkbox or marks written in a cell."""
@@ -440,57 +535,41 @@ class UaesControlPlanAgent(UaesExcelAgent):
         examples = "、".join(f"{row.where}“{row.cells['CP特殊特性']}”" for row in marked[:3])
         return "PASS", f"控制计划“特性类型/特殊特性”列有{len(marked)}行写有特性标记，如{examples}。"
 
-    def racetrack_symbols(self, ctx: RuleContext) -> frozenset[str] | None:
-        """The symbols the plan's footnote legend frames as race tracks, transcribed from its pictures; None without one."""
-        from .fmea import marks
-
-        if not str(self.audit_file.file_url).lower().endswith((".xlsx", ".xlsm")):
-            return None
-        for sheet in self.plan_sheets(ctx):
-            height, width = self.extent(sheet)
-            legend = {cell.row_index for cell in sheet.scan_non_empty(row_min=1, row_max=height, col_min=1, col_max=width) if compact(resources.LEGEND_TITLE) in compact(cell.value())}
-            pictures = [image for image in getattr(sheet.ws, "_images", []) if image.anchor._from.row + 1 in legend]
-            if not pictures:
-                continue
-            symbols: set[str] = set()
-            for picture in pictures:
-                seen = self.transcribe(picture._data(), resources.LEGEND_PROMPT, resources.LEGEND_SCHEMA, "控制计划表尾特性符号图例")
-                if seen.get("symbol") is None or seen.get("racetrack_frame") is None:
-                    raise unable("控制计划表尾“内部过程特性符号”图例的符号未能从图片辨识，尚不能确定哪些标记是跑道尺寸，需人工复核。")
-                if seen["racetrack_frame"]:
-                    symbols |= marks(seen["symbol"])
-            return frozenset(symbols)
-        return None
-
     @rule("跑道尺寸过程能力控制")
     def rule_5(self, ctx: RuleContext):
-        from .fmea import marks, own_class
-
         rows = self.plan(ctx)
-        symbols = self.racetrack_symbols(ctx)
+
+        def filled(row: PlanRow, *names: str) -> bool:
+            return any(compact(self.spanned(row, name)) not in _PLACEHOLDERS for name in names)
+
+        def dimension(row: PlanRow) -> bool:
+            text = compact(self.spanned(row, *_CHARACTERISTIC))
+            return any(word in text for word in _DIMENSION) and not any(word in text for word in _NOT_DIMENSION)
 
         def racetrack(row: PlanRow) -> bool:
-            # Capability control belongs to the process: an outgoing or GP12 inspection re-checks the dimension.
-            if any(word in compact(name) for name in (row.operation, *row.candidates) for word in ("出货检验", "outgoinginspection", "gp12")):
-                return False
-            if "跑道" in row.text(*_CHARACTERISTIC, "CP特殊特性"):
-                return True
-            # A row marked with a legend race-track symbol, or naming that class after its characteristic ("71#平行度5").
-            stated = marks(row.cells.get("CP特殊特性")) | frozenset().union(*(marks(own_class(row.cells.get(name))) for name in _CHARACTERISTIC))
-            return bool(symbols and stated & symbols)
+            return filled(row, "CP产品特性", "CP过程特性") and filled(row, "CP特殊特性") and filled(row, "CP规格公差") and dimension(row) and any(_manufacturing(name) for name in row.owners())
 
         racetracks = [row for row in rows if racetrack(row)]
         if not racetracks:
-            if symbols:
-                return "NA", f"控制计划图例以跑道框标示{'、'.join(sorted(symbols))}类特性，但没有任何行标注这些符号，没有跑道尺寸，本条不适用。"
-            raise unable(
-                "控制计划没有用文字标明哪些尺寸是跑道尺寸（跑道框是图纸或特性符号上的图形标注），检查程序不能从控制计划确定跑道尺寸的范围，尚不能判断其是否都有X-R图/SPC管控，需人工对照图纸复核。"
-            )
-        lacking = [row for row in racetracks if not any(term in compact(row.text("CP控制方法", "CP频率")) for term in _SPC)]
-        if lacking:
-            listed = "、".join(f"{row.where}“{row.text(*_CHARACTERISTIC).strip()}”" for row in lacking[:6])
-            return "NG", f"控制计划过程工序共{len(racetracks)}个跑道尺寸行，其中{len(lacking)}行的控制方法/频率没有X-R图或SPC管控：{listed}{'等' if len(lacking) > 6 else ''}。"
-        return "PASS", f"控制计划过程工序的{len(racetracks)}个跑道尺寸行都有X-R图/SPC管控。"
+            # The customer's ruling: no race-track dimension found is left to a person, neither PASS nor NG.
+            # A special characteristic written only as its specification leaves the characteristic columns blank.
+            unnamed = [
+                row for row in rows if not filled(row, "CP产品特性", "CP过程特性") and filled(row, "CP特殊特性") and filled(row, "CP规格公差") and any(_manufacturing(name) for name in row.owners())
+            ]
+            note = f"另有{len(unnamed)}行标有特殊特性、只写了规格/公差而特性列为空（如{unnamed[0].where}），" if unnamed else ""
+            return "UNABLE", f"未发现跑道尺寸，请核实：控制计划加工/制造工序中没有特性、特殊特性、规格/公差三列均有内容的尺寸类特性行，{note}需人工确认该零件的跑道尺寸。"
+        lacking = [row for row in racetracks if not any(term in compact(self.spanned(row, "评价测量技术", "CP频率", "CP控制方法")) for term in _CAPABILITY)]
+        if not lacking:
+            return "PASS", f"控制计划加工/制造工序的{len(racetracks)}个跑道尺寸行，评价测量技术/频率/控制方法均写明SPC、控制图或Cpk/Ppk管控。"
+        # A row drawn between a manufacturing operation and an inspection may belong to the inspection.
+        certain = [row for row in lacking if all(_manufacturing(name) for name in row.owners())]
+        if not certain:
+            raise unable(f"缺少过程能力管控的尺寸行（{lacking[0].where}等）位于加工/制造工序与检验等工序之间且原件没有分隔线，检查程序不能确定其归属，需人工复核。")
+        lacking = certain
+        if where := self.graphic_in_blank(lacking, "CP控制方法"):
+            raise unable(f"控制计划{where}控制方法格内有图形或无法对应原页位置，检查程序未能读取，需人工复核。")
+        listed = "、".join(f"{row.where}“{self.spanned(row, 'CP产品特性', 'CP过程特性').strip()}”" for row in lacking[:8])
+        return "NG", f"控制计划加工/制造工序共{len(racetracks)}个跑道尺寸行，其中{len(lacking)}行的评价测量技术/频率/控制方法没有SPC、控制图或Cpk/Ppk管控：{listed}{'等' if len(lacking) > 8 else ''}。"
 
     @rule("CP身份字段图纸身份及最后更改日期")
     def rule_6(self, ctx: RuleContext):
