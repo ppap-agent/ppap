@@ -12,6 +12,9 @@ Conventions the script understands (see SKILL.md):
 - `Point__<n><L>` classes are reading L of ambiguity n for the undefined class `Point`; every combination
   of readings becomes its own copy of the ontology, compared through `:Pass` / `:Fail`.
 - `DisjointClasses` whose members share a named parent gets a probe for "in the parent but in none of them".
+- A `:quote` may carry `Annotation(:limit "predicate"|"open-world"|"output")` for a fragment the ontology cannot
+  state as written, and `Annotation(:open "...")` for each situation the clause leaves undefined in that
+  predicate (`"无"` when it defines all). A predicate's class must sit in an exhaustive or probed disjoint group.
 - Classes carrying `:case "file name"` (and optionally `:truth "PASS"|"NG"`) describe a real file's closed facts;
   each is classified per combination. Cases are classes, not individuals: an ABox makes HermiT minutes slower.
 
@@ -90,6 +93,26 @@ def alignment(path: Path, ontology) -> list[str]:
     return problems
 
 
+LIMIT_KINDS = {"predicate": "写不出的谓词", "open-world": "开放世界", "output": "对检查程序的要求"}
+
+
+def limits(base: list[Node]) -> list[tuple[str, str, str | None, list[str]]]:
+    """(kind, quoted fragment, subject class or None, undefined situations) for every quote marked with :limit."""
+    found = []
+    for item in (sub for node in base for sub in walk(node)):
+        if not isinstance(item, Node) or item.head not in ("Annotation", "AnnotationAssertion"):
+            continue
+        assertion = item.head == "AnnotationAssertion"
+        if local(item.args[-3 if assertion else -2]) != "quote":
+            continue
+        meta = [arg for arg in item.args if isinstance(arg, Node) and arg.head == "Annotation"]
+        kinds = [literal_text(arg.args[-1]) for arg in meta if local(arg.args[-2]) == "limit"]
+        if kinds:
+            situations = [literal_text(arg.args[-1]) for arg in meta if local(arg.args[-2]) == "open"]
+            found.append((kinds[0], literal_text(item.args[-1]), item.args[-2] if assertion else None, situations))
+    return found
+
+
 def mentions(axiom: Node, iris: set[str]) -> bool:
     return any(isinstance(item, str) and item in iris for item in walk(axiom))
 
@@ -164,6 +187,30 @@ def main(argv: list[str] | None = None) -> int:
                 Node("Declaration", [Node("Class", [probe])]),
                 Node("EquivalentClasses", [probe, Node("ObjectIntersectionOf", [parent, *(Node("ObjectComplementOf", [m]) for m in members)])]),
             ]
+
+    exhaustive = {member for node in base if node.head == "DisjointUnion" for member in node.args[1:] if isinstance(member, str)}
+    probed = {member for _, members in outside.values() for member in members}
+    for kind, quote, subject, situations in limits(base):
+        if kind not in LIMIT_KINDS:
+            findings += 1
+            print(f"[表达局限] 「{quote}」：未知类别 {kind}，只能是 {'、'.join(LIMIT_KINDS)}")
+            continue
+        line = f"[表达局限] {LIMIT_KINDS[kind]}「{quote}」"
+        if kind == "predicate":
+            line += f" → {local(subject) if subject else '（未挂到类上）'}"
+            if not subject or subject not in exhaustive | probed:
+                findings += 1
+                line += "；抽象出的类不在穷尽或受完备性检查的互斥组里"
+            undefined = [text for text in situations if text != "无"]
+            if not situations:
+                findings += 1
+                line += '；没有列出原文没定义的情况（全部有定义就写 :open "无"）'
+            elif undefined:
+                findings += len(undefined)
+                line += "；原文没定义：" + "；".join(undefined)
+            else:
+                line += "；原文定义了全部情况"
+        print(line)
 
     # Readings: Point__<n><L>.
     points: dict[str, dict[str, str]] = {}
