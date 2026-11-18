@@ -15,7 +15,11 @@
 
 ## 运行
 
-需要已登录的 `claude` 命令行，以及技能本身的运行条件（`JAVA_HOME` 指向 Java 11 及以上）。每条条款启动一个无界面的 Claude Code 会话，按技能从读条款开始完整走一遍。会话不能读 `bench/` 下的内容，但这只是权限设置加提示，不是严格隔离。
+需要本机的 `pi`（已配置好模型）、评分用的已登录 `claude` 命令行，以及技能本身的运行条件（`JAVA_HOME` 指向 Java 11 及以上）。
+
+每条条款启动一个无界面的 pi 会话，按技能从读条款开始完整走一遍。会话只加载 clause-check 一个技能，不读 AGENTS.md、CLAUDE.md 和项目里的配置，不带扩展和 MCP，pi 也没有用户记忆，所以会话只看得到技能和任务说明。模型默认 `xai/grok-4.7`、思考强度 high，可用 `--model`、`--thinking` 改；每条默认 60 分钟超时（`--timeout`）。
+
+会话被要求不读 `bench/`（参照和其他运行结果都在这里），但本机运行没有强制隔离；会话里碰到 `bench/` 的工具调用会被记下来，汇总里单列。
 
 ```bash
 uv run --no-sync python bench/clause-check/bench.py list
@@ -29,9 +33,9 @@ uv run --no-sync python bench/clause-check/bench.py run --name trial --case U06:
 uv run --no-sync python bench/clause-check/bench.py run --jobs 3
 ```
 
-技能的工作文件在 `.local/clause-check-bench/<名称>/<条款>/`；报告、形式化文件、会话摘要（`session.json`）和完整会话记录（`transcript.jsonl`）复制到 `bench/clause-check/runs/<名称>/<条款>/`（不入库），回看技能每一步怎么走的就看会话记录。
+技能的工作文件在 `.local/clause-check-bench/<名称>/<条款>/`；报告、形式化文件、会话摘要（`session.json`）和完整会话记录（`transcript.jsonl`，pi 直接写进结果目录）在 `bench/clause-check/runs/<名称>/<条款>/`（不入库），回看技能每一步怎么走的就看会话记录。
 
-会话用的是本机已登录的 Claude Code 配置，所以也会带上本机的用户记忆和项目会话列表；要完全隔离，需要单独的配置目录加单独的登录凭据，目前没有这样做。
+评分由一个 Claude Code 会话完成，与被测的模型分开。
 
 运行结束后自动评分；重新评分：
 
@@ -50,8 +54,9 @@ uv run --no-sync python bench/clause-check/bench.py score bench/clause-check/run
 | 越界 | 报告里属于 `out_of_scope` 的分析，应为 0 |
 | 技术词 | 报告里的技术词汇和英文标识符（条款原文和文件名里的词除外），应为 0 |
 | 待补 | 报告里“待补白话说明”的处数，应为 0 |
-| 用时 / 费用 | 技能会话的耗时和费用，不含评判 |
-| 模型 | 技能会话实际用到的模型。不传 `--model` 时用本机 Claude Code 的默认模型，比较两次运行前先确认模型一致 |
+| 读了 bench | 会话里碰到 `bench/` 的工具调用次数，应为 0；不为 0 时这条结果不可信 |
+| 用时 / tokens | 技能会话的耗时和输入、输出 token 数，不含评判 |
+| 模型 | 技能会话实际用到的模型；比较两次运行前先确认模型和思考强度一致 |
 
 表下列出每条条款没找到的参照和全部新发现、越界项。
 

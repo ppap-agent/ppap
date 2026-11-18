@@ -1,11 +1,12 @@
 """clause-check bench: run the whole skill on real clauses and judge what its reports find.
 
     list                      the cases
-    run   --name N [--case ID ...] [--jobs J] [--model M]
-                              one headless Claude Code session per case runs the clause-check skill from scratch;
-                              its work stays in .local/clause-check-bench/N/<case>/, the report, session
-                              summary and transcript are copied to bench/clause-check/runs/N/<case>/
-    score runs/N [--rejudge]  a judging session compares each report with the case's reference findings and the
+    run   --name N [--case ID ...] [--jobs J] [--model M] [--thinking T] [--timeout MIN]
+                              one headless pi session per case runs the clause-check skill from scratch, with only
+                              that skill loaded and no context files, extensions or MCP; its work stays in
+                              .local/clause-check-bench/N/<case>/, the report, session summary and transcript go to
+                              bench/clause-check/runs/N/<case>/
+    score runs/N [--rejudge]  a judging Claude Code session (independent of the model under test) compares each report with the case's reference findings and the
                               out-of-scope list; writes judge.json per case and summary.md for the run
 
 The reference findings are the starting point, not the truth: new findings the judge cannot match are listed for
@@ -16,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -27,7 +27,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-SKILL_SCRIPTS = ROOT / ".claude" / "skills" / "clause-check" / "scripts"
+SKILL = ".claude/skills/clause-check"
+DEFAULT_MODEL = "xai/grok-4.7"
 WORK = ROOT / ".local" / "clause-check-bench"
 MISSING = "【待补白话说明】"
 TECH_WORDS = ("OWL", "ROBOT", "HermiT", "本体", "公理", "探针", "推理机", "可满足", "Probe", "__")
@@ -58,7 +59,57 @@ def claude(prompt: str, *options: str) -> dict:
     return result
 
 
-def run_case(case: dict, name: str, model: str | None) -> str:
+def pi(prompt: str, session_dir: Path, model: str, thinking: str, timeout_minutes: int) -> dict:
+    """One headless pi session with only the clause-check skill; a summary of its event stream."""
+    command = ["pi", "-p", "--mode", "json", "--session-dir", str(session_dir), "--no-skills", "--skill", SKILL]
+    command += ["--no-context-files", "--no-approve", "--no-extensions", "--no-mcp", "--model", model, "--thinking", thinking, prompt]
+    started = time.monotonic()
+    summary: dict = {"model": model, "thinking": thinking, "models": [], "turns": 0, "tool_calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "result": "", "is_error": True}
+    process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_minutes * 60)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        stdout, stderr = process.communicate()
+        summary["timed_out"] = True
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "tool_execution_start":
+            summary["tool_calls"] += 1
+        elif event.get("type") == "message_end" and event.get("message", {}).get("role") == "assistant":
+            message = event["message"]
+            usage = message.get("usage") or {}
+            summary["turns"] += 1
+            summary["input_tokens"] += sum(usage.get(key) or 0 for key in ("input", "cacheRead", "cacheWrite"))
+            summary["output_tokens"] += usage.get("output") or 0
+            summary["cost_usd"] += (usage.get("cost") or {}).get("total") or 0
+            used = f"{message.get('provider')}/{message.get('model')}"
+            if used not in summary["models"]:
+                summary["models"].append(used)
+            summary["result"] = "\n".join(block.get("text", "") for block in message.get("content", []) if block.get("type") == "text")
+        elif event.get("type") == "agent_settled":
+            summary["is_error"] = bool(event.get("aborted")) or process.returncode not in (0, None)
+    if summary["is_error"] and stderr:
+        summary["stderr"] = stderr[-2000:]
+    summary["duration_ms"] = int((time.monotonic() - started) * 1000)
+    return summary
+
+
+def bench_reads(transcript: Path) -> list[str]:
+    """Tool calls in the transcript that touch bench/ (the references and other runs the session must not see)."""
+    found = []
+    for line in transcript.read_text(encoding="utf-8").splitlines() if transcript.exists() else []:
+        message = json.loads(line).get("message") or {}
+        for block in message.get("content") or [] if message.get("role") == "assistant" else []:
+            if isinstance(block, dict) and block.get("type") not in ("text", "thinking") and "bench/" in json.dumps(block, ensure_ascii=False):
+                found.append(json.dumps(block.get("arguments", block), ensure_ascii=False)[:200])
+    return found
+
+
+def run_case(case: dict, name: str, model: str, thinking: str, timeout_minutes: int) -> str:
     out = HERE / "runs" / name / slug(case["id"])
     work = WORK / name / slug(case["id"])
     if out.exists() or work.exists():
@@ -68,7 +119,7 @@ def run_case(case: dict, name: str, model: str | None) -> str:
     files = "、".join(f"`{name}`" for name in case["files"])
     prompt = "\n".join(
         [
-            f"使用 clause-check 技能检查条款 {case['id']}（规则文件 {case['rules']}）。",
+            f"使用 clause-check 技能（{SKILL}/SKILL.md）检查条款 {case['id']}（规则文件 {case['rules']}）。",
             f"- 工作目录用 {work.relative_to(ROOT)}/，代替技能里的 .local/clause-check/<类型>/；形式化文件、推理结果和报告都放在这里。",
             f"- 需要对照的真实文件：{files}。在 assets/ 下按文件名查找，现有判定见 assets/corpus/ 里的真值表。" if files else "- 这条不需要对照真实文件。",
             "- 不要读取 bench/ 目录下的任何内容。",
@@ -76,22 +127,19 @@ def run_case(case: dict, name: str, model: str | None) -> str:
             "- 按技能把白话说明补到没有缺项、没有质量问题为止。最后只回复报告文件的路径。",
         ]
     )
-    settings = json.dumps({"permissions": {"deny": ["Read(./bench/**)", "Edit(./bench/**)", "Write(./bench/**)"]}})
-    options = ["--permission-mode", "bypassPermissions", "--settings", settings]
-    if model:
-        options += ["--model", model]
-    result = claude(prompt, *options)
+    result = pi(prompt, out, model, thinking, timeout_minutes)
+    sessions = sorted(out.glob("*.jsonl"))
+    if sessions:
+        sessions[-1].rename(out / "transcript.jsonl")
+    result["bench_reads"] = bench_reads(out / "transcript.jsonl")
     (out / "session.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    transcript = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(ROOT)) / f"{result.get('session_id')}.jsonl"
-    if transcript.exists():
-        shutil.copy(transcript, out / "transcript.jsonl")
     reports = sorted(work.rglob("*.report.md")) or sorted(work.rglob("report.md"))
     for report in reports:
         shutil.copy(report, out / report.name)
     for ontology in work.glob("*.ofn"):
         shutil.copy(ontology, out / ontology.name)
-    state = "失败" if result.get("is_error") else "完成"
-    return f"{case['id']}：{state}，报告 {len(reports)} 份，{result.get('duration_ms', 0) // 1000} 秒，${result.get('total_cost_usd', 0):.2f}"
+    state = "超时" if result.get("timed_out") else "失败" if result["is_error"] else "完成"
+    return f"{case['id']}：{state}，报告 {len(reports)} 份，{result['duration_ms'] // 1000} 秒，{result['input_tokens'] + result['output_tokens']} tokens"
 
 
 JUDGE = """你是条款检查报告的评判。只比对，不评价条款本身，不替规则做选择。
@@ -147,7 +195,7 @@ def plain_problems(report: str, case: dict) -> tuple[list[str], int]:
 
 def score(run: Path, rejudge: bool) -> None:
     data = cases()
-    rows = ["| 条款 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 技术词 | 待补 | 用时 | 费用 | 模型 |", "|---|---|---|---|---|---|---|---|---|---|---|"]
+    rows = ["| 条款 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 技术词 | 待补 | 读了 bench | 用时 | tokens | 模型 |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     details = []
     for case in data["cases"]:
         folder = run / slug(case["id"])
@@ -155,10 +203,12 @@ def score(run: Path, rejudge: bool) -> None:
             continue
         reports = sorted(folder.glob("*report.md"))
         session = json.loads((folder / "session.json").read_text(encoding="utf-8")) if (folder / "session.json").exists() else {}
-        seconds, cost = session.get("duration_ms", 0) // 1000, session.get("total_cost_usd", 0)
-        models = "、".join(sorted(session.get("modelUsage", {}))) or "未知"
+        seconds = session.get("duration_ms", 0) // 1000
+        tokens = session.get("input_tokens", 0) + session.get("output_tokens", 0)
+        models = "、".join(session.get("models") or []) or "未知"
+        reads = session.get("bench_reads", [])
         if not reports:
-            rows.append(f"| {case['id']} | 没有报告 |  |  |  |  |  |  | {seconds}s | ${cost:.2f} | {models} |")
+            rows.append(f"| {case['id']} | 没有报告 |  |  |  |  |  |  | {len(reads)} | {seconds}s | {tokens} | {models} |")
             continue
         report = reports[0].read_text(encoding="utf-8")
         verdict_path = folder / "judge.json"
@@ -171,11 +221,12 @@ def score(run: Path, rejudge: bool) -> None:
         rows.append(
             f"| {case['id']} | {results.count('found')} | {results.count('partial')} | {results.count('missed')} | "
             f"{sum(1 for item in extra if item.get('kind') == 'new')} | {sum(1 for item in extra if item.get('kind') == 'out_of_scope')} | "
-            f"{len(words)} | {missing} | {seconds}s | ${cost:.2f} | {models} |"
+            f"{len(words)} | {missing} | {len(reads)} | {seconds}s | {tokens} | {models} |"
         )
         details.append(f"\n## {case['id']}\n")
         details += [f"- {item.get('result')}：{item.get('reference')}" for item in verdict.get("references", []) if item.get("result") != "found"]
         details += [f"- {item.get('kind')}：{item.get('finding')}（{item.get('why')}）" for item in extra]
+        details += [f"- 读了 bench：{read}" for read in reads]
         if words:
             details.append(f"- 技术词：{'、'.join(sorted(set(words)))}")
         if "error" in verdict:
@@ -193,7 +244,9 @@ def main(argv: list[str] | None = None) -> int:
     running.add_argument("--name", default=time.strftime("%Y%m%d-%H%M"))
     running.add_argument("--case", action="append", default=[])
     running.add_argument("--jobs", type=int, default=2)
-    running.add_argument("--model")
+    running.add_argument("--model", default=DEFAULT_MODEL, help=f"pi model (default {DEFAULT_MODEL})")
+    running.add_argument("--thinking", default="high")
+    running.add_argument("--timeout", type=int, default=60, help="minutes per case")
     scoring = commands.add_parser("score")
     scoring.add_argument("run", type=Path)
     scoring.add_argument("--rejudge", action="store_true")
@@ -212,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         print("没有匹配的条款", file=sys.stderr)
         return 2
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        for line in pool.map(lambda case: run_case(case, args.name, args.model), chosen):
+        for line in pool.map(lambda case: run_case(case, args.name, args.model, args.thinking, args.timeout), chosen):
             print(line, flush=True)
     score(HERE / "runs" / args.name, rejudge=False)
     return 0
