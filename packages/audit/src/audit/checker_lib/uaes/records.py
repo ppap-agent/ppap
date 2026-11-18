@@ -367,7 +367,7 @@ class UaesLabQualificationAgent(UaesRecordAgent):
         if deadline <= date.today():
             return "NG", f"实验室资质截止日期{deadline}不晚于当前日期，资质已到期。" + _lab_reminder(self.group_context)
         message = f"资质截止日期{deadline}晚于当前日期；CNAS标识文字及标题中的认可委员会名称已读取。" + _lab_reminder(self.group_context)
-        status, visual = self.visual({"cnas_mark": "资质证书存在实际CNAS认可标识，不能仅有提及CNAS或空标识占位。"}, "证书实际CNAS认可标识")
+        status, visual = self.visual({"cnas_mark": "资质证书存在实际CNAS认可标识，不能仅有提及CNAS或空标识占位。"}, "证书实际CNAS认可标识", fails_unidentified=True)
         return status, message + visual
 
 
@@ -487,7 +487,7 @@ class UaesLabQualificationDocxAgent(UaesSourceAgent):
         if deadline <= date.today():
             return "NG", "实验室资质已到期，截止日期必须晚于当前日期。" + _lab_reminder(self.group_context)
         message = "资质截止日期晚于当前日期；CNAS标识及标题中的认可委员会名称已读取。" + _lab_reminder(self.group_context)
-        status, visual_message = self.visual_result({"cnas_mark": "资质证书存在实际CNAS认可标识，不能仅有提及CNAS或空标识占位。"}, "证书实际CNAS认可标识")
+        status, visual_message = self.visual_result({"cnas_mark": "资质证书存在实际CNAS认可标识，不能仅有提及CNAS或空标识占位。"}, "证书实际CNAS认可标识", fails_unidentified=True)
         return status, message + visual_message
 
 

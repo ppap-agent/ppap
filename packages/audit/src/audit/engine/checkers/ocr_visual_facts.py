@@ -10,9 +10,10 @@ import logging
 import math
 import re
 from concurrent.futures import ThreadPoolExecutor
-from contextvars import copy_context
+from contextlib import contextmanager
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from documents.ocr.observation import current_ocr_observation, ocr_observation_scope
 
@@ -22,6 +23,30 @@ from .psw_evidence_trace import psw_fact_summary
 
 logger = logging.getLogger(__name__)
 _COMPANY_FACT = "psw_stamp_ends_with_company"
+_UNREADABLE: ContextVar[set[str] | None] = ContextVar("ocr_unreadable_facts", default=None)
+
+
+@contextmanager
+def unreadable_facts() -> Iterator[set[str]]:
+    """Collect the facts the vision model looked at on the original and reported it could not make out.
+
+    Only an actual, agreeing pair of observations counts. No configured model, a scope never asked,
+    disputed observations or a reading served from a caller's own cache report nothing, so a caller
+    that needs this signal falls back to "unknown", never to a failure of the original.
+    """
+    seen: set[str] = set()
+    token = _UNREADABLE.set(seen)
+    try:
+        yield seen
+    finally:
+        _UNREADABLE.reset(token)
+
+
+def note_unreadable(fields) -> None:
+    """Record facts the model reported unreadable on the original, for an open `unreadable_facts` block."""
+    seen = _UNREADABLE.get()
+    if seen is not None:
+        seen.update(fields)
 
 
 @dataclass(frozen=True)
@@ -168,11 +193,13 @@ def observe_ocr_scopes(
             model_fields = {field for field in subset if local_native.get(field, {}).get(scope) is None}
             phase = "observation_1_failed"
             try:
+                unread: list[set[str]] = []
                 for number in (1, 2) if model_fields else (1,):
                     phase = f"observation_{number}_failed"
                     reading_sources = []
                     request_info: dict[str, object] = {}
                     inputs.append(request_info)
+                    unread.append(set())
                     with ocr_observation_scope(number):
                         reading = _observe_ocr_scope(
                             frames,
@@ -182,6 +209,7 @@ def observe_ocr_scopes(
                             field_scopes={field: [scope] for field in subset},
                             native_by_scope=local_native,
                             request_info=request_info,
+                            unreadable=unread[-1],
                         )
                     readings.append(reading)
                     sources.extend(source for source in reading_sources if source not in sources)
@@ -200,7 +228,9 @@ def observe_ocr_scopes(
                             locator = {**args[0], "reported_value": args[0].get("reported_value", args[0].get("observed_value")), "observed_value": None, "coverage": "conflicting"}
                             established.append(((locator, *args[1:]), kwargs))
                     sources = established
-                cached = (facts, sources)
+                # Both observations looked at this scope and could not make the fact out.
+                unreadable = frozenset(model_fields.intersection(*unread))
+                cached = (facts, sources, unreadable)
             except Exception as error:
                 if request_cache is not None and key is not None:
                     request_cache[key] = error
@@ -226,9 +256,10 @@ def observe_ocr_scopes(
                 request_cache[key] = cached
         if isinstance(cached, Exception):
             raise cached
-        facts, sources = cached
+        facts, sources, unreadable = cached
         for args, kwargs in sources:
             witness(*args, **kwargs)
+        note_unreadable(field for field in unreadable if facts.get(field) is None)
         for field, value in facts.items():
             observations[field][scope] = value
     return {scope: {field: values[scope] for field, values in observations.items() if scope in values} for scope in scopes}
@@ -271,6 +302,7 @@ def _observe_ocr_scope(
     any_fields: frozenset[str] = frozenset(),
     native_by_scope: dict[str, dict[str, object]] | None = None,
     request_info: dict[str, object],
+    unreadable: set[str] | None = None,
 ) -> dict[str, object]:
     """Validate one fact per applicable source scope; never choose a winner.
 
@@ -457,6 +489,9 @@ def _observe_ocr_scope(
                 if observation["coverage"] not in ({"partial", "unreadable"} if value is None else {"complete"}):
                     raise ValueError("OCR company coverage is invalid")
             if value is None or observation["coverage"] != "complete":
+                if value is None and observation["coverage"] in {"partial", "unreadable"} and unreadable is not None:
+                    # The model looked at this scope and reported the fact cannot be made out on the original.
+                    unreadable.add(field)
                 if field == _COMPANY_FACT:
                     unconfirmed_company(scope, reason, value, observation["coverage"])
                 continue

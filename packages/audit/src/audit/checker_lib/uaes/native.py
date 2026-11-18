@@ -597,6 +597,17 @@ class UaesSourceAgent(BaseAgent):
         except (VisualFactsUnavailable, SheetFactsUnavailable) as exc:
             raise UnknownFact(str(exc)) from exc
 
+    def visual_observation(self, fields: dict[str, str], *, existential_fields=()):
+        """The image facts of the original, and those the model looked at there and could not make out.
+
+        Only the second set is the clause's "无法辨识"; any other unknown is the program's and stays for a person.
+        """
+        from audit.engine.checkers.ocr_visual_facts import unreadable_facts
+
+        with unreadable_facts() as seen:
+            values = self.visual_pdf(fields, existential_fields=existential_fields)
+        return values, {field for field in seen if values.get(field) is None}
+
     def table_footer(self, table, row):
         """Whether the rows from `row` to the end hold no business record, as seen on the rendered original."""
         from documents.excel.visual import ExcelRegionRenderError
@@ -628,11 +639,14 @@ class UaesSourceAgent(BaseAgent):
             return None
         return observed.get("footer")
 
-    def visual_result(self, fields, description):
-        values = self.visual_pdf(fields)
+    def visual_result(self, fields, description, *, fails_unidentified=False):
+        values, unreadable = self.visual_observation(fields)
         failed = [fields[name] for name, value in values.items() if value is False]
         if failed:
             return "NG", "原件确认不满足：" + "；".join(failed)
+        # Only a clause that says "无法辨识则不通过" fails an original the model could not make out.
+        if fails_unidentified and unreadable:
+            return "NG", "原件上无法辨识" + description + "，判不通过，请人工复核。"
         if any(value is None for value in values.values()):
             questions = []
             evaluation = None
@@ -741,14 +755,18 @@ class UaesSourceAgent(BaseAgent):
                 first_row, first_column, last_row, last_column = area
                 facts.witness({"kind": "xlsx_range", "sheet": table["id"], "start": ref(first_row, first_column), "end": ref(last_row, last_column)}, text, facts.version)
                 return "PASS", "原件中盖有受控章（图片内文字“" + text.strip() + "”）。"
-        observed = self.visual_pdf({"controlled_stamp": "文件中存在真实盖上的受控章；只有“受控章/受控/盖章处”文字标签、空白盖章栏时不算。"}, existential_fields=("controlled_stamp",))
+        observed, unreadable = self.visual_observation(
+            {"controlled_stamp": "文件中存在真实盖上的受控章；只有“受控章/受控/盖章处”文字标签、空白盖章栏时不算。"}, existential_fields=("controlled_stamp",)
+        )
         fact = observed["controlled_stamp"]
         if fact is True:
             return "PASS", "已从原件核实受控章。"
         if fact is False:
             return "NG", "原件没有受控章。"
-        # Whether an unreadable stamp fails is the clause's: only a clause that says so ("无法辨识则不通过") fails it.
-        # A failed model request is not this case; it surfaces as a technical error before reaching here.
-        if fails_unidentified:
-            return "NG", "无法辨识受控章，判不通过，请人工复核。"
-        raise UnknownFact("无法辨识受控章，需人工复核。")
+        # Only a stamp the model looked at and could not make out fails, and only where the clause says so
+        # ("无法辨识则不通过"). A failed model request surfaces as a technical error before reaching here.
+        if fails_unidentified and unreadable:
+            return "NG", "原件上的受控章无法辨识，判不通过，请人工复核。"
+        if unreadable:
+            raise UnknownFact("原件上的受控章无法辨识，需人工复核。")
+        raise UnknownFact("检查程序未能核实受控章，需人工复核。")

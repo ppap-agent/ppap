@@ -236,7 +236,7 @@ class UaesMaterialsAgent(UaesExcelAgent):
             "ne_signature": "UAES NE工程师签字/UAES NE Signature",
             "sqe_signature": "UAES SQD/SQE工程师签字/UAES SQD/SQE Signature",
         }
-        return self.visual({name: f"“{label}”标签右侧的签字横线上有实际签名（手写或签名图片）；横线空白为false。" for name, label in labels.items()}, "三方实际签字")
+        return self.visual({name: f"“{label}”标签右侧的签字横线上有实际签名（手写或签名图片）；横线空白为false。" for name, label in labels.items()}, "三方实际签字", fails_unidentified=True)
 
     @rule("同项目同物料独立图纸的零件名称和编号")
     def rule_3(self, ctx: RuleContext):

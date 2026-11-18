@@ -445,7 +445,7 @@ def test_flow_chart_key_mark_leaves_only_the_other_facts_to_the_image(tmp_path, 
     from audit.checker_lib.uaes.engineering import UaesProcessFlowAgent
 
     asked = []
-    monkeypatch.setattr(UaesProcessFlowAgent, "visual", lambda self, fields, description: asked.append(set(fields)) or ("PASS", description))
+    monkeypatch.setattr(UaesProcessFlowAgent, "visual", lambda self, fields, description, **options: asked.append(set(fields)) or ("PASS", description))
     agent = agent_for(tmp_path, UaesProcessFlowAgent, "U16", _flow_chart((10, "进料检验", 3), (20, f"机加工 {mark}", 0)))
     agent.check(0)
     assert asked == [{"characteristic_marks", "legend"}]

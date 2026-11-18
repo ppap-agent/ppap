@@ -56,13 +56,13 @@ class UaesProcessFlowAgent(UaesExcelAgent):
             return "NG", f"过程流程图“{chart.sheet.title}”全部工序没有关键工序标记（K、★、◆、加粗、底色或虚框均未使用），条款第一项不满足。"
         # Drawn marks and the characteristic symbols beside them exist only as images of the original.
         fields = {name: text for name, text in self.KEY_MARKS.items() if not (marked and name == "key_operation")}
-        return self.visual(fields, "关键工序、特性标记和标记定义")
+        return self.visual(fields, "关键工序、特性标记和标记定义", fails_unidentified=True)
 
     @rule("全图活动符号一致性与检验图例")
     def rule_2(self, ctx: RuleContext):
         chart = self.chart(ctx)
         if chart is None:
-            return self.visual(self.SYMBOL_FIELDS, "全图标准符号、完整图例、一致性及检验符号")
+            return self.visual(self.SYMBOL_FIELDS, "全图标准符号、完整图例、一致性及检验符号", fails_unidentified=True)
         where = f"过程流程图“{chart.sheet.title}”"
         operations = chart.operations
         for operation in operations:

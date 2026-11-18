@@ -191,11 +191,14 @@ class UaesApprovalAgent(UaesExcelAgent):
         sheet, section = self.cover(ctx)
         rejected = self.rejected(ctx, sheet, section)
         if rejected is None:
-            observed = self._from_legacy(lambda agent: agent.visual_pdf({"reject_marked": "封面“否决 Reject”列中，尺寸、材料、性能、试装任一行有实际的勾或叉标记；空框为false。"}))
+            observed, unreadable = self._from_legacy(lambda agent: agent.visual_observation({"reject_marked": "封面“否决 Reject”列中，尺寸、材料、性能、试装任一行有实际的勾或叉标记；空框为false。"}))
             if observed.get("reject_marked") is True:
                 return "NG", "封面否决列有实际标记，为否决件。"
+            # U19:1: "如果无法辨识则不通过…"
+            if unreadable:
+                return "NG", "原件封面否决列的勾选无法辨识，判不通过，请人工复核。"
             if observed.get("reject_marked") is not False:
-                raise unable("封面否决列有未能识别的内容，勾选尚未核实，需人工复核。")
+                raise unable("检查程序未能核实封面否决列的勾选，需人工复核。")
         elif rejected:
             return "NG", f"封面否决列{rejected}有实际标记，为否决件。"
         remarks, _cell = self.remark(sheet)
@@ -213,7 +216,9 @@ class UaesApprovalAgent(UaesExcelAgent):
         signed = self.cover_signatures()
         if signed is None:
             return self.visual(
-                {"signed_dates": "封面组长Team Leader、审核Checked by、批准Approved by三处实际签字及各自日期全部齐全，且组长日期≤审核日期≤批准日期。"}, "完全认可的三方实际签字及递增日期"
+                {"signed_dates": "封面组长Team Leader、审核Checked by、批准Approved by三处实际签字及各自日期全部齐全，且组长日期≤审核日期≤批准日期。"},
+                "完全认可的三方实际签字及递增日期",
+                fails_unidentified=True,
             )
         missing = [role for role, (name, day) in signed.items() if not name or day is None]
         if missing:

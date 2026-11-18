@@ -102,9 +102,9 @@ class UaesExcelAgent(ExcelAgent):
             self._legacy = UaesSourceAgent(self.audit_file, self.rule, group_context=self.group_context)
         return self._legacy
 
-    def visual(self, fields: dict[str, str], description: str) -> tuple[str, str]:
-        """Image facts of the original, each asked as a yes/no question."""
-        return self._from_legacy(lambda agent: agent.visual_result(fields, description))
+    def visual(self, fields: dict[str, str], description: str, *, fails_unidentified: bool = False) -> tuple[str, str]:
+        """Image facts of the original, each asked as a yes/no question; `fails_unidentified` is the clause's "无法辨识则不通过"."""
+        return self._from_legacy(lambda agent: agent.visual_result(fields, description, fails_unidentified=fails_unidentified))
 
     def transcribe(self, image: bytes, prompt: str, schema: dict[str, Any], subject: str) -> dict[str, Any]:
         """One image of an original transcribed into `schema` by the image model; the model transcribes, code decides."""

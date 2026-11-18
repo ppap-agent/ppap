@@ -437,3 +437,39 @@ def test_both_observations_keep_unknown_and_native_facts(monkeypatch):
     result = observe_ocr_images(images(), {"signed": "实际签字", "stamped": "实际印章"}, Mock(), native_by_scope={"stamped": {"pdf:2": True}})
     assert result == {"signed": None, "stamped": True}
     assert len(prompts) == 2
+
+
+def unreadable():
+    return [{"scope": "pdf:2", "value": None, "sources": [], "covered_image_indices": [0], "coverage": "unreadable", "excerpt": ""}]
+
+
+def test_a_fact_both_observations_cannot_make_out_is_reported_unreadable(monkeypatch):
+    from audit.engine.checkers.ocr_visual_facts import unreadable_facts
+
+    install(monkeypatch, {"checked": unreadable()})
+    with unreadable_facts() as seen:
+        assert observe_ocr_images(images(), {"checked": "实际勾选"}, Mock()) == {"checked": None}
+    assert seen == {"checked"}
+
+
+@pytest.mark.parametrize("case", ["no_model", "disputed", "incomplete_context"])
+def test_an_unknown_the_model_did_not_report_unreadable_is_not_the_original(monkeypatch, case):
+    # Only the model looking and saying it cannot make the fact out is the original's; every other unknown is the program's.
+    from audit.engine.checkers.ocr_visual_facts import unreadable_facts
+
+    if case == "no_model":
+        monkeypatch.delenv("PPAP_MODEL_VISION_MODEL")
+        install(monkeypatch, {"checked": unreadable()})
+    elif case == "disputed":
+
+        async def read(data, prompt, **kwargs):
+            return {"checked": unreadable() if current_ocr_observation() == 1 else response(True)}
+
+        monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.read_visual_facts", read)
+    else:
+        raw = {"checked": response(False)}
+        raw["checked"][0]["covered_image_indices"] = []
+        install(monkeypatch, raw)
+    with unreadable_facts() as seen:
+        assert observe_ocr_images(images(), {"checked": "实际勾选"}, Mock()) == {"checked": None}
+    assert seen == set()
