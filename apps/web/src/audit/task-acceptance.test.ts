@@ -271,6 +271,8 @@ test('送审 S 份 reads the saved server scope and is 待确认 without one', (
   assert.equal(submittedCount({...mixed, confirmation_scope: null}, false), null)
   assert.equal(submittedCount({...mixed, confirmation_scope: {...mixed.confirmation_scope!, target_file_version_ids: ['file-a', 'file-u']}}, false), null)
   assert.equal(submittedCount({...mixed, state: 'matching'}, false), null)
+  // Every matched file left out: zero is certain even before the choice is saved.
+  assert.equal(submittedCount({...mixed, files: mixed.files.map(row => row.match?.state === 'matched' ? {...row, selection: 'unselected' as const} : row)}, true), 0)
 })
 
 test('a task without targets says whether files were left out or nothing matched', () => {

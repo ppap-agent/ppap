@@ -27,9 +27,14 @@ export function confirmationScope(task: Task) {
   return scope
 }
 
-/** 「送审 S 份」：S is the server's saved target count; unsaved local choices or a missing scope leave it 待确认 (null), never a local tally. */
+/**
+ * 「送审 S 份」：S is the server's saved target count; unsaved local choices or a missing scope leave it 待确认 (null), never a local tally.
+ * The one certain local fact is zero: with no selected matched file nothing can be submitted, saved or not.
+ */
 export function submittedCount(task: Task, unsaved: boolean): number | null {
-  if (unsaved || task.state !== 'pending_confirm') return null
+  if (task.state !== 'pending_confirm') return null
+  if (!task.files.some(row => row.selection === 'selected' && row.match?.state === 'matched')) return 0
+  if (unsaved) return null
   return confirmationScope(task)?.target_file_version_ids.length ?? null
 }
 

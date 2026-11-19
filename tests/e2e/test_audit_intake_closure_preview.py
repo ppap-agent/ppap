@@ -175,8 +175,8 @@ class AuditIntakeClosureTests(unittest.TestCase):
             for name in ("PFMEA.xlsx", "控制计划.xlsx"):
                 page.get_by_role("checkbox", name=f"送审 {name}", exact=True).uncheck()
             expect(page.get_by_role("button", name="重新识别", exact=True)).to_have_count(0)
-            # Unsaved choices leave the count to the server; 开始审核 completes the task without a Round.
-            expect(page.get_by_text("送审 待确认", exact=True)).to_be_visible()
+            # With every matched file left out the count is certainly zero; 开始审核 completes the task without a Round.
+            expect(page.get_by_text("送审 0 份", exact=True)).to_be_visible()
             page.get_by_role("button", name="开始审核", exact=True).click()
             expect(page.get_by_role("heading", name="本次任务无送审文件", exact=True)).to_be_visible()
             expect(page.get_by_text("本次未勾选送审文件。未开始审核，未扣费，也没有生成审核报告。", exact=True)).to_be_visible()
