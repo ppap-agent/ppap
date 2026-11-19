@@ -4,6 +4,7 @@
     "sans": {
       "$type": "fontFamily",
       "$value": [
+        "Inter",
         "-apple-system",
         "BlinkMacSystemFont",
         "PingFang SC",
@@ -19,7 +20,7 @@
     "control": {
       "$type": "dimension",
       "$value": {
-        "value": 0.375,
+        "value": 0.5,
         "unit": "rem"
       }
     }

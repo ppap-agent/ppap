@@ -88,9 +88,16 @@ const projected: readonly (readonly [string, string])[] = [
 ];
 
 // Each role is shown on the component that uses it, once per theme.
-function components(prefix: string, suffix: string): string {
+function components(prefix: string, suffix: string, tokens: TokenNormalizedSet): string {
   const c = (name: string) => `"{colors.${prefix}${name}}"`;
-  return `  button-primary${suffix}:
+  // A translucent border is not a design.md colour, so its components are projected only when it is opaque.
+  const lines = [
+    `  input${suffix}:\n    backgroundColor: ${c("surface")}\n    textColor: ${c("on-surface")}\n    rounded: "{rounded.control}"`,
+    ...(opaque(tokens, "color.border") ? [`  divider${suffix}:\n    backgroundColor: ${c("border")}`] : []),
+    ...(opaque(tokens, "color.input") ? [`  input-outline${suffix}:\n    backgroundColor: ${c("input-border")}`] : []),
+  ];
+  return `${lines.join("\n")}
+  button-primary${suffix}:
     backgroundColor: ${c("primary")}
     textColor: ${c("on-primary")}
     rounded: "{rounded.control}"
@@ -128,7 +135,7 @@ function frontmatter(light: TokenNormalizedSet, dark: TokenNormalizedSet): strin
   return `---
 version: alpha
 name: PPAP Web
-description: Product palette, font family and control radius of the PPAP web app and Docs Add-on.
+description: "Precision Slate: slate neutrals, one blue for commitments, crisp 1px borders and 8px radius for the PPAP web app and Docs Add-on."
 colors:
 ${[...lines(light, ""), ...lines(dark, "dark-")].join("\n")}
 typography:
@@ -137,16 +144,8 @@ typography:
 rounded:
   control: ${dimension(light, "rounded.control")}
 components:
-${components("", "")}
-  divider:
-    backgroundColor: "{colors.border}"
-  input:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.on-surface}"
-    rounded: "{rounded.control}"
-  input-outline:
-    backgroundColor: "{colors.input-border}"
-${components("dark-", "-dark")}
+${components("", "", light)}
+${components("dark-", "-dark", dark)}
 ---
 `;
 }

@@ -32,7 +32,8 @@ test("projects one palette into the runtime theme and design.md, and design.md i
   assert.notEqual(projected.theme.light.background, projected.theme.dark.background);
   // The app and the Docs Add-on switch themes with the .dark class.
   assert.match(projected.css, /^\.dark \{/m);
-  assert.match(projected.css, /--radius: 0\.375rem;/);
+  const radius = JSON.parse(readFileSync(new URL("../tokens/shared.tokens.json", import.meta.url), "utf8")).rounded.control.$value;
+  assert.ok(projected.css.includes(`--radius: ${radius.value}${radius.unit};`));
   const defined = new Set([...projected.css.matchAll(/(--[\w-]+)\s*:/g)].map((match) => match[1]));
   const references = [...projected.css.matchAll(/var\(([^,)]+)/g)].map((match) => match[1]);
   assert.ok(references.every((name) => defined.has(name)));
