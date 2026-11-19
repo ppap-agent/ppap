@@ -1,7 +1,8 @@
 import {lazy, Suspense, useEffect, useId, useRef, useState} from 'react'
-import {faBookOpen, faCircleNotch, faDownload} from '@fortawesome/free-solid-svg-icons'
+import {faChevronDown, faCircleNotch, faDownload, faEye} from '@fortawesome/free-solid-svg-icons'
 import {Icon} from '../components/ui/icon'
 import {Button} from '../components/ui/button'
+import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger} from '../components/ui/dropdown-menu'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {precheckFileName, type PrecheckAdapter} from './precheck'
@@ -35,12 +36,10 @@ export function HistoryPrecheck({adapter, taskId, label}: {adapter?: PrecheckAda
   }
   // IX-10.05: with no precheck report to trace, the entries stay greyed with the reason on hover.
   const missing = adapter ? undefined : '暂无可追溯预检报告'
-  return <div className="grid gap-1 px-2 pb-1">
+  return <div className="grid gap-1">
     <span id={describedBy} className="sr-only">{label}</span>
-    <div className="flex flex-wrap gap-1" title={missing}>
-      <Button variant="ghost" size="xs" aria-describedby={describedBy} disabled={!adapter || busy} onClick={() => void preview()}>{busy ? <Icon icon={faCircleNotch} className="animate-spin motion-reduce:animate-none"/> : <Icon icon={faBookOpen}/>}预览预检报告</Button>
-      <Button variant="ghost" size="xs" aria-describedby={describedBy} disabled={!adapter || busy} onClick={() => void download()}><Icon icon={faDownload}/>下载预检报告</Button>
-    </div>
+    <DropdownMenu><DropdownMenuTrigger asChild><Button variant="link" size="xs" className="w-fit -ml-2" aria-describedby={describedBy} disabled={!adapter || busy} title={missing}>{busy ? <Icon icon={faCircleNotch} className="animate-spin motion-reduce:animate-none"/> : null}预检报告<Icon icon={faChevronDown} aria-hidden="true"/></Button></DropdownMenuTrigger>
+      <DropdownMenuContent align="start"><DropdownMenuItem onSelect={() => void preview()}><Icon icon={faEye}/>预览</DropdownMenuItem><DropdownMenuItem onSelect={() => void download()}><Icon icon={faDownload}/>下载 PDF</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
     {busy && <p role="status" className="text-xs text-muted-foreground">正在读取预检报告…</p>}
     {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     <Dialog open={open && Boolean(url)} onOpenChange={setOpen}>
