@@ -1,4 +1,4 @@
-"""Positive disclosure contracts keep sample validation separate from PASS/NG."""
+"""Sample validation stays in the internal record with the frozen result; user-facing cards and Docs reports never show it."""
 
 from copy import deepcopy
 from html import unescape
@@ -11,7 +11,7 @@ from product.store.task_view import file_round_audit, report_eligible, round_rea
 
 
 @pytest.mark.parametrize(("status", "not_rerun", "wording"), [("unverified", False, "未经验证"), ("verified", True, "平台已更新，样本未重跑"), ("verified", False, "已通过样本验证")])
-def test_frozen_version_qualification_accompanies_all_pass_outputs(status, not_rerun, wording):
+def test_frozen_version_qualification_stays_internal_and_out_of_user_outputs(status, not_rerun, wording):
     execution = {"mode": "checker_core", "suite_revision_id": "frozen-suite-3", "suite_revision_number": 3, "verification": status, "samples_not_rerun": not_rerun}
     disclosure = frozen_checker_verification(execution)
     assert disclosure["status"] == status and disclosure["samples_not_rerun"] is not_rerun
@@ -33,17 +33,18 @@ def test_frozen_version_qualification_accompanies_all_pass_outputs(status, not_r
     task = {"id": "task-1", "number": "001", "files": [{"selection": "selected", "file": {"id": "file-1", "original_filename": "原件.xlsx"}, "audit": {**audit, "report": {"state": "ready"}}}]}
     card = task_notification_card(task, "completed", "https://example.test")
     text = unescape(card["body"]["elements"][0]["content"])
-    assert disclosure["notice"] in text and "符合 1 项" in text
+    assert "符合 1 项" in text and disclosure["notice"] not in text and "frozen-suite-3" not in text and "样本" not in text
     blocks = report_blocks(round)
     text = "\n".join(part["text_run"]["content"] for block in blocks for value in block.values() if isinstance(value, dict) for part in value["elements"])
-    assert disclosure["notice"] in text and "符合 1" in text
-    assert disclosure["notice"] in history_text(round)
+    assert "符合 1" in text and disclosure["notice"] not in text and "frozen-suite-3" not in text and "file-1" not in text and "rule-1" not in text
+    history = history_text(round)
+    assert disclosure["notice"] not in history and "frozen-suite-3" not in history
     # A later in-memory read or presentation edit cannot mutate the frozen source.
     audit["checker_verification"]["status"] = "verified" if status == "unverified" else "unverified"
     assert source["checker_verification"] == frozen_checker_verification(execution)
 
 
-def test_zip_card_uses_each_frozen_report_qualification():
+def test_zip_card_names_reports_without_their_internal_qualification():
     verification = frozen_checker_verification({"mode": "checker_core", "suite_revision_id": "original-suite", "verification": "verified", "samples_not_rerun": True})
     reference = {"task_id": "other-task", "file_version_id": "original-file"}
     package = {
@@ -54,5 +55,5 @@ def test_zip_card_uses_each_frozen_report_qualification():
     }
     card = task_notification_card({"id": "task", "number": "001", "files": []}, "zip_ready", "https://example.test", package)
     text = unescape(card["body"]["elements"][0]["content"])
-    assert verification["notice"] in text
-    assert "1 份在受理时平台已更新，样本未重跑" in text
+    assert "原件-审核报告.pdf" in text
+    assert verification["notice"] not in text and "样本" not in text and "original-suite" not in text

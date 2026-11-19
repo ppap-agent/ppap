@@ -3,7 +3,6 @@
 import hashlib
 import io
 import os
-import re
 import zipfile
 from urllib.parse import parse_qs, urlsplit
 
@@ -141,15 +140,18 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
             pdf_ready[0] = True
             page.get_by_role("button", name="重新读取 PDF", exact=True).click()
         expect(page.get_by_role("img", name="控制计划.xlsx-审核报告.pdf · 第 1 页", exact=True)).to_be_visible()
-        expect(page.get_by_role("note", name="本轮验证状态")).to_contain_text(reports[0]["checker_verification"]["notice"])
+        # The internal checker sample verification is not shown on the report page (#331).
+        expect(page.get_by_role("note", name="本轮验证状态")).to_have_count(0)
         if stall:
             assert binary_reads["pdf"] == [binary_reads["pdf"][0]] * 2
-        page.get_by_role("button", name="本页文字（可复制）", exact=True).click()
-        expect(page.get_by_role("region", name="当前报告").locator("pre")).to_contain_text("冻结审核报告")
+        reader = page.get_by_role("region", name="当前报告")
+        reader.get_by_role("textbox", name="查找内容", exact=True).fill("冻结审核报告")
+        reader.get_by_role("button", name="查找下一处", exact=True).click()
+        expect(reader.get_by_role("search", name="在报告中查找").get_by_role("status")).to_have_text("在第 1 页")
         assert decoder_reads and all(status == 200 for _path, status in decoder_reads)
         navigation.get_by_role("button").filter(has_text="尺寸检验报告.xlsx").click()
         expect(page.get_by_role("heading", name="尺寸检验报告.xlsx", exact=True)).to_be_visible()
-        expect(page.get_by_role("note", name="本轮验证状态")).to_contain_text(reports[1]["checker_verification"]["notice"])
+        expect(page.get_by_role("note", name="本轮验证状态")).to_have_count(0)
         expect(page.get_by_role("img", name="尺寸检验报告.xlsx-审核报告.pdf · 第 1 页", exact=True)).to_be_visible()
         if stall:
             assert len(held_pdf) == 1
@@ -162,10 +164,10 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
         page.get_by_role("button", name="报告信息", exact=True).click()
         info = page.get_by_role("dialog", name="报告信息", exact=True)
         expect(info.get_by_text("固定要求 2", exact=True)).to_be_visible()
-        # Internal identifiers are never shown; support takes them from the copy button's hover hint.
-        trace = info.get_by_role("button", name="复制追溯信息", exact=True)
-        expect(trace).to_have_attribute("title", re.compile(r"规则版本标识：rule-2(\n|$)"))
-        expect(trace).to_have_attribute("title", re.compile(r"文件版本标识：version-2(\n|$)"))
+        # Internal identifiers are never shown, copied or put in a hover hint.
+        expect(info.get_by_role("button", name="复制追溯信息", exact=True)).to_have_count(0)
+        expect(info.locator("[title*='rule-2'], [title*='version-2']")).to_have_count(0)
+        expect(info.locator("dt")).to_have_text(["报告名称", "生成时间", "原始文件", "审核规则"])
         expect(info.get_by_text("rule-2", exact=True)).to_have_count(0)
         expect(info.get_by_text("version-2", exact=True)).to_have_count(0)
         expect(info.get_by_text("未记录", exact=True)).to_be_visible()

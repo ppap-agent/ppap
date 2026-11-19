@@ -1803,7 +1803,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         import pymupdf
 
         with pymupdf.open(stream=downloaded.content, filetype="pdf") as pdf:
-            text = "".join(page.get_text() for page in pdf)
+            text = "".join("".join(page.get_text().split()) for page in pdf)
             self.assertIn("必须填写零件号", text)
             self.assertIn("P-1", text)
             self.assertIn("共1项：符合1项，不符合0项，无法判断0项，不适用0项。", "".join(text.split()))
@@ -1866,7 +1866,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
 
         with pymupdf.open(stream=pdf.content, filetype="pdf") as document:
             text = "".join("".join(page.get_text().split()) for page in document)
-            self.assertIn("".join(verification["notice"].split()), text)
+            # The internal checker sample verification stays out of the delivered PDF (#331).
+            self.assertNotIn("".join(verification["notice"].split()), text)
             self.assertIn("审核结论：符合", text)
 
     def test_missing_verification_mark_preserves_machine_pass_and_generates_pdf(self):
@@ -1923,7 +1924,10 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                 text = "".join(page.get_text() for page in pdf)
                 self.assertIn(value, text)
                 self.assertNotIn(other, text)
-                self.assertIn(f"file_version={row['file']['id']};result_attempt=1;rule_version={audit['rule']['id']}", pdf.metadata["subject"])
+                properties = " ".join(str(value) for value in pdf.metadata.values())
+                self.assertEqual(pdf.metadata["subject"], "PPAP 审核报告")
+                for internal in (row["file"]["id"], audit["rule"]["id"], task["round_id"]):
+                    self.assertNotIn(internal, properties)
             other_row = next(file for file in files if file["file"]["id"] != row["file"]["id"])
             self.assertEqual(self.display_client.get(pdf_path, params={**query, "file_version_id": other_row["file"]["id"]}).status_code, 403)
             other_report = other_row["audit"]["report"]

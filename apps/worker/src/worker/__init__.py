@@ -154,6 +154,7 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
 
 def process_report_job(store, claimed, ident) -> dict:
     from documents.audit_pdf import render_audit_pdf
+    from product.customers import full_name
 
     try:
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -161,7 +162,7 @@ def process_report_job(store, claimed, ident) -> dict:
             if claimed.kind == "report_zip":
                 result = store.build_report_package(claimed, generated_at, cancelled)
             else:
-                body = render_audit_pdf({**claimed.payload["report_input"], "generated_at": generated_at})
+                body = render_audit_pdf({**claimed.payload["report_input"], "generated_at": generated_at}, customer_name=full_name)
                 if cancelled.is_set():
                     raise ValueError("report_lease_unknown")
                 result = store.write_audit_report(claimed, body, generated_at)

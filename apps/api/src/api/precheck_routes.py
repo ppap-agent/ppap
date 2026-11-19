@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from product.customers import full_name
 from product.files import attachment_content_disposition
 from product.precheck import precheck_task
 from product.precheck_content import entry_key, precheck_content
@@ -34,12 +35,34 @@ class PrecheckFinding(TypedDict):
     scope: Literal["file", "content"]
 
 
+class PrecheckSourceMismatch(TypedDict):
+    """S07: the linked peer arrived but names another part; `value` is the audited file's, `found_value` the peer's."""
+
+    document: str
+    document_type: str
+    identity: str
+    value: str
+    found_value: str
+    found_file_version_id: str
+    found_filename: str
+
+
+class PrecheckMissingPeer(TypedDict):
+    """S04: the peer this file is compared against is not in the batch."""
+
+    document: str
+    document_type: str
+    part_number: NotRequired[str]
+
+
 class PrecheckStatus(TypedDict):
     code: str
     scope: NotRequired[str]
     file_version_id: str
     filename: str
     note: str
+    source_mismatch: NotRequired[PrecheckSourceMismatch]
+    missing: NotRequired[PrecheckMissingPeer]
 
 
 class PrecheckCriterion(TypedDict):
@@ -102,6 +125,24 @@ def _cached_content(key: tuple, read) -> list[dict]:
     return result
 
 
+COVER_FIELDS = ("customer", "project", "model", "part_number", "part")
+
+
+def _cover_recognition(task: dict) -> dict[str, str | None]:
+    """Cover values from the frozen recognition (match metadata) of the submitted files, never display corrections.
+
+    Differing values are all listed; a field no file recognized stays empty. The customer reads as its registered full name.
+    """
+    rows = [row for row in task.get("files", []) if row.get("selection") == "selected" and not row.get("reference_only") and (row.get("match") or {}).get("state") == "matched"]
+    cover: dict[str, str | None] = {}
+    for field in COVER_FIELDS:
+        # The customer falls back to the task's customer, as the precheck routes it.
+        found = [((row.get("match") or {}).get("metadata") or {}).get(field) or (task.get("customer") if field == "customer" else None) for row in rows]
+        values = [full_name(value) if field == "customer" else value.strip() for value in found if isinstance(value, str) and value.strip()]
+        cover[field] = "、".join(dict.fromkeys(values)) or None
+    return cover
+
+
 def register_precheck_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
     def read(request: Request, task_id: str):
         principal = principal_of(request)
@@ -156,6 +197,8 @@ def register_precheck_routes(app: FastAPI, store: AuthStore, principal_of) -> No
         from documents.precheck_pdf import render_precheck_pdf
 
         generated_at = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M")
-        content = render_precheck_pdf({"task_number": task.get("number") or task_id, "generated_at": generated_at, "precheck": result_of(principal_of(request), task)})
-        filename = f"{task.get('number') or task_id}-预检报告.pdf"
+        source = {"task_number": task.get("number"), "generated_at": generated_at, "recognition": _cover_recognition(task), "precheck": result_of(principal_of(request), task)}
+        content = render_precheck_pdf(source)
+        # The task number is what users see; the internal task id never names a delivered file.
+        filename = f"{task['number']}-预检报告.pdf" if task.get("number") else "预检报告.pdf"
         return Response(content, media_type="application/pdf", headers={"Content-Disposition": attachment_content_disposition(filename), **HEADERS})

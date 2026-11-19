@@ -238,9 +238,6 @@ def history_text(round_body: dict, return_url: str = "", *, now: datetime | None
         lines.append("**审核内容" + str(index) + "：" + name + "**")
         lines.append("")
         lines.append("审核结果：" + _status_text(rows))
-        source: dict = next((item for item in round_body["inputs"] if rows and item["file_version_id"] == _finding_version(rows[0])), {})
-        if source.get("checker_verification"):
-            lines.append(source["checker_verification"]["notice"])
         scope = _scope_text(rows)
         if scope:
             lines.append(scope)
@@ -339,7 +336,7 @@ def _published_clause(clauses: object, clause_id: object, text: object) -> bool:
 
 def _semantic_source_text(source: dict) -> str:
     role = "待审" if source["role"] == TARGET else "参考"
-    return f"来源：{source['filename']}（{role}；文件版本 {source['file_version_id']}）；位置：{_source_location(source['locator'])}；原文摘录：{source['excerpt']}"
+    return f"来源：{source['filename']}（{role}）；位置：{_source_location(source['locator'])}；原文摘录：{source['excerpt']}"
 
 
 def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
@@ -377,8 +374,6 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
             detail = {REASON_MANUAL_ONLY: "无对应内置检查，需人工核对", REASON_UNSUPPORTED: "当前文档类型没有可执行检查器"}.get(cast(str, reason), str(reason or "未自动检查"))
             blocks.append(_bullet(title + "：" + detail))
             version = item.get("file_version_id")
-            if version:
-                blocks.append(_text("待审文件版本：" + str(version)))
             rule = (targets.get(version) or {}).get("rule") or {}
             rule_body = rule.get("body") if isinstance(rule, dict) else None
             clauses = rule_body.get("rules") if isinstance(rule_body, dict) else None
@@ -392,11 +387,6 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
         source = targets[_finding_version(rows[0])]
         rule = source.get("rule") or {}
         blocks.append(_text("匹配规则：" + str(rule.get("title") or "未记录规则名称")))
-        if source.get("checker_verification"):
-            blocks.append(_text(source["checker_verification"]["notice"]))
-        blocks.append(_text("待审文件版本：" + source["file_version_id"]))
-        if source.get("rule_version_id"):
-            blocks.append(_text("规则版本：" + source["rule_version_id"]))
         rule_body = rule.get("body") if isinstance(rule, dict) else None
         published_clauses = rule_body.get("rules") if isinstance(rule_body, dict) else None
         if isinstance(published_clauses, list):
@@ -404,9 +394,6 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
             for clause in published_clauses:
                 if isinstance(clause, dict):
                     blocks.append(_bullet(str(clause.get("id") or "?") + "：" + str(clause.get("rule_to_check") or "")))
-        rule_origin = (rule.get("source_file_version_id") if isinstance(rule, dict) else None) or source.get("rule_source_file_version_id")
-        if rule_origin:
-            blocks.append(_text("规则原件来源版本（仅溯源，不表示修订条款位于原件）：" + str(rule_origin)))
         for number, row in enumerate(rows, 1):
             meta = [str(row.get("classification") or "").strip(), str(row.get("priority") or "").strip()]
             blocks.append(_heading3(str(row["status"]) + " · " + _finding_title(row, number)))
@@ -420,9 +407,6 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
                 rule_text = str(semantic.get("rule_text") or "").strip()
                 if (clause_id or rule_text) and not _published_clause(published_clauses, clause_id, rule_text):
                     blocks.append(_text("本轮有效条款：" + (clause_id + " · " if clause_id else "") + rule_text))
-                semantic_origin = semantic.get("rule_source_file_version_id")
-                if semantic_origin and semantic_origin != rule_origin:
-                    blocks.append(_text("规则原件来源版本（仅溯源）：" + str(semantic_origin)))
                 scope = _scope(row)
                 if scope:
                     blocks.append(_text(f"本条核验记录：共 {scope[0]} 条，已判断 {scope[1]} 条，无法判断 {scope[2]} 条"))

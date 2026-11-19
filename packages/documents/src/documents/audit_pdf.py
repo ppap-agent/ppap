@@ -1,4 +1,4 @@
-"""Render an already accepted, frozen per-file machine result as a PDF."""
+"""Render an already accepted, frozen per-file machine result as a PDF: a cover and ten chapters."""
 
 from datetime import datetime
 from html import escape
@@ -7,25 +7,23 @@ from zoneinfo import ZoneInfo
 
 import pymupdf
 
+from documents.report_layout import Chapter, Table, chapter_title, dash, render_report, text
+
 STATUS = {"PASS": "符合", "NG": "不符合", "UNABLE": "无法判断", "ERR": "技术错误", "NA": "不适用"}
 CONCLUSION = {"PASS": "符合", "NG": "不符合", "UNKNOWN": "尚有未确定项"}
+KIND = "PPAP 审核报告"
+# Cover: recognized fields first (frozen recognition of the accepted task), the check date, then fields the reader completes.
+COVER_FIELDS = (("customer", "客户全称"), ("project", "项目"), ("model", "车型"), ("part_number", "零件号"), ("part", "零件名称"))
+READER_FIELDS = ("供应商名称", "PPAP 版本", "SQE 工程师")
+LEVELS = ("A", "B", "C")
+# The same four counts as the summary line, never a risk grade.
+STAT_COLORS = (("符合", "pass_count", "#2ea121"), ("不符合", "ng_count", "#d83931"), ("无法判断", "unknown_count", "#de7802"), ("不适用", "na_count", "#8f959e"))
+DETAIL_HEAD = ("序号", "审核项", "结果", "严重程度", "问题性质", "判定依据", "说明", "位置")
+DETAIL_NOWRAP = (0, 2, 3, 4)
 
 
 def _text(value) -> str:
     return escape(str(value if value is not None else ""))
-
-
-def _verification_notice(verification: dict) -> str:
-    # Escape the frozen notice first. Keep only an exact suite_revision_id from
-    # breaking inside the token; the line may still break before or after it.
-    # A missing or nonmatching id is not injected and is not matched in markup.
-    raw = verification["notice"]
-    notice = str(raw if raw is not None else "")
-    revision_id = verification.get("suite_revision_id")
-    if type(revision_id) is not str or revision_id == "" or revision_id not in notice:
-        return escape(notice)
-    token = '<span style="white-space:nowrap">' + escape(revision_id) + "</span>"
-    return token.join(escape(part) for part in notice.split(revision_id))
 
 
 def _location(locator: dict) -> str:
@@ -47,35 +45,32 @@ def _location(locator: dict) -> str:
     raise ValueError("report_locator_unavailable")
 
 
-# Cover: recognized fields first, then fields the reader completes after download.
-COVER_FIELDS = (("customer", "客户名称"), ("project", "项目名称"), ("model", "车型"), ("part_number", "零件号"), ("part", "零件名称"))
-READER_FIELDS = ("供应商名称", "PPAP 版本", "SQE 工程师")
-# A long table repeats its header only by starting a new chunk; rows are short.
-TABLE_ROWS = 20
-LEVELS = ("A", "B", "C")
-PAGE = pymupdf.Rect(0, 0, 595, 842)
-# A4 portrait, single column: 20 mm top/bottom and 18 mm left/right margins.
-BODY = pymupdf.Rect(51, 57, 544, 785)
-# MuPDF maps sans-serif to Nimbus Sans, which shapes ff/fi/fl into compatibility
-# ligatures (U+FB00 and neighbors); its CJK font does the same and CSS cannot turn
-# that off. Monospace keeps those letters as ASCII, so a copied or extracted frozen
-# identity stays the original string. Chinese text uses MuPDF's embedded CJK fallback.
-CSS = (
-    "body {font-family:monospace; font-size:10.5pt; line-height:1.6} h1 {font-size:20pt} h2 {font-size:14pt} "
-    "h3 {font-size:11pt} p {white-space:pre-wrap} .meta {font-size:9pt; color:#555} "
-    "table {border-collapse:collapse; width:100%} th, td {border:0.5pt solid #888; padding:2pt 4pt; font-size:9pt; line-height:1.4; text-align:left; vertical-align:top} "
-    "th {background-color:#eee} .ng {font-weight:bold; background-color:#ddd} "
-    ".stats td {border:0.5pt solid #dee0e3; background-color:#f5f6f7; padding:6pt 18pt; text-align:center; font-size:10pt} .stats b {font-size:18pt}"
-)
-# Cover stat boxes: the same four counts as the cover line, never a risk grade.
-STAT_COLORS = (("符合", "pass_count", "#2ea121"), ("不符合", "ng_count", "#d83931"), ("无法判断", "unknown_count", "#de7802"), ("不适用", "na_count", "#8f959e"))
-
-
 def _first_location(source: dict, check: dict) -> str:
     for evidence in check["evidence"]:
         if evidence.get("locator"):
             return f"{source['originals'][evidence['file_version_id']]} · {_location(evidence['locator'])}"
     return "未提供具体位置"
+
+
+def _locations(source: dict, check: dict) -> str:
+    places = []
+    for evidence in check["evidence"]:
+        locator = evidence.get("locator")
+        place = _location(locator) if locator else evidence.get("location_gap") or "未提供具体位置。"
+        places.append(f"{source['originals'][evidence['file_version_id']]} · {place}")
+    return "；".join(places) or "未提供具体位置"
+
+
+def _evidence(source: dict, check: dict) -> str:
+    if not check["evidence"]:
+        return "未提供原件定位与摘录。"
+    parts = []
+    for evidence in check["evidence"]:
+        locator = evidence.get("locator")
+        place = _location(locator) if locator else evidence.get("location_gap") or "未提供具体位置。"
+        excerpt = evidence.get("excerpt") or ("该位置内容为空。" if locator else "未提供摘录。")
+        parts.append(f"{text(source['originals'][evidence['file_version_id']])} · {text(place)}<br/>{text(excerpt)}")
+    return "<br/>".join(parts)
 
 
 def _semantic(check: dict) -> dict:
@@ -116,104 +111,128 @@ def _grading_note(check: dict) -> str | None:
     return f"严重程度 {level}（规则默认）"
 
 
-def _cover(source: dict, audited_on: str) -> str:
-    audit, recognition = source["audit"], source.get("recognition") or {}
-    counts = audit["counts"]
-    rows = [(label, recognition.get(key) or "—") for key, label in COVER_FIELDS]
-    rows += [("审核规则", audit["rule"]["title"]), ("检查日期", audited_on)]
+def _status(check: dict) -> str:
+    status = check["finding"]["status"]
+    label = text(STATUS.get(status, status))
+    return f"<span class='strong'>{label}</span>" if status != "PASS" else label
+
+
+def _item(check: dict) -> str:
+    rule = check["rule_item"]
+    return f"{text(rule['id'])} · {text(rule['category'])}"
+
+
+def _explanation(check: dict) -> str:
+    finding = check["finding"]
+    lines = [finding.get("suggestions") or finding.get("classification")]
+    lines.append(_grading_note(check))
+    if scope := check.get("scope"):
+        lines.append(f"检查范围：已查 {scope['checked']}/{scope['total']}，未知 {scope['unknown']}。")
+    lines.append(check.get("scope_notice"))
+    return "<br/>".join(text(line) for line in lines if line) or "—"
+
+
+def _detail_row(source: dict, number: int, check: dict) -> tuple[str, ...]:
+    # 问题性质 has no frozen value yet; it is shown empty rather than guessed.
+    return (str(number), _item(check), _status(check), dash(_level(check)), "—", text(check["rule_item"]["rule_to_check"]), _explanation(check), text(_locations(source, check)))
+
+
+def _cover(source: dict, checked_on: str, customer_name) -> str:
+    # The frozen recognition stays as recorded; only its customer value is shown by the registered full name.
+    recognition = dict(source.get("recognition") or {})
+    if recognition.get("customer"):
+        recognition["customer"] = customer_name(recognition["customer"])
+    rows = [(label, dash(recognition.get(key))) for key, label in COVER_FIELDS]
+    rows += [("检查日期", text(checked_on))]
     rows += [(label, "") for label in READER_FIELDS]
-    table = "".join(f"<tr><th>{_text(label)}</th><td>{_text(value)}</td></tr>" for label, value in rows)
+    table = "".join(f"<tr><th>{escape(label)}</th><td>{value}</td></tr>" for label, value in rows)
     return "".join(
         [
             "<h1>PPAP 审核报告</h1>",
-            f"<h2>{_text(source['filename'])}</h2>",
-            f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b>　总评：<b>{_rating(audit)}</b></p>",
-            f"<p>共 {len(audit['checks'])} 项：符合 {counts['pass_count']} 项，不符合 {counts['ng_count']} 项，"
-            f"无法判断 {counts.get('unknown_count', 0)} 项，不适用 {counts.get('na_count', 0)} 项。</p>",
-            *([f"<p><b>{_verification_notice(audit['checker_verification'])}</b></p>"] if audit.get("checker_verification") else []),
+            f"<p class='kind'>{text(source['filename'])}</p>",
             f"<table>{table}</table>",
             "<p class='meta'>供应商名称、PPAP 版本与 SQE 工程师请下载后自行补充。</p>",
-            "<table class='stats'><tr>" + "".join(f"<td>{label}<br/><b style='color:{color}'>{counts.get(key, 0)}</b></td>" for label, key, color in STAT_COLORS) + "</tr></table>",
         ]
     )
 
 
-def _overview(source: dict) -> str:
+def _summary(source: dict) -> list:
     audit = source["audit"]
     counts = audit["counts"]
-    supplies = [supply for check in audit["checks"] if (supply := _supply(check))]
-    parts = [
-        "<h1>1 检查概览</h1>",
-        f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b>　总评：<b>{_rating(audit)}</b></p>",
-        "<table><tr><th>检查项</th><th>符合</th><th>不符合</th><th>无法判断</th><th>不适用</th></tr>",
-        f"<tr><td>{len(audit['checks'])}</td><td>{counts['pass_count']}</td><td>{counts['ng_count']}</td><td>{counts.get('unknown_count', 0)}</td><td>{counts.get('na_count', 0)}</td></tr></table>",
+    blocks = [
+        f"<p>审核结论：<b>{_text(CONCLUSION.get(audit['conclusion'], audit['conclusion']))}</b>　总评：<b>{_rating(audit)}</b></p>"
+        f"<p>共 {len(audit['checks'])} 项：符合 {counts['pass_count']} 项，不符合 {counts['ng_count']} 项，"
+        f"无法判断 {counts.get('unknown_count', 0)} 项，不适用 {counts.get('na_count', 0)} 项。</p>",
+        "<table><tr>"
+        + "".join(f"<td style='text-align:center'>{label}<br/><b style='color:{color}; font-size:16pt'>{counts.get(key, 0)}</b></td>" for label, key, color in STAT_COLORS)
+        + "</tr></table>",
+    ]
+    scopes = [check["scope"] for check in audit["checks"] if check.get("scope")]
+    if scopes:
+        blocks.append(f"<p>检查范围：已查 {sum(scope['checked'] for scope in scopes)}/{sum(scope['total'] for scope in scopes)}，未知 {sum(scope['unknown'] for scope in scopes)}。</p>")
+    if any(check.get("finding") and not check.get("evidence_verified") for check in audit["checks"]):
+        blocks.append("<p class='meta'>部分判定的证据未经验证，请核对原件中的证据和检查范围。</p>")
+    return blocks
+
+
+def _scope(source: dict) -> list:
+    audit = source["audit"]
+    files = [(text(name), "本报告被审文件" if version == audit["file_version_id"] else "同轮文件") for version, name in source["originals"].items()]
+    return [
+        f"<p>被审文件：{text(source['filename'])}</p><p>审核规则：{text(audit['rule']['title'])}</p>",
+        Table("表 2-1 受检文件集", ("序号", "文件", "角色"), [(str(number), name, role) for number, (name, role) in enumerate(files, 1)], nowrap=(0, 2)),
+    ]
+
+
+def _overview(source: dict) -> list:
+    audit = source["audit"]
+    counts = audit["counts"]
+    blocks: list = [
+        Table(
+            "表 3-1 检查结果分布",
+            ("检查项", "符合", "不符合", "无法判断", "不适用"),
+            [(str(len(audit["checks"])), str(counts["pass_count"]), str(counts["ng_count"]), str(counts.get("unknown_count", 0)), str(counts.get("na_count", 0)))],
+        )
     ]
     failed = [check for check in audit["checks"] if check["finding"]["status"] == "NG"]
     if failed:
         levels = [_level(check) for check in failed]
-        cells = "".join(f"<td>{levels.count(level)}</td>" for level in (*LEVELS, None))
-        parts.append(f"<table><tr><th>A 类</th><th>B 类</th><th>C 类</th><th>未定级</th></tr><tr>{cells}</tr></table>")
-        parts.append("<p class='meta'>未定级的不符合项按「不通过」计入总评。</p>")
-    scopes = [check["scope"] for check in audit["checks"] if check.get("scope")]
-    if scopes:
-        parts.append(f"<p>检查范围：已查 {sum(scope['checked'] for scope in scopes)}/{sum(scope['total'] for scope in scopes)}，未知 {sum(scope['unknown'] for scope in scopes)}。</p>")
-    if any(check.get("finding") and not check.get("evidence_verified") for check in audit["checks"]):
-        parts.append("<p class='meta'>部分判定的证据未经验证，请核对原件中的证据和检查范围。</p>")
-    parts.append(f"<p>需补交或换交的关联文件：{len(supplies)} 份。</p>" if supplies else "<p>本次没有需补交或换交的关联文件。</p>")
-    return "".join(parts)
+        blocks.append(Table("表 3-2 不符合项严重程度", ("A 类", "B 类", "C 类", "未定级"), [tuple(str(levels.count(level)) for level in (*LEVELS, None))]))
+        blocks.append("<p class='meta'>未定级的不符合项按「不通过」计入总评。</p>")
+    supplies = [supply for check in audit["checks"] if check["finding"]["status"] == "NG" and (supply := _supply(check))]
+    blocks.append(f"<p>需补交或换交的关联文件：{len(supplies)} 份。</p>" if supplies else "<p>本次没有需补交或换交的关联文件。</p>")
+    return blocks
 
 
-def _detail_tables(source: dict) -> list[str]:
-    checks = source["audit"]["checks"]
+def _problems(source: dict, levels: set) -> list:
+    rows = [_detail_row(source, number, check) for number, check in enumerate(source["audit"]["checks"], 1) if check["finding"]["status"] == "NG" and _level(check) in levels]
+    named = "A · B 类" if "A" in levels else "C 类"
+    blocks: list = [Table(f"表 {'4' if 'A' in levels else '5'}-1 {named}问题", DETAIL_HEAD, rows, empty=f"本次无{named}问题。", nowrap=DETAIL_NOWRAP)]
+    if None in levels and any(check["finding"]["status"] == "NG" and _level(check) is None for check in source["audit"]["checks"]):
+        blocks.append("<p class='meta'>严重程度为「—」的不符合项尚未定级，列入本章，按「不通过」计入总评。</p>")
+    return blocks
+
+
+def _register(source: dict) -> list:
     rows = [
-        f"<tr class='{'ng' if check['finding']['status'] == 'NG' else ''}'><td>{number}</td><td>{_text(check['rule_item']['id'])} · {_text(check['rule_item']['category'])}</td>"
-        f"<td>{_text(STATUS.get(check['finding']['status'], check['finding']['status']))}</td>"
-        f"<td>{(_level(check) or '未定级') if check['finding']['status'] == 'NG' else '—'}</td><td>{_text(_first_location(source, check))}</td></tr>"
-        for number, check in enumerate(checks, 1)
+        (str(number), _item(check), _status(check), _explanation(check), text(_locations(source, check)))
+        for number, check in enumerate(source["audit"]["checks"], 1)
+        if check["finding"]["status"] not in {"PASS", "NG"}
     ]
-    head = "<tr><th>序号</th><th>审核项</th><th>结果</th><th>严重程度</th><th>位置</th></tr>"
-    chunks = [rows[index : index + TABLE_ROWS] for index in range(0, len(rows), TABLE_ROWS)] or [[]]
-    return [("<h1>2 问题详情</h1><h3>检查结果一览</h3>" if index == 0 else "<h3>检查结果一览（续表）</h3>") + f"<table>{head}{''.join(chunk)}</table>" for index, chunk in enumerate(chunks)]
+    return [
+        Table("表 6-1 无法判断、技术错误与不适用项", ("序号", "审核项", "状态", "说明", "位置"), rows, empty="本次没有无法判断、技术错误或不适用的检查项。", nowrap=(0, 2)),
+        "<p class='meta'>「无法判断」和「技术错误」均未计为符合，须对照原件人工核对。</p>",
+    ]
 
 
-def _details(source: dict) -> str:
-    parts = ["<h3>逐项判定依据</h3>"]
-    for number, check in enumerate(source["audit"]["checks"], 1):
-        rule, finding = check["rule_item"], check["finding"]
-        parts.extend(
-            [
-                f"<hr><h3>{number}. {_text(rule['id'])} · {_text(rule['category'])} - {_text(STATUS.get(finding['status'], finding['status']))}</h3>",
-                f"<p><b>审核规则</b>　{_text(rule['rule_to_check'])}</p>",
-                f"<p><b>判定说明</b>　{_text(finding.get('suggestions') or finding.get('classification'))}</p>",
-            ]
-        )
-        if note := _grading_note(check):
-            parts.append(f"<p><b>说明</b>　{_text(note)}</p>")
-        scope = check.get("scope")
-        if scope:
-            parts.append(f"<p class='meta'>检查范围：已查 {scope['checked']}/{scope['total']}，未知 {scope['unknown']}。</p>")
-        if check.get("scope_notice"):
-            parts.append(f"<p class='meta'>{_text(check['scope_notice'])}</p>")
-        parts.append("<p><b>来源证据</b></p>")
-        if not check["evidence"]:
-            parts.append("<p class='meta'>未提供原件定位与摘录。</p>")
-        for evidence in check["evidence"]:
-            name = source["originals"][evidence["file_version_id"]]
-            locator = evidence.get("locator")
-            location = _location(locator) if locator else evidence.get("location_gap") or "未提供具体位置。"
-            excerpt = evidence.get("excerpt") or ("该位置内容为空。" if locator else "未提供摘录。")
-            parts.append(f"<p>{_text(name)} · {_text(location)}</p><p>{_text(excerpt)}</p>")
-    return "".join(parts)
-
-
-def _remediation(source: dict) -> str:
+def _remediation(source: dict) -> list:
     """Only frozen checker findings: no rewritten advice, no model call."""
     failed = [(number, check) for number, check in enumerate(source["audit"]["checks"], 1) if check["finding"]["status"] == "NG"]
     if not failed:
-        return "<h1>3 整改建议</h1><p>本次未发现问题项，无需整改。</p>"
+        return ["<p>本次未发现问题项，无需整改。</p>"]
     graded = any(_level(check) for _number, check in failed)
     order = "A → B → C → 未定级、再按检查项顺序" if graded else "检查项顺序"
-    parts = ["<h1>3 整改建议</h1>", f"<p>以下按{order}列出不符合项；同一位置的多项合并为一条。</p>"]
+    parts = [f"<p>以下按{order}列出不符合项；同一位置的多项合并为一条。</p>"]
     marks = "①②③④⑤⑥⑦⑧⑨⑩"
     index = 0
     for level in (*LEVELS, None) if graded else (None,):
@@ -222,89 +241,75 @@ def _remediation(source: dict) -> str:
             if not graded or _level(check) == level:
                 groups.setdefault(_first_location(source, check), []).append((number, check))
         if graded:
-            parts.append(f"<h2>{level + ' 类' if level else '未定级'}</h2>" + ("" if groups else f"<p>本次无{level + ' 类' if level else '未定级'}问题。</p>"))
+            named = level + " 类" if level else "未定级"
+            parts.append(f"<h2>{named}</h2>" + ("" if groups else f"<p>本次无{named}问题。</p>"))
         for location, items in groups.items():
             index += 1
-            parts.append(f"<h3>{index}. 位置：{_text(location)}</h3>")
+            lines = [f"<h3>{index}. 位置：{text(location)}</h3>"]
             for position, (number, check) in enumerate(items):
                 mark = marks[position] if len(items) > 1 and position < len(marks) else ""
                 rule = check["rule_item"]
-                parts.append(f"<p>{mark}【{_text(rule['category'])}】{_text(check['finding'].get('suggestions'))}</p>")
-                parts.append(f"<p class='meta'>依据：第 {number} 项 · 检查项 {_text(rule['id'])}</p>")
-    supplies = [supply for _number, check in failed if (supply := _supply(check)) and supply["kind"] == "missing"]
+                lines.append(f"<p>{mark}【{text(rule['category'])}】{text(check['finding'].get('suggestions'))}</p>")
+                lines.append(f"<p class='meta'>依据：第 {number} 项 · 检查项 {text(rule['id'])}</p>")
+            parts.append("".join(lines))
+    supplies = [supply for _number, check in failed if (supply := _supply(check))]
     if supplies:
-        parts.append("<h3>需补交文件清单</h3>")
+        lines = ["<h3>需补交或换交文件清单</h3>"]
         for supply in supplies:
-            part = f"（零件号 {supply['part_number']}）" if supply.get("part_number") else ""
-            parts.append(f"<p>补交：{_text(supply['document'])}{_text(part)}</p>")
-    return "".join(parts)
+            document, part = supply["document"], supply.get("part_number")
+            if supply["kind"] == "missing":
+                line = f"补交：零件号 {part} 的《{document}》" if part else f"补交：《{document}》"
+            else:
+                line = f"换交：《{document}》（零件号 {part}）" if part else f"换交：《{document}》"
+            lines.append(f"<p>{text(line)}</p>")
+        parts.append("".join(lines))
+    return parts
 
 
-def _appendix(source: dict) -> str:
-    audit = source["audit"]
-    files = "".join(f"<tr><td>{_text(name)}</td><td>{'本报告被审文件' if version == audit['file_version_id'] else '同轮文件'}</td></tr>" for version, name in source["originals"].items())
-    return "".join(
-        [
-            "<h1>4 附录</h1><h3>受检文件集</h3>",
-            f"<table><tr><th>文件</th><th>角色</th></tr>{files}</table>",
-            f"<h3>审核规则</h3><p>{_text(audit['rule']['title'])}</p>",
-            *([f"<h3>检查版本</h3><p>{_verification_notice(audit['checker_verification'])}</p>"] if audit.get("checker_verification") else []),
-            f"<p class='meta'>生成时间：{_text(source['generated_at'])}</p>",
-            "<p class='meta'>本报告记录所选文件版本和冻结要求的机器审核结果，不表示正式量产批准。</p>",
-        ]
-    )
+def _limits(source: dict) -> list:
+    lines = [
+        "本报告记录所选文件版本和冻结要求的机器审核结果，不表示正式量产批准。",
+        "「无法判断」「技术错误」与「不适用」项均未计为符合；其原因与位置见第六章，须对照原件核对。",
+        "表中「严重程度」「问题性质」显示「—」的，表示本次没有该项判定数据，不表示没有问题。",
+        "供应商名称、PPAP 版本与 SQE 工程师由报告使用方下载后补充，本报告不判定其内容。",
+    ]
+    return ["".join(f"<p>· {line}</p>" for line in lines), f"<p class='meta'>生成时间：{_text(_shanghai(source['generated_at']).strftime('%Y-%m-%d %H:%M'))}</p>"]
 
 
-def _audited_on(source: dict) -> str:
-    moment = datetime.fromisoformat(source.get("audited_at") or source["generated_at"])
-    return moment.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+def _appendix(source: dict) -> list:
+    rows = [
+        (str(number), _item(check), _status(check), dash(_level(check)), text(check["rule_item"]["rule_to_check"]), _explanation(check), _evidence(source, check))
+        for number, check in enumerate(source["audit"]["checks"], 1)
+    ]
+    return [
+        "<p>下表列出本规则的全部检查项及其结果，含符合、不适用、无法判断与不符合项。</p>",
+        Table("表 9-1 检查项全量结果", ("序号", "审核项", "结果", "严重程度", "判定依据", "说明", "来源证据"), rows, nowrap=(0, 2, 3)),
+    ]
 
 
-def render_audit_pdf(source: dict) -> bytes:
-    """No model calls, current document reads, human reviews or display edits."""
-    audit = source["audit"]
-    audited_on = _audited_on(source)
-    # Each section starts a new page. MuPDF loops on CSS page breaks, so every
-    # section is a separate story.
-    sections = [_cover(source, audited_on), _overview(source), *_detail_tables(source), _details(source), _remediation(source), _appendix(source)]
-    if sum(len(section) for section in sections) > 4_000_000:
-        raise ValueError("report_content_too_large")
-    output = BytesIO()
-    pages = 0
-    with pymupdf.DocumentWriter(output) as writer:
-        for section in sections:
-            story = pymupdf.Story(html=f'<html lang="zh"><body>{section}</body></html>', user_css=CSS)
-            more = 1
-            while more:
-                if pages >= 500:
-                    raise ValueError("report_page_limit")
-                device = writer.begin_page(PAGE)
-                more, _filled = story.place(BODY)
-                story.draw(device)
-                writer.end_page()
-                pages += 1
-    title = source["filename"] + "-审核报告"
-    with pymupdf.open(stream=output.getvalue(), filetype="pdf") as document:
-        document.set_metadata(
-            {
-                "title": title,
-                "subject": f"round={audit['round_id']};file_version={audit['file_version_id']};result_attempt={audit['result_attempt']};rule_version={audit['rule']['id']}",
-            }
-        )
-        # The cover has no header or footer; page numbers start on the first body page.
-        # Same fonts as the body, so the header keeps ASCII identities unshaped.
-        margin = "body {font-family:monospace; font-size:8pt; color:#666} p {margin:0}"
-        header = _text(title if len(title) <= 50 else title[:49] + "…")
-        for index, page in enumerate(document):
-            if index == 0:
-                continue
-            page.insert_htmlbox(pymupdf.Rect(51, 30, 400, 50), f"<p>{header}</p>", css=margin)
-            page.insert_htmlbox(pymupdf.Rect(400, 30, 544, 50), "<p style='text-align:right'>PPAP 审核报告</p>", css=margin)
-            page.draw_line((51, 48), (544, 48), color=(0.6, 0.6, 0.6), width=0.5)
-            page.insert_htmlbox(pymupdf.Rect(51, 800, 300, 820), f"<p>{audited_on}</p>", css=margin)
-            page.insert_htmlbox(pymupdf.Rect(300, 800, 544, 820), f"<p style='text-align:right'>第 {index} / {len(document) - 1} 页</p>", css=margin)
-        document.subset_fonts()
-        return document.tobytes(garbage=4, deflate=True)
+def _shanghai(value: str) -> datetime:
+    return datetime.fromisoformat(value).astimezone(ZoneInfo("Asia/Shanghai"))
+
+
+def render_audit_pdf(source: dict, customer_name=lambda value: value) -> bytes:
+    """No model calls, current document reads, human reviews or display edits.
+
+    ``customer_name`` maps the recognized customer to its registered full name (``product.customers.full_name``).
+    """
+    checked_on = _shanghai(source.get("audited_at") or source["generated_at"]).strftime("%Y-%m-%d")
+    chapters = [
+        Chapter(chapter_title(1, "结论摘要"), _summary(source)),
+        Chapter(chapter_title(2, "提交范围与文件集"), _scope(source)),
+        Chapter(chapter_title(3, "问题总览"), _overview(source)),
+        Chapter(chapter_title(4, "A · B 类问题明细"), _problems(source, {"A", "B", None})),
+        Chapter(chapter_title(5, "C 类问题明细"), _problems(source, {"C"})),
+        Chapter(chapter_title(6, "状态登记"), _register(source)),
+        Chapter(chapter_title(7, "整改建议汇总"), _remediation(source)),
+        Chapter(chapter_title(8, "结论作用域与局限性声明"), _limits(source)),
+        Chapter(chapter_title(9, "附录 · 检查项全量结果"), _appendix(source)),
+        Chapter(chapter_title(10, "附录 · 分则附加节"), ["<p>本章无附加节。</p>"]),
+    ]
+    return render_report(cover=_cover(source, checked_on, customer_name), chapters=chapters, name=source["filename"] + "-审核报告", kind=KIND, date=checked_on)
 
 
 def render_fact_confirmation_pdf(source: dict) -> bytes:

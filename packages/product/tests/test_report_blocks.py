@@ -82,12 +82,10 @@ class ReportBlocksTests(unittest.TestCase):
             "人工复核：接受",
             "理由：已核实",
             "下一步：补签",
-            "来源：audit.xlsx（待审；文件版本 v1）；位置：Sheet1!A1；原文摘录：缺少签字",
-            "来源：reference.xlsx（参考；文件版本 v2）；位置：签字页!B2；原文摘录：签字栏",
+            "来源：audit.xlsx（待审）；位置：Sheet1!A1；原文摘录：缺少签字",
+            "来源：reference.xlsx（参考）；位置：签字页!B2；原文摘录：签字栏",
             "参考资料（不单独审核）：reference.xlsx",
             "匹配规则：客户规则",
-            "待审文件版本：v1",
-            "规则版本：rule1",
             "https://example.test/?round=1",
         ):  # noqa: E501
             self.assertIn(expected, text)
@@ -112,7 +110,7 @@ class ReportBlocksTests(unittest.TestCase):
         }
         blocks = report_blocks(body)
         text = "\n".join(part["text_run"]["content"] for block in blocks for value in block.values() if isinstance(value, dict) for part in value["elements"])
-        self.assertIn("audit.pdf（待审；文件版本 v1）", text)
+        self.assertIn("audit.pdf（待审）", text)
         self.assertIn("位置：第 3 页 · 表格行 12 · 列 4", text)
         self.assertIn("原文摘录：缺少签字", text)
         self.assertNotIn("Sheet", text)
@@ -187,8 +185,7 @@ class ReportBlocksTests(unittest.TestCase):
             "本条核验记录：共 4 条，已判断 2 条，无法判断 2 条",
             "UNABLE · R1 · 条款",
             "修订后的频次要求",
-            "规则原件来源版本（仅溯源，不表示修订条款位于原件）：original-rule-v",
-            "flow.pdf（参考；文件版本 v2）",
+            "flow.pdf（参考）",
             "位置：第 3 页 · 文本块 2",
             "原文摘录：流程记录",
             "无法判断原因：unresolved_relation",
@@ -269,15 +266,12 @@ class ReportBlocksTests(unittest.TestCase):
             self.assertEqual(text.count(rule_text), 1)
         for expected in (
             "R3 · 特殊要求：无对应内置检查，需人工核对",
-            "待审文件版本：v1",
-            "规则版本：rv1",
-            "规则原件来源版本（仅溯源，不表示修订条款位于原件）：original-v",
             "控制计划!B2",
             "控制计划!C3:D8",
             "第 4 页 · 文本块 7",
             "段落 9",
             "表格 2 · 行 3 · 列 4",
-            "flow.pdf（参考；文件版本 v2）",
+            "flow.pdf（参考）",
             "原文摘录：核对单元格",
             "未检查范围：flow.pdf（参考资料，不单独审核）",
         ):

@@ -255,25 +255,30 @@ def test_failed_round_report_generation_reaches_the_existing_report_recovery_ui(
         browser.close()
 
 
-def test_all_pass_frozen_verification_remains_visible_in_result_focus_and_report():
-    status, not_rerun = "unverified", False
+def test_internal_checker_verification_stays_out_of_results_focus_and_report():
     from product.checker_verification import frozen_checker_verification
 
-    verification = frozen_checker_verification({"mode": "checker_core", "suite_revision_id": "frozen-checker-3", "suite_revision_number": 3, "verification": status, "samples_not_rerun": not_rerun})
+    verification = frozen_checker_verification({"mode": "checker_core", "suite_revision_id": "frozen-checker-3", "suite_revision_number": 3, "verification": "unverified", "samples_not_rerun": False})
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1057, "height": 853})
         page.set_default_timeout(5000)
         round_report_routes(page, verification=verification)
         page.goto(WEB + f"/tasks/{TASK}?file={VERSION}&clause=1")
-        notice = page.get_by_role("note", name="本轮验证状态")
-        expect(notice).to_contain_text(verification["notice"])
-        expect(notice).to_contain_text("部分判定的证据未经验证")
+        details = page.get_by_role("region", name="审核详情")
+        expect(details.get_by_role("table")).to_be_visible()
+
+        def expect_no_internal_identity():
+            html = page.content()
+            for internal in ("样本验证", "frozen-checker-3", "检查版本第", "data-suite-revision", verification["notice"]):
+                assert internal not in html, internal
+            expect(page.get_by_role("note", name="本轮验证状态")).to_have_count(0)
+
+        expect_no_internal_identity()
         page.get_by_role("button", name="逐条复核", exact=True).click()
-        expect(notice).to_be_visible()
-        expect(notice).to_contain_text(verification["notice"])
+        expect(page.get_by_role("region", name="专注复核")).to_be_visible()
+        expect_no_internal_identity()
         page.get_by_role("button", name="审核报告", exact=True).click()
-        expect(page.get_by_role("region", name="当前报告").get_by_role("note", name="本轮验证状态")).to_contain_text(verification["notice"])
-        page.get_by_role("navigation", name="当前位置", exact=True).get_by_role("link", name="返回审核结果", exact=True).click()
-        expect(page.get_by_role("region", name="审核详情").get_by_role("note", name="本轮验证状态")).to_contain_text(verification["notice"])
+        expect(page.get_by_role("region", name="当前报告")).to_be_visible()
+        expect_no_internal_identity()
         browser.close()
