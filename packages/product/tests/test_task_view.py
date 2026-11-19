@@ -802,3 +802,12 @@ def test_a_running_round_names_the_task_under_way_and_each_files_place():
     # Nothing is shown before the first file, for an unknown file, or once the round ended.
     for round in ({**deep, "progress": {"phase": "checking"}}, {**deep, "progress": {"phase": "checking", "stage": "check", "target": "ref"}}, {**preparing, "execution": "completed"}):
         assert run_view(round) == (None, {})
+
+
+def test_a_finished_audit_whose_reports_are_still_being_made_is_summarizing():
+    reports = {"version-a": {"state": "generating"}}
+    summarizing = task_round_view(task_input(), verified_round(), reports)
+    assert (summarizing["state"], summarizing["run"]) == ("reviewing", {"stage": "summary"})
+    # Once the reports are made the task is over; a failed round never shows the summary.
+    assert "run" not in task_round_view(task_input(), verified_round(), {"version-a": {"state": "ready"}})
+    assert "run" not in task_round_view(task_input(), frozen_round("failed"), reports)

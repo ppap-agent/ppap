@@ -361,6 +361,9 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
         or has_execution_error(round["execution"], round.get("coverage") or {}, round.get("findings", []))
         or any(audit["execution"] == "review_failed" for audit in audits)
     )
+    if not task_finished and round["execution"] == "completed" and not failed:
+        # The audit is over and only its reports are still being made: the round is summarizing.
+        run = {"stage": "summary"}
     # The round's standing, defined once: what writeback, release, the flow node and every page read.
     standing = {
         "conclusion": None if not finished else "ERROR" if failed else overall([_settled(audit, confirmed=True) for audit in audits]),
