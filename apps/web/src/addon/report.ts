@@ -10,7 +10,7 @@ export type TaskFile = components['schemas']['AuditTaskFile']
 export type Check = components['schemas']['AuditClauseEvaluation']
 export type Verdict = 'PASS' | 'NG' | 'UNKNOWN' | 'ERROR' | 'NONE' | 'RUNNING'
 
-export const verdictLabel: Record<Verdict, string> = {PASS: '符合', NG: '不符合', UNKNOWN: '尚有未确定项', ERROR: '审核异常', NONE: '未审核', RUNNING: '审核中'}
+export const verdictLabel: Record<Verdict, string> = {PASS: '符合', NG: '不符合', UNKNOWN: '待审核', ERROR: '审核异常', NONE: '未审核', RUNNING: '审核中'}
 
 export const audited = (task: Task) => task.files.filter(row => row.selection === 'selected' && row.audit)
 
@@ -72,13 +72,13 @@ export function resultMarkdown(task: Task, link: string): string {
   const lines = [
     `## ${marker(task)}`,
     '',
-    `**总体结论：${verdictLabel[overall]}**　不符合 ${sum.ng} 项，尚未确定 ${sum.unsure} 项。审核时间：${when(task.round_started_at ?? task.created_at)}`,
+    `**总体结论：${verdictLabel[overall]}**　不符合 ${sum.ng} 项，待审核 ${sum.unsure} 项。审核时间：${when(task.round_started_at ?? task.created_at)}`,
     '',
-    '| 文件 | 结论 | 不符合 | 尚未确定 |',
+    '| 文件 | 结论 | 不符合 | 待审核 |',
     '| --- | --- | --- | --- |',
     ...audited(task).map(row => {
       const counts = row.audit!.counts
-      return `| ${cell(row.file.original_filename)} | ${conclusionLabel[row.audit!.conclusion ?? ''] ?? '尚有未确定项'} | ${counts.ng_count} | ${counts.unknown_count + counts.not_covered_count + counts.error_count} |`
+      return `| ${cell(row.file.original_filename)} | ${conclusionLabel[row.audit!.conclusion ?? ''] ?? '待审核'} | ${counts.ng_count} | ${counts.unknown_count + counts.not_covered_count + counts.error_count} |`
     }),
     '',
   ]

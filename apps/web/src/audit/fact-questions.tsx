@@ -65,7 +65,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
   async function accepted(receipt: FactAnswerReceipt) {
     if (!mounted.current) return
     setPending(null); keepOperation(roundId, null)
-    setNotice(receipt.answer.value === null ? '已记录“看不清”。相关条款仍为无法判断。' : '回答已保存，只重算相关条款。原机器结果保留。')
+    setNotice(receipt.answer.value === null ? '已记录“看不清”。相关条款仍为待审核。' : '回答已保存，只重算相关条款。原机器结果保留。')
     await read()
   }
   async function apply(question: FactQuestion, value: boolean | string | null) {

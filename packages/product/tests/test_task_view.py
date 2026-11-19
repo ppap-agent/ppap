@@ -105,8 +105,10 @@ class TaskRoundViewTests(unittest.TestCase):
         ]
         check = task_round_view(task_input(), round)["files"][0]["audit"]["checks"][0]
         self.assertIn("有来源不在本轮冻结文件中", check["scope_notice"])
-        self.assertIn("page_location_failed：第3页未能定位表格", check["scope_notice"])
-        self.assertIn("已执行 1 次断言", check["scope_notice"])
+        self.assertIn("第3页未能定位表格", check["scope_notice"])
+        # Diagnostic codes, assertion counts and provenance wording are internal (#331 AC-16).
+        for internal in ("page_location_failed", "次断言", "trace"):
+            self.assertNotIn(internal, check["scope_notice"])
         self.assertFalse(check["evidence_verified"])
 
     def test_pdf_cell_is_preserved_in_task_and_historical_evidence(self):
@@ -185,8 +187,7 @@ class TaskRoundViewTests(unittest.TestCase):
         check = audit["checks"][0]
         self.assertEqual(check["scope"], {"total": 2, "checked": 2, "unknown": 0})
         self.assertFalse(check["evidence_verified"])
-        self.assertIn("已执行 4 次断言", check["scope_notice"])
-        self.assertNotIn("已检查 4/4", check["scope_notice"] or "")
+        self.assertIsNone(check["scope_notice"])
 
     def test_writeback_rejects_an_unresolved_cell_and_keeps_a_pdf_page(self):
         from product.feishu_writeback import report_blocks, writeback_state

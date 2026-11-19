@@ -396,7 +396,14 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     {key: 'reference', title: '比对资料', note: '不单独审核或收费', selectable: false, card: 'soft', tone: 'text-primary'},
     {key: 'pending', title: '等待识别', note: '', selectable: false, card: 'soft', tone: 'text-muted-foreground'},
   ] as const
-  const matchSections = sectionSpec.map(section => ({...section, rows: shownMatchRows.filter(row => sectionOf(row) === section.key)})).filter(section => section.rows.length)
+  // Only a file-level block keeps a file out of the audit; content-level blocks are checked by the audit itself.
+  const fileBlocked = (row: AuditTaskFile) => Boolean(precheck.result?.blocks.some(item => item.file_version_id === row.file.id && item.scope === 'file'))
+  const matchSections = sectionSpec
+    .map(section => {
+      const rows = shownMatchRows.filter(row => sectionOf(row) === section.key)
+      return {...section, rows, note: section.key === 'block' && !rows.some(fileBlocked) ? '内容级阻断不阻止开始审核，正式审核将核对' : section.note}
+    })
+    .filter(section => section.rows.length)
   const [deepSaving, setDeepSaving] = useState<string | null>(null), [deepError, setDeepError] = useState<{taskId: string; message: string} | null>(null)
   async function changeDeepMode(current: AuditTask, value: boolean) {
     if (!adapter.deepMode) return

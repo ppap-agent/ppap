@@ -394,7 +394,7 @@ function Result({task, call, host, canEdit, open, onReaudit, setPrimary, notify}
         {audited(task).map(row => (
           <li key={row.file.id}>
             <span className="min-w-0 truncate" title={row.file.original_filename}>{row.file.original_filename}</span>
-            <span className={tag(row.audit!.execution === 'review_failed' ? 'ERROR' : row.audit!.conclusion ?? 'UNKNOWN')}>{row.audit!.execution === 'review_failed' ? '审核异常' : conclusionLabel[row.audit!.conclusion ?? ''] ?? '尚有未确定项'}</span>
+            <span className={tag(row.audit!.execution === 'review_failed' ? 'ERROR' : row.audit!.conclusion ?? 'UNKNOWN')}>{row.audit!.execution === 'review_failed' ? '审核异常' : conclusionLabel[row.audit!.conclusion ?? ''] ?? '待审核'}</span>
           </li>
         ))}
       </ul>

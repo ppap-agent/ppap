@@ -477,7 +477,7 @@ def test_checker_results_keep_clause_status_in_the_task_view_and_public_contract
     assert by_id["A"]["finding"]["status"] == "UNABLE"
     assert by_id["A"]["evidence_verified"] is False
     assert by_id["A"]["verification_scope"] == "checker_execution"
-    assert by_id["A"]["scope_notice"] == "这是固定程序的执行结果，不是 trace 证明。已执行 1 次断言。诊断：read_gap：表头有两种读法。"
+    assert by_id["A"]["scope_notice"] == "表头有两种读法。"
     assert by_id["B"]["finding"]["status"] == "NG"
     assert by_id["C"]["finding"]["status"] == "ERR"
     assert "本项未执行" in by_id["C"]["finding"]["suggestions"]

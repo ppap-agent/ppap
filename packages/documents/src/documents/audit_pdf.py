@@ -10,7 +10,7 @@ from documents.report_layout import Chapter, Table, chapter_title, dash, render_
 # PRD §2.11 八: PASS / NG are written as they are; a clause without a verdict is 待审核 (never PASS).
 STATUS = {"PASS": "PASS", "NG": "NG", "UNABLE": "待审核", "uncovered": "待审核", "ERR": "技术错误", "NA": "不适用"}
 PENDING = frozenset({"UNABLE", "uncovered"})
-CONCLUSION = {"PASS": "PASS", "NG": "NG", "UNKNOWN": "尚有未确定项"}
+CONCLUSION = {"PASS": "PASS", "NG": "NG", "UNKNOWN": "待审核"}
 KIND = "PPAP 审核报告"
 # Cover: recognized fields first (frozen recognition of the accepted task), the check date, then fields the reader completes.
 COVER_FIELDS = (("customer", "客户全称"), ("project", "项目"), ("model", "车型"), ("part_number", "零件号"), ("part", "零件名称"))

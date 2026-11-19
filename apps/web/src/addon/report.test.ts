@@ -37,11 +37,11 @@ test('the document content names the audit, every audited file and each open ite
   assert.deepEqual(attention(task).map(item => item.check.rule_item.id), ['c3', 'c2'])
   const text = resultMarkdown(task, 'https://ppap.example/tasks/task-1')
   assert.ok(text.startsWith(`## ${marker(task)}\n`))
-  assert.match(text, /\*\*总体结论：不符合\*\*　不符合 1 项，尚未确定 1 项/)
+  assert.match(text, /\*\*总体结论：不符合\*\*　不符合 1 项，待审核 1 项/)
   // A file name or reason cannot break the table or the list it is written into.
   assert.match(text, /\| PFMEA｜A\.xlsx \| 不符合 \| 1 \| 1 \|/)
   assert.match(text, /- \[ \] 【不符合】PFMEA｜A\.xlsx：特殊特性已标识——特殊特性｜符号缺失/)
-  assert.match(text, /- \[ \] 【无法判断】PFMEA｜A\.xlsx：签字日期可辨认/)
+  assert.match(text, /- \[ \] 【待审核】PFMEA｜A\.xlsx：签字日期可辨认/)
   assert.ok(!text.includes('参考.pdf') && !text.includes('封面完整'))
   assert.ok(text.includes('](https://ppap.example/tasks/task-1)'))
 })

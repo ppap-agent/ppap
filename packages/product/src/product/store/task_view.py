@@ -100,28 +100,18 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: 
     if not isinstance(verification_scope, str) and isinstance(semantic, dict) and isinstance(semantic.get("verification_scope"), str):
         verification_scope = semantic["verification_scope"]
     scope_gap = f"检查范围说明：已检查 {scope['checked']}/{scope['total']}，未知 {scope['unknown']}。" if scope and (scope["unknown"] or scope["checked"] < scope["total"]) else None
-    checker_notice = "这是固定程序的执行结果，不是 trace 证明。" if verification_scope == "checker_execution" else None
-    performed = semantic.get("checks_performed") if isinstance(semantic, dict) else None
-    if checker_notice and type(performed) is int and performed >= 0:
-        checker_notice = f"{checker_notice}已执行 {performed} 次断言。"
-    diagnostics = semantic.get("diagnostics") if isinstance(semantic, dict) else None
-    if checker_notice and isinstance(diagnostics, list):
-        parts: list[str] = []
-        for item in diagnostics:
-            if not isinstance(item, dict):
-                continue
-            code = str(item.get("code") or "").strip()
-            message = str(item.get("message") or "").strip()
-            if code and message:
-                parts.append(f"{code}：{message}")
-            elif code or message:
-                parts.append(code or message)
-        if parts:
-            checker_notice = f"{checker_notice}诊断：{'；'.join(parts)}。"
-    basis = semantic.get("empty_scope_basis") if isinstance(semantic, dict) else None
-    suggestions = str((finding or {}).get("suggestions") or "") if isinstance(finding, dict) else ""
-    if checker_notice and isinstance(basis, str) and basis and basis not in checker_notice and basis not in suggestions:
-        checker_notice = f"{checker_notice}空范围依据：{basis}。"
+    # Only what helps a person check the original reaches them: the checker's read-gap messages (not its
+    # informational provenance notes) and the basis of an empty scope. Codes and assertion counts stay internal.
+    checker_notice = None
+    if verification_scope == "checker_execution":
+        diagnostics = semantic.get("diagnostics") if isinstance(semantic, dict) else None
+        messages = [str(item.get("message") or "").strip() for item in diagnostics if isinstance(item, dict) and item.get("severity") != "info"] if isinstance(diagnostics, list) else []
+        basis = semantic.get("empty_scope_basis") if isinstance(semantic, dict) else None
+        suggestions = str((finding or {}).get("suggestions") or "") if isinstance(finding, dict) else ""
+        if isinstance(basis, str) and basis and basis not in suggestions:
+            messages.append(basis)
+        messages = [message.rstrip("。") for message in dict.fromkeys(messages) if message and message not in suggestions]
+        checker_notice = "；".join(messages) + "。" if messages else None
     return {
         "rule_item": rule,
         "execution": "failed"

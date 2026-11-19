@@ -109,7 +109,7 @@ class FactQuestionsPreviewTests(unittest.TestCase):
             first.get_by_role("button", name="保存回答", exact=True).click()
             results = section.get_by_role("region", name="人工确认结果", exact=True)
             expect(results).to_be_visible()
-            expect(results).to_contain_text("原机器结果：无法判断")
+            expect(results).to_contain_text("原机器结果：待审核")
             expect(results).to_contain_text("人工确认")
             expect(results).to_contain_text("符合")
             expect(section.get_by_text("待确认 3 项 · 人工确认结果 1 项", exact=True)).to_be_visible()

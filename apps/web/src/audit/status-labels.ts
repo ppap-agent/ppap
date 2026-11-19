@@ -2,9 +2,9 @@
 export type ResultStatus = 'PASS' | 'NG' | 'UNABLE' | 'ERR' | 'NA'
 export type ResultTone = 'destructive' | 'warning' | 'success' | 'outline'
 
-export const resultLabel: Record<ResultStatus, string> = {PASS: '符合', NG: '不符合', UNABLE: '无法判断', ERR: '技术错误', NA: '不适用'}
+export const resultLabel: Record<ResultStatus, string> = {PASS: '符合', NG: '不符合', UNABLE: '待审核', ERR: '技术错误', NA: '不适用'}
 export const uncoveredLabel = '未覆盖'
-export const conclusionLabel: Record<string, string> = {PASS: '符合', NG: '不符合', UNKNOWN: '尚有未确定项'}
+export const conclusionLabel: Record<string, string> = {PASS: '符合', NG: '不符合', UNKNOWN: '待审核'}
 
 export function resultTone(status: ResultStatus | 'uncovered' | 'UNKNOWN' | null | undefined): ResultTone {
   if (status === 'NG') return 'destructive'
