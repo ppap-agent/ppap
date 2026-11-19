@@ -89,3 +89,14 @@ uaes,F01RD0YA40_机加工壳体/缺陷样本(-test-)/10 控制计划,f01,assets/
 uaes,F01RD0YA40_机加工壳体/缺陷样本(-test-)/10 控制计划,f02,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/08 过程流程图/流程图A40.xlsx,流程图A40.xlsx,reference,,,
 uaes,F01RD0YA40_机加工壳体/缺陷样本(-test-)/10 控制计划,f03,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/09 潜在过程失效模式及后果分析/专用PFMEA-A40.xlsx,专用PFMEA-A40.xlsx,reference,,,
 uaes,F01RD0YA40_机加工壳体/缺陷样本(-test-)/16 零件提交保证书,f01,assets/uaes/samples/F01RD0YA40_机加工壳体/缺陷样本(-test-)/16 零件提交保证书/F-PU-206_零件提交保证书_PartSubmissionWarrant_V03 -test-零件名称无、零件号错误、无签字盖章.xls,F-PU-206_零件提交保证书_PartSubmissionWarrant_V03 -test-零件名称无、零件号错误、无签字盖章.xls,target,uaes/U17,UAES:U17,U17:1;U17:2;U17:3;U17:4;U17:5
+uaes,F01RD0YA40_机加工壳体/06 测量系统分析评价,f01,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/06 测量系统分析评价/MSA/A40-Kappa.xls,A40-Kappa.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01RD0YA40_机加工壳体/06 测量系统分析评价,f02,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/06 测量系统分析评价/MSA/A40-气动量仪-Cgk.xls,A40-气动量仪-Cgk.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01RD0YA40_机加工壳体/06 测量系统分析评价,f03,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/06 测量系统分析评价/MSA/A40-粗糙度仪-Cgk.xls,A40-粗糙度仪-Cgk.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01RD0YA40_机加工壳体/06 测量系统分析评价,f04,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/06 测量系统分析评价/MSA/A40卡尺-Cgk.xls,A40卡尺-Cgk.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01RD0YA40_机加工壳体/06 测量系统分析评价,f05,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/06 测量系统分析评价/MSA/MSA-1-卡尺.xls,MSA-1-卡尺.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01RD0YA40_机加工壳体/06 测量系统分析评价,f06,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/06 测量系统分析评价/MSA/MSA-2-CMM.xls,MSA-2-CMM.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01RD0YA40_机加工壳体/06 测量系统分析评价,f07,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/06 测量系统分析评价/MSA/MSA-3-粗糙度仪.xls,MSA-3-粗糙度仪.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01RD0YA40_机加工壳体/06 测量系统分析评价,f08,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/06 测量系统分析评价/MSA/MSA-4-气动量仪.xls,MSA-4-气动量仪.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01RD0YA40_机加工壳体/06 测量系统分析评价,f09,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/06 测量系统分析评价/MSA/MSA-5-塞规.xls,MSA-5-塞规.xls,target,uaes/U05,UAES:U05,U05:1-1;U05:1-2;U05:2;U05:3
+uaes,F01RD0YA40_机加工壳体/06 测量系统分析评价,f10,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/10 控制计划/控制计划-A40.xlsx,控制计划-A40.xlsx,reference,,,
+uaes,F01RD0YA40_机加工壳体/16 零件提交保证书,f01,assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/16 零件提交保证书/F-PU-206_零件提交保证书_PartSubmissionWarrant_V03.xls,F-PU-206_零件提交保证书_PartSubmissionWarrant_V03.xls,target,uaes/U17,UAES:U17,U17:1;U17:2;U17:3;U17:4;U17:5
