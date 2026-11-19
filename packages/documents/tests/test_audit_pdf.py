@@ -450,3 +450,19 @@ def test_every_embedded_report_font_is_a_subset():
         names = {font[3] for page in document for font in page.get_fonts(full=True)}
     assert names and all(re.match(r"^[A-Z]{6}\+", name) for name in names), names
     assert len(pdf) < 2_000_000
+
+
+def test_copied_report_text_is_the_text_the_report_wrote():
+    """Glyphs the CJK font shares (space/no-break space, -/no-break hyphen, ·/・, 一/⼀) copy as the ordinary character.
+
+    Known gap: in the running header Noto may draw a digit with an alternate glyph that only a private-use
+    code point names, so that digit copies as private use; this test does not cover it.
+    """
+    source = report_source()
+    source["filename"] = "F01-R10 1号 一人日 控制计划.xlsx"
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        text = "".join(page.get_text() for page in document)
+    assert "F01-R10 1号 一人日 控制计划" in text
+    assert "四、A · B 类问题明细" in text
+    variants = {char for char in text if char in "\u00a0\u2011\u30fb" or 0x2E80 <= ord(char) <= 0x2FDF or 0xF900 <= ord(char) <= 0xFAFF}
+    assert not variants, variants

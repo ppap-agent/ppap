@@ -12,6 +12,7 @@ chapter list from that outline, so chapter names exist only in the renderers.
 
 from __future__ import annotations
 
+import re
 import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -43,7 +44,7 @@ CSS = (
     ".card {border:0.5pt solid #777; padding:3pt 6pt} .card p {margin:1pt 0} "
     ".cover h1 {font-size:24pt; margin-top:120pt; text-align:center} .cover .kind {font-size:13pt; text-align:center; margin-bottom:36pt} "
     # MuPDF sizes columns by content, so padding gives the cover values and the contents lines their width.
-    ".cover th {white-space:nowrap; font-size:10.5pt; padding:5pt 8pt} .cover td {font-size:10.5pt; padding:5pt 200pt 5pt 8pt} "
+    ".cover th {white-space:nowrap; font-size:10.5pt; padding:5pt 8pt} .cover td {font-size:10.5pt; padding:5pt 8pt} "
     ".toc td {font-size:10.5pt; border:none; border-bottom:0.5pt dotted #999; padding:5pt 260pt 5pt 2pt} .toc .page {text-align:right; white-space:nowrap; padding:5pt 2pt}"
 )
 CHINESE_NUMBERS = "一二三四五六七八九十"
@@ -124,6 +125,78 @@ def report_fonts() -> tuple[bytes, bytes]:
     # MuPDF's own embedded CJK font covers Chinese and ASCII; still one family for every glyph.
     fallback = pymupdf.Font("cjk").buffer
     return fallback, fallback
+
+
+@cache
+def _canonical_codepoints() -> dict[int, int]:
+    """Each code point of the report faces mapped to the ordinary code point drawn with the same glyph.
+
+    Noto Sans CJK draws U+0020/U+00A0, U+002D/U+2011 and U+00B7/U+30FB with one glyph each; the PDF text
+    layer can name one code point per glyph, and MuPDF picks the higher one, so copied text would read
+    no-break spaces, no-break hyphens, katakana dots and radicals for 一/人/日. The ordinary one is what the report wrote.
+    """
+    from fontTools.ttLib import TTFont
+
+    canonical: dict[int, int] = {}
+    for face in dict.fromkeys(report_fonts()):
+        cmap = TTFont(BytesIO(face), fontNumber=0, lazy=True).getBestCmap() or {}
+        preferred: dict[str, int] = {}
+        for code, glyph in cmap.items():
+            preferred[glyph] = min(code, preferred.get(glyph, code), key=_preference)
+        for code, glyph in cmap.items():
+            if preferred[glyph] != code:
+                canonical.setdefault(code, preferred[glyph])
+    return canonical
+
+
+# Code points that only share another character's glyph: no-break space and hyphen, the katakana middle dot,
+# CJK radicals and Kangxi radicals, private-use code points and compatibility ideographs. The ordinary character wins.
+_VARIANTS = ((0x00A0, 0x00A0), (0x2011, 0x2011), (0x30FB, 0x30FB), (0x2E80, 0x2FDF), (0xE000, 0xF8FF), (0xF900, 0xFAFF), (0x2F800, 0x2FA1F), (0xF0000, 0x10FFFF))
+
+
+def _preference(code: int) -> tuple[bool, int]:
+    return any(low <= code <= high for low, high in _VARIANTS), code
+
+
+_HEX = re.compile(r"<([0-9a-fA-F]+)>")
+
+
+def _canonical_to_unicode(document: pymupdf.Document) -> None:
+    """Rewrite each font's ToUnicode map so a shared glyph copies as the code point the report wrote."""
+    canonical = _canonical_codepoints()
+    for xref in range(1, document.xref_length()):
+        kind, value = document.xref_get_key(xref, "ToUnicode")
+        if kind != "xref":
+            continue
+        target = int(value.split()[0])
+        cmap = document.xref_stream(target).decode("latin-1")
+        mapping: dict[int, str] = {}
+        for block in re.findall(r"beginbfchar(.*?)endbfchar", cmap, re.S):
+            for source, destination in re.findall(r"<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>", block):
+                mapping[int(source, 16)] = destination
+        for block in re.findall(r"beginbfrange(.*?)endbfrange", cmap, re.S):
+            for line in block.strip().splitlines():
+                codes = _HEX.findall(line)
+                if len(codes) != 3 or "[" in line:
+                    return  # an array range is not produced by MuPDF; leave the map untouched rather than guess
+                first, last, start = int(codes[0], 16), int(codes[1], 16), int(codes[2], 16)
+                for offset in range(last - first + 1):
+                    mapping[first + offset] = f"{start + offset:04x}"
+        changed = False
+        for source, destination in mapping.items():
+            if len(destination) == 4 and int(destination, 16) in canonical:
+                mapping[source] = f"{canonical[int(destination, 16)]:04x}"
+                changed = True
+        if not changed:
+            continue
+        entries = sorted(mapping.items())
+        blocks = "".join(
+            f"{len(chunk)} beginbfchar\n" + "".join(f"<{source:04x}> <{destination}>\n" for source, destination in chunk) + "endbfchar\n"
+            for chunk in (entries[index : index + 100] for index in range(0, len(entries), 100))
+        )
+        head = cmap[: cmap.index("endcodespacerange") + len("endcodespacerange\n")]
+        tail = cmap[cmap.index("endcmap") :]
+        document.update_stream(target, (head + blocks + tail).encode("latin-1"))
 
 
 def _archive() -> tuple[pymupdf.Archive, str]:
@@ -281,6 +354,10 @@ def render_report(*, cover: str, chapters: list[Chapter], name: str, kind: str, 
             page.draw_line((51, 48), (544, 48), color=(0.6, 0.6, 0.6), width=0.5)
             page.insert_htmlbox(pymupdf.Rect(51, 800, 300, 820), f"<p>{escape(date)}</p>", css=faces + margin, archive=archive)
             page.insert_htmlbox(pymupdf.Rect(300, 800, 544, 820), f"<p style='text-align:right'>第 {index + 1} / {total} 页</p>", css=faces + margin, archive=archive)
+        # fontTools subsets the Noto CJK faces; MuPDF's own subsetter rejects their CFF and leaves them whole.
+        # The text layer is made exact before the contents lines are found by their titles.
+        document.subset_fonts(fallback=True)
+        _canonical_to_unicode(document)
         # Each contents line links to its page.
         contents_page = document[1]
         for title, page_number in entries:
@@ -292,6 +369,4 @@ def render_report(*, cover: str, chapters: list[Chapter], name: str, kind: str, 
         # Properties carry the report name and type only: no internal identifier, build or tool version.
         document.set_metadata({"title": name, "subject": kind, "author": "", "keywords": "", "creator": "", "producer": "", "creationDate": "", "modDate": "", "trapped": ""})
         document.del_xml_metadata()
-        # fontTools subsets the Noto CJK faces; MuPDF's own subsetter rejects their CFF and leaves them whole.
-        document.subset_fonts(fallback=True)
         return document.tobytes(garbage=4, deflate=True)
