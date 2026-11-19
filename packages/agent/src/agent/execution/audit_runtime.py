@@ -1,4 +1,4 @@
-"""One accepted audit, one guest process, explicit frozen clause entrypoints.
+"""One file's audit task (or a whole accepted audit in local harnesses), explicit frozen clause entrypoints.
 
 This is process/lifecycle isolation, not a hostile-code security sandbox. Object
 and tenant authorization belong to the host accepting the ExecutionSnapshot.
@@ -152,8 +152,9 @@ def run_audit(
     runtime: CheckerRuntime | None = None,
     clause_timeout: float = 120,
     unavailable_sources: frozenset[str] = frozenset(),
+    target_id: str | None = None,
 ) -> dict[str, Any]:
-    """Execute in the caller's guest; never spawn per target or per clause."""
+    """Execute in the caller's guest; never spawn per clause. ``target_id`` runs that one file only."""
     if not math.isfinite(clause_timeout) or clause_timeout <= 0:
         raise ValueError("invalid_clause_timeout")
     snapshot.validate_sources(sources, unavailable=unavailable_sources)
@@ -218,6 +219,8 @@ def run_audit(
             model_scope = contextlib.nullcontext() if model_access_scoped() else model_access_scope(None)
             with model_scope, bind_runtime(runtime), track_model_usage():
                 for index, target in enumerate(snapshot.targets):
+                    if target_id is not None and target.file_version_id != target_id:
+                        continue
                     if target.file_version_id in unavailable_sources:
                         results = [_evidence_references(_error(clause, "ERR", "checker_input_unavailable"), target.file_version_id) for clause in target.binding.entrypoints]
                         validated = validate_results(results, target=target, inputs=snapshot.inputs)
@@ -323,16 +326,17 @@ def run_audit(
             runtime.close()
 
 
-def _validate_output(snapshot: ExecutionSnapshot, result: dict[str, Any], *, unavailable_sources: frozenset[str] = frozenset()) -> dict[str, Any]:
+def _validate_output(snapshot: ExecutionSnapshot, result: dict[str, Any], *, unavailable_sources: frozenset[str] = frozenset(), target_id: str | None = None) -> dict[str, Any]:
     if result.get("input_digest") != snapshot.input_digest:
         raise AuditRunError("audit_output_identity_mismatch")
     if result.get("unavailable_sources", []) != sorted(unavailable_sources):
         raise AuditRunError("audit_output_availability_mismatch")
-    known = {target.file_version_id for target in snapshot.targets}
-    if any(item.get("file_version_id") not in known for item in result.get("findings", ())):
+    targets = [target for target in snapshot.targets if target_id is None or target.file_version_id == target_id]
+    known = {target.file_version_id for target in targets}
+    if not targets or any(item.get("file_version_id") not in known for item in result.get("findings", ())):
         raise AuditRunError("audit_output_target_mismatch")
     findings, coverage = [], []
-    for target in snapshot.targets:
+    for target in targets:
         checked = validate_results([item for item in result["findings"] if item["file_version_id"] == target.file_version_id], target=target, inputs=snapshot.inputs)
         if target.file_version_id in unavailable_sources and any(row["status"] != "ERR" or row["suggestions"] != "checker_input_unavailable" or row.get("evidence") for row in checked["findings"]):
             raise AuditRunError("audit_output_unavailable_source")

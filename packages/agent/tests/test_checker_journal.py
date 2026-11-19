@@ -67,7 +67,7 @@ def test_model_enabled_core_fixed_trials_already_bind_the_frozen_operation(tmp_p
     container = ControlledContainer(tmp_path, monkeypatch)
     snapshot, sources, programs = frozen_trial()
     first_inputs = tmp_path / "first"
-    first = write_audit_manifest(first_inputs, snapshot, sources, programs)
+    first = write_audit_manifest(first_inputs, snapshot, sources, programs, "file")
     container.interrupted = unknown
     if unknown:
         with pytest.raises(ControllerFault, match="MODEL_TIMEOUT"):
@@ -77,7 +77,7 @@ def test_model_enabled_core_fixed_trials_already_bind_the_frozen_operation(tmp_p
         assert container.run(first, first_inputs) == original
     container.interrupted = False
     second_inputs = tmp_path / "second"
-    second = write_audit_manifest(second_inputs, replace(snapshot, round_id="explicit-new-operation"), sources, programs)
+    second = write_audit_manifest(second_inputs, replace(snapshot, round_id="explicit-new-operation"), sources, programs, "file")
     assert first.execution_id != second.execution_id
     result = container.run(second, second_inputs)
     assert result["round_id"] == "explicit-new-operation"

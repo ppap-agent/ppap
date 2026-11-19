@@ -52,7 +52,7 @@ def request_model(work: Path, *, incomplete_response: bool = False, request_inpu
 
 
 def audit_job(*, allow_model_calls: bool) -> AuditJobSpec:
-    return AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="test-revision", allow_model_calls=allow_model_calls)
+    return AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="test-revision", target_id="file", allow_model_calls=allow_model_calls)
 
 
 def make_runtime(root: Path) -> ContainerRuntime:

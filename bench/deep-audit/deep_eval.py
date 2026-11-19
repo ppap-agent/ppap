@@ -6,8 +6,8 @@
 `run` builds each case's frozen round as the corpus does, freezes the platform model selection
 as a tenant without its own key does, and executes it the way the Controller does: the bound
 local gateway, ContainerRuntime (the guest runs as uid 10001 under prlimit), then
-CoreRuntime.execute_snapshot in deep mode. When the whole deep guest fails, the round falls
-back to the Suite programs exactly as production does and the targets count as degraded.
+CoreRuntime.execute_snapshot in deep mode: each file is checked in its own task, then reviewed in
+its own task; a review that does not finish leaves that file with its program result.
 """
 
 from __future__ import annotations
@@ -49,13 +49,13 @@ class _Usage(logging.Handler):
                 pass
 
 
-def _rows(case, result: dict, deep: dict | None, reviews: dict) -> list[dict]:
+def _rows(case, result: dict, deep: dict, reviews: dict) -> list[dict]:
     final = {(item["file_version_id"], str(item["clause_id"])): item for item in result["findings"]}
     rows = []
     for file in case.files:
         if file.role != "target":
             continue
-        state = (deep or {}).get(file.file_id) or {"state": "degraded", "reason": "deep_runtime_failed"}
+        state = deep[file.file_id]
         for clause, expected in file.expected.items():
             key = (file.file_id, clause)
             record = reviews.get(key, {})
@@ -127,11 +127,6 @@ def run_cases(dataset: str, indexes: list[int], out: Path) -> int:
                 usage.by_target.clear()
                 try:
                     result, deep, reviews = core.execute_snapshot(snapshot, sources, programs, ExecutionContext(), analysis_mode="deep")
-                    line["deep_failure"] = ""
-                except Exception as exc:  # noqa: BLE001 — production falls back to the Suite programs.
-                    line["deep_failure"] = getattr(exc, "code", type(exc).__name__)
-                    result, deep, reviews = core.execute_snapshot(snapshot, sources, programs, ExecutionContext())
-                    deep = None
                 finally:
                     gateway.http.grants.revoke_all()
                 line.update(
@@ -147,7 +142,7 @@ def run_cases(dataset: str, indexes: list[int], out: Path) -> int:
                 line.update(seconds=round(time.monotonic() - started, 1), error=f"{type(exc).__name__}: {str(exc)[:300]}", trace=traceback.format_exc()[-2000:], rows=[])
             with (out / "cases.jsonl").open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(line, ensure_ascii=False) + "\n")
-            print(f"case {index} {case.case_id}: {line.get('error') or line.get('deep_failure') or 'ok'} ({line['seconds']}s)", flush=True)
+            print(f"case {index} {case.case_id}: {line.get('error') or 'ok'} ({line['seconds']}s)", flush=True)
     return 1 if failures else 0
 
 
@@ -189,7 +184,6 @@ def summarize(lines: list[dict]) -> dict:
     return {
         "cases": len(lines),
         "case_errors": {line["case"]: line["error"] for line in lines if line.get("error")},
-        "deep_failures": dict(Counter(line["deep_failure"] for line in lines if line.get("deep_failure"))),
         "targets": len(targets),
         "targets_not_reviewed": dict(Counter(reason for state, reason in targets.values() if state != "completed")),
         **{key: totals[key] for key in ("rows", "program_right", "deep_right", "fixed", "broke", "wrong_to_wrong", "new_pass_against_truth", "rows_not_reviewed", "corrections_rejected")},
@@ -225,7 +219,7 @@ def render(summary: dict, meta: dict) -> str:
     lines += [f"| {truth} | {item.get('rows', 0)} | {item.get('program_right', 0)} | {item.get('deep_right', 0)} |" for truth, item in summary["by_truth"].items()]
     lines += ["", "## 结论变化", ""] + ([f"- {key}：{value}" for key, value in summary["transitions"].items()] or ["- 无"])
     lines += ["", "## 未完成", ""]
-    lines += [f"- 未复核目标：{json.dumps(summary['targets_not_reviewed'], ensure_ascii=False)}", f"- 深度整体失败（已回退为程序结论）：{json.dumps(summary['deep_failures'], ensure_ascii=False)}"]
+    lines += [f"- 未复核目标：{json.dumps(summary['targets_not_reviewed'], ensure_ascii=False)}"]
     lines += [f"- 用例错误 {case}：{error}" for case, error in summary["case_errors"].items()]
     return "\n".join(lines) + "\n"
 

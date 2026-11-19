@@ -28,7 +28,7 @@ from uuid import UUID, uuid4
 from audit.checker_core import MODEL_IDENTITY_KEYS
 from documents.model_access import ModelAccess, ModelPurpose, ModelUnavailable, streams_only
 
-from agent.execution.budget import DEEP_TOTAL_SECONDS
+from agent.execution.budget import TASK_SECONDS
 from agent.execution.secure_files import reject_constant, unique_object
 
 MAX_BODY = 8 * 1024 * 1024
@@ -66,7 +66,7 @@ class Grants:
         self,
         model: str,
         *,
-        ttl: int = DEEP_TOTAL_SECONDS,
+        ttl: int = TASK_SECONDS,
         requests: int = 200,
         per_request_output_tokens: int = 32_768,
         capacity: int = 128,

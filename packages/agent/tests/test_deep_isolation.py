@@ -547,7 +547,7 @@ class ContainerBoundaryTests(unittest.TestCase):
                 runtime.degraded = False
                 inputs = root / "inputs"
                 inputs.mkdir()
-                spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision")
+                spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision", target_id="file")
                 run = root / "run"
                 (run / "work").mkdir(parents=True)
                 (run / "grant").mkdir()
@@ -573,7 +573,7 @@ class ContainerBoundaryTests(unittest.TestCase):
             runtime.journal.mkdir()
             runtime.slot = threading.Lock()
             runtime.degraded = False
-            spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision")
+            spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision", target_id="file")
             original = {"ok": True, "input_tokens": 60, "output_tokens": 9, "model_requests": 1}
             (runtime.journal / (spec.execution_id.hex + ".json")).write_text(json.dumps(original))
             with patch.object(runtime, "_write_grant") as issue, patch.object(runtime, "_execute") as execute:
@@ -822,7 +822,7 @@ class ContainerBoundaryTests(unittest.TestCase):
                 app_revision="0" * 40,
                 sandbox_profile="off",
             )
-            spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision")
+            spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision", target_id="file")
             run = root / "run"
             run.mkdir()
             with (

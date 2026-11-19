@@ -6,7 +6,7 @@ import signal
 import sys
 import threading
 
-from agent.client import DEEP_REQUEST_TIMEOUT
+from agent.client import REQUEST_IDLE_TIMEOUT
 from agent.execution.harness import runtime_from_env
 from agent.run import Controller, UnixControllerServer
 from agent.source import authorize_execution, object_file_source
@@ -70,7 +70,7 @@ def main() -> int:
                 readiness=runtime.ready,
                 configuration=settings.deep_execution_policy().runtime_identity(),
             ),
-            request_timeout=DEEP_REQUEST_TIMEOUT,
+            request_timeout=REQUEST_IDLE_TIMEOUT,
         )
         server.start()
         try:

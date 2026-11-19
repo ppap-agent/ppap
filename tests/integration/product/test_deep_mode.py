@@ -95,7 +95,7 @@ def test_controlled_guests_bind_full_frozen_model_identity(tmp_path, core_system
     )
     inputs, work = tmp_path / "inputs", tmp_path / "work"
     work.mkdir()
-    job = write_audit_manifest(inputs, snapshot, sources, {digest: programs})
+    job = write_audit_manifest(inputs, snapshot, sources, {digest: programs}, "target")
 
     core_system.run(job, inputs, work, monotonic() + 100, Event())
 

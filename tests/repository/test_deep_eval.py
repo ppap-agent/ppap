@@ -36,13 +36,13 @@ def test_review_outcomes_are_scored_against_the_human_truth(tmp_path):
     assert summary["by_truth"]["NG"] == {"rows": 3, "program_right": 1, "deep_right": 2}
 
 
-def test_unreviewed_targets_failures_and_errors_are_reported_not_hidden(tmp_path):
+def test_unreviewed_targets_and_errors_are_reported_not_hidden(tmp_path):
     lines = [
-        {"case": "a", "seconds": 5, "deep_failure": "deep_timeout", "rows": [_row("NG", "NG", "NG", state="degraded")]},
+        {"case": "a", "seconds": 5, "rows": [_row("NG", "NG", "NG", state="degraded")]},
         {"case": "b", "seconds": 1, "error": "OSError: missing", "rows": []},
     ]
     summary = _report(tmp_path, lines)
-    assert summary["rows_not_reviewed"] == 1 and summary["deep_failures"] == {"deep_timeout": 1}
+    assert summary["rows_not_reviewed"] == 1
     assert summary["case_errors"] == {"b": "OSError: missing"}
     assert summary["seconds_per_case"]["max"] == 5
 

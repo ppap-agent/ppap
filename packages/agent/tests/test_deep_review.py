@@ -6,11 +6,11 @@ The guest runs in-process with a controlled Pi runner; no model is called.
 import hashlib
 import io
 import json
+import time
 import uuid
 from types import SimpleNamespace
 
 import pytest
-from agent.client import DeepError
 from agent.core_program import CoreRuntime, run_audit_manifest
 from agent.deep_review import CORRECTED_PREFIX, CitedEvidence, DeepReview, OriginalReader, check_evidence
 from agent.protocol import ExecuteRequest, FrozenFile
@@ -82,13 +82,13 @@ def build(target_bytes: bytes | None = None, target_name: str = "cp.xlsx"):
 
 class Guest:
     def __init__(self, tmp_path):
-        self.root, self.modes = tmp_path, []
+        self.root, self.tasks = tmp_path, []
 
     def ready(self, operation="audit"):
         return True
 
     def run(self, job, inputs, work, deadline, cancelled, on_activity=None):
-        self.modes.append(job.analysis_mode)
+        self.tasks.append((job.operation, job.target_id, round(deadline - time.monotonic())))
         grant = self.root / f"grant-{uuid.uuid4().hex}"
         grant.mkdir()
         (grant / "model.json").write_text(json.dumps({"base_url": "http://127.0.0.1:1/v1", "token": "local-short-lived-capability-1234567890", "model": "test-model", "wall_seconds": 100}))
@@ -218,42 +218,42 @@ def test_a_target_whose_review_fails_or_differs_keeps_its_program_result_and_say
     assert all("deep_review" not in row.locator["semantic"] for row in result.findings)
 
 
-def test_a_failed_deep_guest_falls_back_to_the_suite_programs_without_repeating_deep(tmp_path, monkeypatch):
+def test_each_file_is_one_deep_task_with_its_own_time_and_a_failed_task_leaves_only_that_file_unreviewed(tmp_path, monkeypatch):
+    from agent.execution.budget import CHECK_SECONDS, DEEP_TOTAL_SECONDS
+
     snapshot, sources, spec, suite = build()
     controlled_pi(monkeypatch, confirm)
 
     class Failing(Guest):
         def run(self, job, inputs, work, deadline, cancelled, on_activity=None):
-            if job.analysis_mode == "deep":
-                self.modes.append("deep")
+            if job.operation == "review-target" and job.target_id == "file-a":
+                self.tasks.append((job.operation, job.target_id, round(deadline - time.monotonic())))
                 raise ControllerFault("MODEL_TIMEOUT")
             return super().run(job, inputs, work, deadline, cancelled)
 
     guest = Failing(tmp_path)
     result = run(tmp_path, snapshot, sources, spec, suite, guest)
-    assert guest.modes == ["deep", "standard"]
+    assert guest.tasks == [
+        ("execute-audit", "file-a", CHECK_SECONDS),
+        ("execute-audit", "file-b", CHECK_SECONDS),
+        ("review-target", "file-a", DEEP_TOTAL_SECONDS),
+        ("review-target", "file-b", DEEP_TOTAL_SECONDS),
+    ]
     assert {row["file_version_id"]: row["deep_review"] for row in result.coverage.checker_execution["targets"]} == {
-        "file-a": {"state": "degraded", "reason": "deep_runtime_failed"},
-        "file-b": {"state": "degraded", "reason": "deep_runtime_failed"},
+        "file-a": {"state": "degraded", "reason": "deep_timeout"},
+        "file-b": {"state": "completed"},
     }
 
 
-def test_a_standard_round_never_runs_or_accepts_a_review(tmp_path, monkeypatch):
+def test_a_standard_round_never_runs_a_review(tmp_path, monkeypatch):
     snapshot, sources, spec, suite = build()
     seen = controlled_pi(monkeypatch, confirm)
-    result = run(tmp_path, snapshot, sources, spec.model_copy(update={"analysis_mode": "standard"}), suite)
+    guest = Guest(tmp_path)
+    result = run(tmp_path, snapshot, sources, spec.model_copy(update={"analysis_mode": "standard"}), suite, guest)
     assert seen == []
+    assert {operation for operation, *_ in guest.tasks} == {"execute-audit"}
     assert "analysis_mode" not in result.coverage.checker_execution
     assert all("deep_review" not in row for row in result.coverage.checker_execution["targets"])
-
-    class Injecting(Guest):
-        def run(self, job, inputs, work, deadline, cancelled, on_activity=None):
-            super().run(job, inputs, work, deadline, cancelled)
-            bundle = work / "result" / "bundle.json"
-            bundle.write_text(json.dumps({**json.loads(bundle.read_text()), "deep_reviews": {}}))
-
-    with pytest.raises(DeepError, match="deep_output_invalid"):
-        run(tmp_path, snapshot, sources, spec.model_copy(update={"analysis_mode": "standard"}), suite, Injecting(tmp_path))
 
 
 def reader_for(name: str, raw: bytes, tmp_path):

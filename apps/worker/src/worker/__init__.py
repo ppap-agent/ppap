@@ -210,7 +210,7 @@ def audit_lease(store, claimed, ident):
 
 def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[dict, str]:
     """All admitted audits share the frozen Core and existing leased UDS boundary."""
-    from agent.client import DEEP_MODE_REQUEST_TIMEOUT, DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
+    from agent.client import DeepClient, DeepError
     from agent.failures import failure_result
     from agent.mapping import product_result, spec_from_work
     from agent.protocol import DeepProgress
@@ -253,9 +253,7 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
                 except Exception:  # noqa: BLE001
                     logger.debug("deep_activity_broadcast_failed", exc_info=True)
 
-            # A deep round may run a second (Suite) guest after its deep guest failed.
-            timeout = DEEP_MODE_REQUEST_TIMEOUT if spec.analysis_mode == "deep" else DEEP_REQUEST_TIMEOUT
-            response = DeepClient(socket_path, timeout=timeout).execute(
+            response = DeepClient(socket_path).execute(
                 spec,
                 cancelled=cancelled,
                 on_progress=progress,

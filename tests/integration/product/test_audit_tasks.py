@@ -2470,11 +2470,11 @@ def test_a_file_whose_deep_review_did_not_complete_keeps_the_standard_result_at_
         TypeAdapter(wc.AuditTask).validate_python(task)
         target = next(row for row in task["files"] if row["file"]["id"] == body["files"][0]["file_version_id"])
         assert task["deep_mode"] is True and target["audit"]["execution"] == "completed"
-        assert target["deep_review"] == {"state": "degraded", "reason": "deep_runtime_failed"}
+        assert target["deep_review"] == {"state": "degraded", "reason": "deep_review_failed"}
         events = client.get("/usage").json()["events"]
         assert [(row["consumed_points"], row["charge"]) for row in events] == [(500, "audit")]
         assert [row["points"] for row in client.get("/audit-usage").json()["entries"]] == [500]
-        assert core_system.audit_jobs[-1].analysis_mode == "standard"
+        assert {job.operation for job in core_system.audit_jobs} == {"execute-audit"}
     finally:
         client.close()
         http.close()

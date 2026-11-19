@@ -1,8 +1,10 @@
-"""Trusted resource limits for one Deep execution."""
+"""Trusted resource limits. Every execution is one task: one file checked, or one file reviewed."""
 
-DEEP_TOTAL_SECONDS = 40 * 60
-# Deep review reads the program results after the Suite programs ran. A target not
-# reviewed by then keeps its program result.
-DEEP_REVIEW_SECONDS = 30 * 60
+# One file's Suite programs, in standard and deep rounds alike.
+CHECK_SECONDS = 3 * 60
+# One deep task: the review of one file after its programs ran. It keeps its program result when unfinished.
+DEEP_TOTAL_SECONDS = 6 * 60
+# The longest single task; a model grant never outlives it.
+TASK_SECONDS = max(CHECK_SECONDS, DEEP_TOTAL_SECONDS)
 MAX_INPUT_TOTAL = 128 * 1024 * 1024
 MAX_INPUT_FILES = 256

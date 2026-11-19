@@ -10,13 +10,13 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from agent.execution.budget import DEEP_TOTAL_SECONDS
+from agent.execution.budget import TASK_SECONDS
 from agent.protocol import ActivityEnvelope, ErrorEnvelope, ExecuteRequest, ExecuteResponse, ProgressEnvelope, RequestEnvelope, ResultEnvelope
 
 MAX_FRAME = 32 * 1024 * 1024
-DEEP_REQUEST_TIMEOUT = DEEP_TOTAL_SECONDS + 30.0
-# A deep audit whose guest fails as a whole re-runs the Suite programs in a second guest.
-DEEP_MODE_REQUEST_TIMEOUT = 2 * DEEP_TOTAL_SECONDS + 60.0
+# An execution runs one task per file and reports each one, so a request is only idle while one
+# task runs. A request idle longer than the longest task plus result handling has stalled.
+REQUEST_IDLE_TIMEOUT = TASK_SECONDS + 60.0
 
 
 class DeepError(Exception):
@@ -116,7 +116,7 @@ def read_frame(sock: socket.socket, *, deadline: float | None = None, cancelled:
 
 
 class DeepClient:
-    def __init__(self, socket_path: str, timeout: float = DEEP_REQUEST_TIMEOUT):
+    def __init__(self, socket_path: str, timeout: float = REQUEST_IDLE_TIMEOUT):
         self.socket_path = str(socket_path or "").strip()
         self.timeout = timeout
 
@@ -141,6 +141,8 @@ class DeepClient:
                 write_frame(sock, payload, deadline=deadline, cancelled=cancelled)
                 while True:
                     raw = read_frame(sock, deadline=deadline, cancelled=cancelled)
+                    # Every frame shows the execution is still moving; only silence times out.
+                    deadline = time.monotonic() + self.timeout
                     if raw.get("op") == "activity":
                         step = ActivityEnvelope.model_validate(raw).activity
                         _check_active(deadline, cancelled)
