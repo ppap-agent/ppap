@@ -3740,7 +3740,8 @@ class AuthStore:
             for check in audit["checks"]:
                 check.pop("review", None)
                 check.pop("review_item_key", None)
-                check["finding"].pop("review", None)
+                if check["finding"]:
+                    check["finding"].pop("review", None)
             payload = {
                 "task_id": str(head[0]),
                 "source_round_id": claimed.round_id,
@@ -3760,6 +3761,31 @@ class AuthStore:
                 VALUES (%s, %s, %s, 'report_pdf', %s, 'queued') ON CONFLICT DO NOTHING""",
                 (uuid.uuid4(), claimed.tenant_id, claimed.round_id, Jsonb(payload)),
             )
+
+    def frozen_precheck_warnings(self, tenant_id: str, task_id: str, file_version_id: str) -> list[dict]:
+        """The audited file's own precheck warnings (W01～W06) on the accepted Task, read as the precheck page reads
+        them for the Task's creator; the audit report carries them as C-class problems. No model call, no write."""
+        from product.precheck import precheck_task
+        from product.precheck_content import entry_key, precheck_content
+
+        with self._conn() as conn:
+            row = conn.execute("SELECT created_by FROM product.audit_drafts WHERE id = %s AND tenant_id = %s AND task_fingerprint IS NOT NULL", (task_id, tenant_id)).fetchone()
+        if not row:
+            raise KeyError("missing")
+        creator = Principal(str(row[0]), str(tenant_id), "", "", "", "", "member")
+        task = self.get_audit_task(creator, task_id)
+        content = {}
+        target = next((item for item in task.get("files", []) if item["file"]["id"] == file_version_id), None)
+        match = (target or {}).get("match") or {}
+        customer = (match.get("metadata") or {}).get("customer") or task.get("customer_preference")
+        key = entry_key(customer, match.get("document_type"))
+        if target and key and target.get("selection") == "selected" and match.get("state") == "matched" and not target.get("reference_only"):
+            version = self.read_file_version(creator, target["file"]["file_id"], file_version_id)
+            try:
+                content[file_version_id] = precheck_content(self.version_bytes(version), version.original_filename, key, customer=customer)
+            except Exception:  # noqa: BLE001 - as on the precheck page, an unreadable file keeps only its file-level warnings
+                pass
+        return [item for item in precheck_task(task, content)["warnings"] if item["file_version_id"] == file_version_id]
 
     def _frozen_recognition(self, conn, task_id: str) -> dict[str, dict]:
         """Recognized file information of the accepted Task; corrections are separate."""

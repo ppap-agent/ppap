@@ -278,6 +278,12 @@ def test_completed_card_uses_actual_counts_without_changing_ng_or_inventing_pass
     assert card["header"]["template"] != "green"
 
 
+def test_completed_card_names_pending_clauses_beside_the_aggregated_file_label() -> None:
+    audit = {"execution": "completed", "conclusion": "PASS", "counts": {"pass_count": 3, "ng_count": 0, "unknown_count": 1, "not_covered_count": 1, "error_count": 0}, "report": {"state": "ready"}}
+    task = {"id": "task-a", "number": "001", "files": [{"selection": "selected", "file": {"id": "version-0", "original_filename": "控制计划.xlsx"}, "audit": audit}]}
+    assert "<text_tag color='green'>符合</text_tag> 另 2 项待审核 符合 3 项" in _text(task_notification_card(task, "completed", "https://ppap.example.test"))
+
+
 @pytest.mark.parametrize("all_blocked", [False, True])
 def test_confirmation_card_displays_only_server_admission_scope_and_exclusion_reasons(all_blocked):
     task = {

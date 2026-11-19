@@ -188,9 +188,21 @@ def _outcome(check: dict, confirmation: dict | None) -> str:
     return status if status in {"PASS", "NG", "NA"} else "UNABLE"
 
 
-def _conclusion(outcomes: list[str], complete: bool) -> str:
-    """A file conforms only when every clause is decided, at least one passes and none fails."""
-    return "NG" if "NG" in outcomes else "PASS" if complete and "PASS" in outcomes and set(outcomes) <= {"PASS", "NA"} else "UNKNOWN"
+# Clauses the audit gave no verdict for (无法判断 / 未覆盖): 待审核. They stay 待审核 and are never counted as PASS.
+PENDING_OUTCOMES = frozenset({"UNABLE", "uncovered"})
+
+
+def _conclusion(outcomes: list[str], decidable: bool) -> str:
+    """The file label aggregates the reviewed clauses (PRD IL-12.08): any NG is NG; otherwise a reviewed PASS is PASS,
+    with the 待审核 clauses counted beside it (``pending_count``). Nothing reviewed (all 待审核 or 不适用) stays UNKNOWN."""
+    return "NG" if "NG" in outcomes else "PASS" if decidable and "PASS" in outcomes and set(outcomes) <= {"PASS", "NA"} | PENDING_OUTCOMES else "UNKNOWN"
+
+
+def pending_count(audit: dict, *, confirmed: bool = True) -> int:
+    """待审核 clauses of a file: where they stand now (confirmed), or as the machine left them."""
+    if confirmed:
+        return sum(check.get("outcome") in PENDING_OUTCOMES for check in audit["checks"])
+    return audit["counts"]["unknown_count"] + audit["counts"]["not_covered_count"]
 
 
 def overall(conclusions: list[str | None]) -> str:
@@ -200,13 +212,25 @@ def overall(conclusions: list[str | None]) -> str:
     return "PASS" if conclusions and all(value == "PASS" for value in conclusions) else "UNKNOWN"
 
 
+def _settled(audit: dict, *, confirmed: bool) -> str | None:
+    """A file's part in the round's one conclusion: a PASS with 待审核 clauses does not settle the round."""
+    value = audit["confirmed_conclusion" if confirmed else "conclusion"]
+    return "UNKNOWN" if value == "PASS" and pending_count(audit, confirmed=confirmed) else value
+
+
 def report_eligible(checks: list[dict], failed: bool, unmapped: list[dict]) -> bool:
-    """Every clause has a result; one the checker could not decide stays 无法判断 in the report."""
+    """Every clause ended without a technical error and at least one has a result. A clause the checker could not
+    decide (无法判断) or does not cover (未覆盖) stays 待审核 in the report."""
     return (
         bool(checks)
         and not failed
         and not unmapped
-        and all(check["execution"] == "completed" and check["coverage"] == "executed" and check["finding"] is not None and check["finding"]["status"] in REPORTED_STATUSES for check in checks)
+        and any(check["finding"] is not None for check in checks)
+        and all(
+            check["execution"] == "completed"
+            and (check["coverage"] == "executed" and check["finding"] is not None and check["finding"]["status"] in REPORTED_STATUSES or check["coverage"] != "executed" and check["finding"] is None)
+            for check in checks
+        )
     )
 
 
@@ -236,8 +260,9 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
     file_has_error = finished and (file_failed or any(check["execution"] == "failed" for check in checks) or any(finding["status"] == "ERR" for finding in unmapped))
     counts = _counts(checks)
     complete = report_eligible(checks, file_has_error, unmapped)
-    # An undecided clause never lets the file conform.
-    conclusion = ("NG" if counts["ng_count"] else "PASS" if complete and counts["pass_count"] and not counts["unknown_count"] else "UNKNOWN") if finished else None
+    # The file label aggregates the reviewed clauses; 待审核 clauses are counted beside it, never as PASS.
+    decidable = finished and not file_has_error and not unmapped
+    conclusion = ("NG" if counts["ng_count"] else "PASS" if decidable and counts["pass_count"] else "UNKNOWN") if finished else None
     # Each clause's standing is decided here, once, for every reader. A confirmed original fact can only
     # settle a clause the machine could not decide; it is kept beside the machine result, never over it.
     confirmed = round.get("fact_results") or {}
@@ -249,7 +274,7 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
         check["outcome"] = _outcome(check, confirmation)
         check["objected"] = (check.get("review") or {}).get("judgment") in OBJECTIONS
         check["attention"] = check["outcome"] not in {"PASS", "NA", "running"} or check["objected"]
-    confirmed_conclusion = _conclusion([check["outcome"] for check in checks], complete) if finished else None
+    confirmed_conclusion = _conclusion([check["outcome"] for check in checks], decidable) if finished else None
     return {
         "round_id": round["id"],
         "file_version_id": version_id,
@@ -316,8 +341,8 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
     )
     # The round's standing, defined once: what writeback, release, the flow node and every page read.
     standing = {
-        "conclusion": None if not finished else "ERROR" if failed else overall([audit["confirmed_conclusion"] for audit in audits]),
-        "machine_conclusion": None if not finished else "ERROR" if failed else overall([audit["conclusion"] for audit in audits]),
+        "conclusion": None if not finished else "ERROR" if failed else overall([_settled(audit, confirmed=True) for audit in audits]),
+        "machine_conclusion": None if not finished else "ERROR" if failed else overall([_settled(audit, confirmed=False) for audit in audits]),
         "objection": any(check["objected"] for audit in audits for check in audit["checks"]),
     }
     return {

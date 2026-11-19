@@ -175,9 +175,9 @@ def test_chapter_four_has_the_eight_fixed_columns_and_unknown_values_read_as_a_d
     with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
         chapter = _chapter_page(document, "四、A · B 类问题明细")
         assert "序号审核项结果严重程度问题性质判定依据说明位置" in chapter
-        assert "1R1·类别1不符合A—零件号必须与图纸一致" in chapter
+        assert "1R1·类别1NGA—零件号必须与图纸一致" in chapter
         # An NG without a level stays in chapter four with an empty level, never a guessed one.
-        assert "2R2·类别2不符合——" in chapter and "严重程度为「—」的不符合项尚未定级" in chapter
+        assert "2R2·类别2NG——" in chapter and "严重程度为「—」的不符合项尚未定级" in chapter
         assert "尺寸检验报告.xlsx·检验!A1" in chapter
         assert "本次无C类问题。" in _chapter_page(document, "五、C 类问题明细")
 
@@ -196,10 +196,10 @@ def test_every_status_is_listed_in_chapter_nine_and_unknowns_are_registered_not_
     with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
         text = "".join(_pages(document))
         appendix = _chapter(text, "九、附录 · 检查项全量结果")
-        for number, label in enumerate(("符合", "不适用", "无法判断", "技术错误", "不符合"), 1):
+        for number, label in enumerate(("PASS", "不适用", "待审核", "技术错误", "NG"), 1):
             assert f"{number}R{number}·类别{number}{label}" in appendix, label
         register = _chapter(text, "六、状态登记")
-        assert "R2·类别2不适用第2项说明。" in register and "R3·类别3无法判断第3项说明。" in register and "R4·类别4技术错误" in register
+        assert "R2·类别2不适用第2项说明。" in register and "R3·类别3待审核第3项说明。" in register and "R4·类别4技术错误" in register
         assert "R1·类别1" not in register and "R5·类别5" not in register
 
 
@@ -219,7 +219,7 @@ def test_long_tables_repeat_their_header_on_every_page_and_mark_continuations():
         assert all("序号审核项结果严重程度判定依据说明来源证据" in page for page in appendix)
         assert sum("表9-1检查项全量结果（续表）" in page for page in appendix) == len(appendix) - 1
         text = "".join(pages)
-        assert all(f"R{number}·类别{number}符合" in text for number in range(1, 61))
+        assert all(f"R{number}·类别{number}PASS" in text for number in range(1, 61))
 
 
 def test_new_pdfs_carry_no_internal_identity_or_checker_sample_verification():
@@ -245,7 +245,7 @@ def test_new_pdfs_carry_no_internal_identity_or_checker_sample_verification():
         assert document.embfile_count() == 0
         assert set(document.metadata.get(key) for key in ("author", "keywords", "creator", "producer")) == {""}
         # Customer-facing risk stays: the unknown clause is named, located and not counted as met.
-        assert "无法判断1项" in text and "签字区域未能读取，需人工复核。" in text and "「无法判断」和「技术错误」均未计为符合" in text
+        assert "待审核1项" in text and "签字区域未能读取，需人工复核。" in text and "「待审核」项未计为PASS" in text
 
 
 def test_one_cjk_font_family_is_embedded_as_a_subset():
@@ -358,11 +358,16 @@ def test_every_check_is_listed_and_remediation_holds_only_failed_items_merged_by
         for number in range(1, 49):
             assert f"R{number}·" in appendix
         remediation = _chapter(text, "七、整改建议汇总")
-        assert "①【类别3】第3项缺值。" in remediation and "②【类别7】第7项缺值。" in remediation
+        # Two problems at one location merge into one point; the action names the location and the clause it must meet.
+        assert "①改值：使「尺寸检验报告.xlsx·检验!A2」满足「必须填写零件号」（现状：第3项缺值）" in remediation
+        assert "②改值：使「尺寸检验报告.xlsx·检验!A2」满足「必须填写零件号」（现状：第7项缺值）" in remediation
         assert "已核实" not in remediation
-        assert "补交：零件号P1的《图纸》" in remediation and "换交：《材料证明》（零件号P1）" in remediation
+        assert "增补零件号P1的《图纸》" in remediation and "增补零件号P1的《材料证明》，删除本批零件号不一致的《材料证明》" in remediation
+        assert "建议截止日" in remediation and "整改益处" in remediation and "修订后自查要点" in remediation
+        register = _chapter(text, "六、状态登记")
+        assert "需补交文件清单补交：零件号P1的《图纸》换交：《材料证明》（零件号P1）" in register
         # An undecided clause is not a file to supply.
-        assert "检具清单" not in remediation
+        assert "检具清单" not in remediation and "检具清单" not in register
         assert "需补交或换交的关联文件：2份" in _chapter(text, "三、问题总览")
 
 
@@ -422,11 +427,12 @@ def test_levels_order_remediation_and_overrides_are_explained():
         remediation = _chapter(text, "七、整改建议汇总")
         order = [remediation.index(f"第{number}项缺值") for number in (2, 4, 1, 3)]
         assert order == sorted(order)
-        groups = remediation[remediation.index("合并为一条。") :]
-        assert groups.index("A类") < groups.index("B类") < groups.index("C类") < groups.index("未定级")
+        sections = [remediation.index(title) for title in ("P1立即整改（A类）", "P2限期整改（B类）", "P3建议整改（C类）", "未定级的不符合项")]
+        assert sections == sorted(sections)
+        assert "3个工作日" in remediation and "7个工作日" in remediation and "15个工作日" in remediation
 
 
-def test_an_undecided_clause_is_counted_and_keeps_minor_failures_from_a_conditional_pass():
+def test_an_undecided_clause_is_counted_beside_the_rating_and_never_as_a_problem():
     source = _graded_source([("C", None)])
     undecided = deepcopy(source["audit"]["checks"][0])
     undecided["rule_item"] = {"id": "2", "category": "签字", "rule_to_check": "必须有签字"}
@@ -436,10 +442,11 @@ def test_an_undecided_clause_is_counted_and_keeps_minor_failures_from_a_conditio
     with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
         pages = _pages(document)
         summary = _chapter_page(document, "一、结论摘要")
-    assert "无法判断1项" in summary
-    # The stat boxes repeat the same counts; 无法判断 stays its own box, not PASS.
-    assert "符合0不符合1无法判断1不适用0" in summary
-    assert "总评：不通过" in summary and "有条件通过" not in "".join(pages)
+    assert "待审核1项" in summary
+    # The stat boxes repeat the same four values; 待审核 stays its own box, not PASS.
+    assert "PASS0NG1待审核1不适用0" in summary
+    # Owner's ruling on PRD §2.11 四: no A / B and a C passes with conditions; the pending clause is named beside it.
+    assert "总评：有条件通过另1项待审核" in summary and "问题总数1项" in summary
     assert "签字区域未能读取，需人工复核。" in "".join(pages)
 
 
@@ -466,3 +473,64 @@ def test_copied_report_text_is_the_text_the_report_wrote():
     assert "四、A · B 类问题明细" in text
     variants = {char for char in text if char in "\u00a0\u2011\u30fb" or 0x2E80 <= ord(char) <= 0x2FDF or 0xF900 <= ord(char) <= 0xFAFF}
     assert not variants, variants
+
+
+def _warning(code: str, problem: str, location: str = "尺寸检验报告.xlsx", scope: str = "file") -> dict:
+    titles = {"W01": "缺项", "W02": "字段为空或未识别", "W03": "写法不规范"}
+    return {
+        "code": code,
+        "title": titles[code],
+        "level": "warn",
+        "file_version_id": "version-one",
+        "filename": "尺寸检验报告.xlsx",
+        "location": location,
+        "evidence": "(空)",
+        "problem": problem,
+        "action": "",
+        "responsibility": "材料侧",
+        "scope": scope,
+    }
+
+
+def test_a_pass_with_pending_clauses_passes_and_names_them_and_an_uncovered_clause_is_pending():
+    source = report_source()
+    audit = source["audit"]
+    audit["conclusion"] = "PASS"
+    audit["checks"][0]["finding"] = {"status": "PASS", "suggestions": "已核实。"}
+    uncovered = deepcopy(audit["checks"][0])
+    uncovered.update(finding=None, evidence=[], scope=None, scope_notice="本条要求未完成自动检查。")
+    uncovered["rule_item"] = {"id": "2", "category": "签字", "rule_to_check": "必须有供应商签字"}
+    audit["checks"].append(uncovered)
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        text = "".join(_pages(document))
+        summary = _chapter_page(document, "一、结论摘要")
+    assert "总评：通过另1项待审核文件结论：PASS" in summary and "问题总数0项" in summary
+    assert "2·签字待审核本条要求未完成自动检查。" in _chapter(text, "六、状态登记")
+    assert "2·签字待审核—必须有供应商签字" in _chapter(text, "九、附录 · 检查项全量结果")
+    assert "本次未发现问题项，无需整改。" in _chapter(text, "七、整改建议汇总")
+
+
+def test_precheck_warnings_are_c_class_problems_with_concrete_remediation():
+    source = report_source()
+    audit = source["audit"]
+    audit["conclusion"] = "PASS"
+    audit["checks"][0]["finding"] = {"status": "PASS", "suggestions": "已核实。"}
+    source["precheck_warnings"] = [
+        _warning("W02", "文件中未识别到零件号。"),
+        _warning("W03", "C3 日期写法：应为 yyyy-mm-dd，请核实。", "尺寸检验报告.xlsx › 封面!B4", "content"),
+    ]
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        text = "".join(_pages(document))
+        summary = _chapter_page(document, "一、结论摘要")
+    # No audit NG: the file stays PASS; the warnings make the report pass with conditions (C only).
+    assert "总评：有条件通过文件结论：PASS" in summary and "C类2项" in summary and "C类含预检警告2项" in summary
+    chapter_five = _chapter(text, "五、C 类问题明细")
+    assert "W-01预检W02·字段为空或未识别W02C—" in chapter_five and "W-02预检W03·写法不规范W03C—" in chapter_five
+    assert "A类B类C类未定级002" in _chapter(text, "三、问题总览")
+    remediation = _chapter(text, "七、整改建议汇总")
+    assert "本次无P1项" in remediation and "本次无P2项" in remediation
+    assert "P3增补：在《尺寸检验报告.xlsx》表头填写零件号尺寸检验报告.xlsx15个工作日" in remediation
+    assert "改值：尺寸检验报告.xlsx›封面!B4——C3日期写法：应为yyyy-mm-dd" in remediation
+    assert "请核实" not in remediation and "同上" not in remediation
+    # Warnings are not audit items: the four result values count only the clauses.
+    assert "PASS1NG0待审核0不适用0" in summary

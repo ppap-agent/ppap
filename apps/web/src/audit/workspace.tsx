@@ -13,9 +13,10 @@ import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../
 import {CompletionNotification, type AuditNotificationAdapter} from './completion-notification'
 import {Item, ItemContent, ItemDescription, ItemGroup} from '../components/ui/item'
 import {FileName} from '../journey/file-name'
-import {clauseLabel, reportReady, resultConsistencyError, taskProgressError, taskResultCounts} from './result-projection'
+import {clauseLabel, pendingCount, pendingNote, reportReady, resultConsistencyError, taskProgressError, taskResultCounts} from './result-projection'
 import {AuditReports} from './reports'
-import {AuditReviewContent, type OriginalRenderer} from './review-content'
+import {AuditReviewContent, useRegisteredCustomers, type OriginalRenderer} from './review-content'
+import {customerFullName} from './customer-register'
 import type {AuditReportAdapter} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {AuditTaskEstimate} from './task-estimate'
@@ -139,15 +140,19 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
     if (!row.audit || invalid) return null
     if (row.audit.execution !== 'completed') return {text: `已结束 ${row.audit.progress.completed}/${row.audit.progress.total} 项`, className: 'text-xs tabular-nums text-muted-foreground'}
     // What still needs a person is the server's standing, the same the Feishu Project tab counts; review progress follows.
-    const pending = row.audit.checks.filter(check => check.attention).length
+    // 待审核 clauses are named once, beside the file label; 待处理 counts the rest that need a person.
+    const waiting = pendingNote(row.audit)
+    const pending = row.audit.checks.filter(check => check.attention).length - (waiting ? pendingCount(row.audit) : 0)
     const open = row.audit.checks.filter(reviewable)
     const done = row.audit.checks.filter(hasReview).length
-    const parts = [pending ? `待处理 ${pending}` : '', open.length ? `已复核 ${done}/${open.length}` : ''].filter(Boolean)
-    return parts.length ? {text: parts.join(' · '), className: pending ? 'text-xs font-medium tabular-nums text-foreground' : 'text-xs tabular-nums text-muted-foreground'} : null
+    const parts = [waiting, pending ? `待处理 ${pending}` : '', open.length ? `已复核 ${done}/${open.length}` : ''].filter(Boolean)
+    return parts.length ? {text: parts.join(' · '), className: pending || waiting ? 'text-xs font-medium tabular-nums text-foreground' : 'text-xs tabular-nums text-muted-foreground'} : null
   }
   // Each queue button is named by its file; state, progress and report status describe it.
   const queueId = useId()
-  const subject = subjectLabel(taskSubject(task))
+  const customers = useRegisteredCustomers()
+  // P5 shows the registered full name throughout (PRD §1.4 ①③).
+  const subject = subjectLabel(taskSubject(task), value => customerFullName(customers, value))
   const fileGroups = [{title: '审核文件', rows: targets}, {title: '比对资料', rows: references}].filter(group => group.rows.length)
   const fileQueue = <div className="space-y-3 p-3"><div className="flex items-center justify-between gap-2 px-1"><h2 className="text-base font-semibold">文件列表</h2><Button variant={selected ? 'outline' : 'soft'} size="sm" aria-pressed={!selected} onClick={() => chooseFile('')}>全部文件概览</Button></div><nav aria-label="文件队列">{fileGroups.map(group => <section key={group.title} className="min-w-0 space-y-2">{fileGroups.length > 1 && <h2 className="px-1 text-xs font-medium text-muted-foreground">{group.title}</h2>}<div className="grid gap-2">{group.rows.map(row => {
     const invalid = resultConsistencyError(task, row)

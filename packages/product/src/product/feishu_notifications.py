@@ -86,6 +86,10 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
             conclusion = {"PASS": "符合", "NG": "不符合"}.get(audit.get("conclusion") or "", "无正式结论")
             color = {"PASS": "green", "NG": "red"}.get(audit.get("conclusion") or "", "neutral")
             detail = f"<text_tag color='{color}'>{conclusion}</text_tag>"
+            # The file label aggregates the reviewed clauses; the 待审核 ones are named beside it (PRD IL-12.08).
+            pending = sum((audit.get("counts") or {}).get(key, 0) for key in ("unknown_count", "not_covered_count"))
+            if audit.get("conclusion") in {"PASS", "NG"} and pending:
+                detail += f" 另 {pending} 项待审核"
             if audit.get("counts"):
                 detail += " " + _counts_text(audit["counts"])
             blocks.append("**" + _markdown(row["file"]["original_filename"]) + "**<br>" + detail)

@@ -13,7 +13,7 @@ import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {HighlightText} from '../components/highlight-text'
 import {FileName} from '../journey/file-name'
-import {clauseLabel, clauseObservation, frozenResultError, programNotice, sameSnapshot, type ReviewFile} from './result-projection'
+import {clauseLabel, clauseObservation, frozenResultError, pendingNote, programNotice, sameSnapshot, type ReviewFile} from './result-projection'
 import {displayFields, fileDisplayValues, validDisplayInfo} from './display-info-contract'
 import {RecordedReview, frozenOriginal} from './recorded-review'
 import {HistoricalFindings} from './historical-findings'
@@ -64,7 +64,7 @@ export function useMinWidth(width: number) {
 
 /** The customer register, read once per page load; until it arrives (or if it cannot), a customer shows as recorded. */
 let registerRead: Promise<RegisteredCustomer[]> | null = null
-function useRegisteredCustomers() {
+export function useRegisteredCustomers() {
   const [customers, setCustomers] = useState<RegisteredCustomer[] | null>(null)
   useEffect(() => {
     let active = true
@@ -228,7 +228,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
       {showFileTitle && <h2 className="min-w-0 break-words text-base font-semibold">{file.file.original_filename}</h2>}
-      {audit && showFileTitle && <div className="flex flex-wrap items-center gap-2"><Badge shape="square" variant={issue ? 'warning' : audit.execution === 'review_failed' ? 'destructive' : audit.conclusion ? resultTone(audit.conclusion) : 'outline'}>{issue ? '结果待确认' : audit.execution === 'review_failed' ? executionLabel.review_failed : audit.conclusion ? conclusionLabel[audit.conclusion] ?? '结果未知' : executionLabel[audit.execution]}</Badge>{!issue && audit.execution !== 'completed' && audit.execution !== 'review_failed' && <span className="text-xs tabular-nums text-muted-foreground">已结束 {audit.progress.completed}/{audit.progress.total} 项</span>}</div>}
+      {audit && showFileTitle && <div className="flex flex-wrap items-center gap-2"><Badge shape="square" variant={issue ? 'warning' : audit.execution === 'review_failed' ? 'destructive' : audit.conclusion ? resultTone(audit.conclusion) : 'outline'}>{issue ? '结果待确认' : audit.execution === 'review_failed' ? executionLabel.review_failed : audit.conclusion ? conclusionLabel[audit.conclusion] ?? '结果未知' : executionLabel[audit.execution]}</Badge>{!issue && audit.execution === 'completed' && pendingNote(audit, true) && <span className="text-xs font-medium tabular-nums">{pendingNote(audit, true)}</span>}{!issue && audit.execution !== 'completed' && audit.execution !== 'review_failed' && <span className="text-xs tabular-nums text-muted-foreground">已结束 {audit.progress.completed}/{audit.progress.total} 项</span>}</div>}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {onOpenTask && <Button variant="outline" size="sm" onClick={onOpenTask}>打开来源任务<ArrowUpRight/></Button>}

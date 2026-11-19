@@ -1,7 +1,7 @@
 import unittest
 from copy import deepcopy
 
-from product.store.task_view import has_execution_error, report_eligible, round_read_view, task_round_view
+from product.store.task_view import has_execution_error, pending_count, report_eligible, round_read_view, task_round_view
 
 
 def frozen_round(execution="completed"):
@@ -416,7 +416,7 @@ class TaskRoundViewTests(unittest.TestCase):
                 else:
                     self.assertEqual(audit["conclusion"], "UNKNOWN")
 
-    def test_scope_gap_is_informational_but_a_missing_check_still_prevents_a_complete_report(self):
+    def test_scope_gap_is_informational_and_an_uncovered_clause_stays_pending_in_the_report(self):
         round = verified_round()
         round["findings"][0]["locator"]["semantic"]["scope"] = {"total": 3, "checked": 2, "unknown": 1}
         audit = task_round_view(task_input(), round)["files"][0]["audit"]
@@ -430,7 +430,9 @@ class TaskRoundViewTests(unittest.TestCase):
         audit = task_round_view(task_input(), round)["files"][0]["audit"]
         self.assertEqual((audit["conclusion"], audit["counts"]["not_covered_count"]), ("NG", 1))
         self.assertEqual(audit["report"]["state"], "not_eligible")
-        self.assertFalse(report_eligible(audit["checks"], False, audit["unmapped_findings"]))
+        # 未覆盖 is 待审核 (PRD IL-12.08): the report lists it in chapter 6 instead of being withheld.
+        self.assertTrue(report_eligible(audit["checks"], False, audit["unmapped_findings"]))
+        self.assertEqual(pending_count(audit), 1)
 
     def test_optional_scope_gap_does_not_change_pass_and_human_review_does_not_replace_unable(self):
         round = verified_round("PASS")
@@ -453,7 +455,7 @@ class TaskRoundViewTests(unittest.TestCase):
         audit = task_round_view(task_input(), round)["files"][0]["audit"]
         self.assertFalse(report_eligible(audit["checks"], False, audit["unmapped_findings"]))
 
-    def test_a_pass_beside_an_undecided_clause_is_not_a_conforming_file(self):
+    def test_a_pass_beside_an_undecided_clause_is_a_pass_with_one_pending_clause(self):
         round = verified_round("PASS")
         round["inputs"][0]["rule"]["body"]["rules"].append({"id": "clause-b", "category": "控制计划", "rule_to_check": "核对检验方法"})
         coverage, finding = deepcopy(round["coverage"]["rule_items"][0]), deepcopy(round["findings"][0])
@@ -466,7 +468,18 @@ class TaskRoundViewTests(unittest.TestCase):
         audit = task_round_view(task_input(), round)["files"][0]["audit"]
         self.assertEqual((audit["counts"]["pass_count"], audit["counts"]["unknown_count"]), (1, 1))
         self.assertTrue(report_eligible(audit["checks"], False, audit["unmapped_findings"]))
-        self.assertEqual(audit["conclusion"], "UNKNOWN")
+        # PRD IL-12.08: the file label aggregates the reviewed clauses; the undecided one stays 待审核, never PASS.
+        self.assertEqual((audit["conclusion"], audit["confirmed_conclusion"]), ("PASS", "PASS"))
+        self.assertEqual([check["outcome"] for check in audit["checks"]], ["PASS", "UNABLE"])
+        self.assertEqual((pending_count(audit), pending_count(audit, confirmed=False)), (1, 1))
+        # The round is not settled while a clause is pending: writeback and release never read it as PASS.
+        view = task_round_view(task_input(), round)
+        self.assertEqual((view["conclusion"], view["machine_conclusion"]), ("UNKNOWN", "UNKNOWN"))
+        # Every clause pending: no reviewed clause, so no file label.
+        for row in round["findings"]:
+            row["status"] = "UNABLE"
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertEqual((audit["conclusion"], pending_count(audit)), ("UNKNOWN", 2))
 
     def test_duplicate_validation_coverage_or_findings_are_not_verified(self):
         for field in ("coverage", "findings"):

@@ -12,6 +12,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
+from product.store.task_view import PENDING_OUTCOMES
+
 # One vocabulary with the PPAP web app (apps/web/src/audit/status-labels.ts).
 CONCLUSION_LABEL = {"PASS": "符合", "NG": "不符合", "UNKNOWN": "尚有未确定项"}
 REFERENCE_LABEL = "作为参考资料，未单独审核"
@@ -112,7 +114,12 @@ def summary(task: dict, web_url: str) -> list[str]:
         ng += outcomes.count("NG")
         unsure += sum(outcome in {"UNABLE", "ERR", "uncovered"} for outcome in outcomes)
         confirmed = audit["confirmed_conclusion"]
-        lines.append(f"{name}：{CONCLUSION_LABEL[confirmed]}" + ("（依据人工确认的原件事实）" if confirmed != audit["conclusion"] else ""))
+        pending = sum(outcome in PENDING_OUTCOMES for outcome in outcomes)
+        lines.append(
+            f"{name}：{CONCLUSION_LABEL[confirmed]}"
+            + (f"（另 {pending} 项待审核）" if confirmed in {"PASS", "NG"} and pending else "")
+            + ("（依据人工确认的原件事实）" if confirmed != audit["conclusion"] else "")
+        )
     lines.append(f"总体：{CONCLUSION_LABEL[task['conclusion']]}；不符合 {ng} 项，尚未确定 {unsure} 项")
     lines.append("查看详情：" + task_link(web_url, str(task["id"])))
     return lines

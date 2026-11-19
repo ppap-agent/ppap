@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {clauseObservation, resultConsistencyError, taskProgressError, taskResultCounts, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor, packageOutcomeError, taskPackageScopeError, frozenResultError, reconcileTaskNotification} from './result-projection.ts'
+import {clauseObservation, resultConsistencyError, taskProgressError, taskResultCounts, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor, packageOutcomeError, taskPackageScopeError, frozenResultError, reconcileTaskNotification, pendingCount, pendingNote} from './result-projection.ts'
 import {readReportPdf, readReportZip, readTaskReportPackage} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
@@ -400,6 +400,26 @@ test('an unknown check keeps the report as 无法判断 but never earns PASS; a 
   audit.execution = 'review_failed'; audit.checks[0].execution = 'failed'
   audit.counts = {...audit.counts, unknown_count: 0, error_count: 1}
   assert.match(error(task), /暂不生成正式报告/)
+})
+test('a reviewed PASS beside a pending clause is a PASS with the pending clause named, and its report stays available', () => {
+  const task = projection(), audit = task.files[0].audit!
+  const extra = {...structuredClone(audit.checks[0].rule_item), id: '2', category: '签字', rule_to_check: '须有签字。'}
+  for (const rule of [audit.rule, task.files[0].match!.rule!]) if (rule.body.kind === 'engine') rule.body.rules.push(structuredClone(extra))
+  audit.checks.push({...structuredClone(audit.checks[0]), rule_item: structuredClone(extra), coverage: 'unsupported', finding: null, evidence: [], scope: null, outcome: 'uncovered', attention: true})
+  audit.progress = {completed: 2, total: 2}
+  audit.counts = {...audit.counts, not_covered_count: 1}
+  assert.equal(error(task), '')
+  assert.equal(audit.conclusion, 'PASS')
+  assert.equal(pendingCount(audit), 1)
+  assert.equal(pendingNote(audit), '另 1 项待审核')
+  assert.equal(pendingNote(audit, true), '另 1 项待审核')
+  // Nothing reviewed: no file label to place the note beside.
+  audit.conclusion = 'UNKNOWN'
+  assert.equal(pendingNote(audit), '')
+  // A PASS label without any reviewed PASS is contradictory.
+  audit.checks[0].finding!.status = 'UNABLE'; audit.checks[0].outcome = 'UNABLE'; audit.conclusion = 'PASS'
+  audit.counts = {...audit.counts, pass_count: 0, unknown_count: 1}
+  assert.match(error(task), /结论为“符合”，但审核项结果不完整/)
 })
 test('empty rules and wrong progress fail closed', () => {
   const task = projection(), audit = task.files[0].audit!

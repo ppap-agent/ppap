@@ -27,6 +27,18 @@ export function taskResultCounts(task: Task) {
     return total
   }, {items: 0, pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0})
 }
+type FileAudit = NonNullable<TaskFile['audit']>
+/** 待审核 clauses of a file (无法判断 / 未覆盖), never counted as PASS: as they stand now, or as the machine left them. */
+export function pendingCount(audit: Pick<FileAudit, 'checks' | 'counts'>, machine = false): number {
+  if (machine) return audit.counts.unknown_count + audit.counts.not_covered_count
+  return audit.checks.filter(check => check.outcome ? check.outcome === 'UNABLE' || check.outcome === 'uncovered' : check.execution === 'completed' && (check.coverage === 'executed' ? check.finding?.status === 'UNABLE' : !check.finding)).length
+}
+/** 「另 N 项待审核」 beside a file label aggregated over its reviewed clauses (PRD IL-12.08); empty when none is pending or nothing was reviewed. */
+export function pendingNote(audit: Pick<FileAudit, 'checks' | 'counts' | 'conclusion' | 'confirmed_conclusion'>, machine = false): string {
+  const count = pendingCount(audit, machine)
+  const conclusion = machine ? audit.conclusion : audit.confirmed_conclusion ?? audit.conclusion
+  return count && (conclusion === 'PASS' || conclusion === 'NG') ? `另 ${count} 项待审核` : ''
+}
 /** A checker's run notes (assertion counts, diagnostic codes) are for whoever maintains the check, not the reason for the result. */
 export function programNotice(check: components['schemas']['AuditClauseEvaluation']): string | null {
   return check.verification_scope === 'checker_execution' && check.scope_notice ? check.scope_notice : null
@@ -161,11 +173,12 @@ export function frozenResultError(roundId: string | null, row: ReviewFile, froze
   }
   const {na_count, ...observedCounts} = audit.counts
   if (!sameSnapshot(counts, observedCounts) || na_count !== undefined && na_count !== notApplicable) return '审核项数量与明细不一致，请刷新。'
-  // Every clause has a result; one the checker could not decide stays 无法判断 in the report, but never lets the file conform.
-  const reportable = rules.length > 0 && audit.execution === 'completed' && valid.length === rules.length && valid.every(item => ['PASS', 'NG', 'NA', 'UNABLE'].includes(item.finding!.status))
-  const complete = reportable && valid.every(item => item.finding!.status !== 'UNABLE')
+  // Every clause ended without a technical error and one has a result; a clause without a verdict (无法判断 / 未覆盖) stays 待审核 in the report.
+  const ended = audit.checks.every(item => item.execution === 'completed' && (item.coverage === 'executed' ? item.finding && ['PASS', 'NG', 'NA', 'UNABLE'].includes(item.finding.status) : !item.finding))
+  const reportable = rules.length > 0 && audit.execution === 'completed' && valid.length > 0 && ended
   if (audit.progress.completed !== audit.checks.filter(item => ['completed', 'failed'].includes(item.execution)).length) return '审核进度与审核项状态不一致，请刷新。'
-  if (audit.conclusion === 'PASS' && (!complete || valid.some(item => item.finding?.status === 'NG'))) return '结论为“符合”，但审核项结果不完整，请刷新。'
+  // The file label aggregates the reviewed clauses (PRD IL-12.08): PASS needs a reviewed PASS and no NG; 待审核 clauses are named beside it.
+  if (audit.conclusion === 'PASS' && (!reportable || !valid.some(item => item.finding?.status === 'PASS') || valid.some(item => item.finding?.status === 'NG'))) return '结论为“符合”，但审核项结果不完整，请刷新。'
   if (audit.conclusion === 'NG' && !valid.some(item => item.finding?.status === 'NG')) return '结论为“不符合”，但找不到不符合的审核项，请刷新。'
   if (audit.report.state !== 'not_eligible' && (!reportable || !['PASS', 'NG', 'UNKNOWN'].includes(audit.conclusion || ''))) return '还有审核项没有结果，暂不生成正式报告。'
   return ''

@@ -162,7 +162,10 @@ def process_report_job(store, claimed, ident) -> dict:
             if claimed.kind == "report_zip":
                 result = store.build_report_package(claimed, generated_at, cancelled)
             else:
-                body = render_audit_pdf({**claimed.payload["report_input"], "generated_at": generated_at}, customer_name=full_name)
+                payload = claimed.payload
+                # The audited file's own precheck warnings join the report's C class (PRD §2.11 四).
+                warnings = store.frozen_precheck_warnings(claimed.tenant_id, payload["task_id"], payload["source_file_version_id"])
+                body = render_audit_pdf({**payload["report_input"], "generated_at": generated_at, "precheck_warnings": warnings}, customer_name=full_name)
                 if cancelled.is_set():
                     raise ValueError("report_lease_unknown")
                 result = store.write_audit_report(claimed, body, generated_at)

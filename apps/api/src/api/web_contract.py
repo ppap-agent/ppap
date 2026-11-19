@@ -54,7 +54,6 @@ class PublicConfig(TypedDict):
     feishu_app_id: str
     current_access: str
     usage_charge_enabled: bool
-    rule_upload_enabled: bool
     login: str
     personal_drive_upload: bool
 
@@ -141,6 +140,8 @@ class RuleItem(TypedDict):
     priority: str | None
     rule_to_check: str
     type_of_rule: str
+    # Default severity carried by the rule (rule package v1.5 severity; PRD §2.11 五); absent means ungraded.
+    severity: NotRequired[Literal["A", "B", "C"]]
 
 
 class EngineRuleBody(TypedDict):
@@ -734,6 +735,20 @@ class UsageEvent(TypedDict):
 class UsageList(TypedDict):
     events: list[UsageEvent]
     next_offset: int | None
+
+
+class AuditDurationInterval(TypedDict):
+    low: float
+    high: float
+
+
+class AuditDurationEstimate(TypedDict):
+    """Seconds one file's standard audit took in this tenant recently: median (low) to 90th percentile (high).
+
+    Null when too few files were measured; the page then shows no estimate.
+    """
+
+    per_file_seconds: AuditDurationInterval | None
 
 
 class QuotaEstimate(TypedDict, total=False):

@@ -90,6 +90,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-duration-estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Audit Duration Estimate
+         * @description One file's standard audit time in the caller's tenant; no estimate below the sample minimum.
+         */
+        get: operations["audit_duration_estimate_audit_duration_estimate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-report-packages": {
         parameters: {
             query?: never;
@@ -2154,6 +2174,22 @@ export interface components {
              */
             state: "completed" | "degraded";
         };
+        /**
+         * AuditDurationEstimate
+         * @description Seconds one file's standard audit took in this tenant recently: median (low) to 90th percentile (high).
+         *
+         *     Null when too few files were measured; the page then shows no estimate.
+         */
+        AuditDurationEstimate: {
+            per_file_seconds: components["schemas"]["AuditDurationInterval"] | null;
+        };
+        /** AuditDurationInterval */
+        AuditDurationInterval: {
+            /** High */
+            high: number;
+            /** Low */
+            low: number;
+        };
         /** AuditEvidenceReference */
         AuditEvidenceReference: {
             /** Derived File Version Id */
@@ -2947,6 +2983,8 @@ export interface components {
             outline_version: string;
             /** Statuses */
             statuses: components["schemas"]["PrecheckStatus"][];
+            /** Unreviewed */
+            unreviewed: number;
             /** Warnings */
             warnings: components["schemas"]["PrecheckFinding"][];
         };
@@ -3853,6 +3891,16 @@ export interface components {
             /** Warn */
             warn: number;
         };
+        /**
+         * PrecheckCoverage
+         * @description S06: `judged` of the `total` criteria the precheck should decide for this file.
+         */
+        PrecheckCoverage: {
+            /** Judged */
+            judged: number;
+            /** Total */
+            total: number;
+        };
         /** PrecheckCriterion */
         PrecheckCriterion: {
             /** Code */
@@ -3961,6 +4009,7 @@ export interface components {
         PrecheckStatus: {
             /** Code */
             code: string;
+            coverage?: components["schemas"]["PrecheckCoverage"];
             /** File Version Id */
             file_version_id: string;
             /** Filename */
@@ -4036,8 +4085,6 @@ export interface components {
             personal_drive_upload: boolean;
             /** Profile */
             profile: string;
-            /** Rule Upload Enabled */
-            rule_upload_enabled: boolean;
             /** Usage Charge Enabled */
             usage_charge_enabled: boolean;
         };
@@ -4439,6 +4486,11 @@ export interface components {
             priority: string | null;
             /** Rule To Check */
             rule_to_check: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity?: "A" | "B" | "C";
             /** Type Of Rule */
             type_of_rule: string;
         };
@@ -5266,6 +5318,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_duration_estimate_audit_duration_estimate_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditDurationEstimate"];
                 };
             };
         };
