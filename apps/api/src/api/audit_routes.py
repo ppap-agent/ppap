@@ -524,6 +524,17 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
+    @app.get("/audit-duration-estimate", response_model=wc.AuditDurationEstimate)
+    def audit_duration_estimate(request: Request) -> JSONResponse:
+        """One file's standard audit time in the caller's tenant; no estimate below the sample minimum."""
+        from product.store.durations import audit_duration_estimate as estimate
+
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        with store._conn() as conn:
+            return JSONResponse(estimate(conn, principal.tenant_id))
+
     @app.get("/audit-usage/export", response_class=Response, responses={200: {"content": {"text/csv": {"schema": {"type": "string", "format": "binary"}}}}})
     def audit_usage_export(request: Request, range: str = "30d", search: str = Query("", max_length=200), settlement: str = ""):
         """Every entry the usage list would show for the same range, search and settlement, as CSV."""

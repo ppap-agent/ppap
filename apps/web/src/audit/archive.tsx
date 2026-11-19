@@ -146,7 +146,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
     return () => window.clearTimeout(timer)
   }, [search, query.search])
   const current = page && sameSnapshot(page.query, query) ? page : null
-  // A customer node by its id, or (`recorded`) the node holding a recorded value; the narrow table column shows its short name.
+  // A customer node by its id, or (`recorded`) the node holding a recorded value; this page names every customer in full.
   const customerGroup = (key: string, recorded = false) => page?.customer_groups.find(group => recorded ? group.values.includes(key.trim()) : group.id === key)
   // Customers lead the tree; the vehicle and part levels open under the chosen customer and vehicle.
   // A count shows only once the read has said it; no placeholder stands in for it.
@@ -198,7 +198,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
     {current && <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
       {/* Wide rows scroll inside this card. Column names and the pager stay in view. */}
       <Table aria-label="审核文件列表" containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead className="w-10"><span className="sr-only">选择报告</span></TableHead><TableHead>文档名称</TableHead><TableHead>审核规则</TableHead><TableHead>审核结果</TableHead><TableHead>文件类型</TableHead><TableHead>发起人</TableHead><TableHead>发起时间</TableHead><TableHead>客户名称</TableHead><TableHead>车型</TableHead><TableHead>零件号</TableHead><TableHead>零件名称</TableHead></TableRow></TableHeader><TableBody>{current.documents.map(document => {
-        const initiator = document.latest_completed?.initiator ?? document.latest_activity?.initiator, rule = document.latest_completed?.rule_title ?? document.latest_activity?.rule_title, at = time(document)
+        const initiator = document.latest_completed?.initiator ?? document.latest_activity?.initiator, rule = document.latest_completed?.rule_title ?? document.latest_activity?.rule_title, at = time(document), customer = document.metadata.customer && (customerGroup(document.metadata.customer, true)?.full_name ?? document.metadata.customer)
         return <TableRow key={document.document_id} data-state={checked[document.document_id] ? 'selected' : undefined} className="cursor-pointer" onClick={event => {if (event.target instanceof Element && event.currentTarget.contains(event.target) && !event.target.closest('button, a, [role="checkbox"]')) openDocument(document)}}>
         <TableCell><Checkbox aria-label={`选择 ${document.title}`} checked={Boolean(checked[document.document_id])} disabled={!checked[document.document_id] && (!document.latest_completed || !historyReportReady(document.latest_completed))} onCheckedChange={value => toggle(document, value === true)}/></TableCell>
         <TableCell className="whitespace-normal"><div className="min-w-48 max-w-96"><button type="button" className="rounded-sm text-left text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50" onClick={() => openDocument(document)}><FileName name={document.title} colored/></button></div></TableCell>
@@ -207,7 +207,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
         <TableCell>{document.document_type ? documentTypeLabel(document.document_type) : unset}</TableCell>
         <TableCell>{initiator || unset}</TableCell>
         <TableCell>{at ? <time className="text-muted-foreground tabular-nums" dateTime={at}>{displayTime(at)}</time> : unset}</TableCell>
-        <TableCell>{document.metadata.customer ? <span title={customerGroup(document.metadata.customer, true)?.full_name ?? document.metadata.customer}>{customerGroup(document.metadata.customer, true)?.short_name ?? document.metadata.customer}</span> : unset}</TableCell>
+        <TableCell>{customer ? <div className="max-w-40 truncate" title={customer}>{customer}</div> : unset}</TableCell>
         <TableCell>{document.metadata.model || unset}</TableCell>
         <TableCell>{document.metadata.part_number ? <span className="tabular-nums">{document.metadata.part_number}</span> : unset}</TableCell>
         <TableCell>{document.metadata.part || unset}</TableCell>

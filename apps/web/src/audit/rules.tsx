@@ -45,7 +45,7 @@ function RulesWorkspace({active}: {active: boolean}) {
   if (read.error) return <Alert variant="destructive"><AlertTitle>客户规则未能读取</AlertTitle><AlertDescription><p>{read.error}</p><Button variant="outline" size="sm" onClick={() => setRevision(value => value + 1)}>重新读取</Button></AlertDescription></Alert>
   if (route.rule) {
     const owner = entries.find(entry => entry.types?.some(type => type.rules.some(rule => rule.id === route.rule)))?.customer
-    return <RuleDetail ruleId={route.rule} customer={owner && {id: owner.customer_id, name: owner.full_name}}/>
+    return <RuleDetail ruleId={route.rule} customer={owner && {id: owner.customer_id, name: owner.short_name}}/>
   }
   return <section aria-label="审核规则库" className="flex min-h-0 flex-1 flex-col">
     <CustomerRulesBrowser entries={entries} selectedId={route.customer} loading={read.loading}/>

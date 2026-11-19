@@ -55,7 +55,7 @@ export function CustomerRulesBrowser({entries, selectedId, loading}: {entries: C
         const {customer} = item, href = rulesAddress({template: customer.customer_id}), current = customer.customer_id === entry?.customer.customer_id, ratio = ruleCoverage(customer), described = `rules-customer-${customer.customer_id}`
         return <li key={customer.customer_id}><a aria-current={current ? 'page' : undefined} aria-describedby={described} href={href} onClick={event => followRulesLink(event, href)} className={`flex min-w-0 items-center gap-3 rounded-md px-3 py-2 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${current ? 'bg-primary-soft text-primary' : 'hover:bg-muted'}`}>
           <CustomerAvatar name={customer.short_name}/>
-          <span className="min-w-0 flex-1 space-y-0.5"><span className="block truncate text-sm" title={customer.full_name}>{customer.short_name}</span><span id={described} className="block text-xs tabular-nums text-muted-foreground">{ratio ? `${ratio.covered} / ${ratio.total} 类有生效规则` : '文件类型范围未配置'}</span></span>
+          <span className="min-w-0 flex-1 space-y-0.5"><span className="block truncate text-sm" title={customer.short_name}>{customer.short_name}</span><span id={described} className="block text-xs tabular-nums text-muted-foreground">{ratio ? `${ratio.covered} / ${ratio.total} 类有生效规则` : '文件类型范围未配置'}</span></span>
         </a></li>
       })}
       {!shown.length && <li className="grid justify-items-center gap-3 py-12 text-center"><p className="text-sm text-muted-foreground">{query ? '没有匹配的客户' : '还没有客户规则'}</p>{query && <Button variant="outline" size="sm" onClick={() => setQuery('')}>清除搜索</Button>}</li>}
@@ -80,13 +80,13 @@ function CustomerRulesDetail({entry, focus}: {entry: CustomerRules; focus: strin
     return rules.length ? [{...type, rules}] : []
   })
   const rows = types.flatMap((type): {type: TypeRules; rule: RuleRow | null; first: boolean}[] => type.rules.length ? type.rules.map((rule, index) => ({type, rule, first: index === 0})) : [{type, rule: null, first: true}])
-  return <section aria-label={`${customer.full_name} 的规则`} className="flex min-h-0 flex-1 flex-col gap-3">
+  return <section aria-label={`${customer.short_name} 的规则`} className="flex min-h-0 flex-1 flex-col gap-3">
     <header className="flex items-center gap-3 rounded-lg border bg-card p-4">
       <CustomerAvatar name={customer.short_name}/>
-      <h2 className="min-w-0 truncate text-lg font-semibold" title={customer.full_name}>{customer.full_name}</h2>
+      <h2 className="min-w-0 truncate text-lg font-semibold" title={customer.short_name}>{customer.short_name}</h2>
     </header>
     {entry.types === null ? <Alert><AlertCircle aria-hidden="true"/><AlertTitle>这个客户的文件类型范围尚未配置</AlertTitle><AlertDescription>暂不显示规则覆盖。请联系我们配置后再查看。</AlertDescription></Alert> : <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
-      {rows.length ? <Table aria-label={`${customer.full_name} 的规则列表`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>文件类型</TableHead><TableHead>规则</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead></TableRow></TableHeader><TableBody>{rows.map(({type, rule, first}) => {
+      {rows.length ? <Table aria-label={`${customer.short_name} 的规则列表`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>文件类型</TableHead><TableHead>规则</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead></TableRow></TableHeader><TableBody>{rows.map(({type, rule, first}) => {
         const href = rule && rulesAddress({systemRule: rule.id}), updated = rule ? day(rule.updatedAt) : ''
         return <TableRow key={rule ? rule.id : `type:${type.code}`}>
           <TableCell className="whitespace-normal">{first ? type.label : <span className="sr-only">{type.label}</span>}</TableCell>
