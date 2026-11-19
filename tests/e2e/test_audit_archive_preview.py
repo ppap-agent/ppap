@@ -228,6 +228,12 @@ class AuditArchivePreviewTests(unittest.TestCase):
             expect(panel.get_by_role("button", name=re.compile("^选择第"))).to_have_count(4)
             expect(panel.get_by_role("button", name="选择第 3 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
             expect(panel.get_by_role("button", name="选择第 1 次审核", exact=True)).to_contain_text("审核异常")
+            # IX-10: every version carries its precheck report entries, still usable when the audit failed (IX-10.04).
+            expect(panel.get_by_role("button", name="预览预检报告", exact=True)).to_have_count(4)
+            expect(panel.get_by_role("button", name="下载预检报告", exact=True)).to_have_count(4)
+            failed_precheck = panel.get_by_role("button", name="预览预检报告", exact=True).last
+            expect(failed_precheck).to_have_accessible_description("第 1 次审核")
+            expect(failed_precheck).to_be_enabled()
             second = panel.get_by_role("button", name="选择第 2 次审核", exact=True)
             second.click()
             expect(second).to_have_attribute("aria-pressed", "true")

@@ -17,6 +17,7 @@ import {Tooltip, TooltipContent, TooltipTrigger} from '../components/ui/tooltip'
 import {Pager} from '../components/pager'
 import {cn} from '../lib/utils'
 import {ArchiveHistory} from './history'
+import type {PrecheckAdapter} from './precheck'
 import {readReportPackage, readReportPdf, readReportZip, type AuditReportAdapter, type AuditReportPackage} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {useReportPackage} from './report-actions'
@@ -44,7 +45,7 @@ const results = [['PASS', conclusionLabel.PASS], ['NG', conclusionLabel.NG], ['U
 const resultName = (value: ArchiveQuery['result']) => results.find(([key]) => key === value)?.[1] ?? null
 const otherLabel = (label: string, kind: string) => label === '其他' ? `未归类${kind}` : label
 
-export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter, sharingAdapter, active = true}: {adapter: AuditArchiveAdapter; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; active?: boolean; headerActions?: HTMLElement | null}) {
+export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter, sharingAdapter, precheckAdapter, active = true}: {adapter: AuditArchiveAdapter; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; precheckAdapter?: PrecheckAdapter; active?: boolean; headerActions?: HTMLElement | null}) {
   const [query, setQuery] = useState(initialQuery), [search, setSearch] = useState(''), [searchOpen, setSearchOpen] = useState(false)
   const [page, setPage] = useState<components['schemas']['AuditArchivePage'] | null>(null)
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0)
@@ -175,7 +176,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
   if (!active) return null
   if (!address.documentId && (address.reference || address.invalid || address.report)) return <Alert><AlertTitle>无法打开这次审核</AlertTitle><AlertDescription><p>链接缺少有效的文件或审核信息。</p><Button variant="outline" size="sm" onClick={closeDocument}>返回审核文件</Button></AlertDescription></Alert>
   // A history read that settles after the person left this document must not write it back into the address.
-  if (address.documentId) return <ArchiveHistory key={`${address.documentId}:${restore}`} documentId={address.documentId} document={page?.documents.find(row => row.document_id === address.documentId) || null} initialAddress={address} onNavigate={(reference, report, replace) => {if (activeRef.current && readArchiveAddress(location.search).documentId === address.documentId) writeArchiveAddress(address.documentId, reference, report, replace)}} adapter={adapter} renderOriginal={renderOriginal} onBack={closeDocument} onOpenTask={onOpenTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter}/>
+  if (address.documentId) return <ArchiveHistory key={`${address.documentId}:${restore}`} documentId={address.documentId} document={page?.documents.find(row => row.document_id === address.documentId) || null} initialAddress={address} onNavigate={(reference, report, replace) => {if (activeRef.current && readArchiveAddress(location.search).documentId === address.documentId) writeArchiveAddress(address.documentId, reference, report, replace)}} adapter={adapter} renderOriginal={renderOriginal} onBack={closeDocument} onOpenTask={onOpenTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} precheckAdapter={precheckAdapter}/>
   const time = (document: ArchiveDocument) => (document.latest_completed ?? document.latest_activity)?.audited_at
   return <section className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden" aria-label="审核文件">
     <div className="grid min-h-0 flex-1 grid-cols-[15rem_minmax(0,1fr)] grid-rows-1 gap-4">
