@@ -91,21 +91,27 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     page.route("**/api/audit-tasks/original-task", lambda route: route.fulfill(json=task))
     reads = []
 
+    # The page also reads the register for coverage; only reads after an explicit picker refresh return the new customer.
+    refreshed = []
+
     def catalog(route):
         reads.append(route.request.method)
-        customers = [] if len(reads) == 1 else [{"customer_id": "customer-new", "name": "新客户"}]
-        route.fulfill(json={"customers": customers})
+        customers = [{"customer_id": "customer-new", "name": "新客户", "full_name": "新客户", "short_name": "新客户", "coverage": None}] if len(refreshed) > 1 else []
+        route.fulfill(json={"customers": customers, "unregistered": []})
 
     page.route("**/api/audit-customers", catalog)
     page.goto(WEB + "/audit?task=original-task")
     page.get_by_role("button", name="返回核对客户", exact=True).click()
-    assert reads == []
     customer_picker = page.get_by_role("combobox", name="审核客户", exact=True)
+    expect(customer_picker).to_be_visible()
+    before = len(reads)
+    refreshed.append(1)
     with page.expect_response(lambda response: response.url.endswith("/api/audit-customers")):
         customer_picker.click()
     expect(page.get_by_role("option", name="新客户", exact=True)).to_have_count(0)
-    assert reads == ["GET"]
+    assert len(reads) > before and set(reads) == {"GET"}
     page.keyboard.press("Escape")
+    refreshed.append(1)
     with page.expect_response(lambda response: response.url.endswith("/api/audit-customers")):
         customer_picker.click()
     page.get_by_role("option", name="新客户", exact=True).click()
@@ -113,7 +119,7 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
     expect(customer_picker).to_contain_text("新客户")
     expect(page).to_have_url(WEB + "/tasks/original-task")
-    assert reads == ["GET", "GET"]
+    assert set(reads) == {"GET"}
 
     expect(page.get_by_role("button", name="模板库", exact=True)).to_be_visible()
 
@@ -210,7 +216,7 @@ def test_authorization_failure_keeps_task_and_requires_an_explicit_new_login(pag
     assert host_posts == []
 
 
-def test_native_records_usage_and_logout_keep_the_task_report_address(page):
+def test_native_usage_and_logout_keep_the_task_report_address(page):
     page.set_viewport_size({"width": 1280, "height": 720})
     login_config(page)
     page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
@@ -226,17 +232,11 @@ def test_native_records_usage_and_logout_keep_the_task_report_address(page):
     page.goto(WEB + "/audit?task=original-task&report=frozen-report#original-clause")
     account = page.get_by_role("button", name="登录恢复测试，账号菜单")
     expect(account).to_be_visible()
+    expect(page).to_have_url(WEB + "/tasks/original-task?report=frozen-report#original-clause")
     account.click()
-    page.get_by_role("menuitem", name="本机草稿", exact=True).click()
-    records = page.get_by_role("dialog", name="本机记录", exact=True)
-    expect(records).to_be_visible()
-    page.keyboard.press("Escape")
-    expect(records).to_have_count(0)
-    assert page.url == WEB + "/tasks/original-task?report=frozen-report#original-clause"
-    account.click()
-    # Usage is reached from the product navigation only; the account menu does not repeat it.
+    # Usage is reached from the product navigation only; the account menu holds only sign-out.
     expect(page.get_by_role("menuitem", name="退出登录")).to_be_visible()
-    expect(page.get_by_role("menuitem", name="用量记录")).to_have_count(0)
+    expect(page.get_by_role("menuitem")).to_have_count(1)
     page.keyboard.press("Escape")
     page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="用量记录", exact=True).click()
     expect(page.get_by_role("heading", name="用量记录", exact=True)).to_be_visible()

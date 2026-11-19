@@ -37,11 +37,6 @@ test('model failures explain the next step instead of a raw error code', async (
   assert.equal(messages.size, 2)
 })
 
-test('rule source rejection explains the required correction without claiming publication', async () => {
-  installFetch(() => jsonResponse({error: 'rule_source_unverified'}, 400))
-  await assert.rejects(request('/rules', 'POST', {}), /请重新选择原文位置并核对，草稿未发布/)
-})
-
 test('connect reads runtime config then public-config', async () => {
   const calls = installFetch(url => {
     if (url === '/runtime-config.json') return jsonResponse({api_url: 'http://api.example'})

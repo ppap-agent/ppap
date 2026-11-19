@@ -1,10 +1,10 @@
 """Keyboard, focus, touch size, and reduced-motion checks for the product UI."""
 
-import hashlib
-import json
 import os
 import unittest
 from urllib.parse import urlsplit
+
+from .conftest import wait_until
 
 try:
     from playwright.sync_api import sync_playwright
@@ -102,19 +102,23 @@ class UiA11yTests(unittest.TestCase):
             expect(page.locator("main:focus")).to_have_count(1)
             expect(page.get_by_role("heading", level=1)).to_have_count(1)
             directory = []
-            page.route("**/api/rule-library", lambda route: directory.append(route))
+            page.route("**/api/rules", lambda route: directory.append(route))
             page.goto(WEB + "/requirements")
-            expect(page.get_by_role("heading", name="审核规则库", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="审核规则库", exact=True)).to_be_visible()
             loading = page.get_by_role("status", name="正在读取客户规则…", exact=True)
             expect(loading).to_be_visible()
             self.assertTrue(loading.evaluate("el => el.getAnimations({subtree: true}).every(animation => animation.playState !== 'running')"))
             expect(page.get_by_text("还没有客户规则", exact=True)).to_have_count(0)
-            directory.pop().fulfill(status=503, json={"error": "unavailable"})
+            wait_until(page, lambda: directory, "The rule list read did not reach its route handler")
+            while directory:
+                directory.pop().fulfill(status=503, json={"error": "unavailable"})
             expect(loading).to_have_count(0)
-            expect(page.get_by_role("alert")).to_contain_text("规则没读到")
+            expect(page.get_by_role("alert")).to_contain_text("客户规则未能读取")
             page.get_by_role("button", name="重新读取", exact=True).click()
             expect(loading).to_be_visible()
-            directory.pop().fulfill(json={"versions": []})
+            wait_until(page, lambda: directory, "The rule list was not read again")
+            while directory:
+                directory.pop().fulfill(json={"rules": []})
             expect(page.get_by_text("还没有客户规则", exact=True)).to_be_visible()
             expect(loading).to_have_count(0)
             context.close()
@@ -162,17 +166,16 @@ class UiA11yTests(unittest.TestCase):
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
             page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": ["控制计划"]}))
             page.route("**/api/suites", lambda route: route.fulfill(json={"suites": [], "predefined": []}))
-            page.route("**/api/rule-library", lambda route: route.fulfill(status=403, json={"error": "access_denied"}))
+            page.route("**/api/audit-customers", lambda route: route.fulfill(status=403, json={"error": "access_denied"}))
             page.goto(WEB + "/requirements")
             expect(page.get_by_role("alert")).to_contain_text("没有访问这份资料的权限。")
             expect(page.get_by_text("还没有客户规则", exact=True)).to_have_count(0)
             expect(page.get_by_role("button", name="重新读取", exact=True)).to_be_visible()
             browser.close()
 
-    def test_rule_editor_keyboard_modal_and_single_heading(self):
+    def test_rule_detail_is_read_only_with_a_single_heading(self):
         from playwright.sync_api import expect
 
-        source_bytes = json.dumps(BODY).encode()
         rule = {
             "id": RULE,
             "title": "规则 A",
@@ -181,15 +184,6 @@ class UiA11yTests(unittest.TestCase):
             "source_file_id": SOURCE,
             "source_file_version_id": VERSION,
             "predecessor_id": None,
-        }
-        source = {
-            "file_id": SOURCE,
-            "id": VERSION,
-            "original_filename": "控制计划要求.json",
-            "status": "ready",
-            "content_type": "application/json",
-            "byte_size": len(source_bytes),
-            "sha256": hashlib.sha256(source_bytes).hexdigest(),
         }
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -218,7 +212,6 @@ class UiA11yTests(unittest.TestCase):
                             "feishu_app_id": "",
                             "current_access": "allowed",
                             "usage_charge_enabled": False,
-                            "rule_upload_enabled": True,
                         },
                         headers=cors,
                     )
@@ -233,30 +226,12 @@ class UiA11yTests(unittest.TestCase):
                         },
                         headers=cors,
                     )
-                elif path == f"/files/{SOURCE}/versions/{VERSION}/rule-sources":
-                    route.fulfill(json={"file_version_id": VERSION, "units": [{"id": "json:0", "location": "rules[0].rule_to_check", "excerpt": BODY["rules"][0]["rule_to_check"]}]}, headers=cors)
-                elif path == "/suites":
-                    route.fulfill(json={"suites": [], "predefined": []}, headers=cors)
-                elif path == "/rule-types":
-                    route.fulfill(json={"types": ["控制计划"]}, headers=cors)
-                elif path == "/rule-library":
-                    route.fulfill(
-                        json={
-                            "versions": [
-                                {
-                                    "id": RULE,
-                                    "title": rule["title"],
-                                    "created_at": rule["created_at"],
-                                    "version": "v1",
-                                    "scope": {"customer": "", "part": "", "revision": "", "allCustomers": False, "allParts": True, "allRevisions": True},
-                                    "reason": "",
-                                    "predecessor_id": None,
-                                    "clause_count": len(BODY["rules"]),
-                                }
-                            ],
-                        },
-                        headers=cors,
-                    )
+                elif path == "/audit-customers":
+                    route.fulfill(json={"customers": [], "unregistered": []}, headers=cors)
+                elif path == "/audit-customers/default":
+                    route.fulfill(json={"customer_preference": None, "revision": 0}, headers=cors)
+                elif path == "/audit-tasks":
+                    route.fulfill(json={"tasks": [], "next_offset": None}, headers=cors)
                 elif path == "/rules":
                     route.fulfill(
                         json={
@@ -279,58 +254,20 @@ class UiA11yTests(unittest.TestCase):
                     )
                 elif path == "/rules/" + RULE:
                     route.fulfill(json=rule, headers=cors)
-                elif path == f"/files/{SOURCE}/versions/{VERSION}":
-                    route.fulfill(json=source, headers=cors)
                 else:
                     unexpected.append(path)
                     route.fulfill(status=404, json={"error": "unexpected_test_request"}, headers=cors)
 
             page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
             page.route("**/api/**", respond)
-            page.goto(WEB + "/?view=requirements&requirement=" + RULE)
-            expect(page.get_by_role("heading", name="规则 A", exact=True)).to_be_visible()
-            page.get_by_role("button", name="创建新版本", exact=True).click()
-            title = page.get_by_role("textbox", name="规则名称", exact=True)
-            expect(title).to_have_value("规则 A")
+            page.goto(WEB + "/requirements?systemRule=" + RULE)
+            expect(page.get_by_role("heading", name="规则 A", exact=True, level=1)).to_be_visible()
             expect(page.get_by_role("heading", level=1)).to_have_count(1)
-            title.focus()
-            expect(title).to_be_focused()
-            page.keyboard.press("Tab")
-            expect(title).not_to_be_focused()
-            expect(focus_within(page, "main")).to_have_count(1)
-            original = page.get_by_role("button", name="核对出处", exact=True)
-            original.focus()
-            page.keyboard.press("Enter")
-            sheet = page.get_by_role("dialog", name="第 1 条 · 核对出处", exact=True)
-            expect(sheet).to_be_visible()
-            expect(focus_within(page, "[role=dialog]")).to_have_count(1)
-            page.keyboard.press("Escape")
-            expect(sheet).to_have_count(0)
-            expect(original).to_be_focused()
-            discard = page.get_by_role("button", name="放弃草稿", exact=True)
-            discard.focus()
-            page.keyboard.press("Space")
-            dialog = page.get_by_role("dialog", name="放弃这份草稿？", exact=True)
-            expect(dialog).to_be_visible()
-            for _ in range(8):
-                page.keyboard.press("Tab")
-                expect(focus_within(page, "[role=dialog]")).to_have_count(1)
-            for _ in range(4):
-                page.keyboard.press("Shift+Tab")
-                expect(focus_within(page, "[role=dialog]")).to_have_count(1)
-            expect(page.get_by_role("heading", level=1)).to_have_count(0)
-            page.keyboard.press("Escape")
-            expect(dialog).to_have_count(0)
-            expect(page.get_by_role("heading", level=1)).to_have_count(1)
-            expect(discard).to_be_focused()
-            expect(title).to_have_value("规则 A")
-            page.keyboard.press("Enter")
-            expect(dialog).to_be_visible()
-            dialog.get_by_role("button", name="继续编辑", exact=True).focus()
-            page.keyboard.press("Enter")
-            expect(dialog).to_have_count(0)
-            expect(discard).to_be_focused()
-            expect(title).to_have_value("规则 A")
+            expect(page.get_by_role("article", name="第 1 条", exact=True)).to_contain_text("检查 A")
+            # Rules are delivered by the platform: the page offers nothing to upload, edit or publish.
+            expect(page.get_by_role("main").get_by_role("textbox")).to_have_count(0)
+            for name in ("上传规则", "创建新版本", "保存版本", "放弃草稿", "采用"):
+                expect(page.get_by_role("button", name=name, exact=True)).to_have_count(0)
             self.assertEqual(writes, [])
             self.assertEqual(unexpected, [])
             browser.close()

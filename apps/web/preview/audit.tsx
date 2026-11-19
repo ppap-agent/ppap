@@ -121,8 +121,8 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
   customers: [{value: 'sample-customer', label: '示例客户'}],
   // The enterprise default starts at automatic recognition, as for a new tenant.
   customerDefaults: {read: async () => ({customer_preference: null, revision: 0}), save: async (customer_preference, revision) => ({customer_preference, revision: revision + 1})},
-  // Preview coverage: the sample customer has rules for the sample documents among the seventeen standard types.
-  coverage: async () => ({types: standardTypes, catalog: {suites: [], predefined: []}, rules: documents.map((document, index) => ({id: `preview-rule-${index + 1}`, title: document.rule, kind: 'engine', created_at: '2026-11-01T08:00:00+00:00', predecessor_id: null, customer_scope: 'restricted' as const, type: standardTypes.includes(document.type) ? document.type : standardTypes[index], rule_profile: 'v4', customers: ['sample-customer'], models: [], parts: []}))}),
+  // Preview register: the sample customer's type set M is the seventeen standard types, with rules for the sample documents.
+  coverage: async () => ({customers: [{customer_id: 'sample-customer', name: 'sample-customer', full_name: '示例客户', short_name: '示例客户', coverage: {version: 'preview', effective_from: '2026-11-18', types: standardTypes.map((rule_type, index) => ({code: `T${String(index + 1).padStart(2, '0')}`, rule_type})), rule_types: [...new Set(documents.map((document, index) => standardTypes.includes(document.type) ? document.type : standardTypes[index]))], template_types: []}}]}),
   authenticate: async () => {authenticated = true},
   drive: {
     list: async ({folderToken, pageToken} = {}) => {

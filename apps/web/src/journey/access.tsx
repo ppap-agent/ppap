@@ -1,17 +1,15 @@
 // Stitch: projects/13261964020862199279/screens/5a80a77a4f524928b808862728d5677a (login)
 // and screens/9a6cb6189e92450da32d95a31820b41c (connection failure).
 import {createContext, useContext, useEffect, useRef, useState, type ReactNode} from 'react'
-import {ArrowRight, ChevronDown, FolderClock, LogOut, Sparkles} from 'lucide-react'
-import {apiUrl, connect, feishuAppId, request, ruleUploadEnabled, type HostLoginRequest, type PrincipalPublic} from '../api'
+import {ArrowRight, ChevronDown, LogOut, Sparkles} from 'lucide-react'
+import {apiUrl, connect, feishuAppId, request, type HostLoginRequest, type PrincipalPublic} from '../api'
 import {isFeishuHost, requestHostCode} from '../hostLogin'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Button} from '../components/ui/button'
 import {Alert, AlertDescription} from '../components/ui/alert'
 import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger} from '../components/ui/dropdown-menu'
-import {LocalRecordsDialog} from './local-records'
-import {setDraftOwner} from './saved-draft'
 
-const AccessContext = createContext<{principal: PrincipalPublic; logout: () => void; records: () => void} | null>(null)
+const AccessContext = createContext<{principal: PrincipalPublic; logout: () => void} | null>(null)
 export const useAccess = () => useContext(AccessContext)
 const loginErrors: Record<string, string> = {
   cancelled: '已取消飞书授权。需要登录后才能继续审核。',
@@ -27,7 +25,6 @@ export function AccountMenu({compact = false, className}: {compact?: boolean; cl
       {!compact && <><span className={"min-w-0 flex-1 truncate text-left"}>{name}</span><ChevronDown/></>}
     </Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end"><DropdownMenuLabel>{name}</DropdownMenuLabel><DropdownMenuSeparator/>
-      {ruleUploadEnabled && <DropdownMenuItem onSelect={access?.records}><FolderClock/>本机草稿</DropdownMenuItem>}
       <DropdownMenuItem onSelect={access?.logout}><LogOut/>退出登录</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
@@ -41,7 +38,7 @@ export function ProductAccess({children}: {children: ReactNode}) {
   const [principal, setPrincipal] = useState<PrincipalPublic | null>(null)
   const [ready, setReady] = useState(false), [error, setError] = useState(''), [revision, setRevision] = useState(0)
   const [canSignIn, setCanSignIn] = useState(false)
-  const [records, setRecords] = useState(false), epoch = useRef(0)
+  const epoch = useRef(0)
   useEffect(() => {
     const url = new URL(location.href)
     if (url.searchParams.has('auth_error')) {url.searchParams.delete('auth_error'); history.replaceState(history.state, '', url)}
@@ -81,10 +78,8 @@ export function ProductAccess({children}: {children: ReactNode}) {
     catch (cause) {setError(cause instanceof Error ? cause.message : '退出未完成')}
   }
   if (ready && principal) {
-    setDraftOwner(`${principal.tenant_id}:${principal.user_id}`)
-    return <AccessContext.Provider value={{principal, logout: () => void logout(), records: () => setRecords(true)}}>
+    return <AccessContext.Provider value={{principal, logout: () => void logout()}}>
     {children}{error && <div className="fixed right-4 bottom-4 z-40 max-w-md"><Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert></div>}
-    <LocalRecordsDialog open={records} onOpenChange={setRecords}/>
   </AccessContext.Provider>
   }
   return <div className={"flex min-h-dvh flex-col bg-background text-foreground"}>
