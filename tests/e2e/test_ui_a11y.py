@@ -56,7 +56,6 @@ class UiA11yTests(unittest.TestCase):
                         "feishu_app_id": "",
                         "current_access": "allowed",
                         "usage_charge_enabled": False,
-                        "rule_upload_enabled": True,
                     }
                 ),
             )
@@ -142,7 +141,6 @@ class UiA11yTests(unittest.TestCase):
                         "feishu_app_id": "",
                         "current_access": "allowed",
                         "usage_charge_enabled": False,
-                        "rule_upload_enabled": True,
                     }
                 ),
             )

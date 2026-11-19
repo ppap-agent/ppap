@@ -220,8 +220,8 @@ def register_tools(mcp, gateway, authority):
         """Read publishable source selections and provenance for an authorized original."""
         return await read("rules:read", f"/files/{file_id}/versions/{version_id}/rule-sources", page)
 
-    # Users only upload rules or publish new versions when the deployment enables it.
-    if gateway.store.settings.rule_upload_enabled:
+    # Only platform operators upload or publish rules (the API enforces it per caller); no operators, no tools.
+    if gateway.store.settings.platform_operator_identities():
 
         @mcp.tool(annotations=EXTERNAL)
         async def parse_rule(request_id: UUID, body: wc.RuleParseRequest) -> Reply[dict]:

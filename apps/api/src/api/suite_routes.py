@@ -212,6 +212,10 @@ def register_suite_routes(app: FastAPI, store, principal_of):
 
     @app.put("/suites/{suite_key}/active", response_model=SuitePublication, openapi_extra=wc.openapi_body(SuitePublishRequest))
     def suites_publish(suite_key: str, request: Request, body: Any = Body(...)):
+        # Adopting a checker version changes the tenant's effective rules: platform operators only.
+        principal = principal_of(request)
+        if principal and not store.settings.platform_operator(principal.tenant_key, principal.subject):
+            return JSONResponse({"error": "platform_operator_required"}, status_code=403, headers=headers)
         return respond(request, lambda principal: releases().publish(principal, suite_key, **body_fields(body, {"revision_id", "expected_revision", "operation_id", "force_unverified"})))
 
     @app.get("/suite-revisions/{revision_id}", response_model=SuiteRevisionDetail)

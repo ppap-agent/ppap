@@ -111,8 +111,6 @@ services:
       PPAP_PROFILE: isolated-dev
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:-local}
       PPAP_SERVICE: api
-      # The development stack edits rules; production keeps the default (off).
-      PPAP_RULE_UPLOAD_ENABLED: ${PPAP_RULE_UPLOAD_ENABLED:-true}
       PPAP_MODEL_CODING_API_KEY: ""
       PPAP_MODEL_TEXT_REASONING_EFFORT: ${PPAP_MODEL_TEXT_REASONING_EFFORT:-}
       PPAP_USAGE_CHARGE_ENABLED: ${PPAP_USAGE_CHARGE_ENABLED:-false}

@@ -120,7 +120,7 @@ class RuleApiTests(unittest.TestCase):
         env = {key: value for key, value in os.environ.items() if not key.startswith(("PPAP_", "FEISHU_"))}
         self.env = patch.dict(os.environ, env, clear=True)
         self.env.start()
-        self.settings = Settings(usage_charge_enabled=False, rule_upload_enabled=True, git_sha="a" * 40)
+        self.settings = Settings(usage_charge_enabled=False, git_sha="a" * 40)
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.ai = FakeRuleAI()
@@ -198,9 +198,9 @@ class RuleApiTests(unittest.TestCase):
             self.assertEqual(rejected.json()["error"], "rule_source_unverified")
         self.assertEqual(self.client.post("/rules", json=payload(clause)).status_code, 201)
         self.login("bob")
-        # Every member of the enterprise reads its originals.
+        # Every member of the enterprise reads its originals; only platform operators publish rules.
         self.assertEqual(self.client.get(path).status_code, 200)
-        self.assertEqual(self.client.post("/rules", json=payload(clause)).status_code, 201)
+        self.assertEqual(self.client.post("/rules", json=payload(clause)).json(), {"error": "platform_operator_required"})
         self.client.cookies.clear()
         self.assertEqual(self.client.get(path).status_code, 401)
 
@@ -249,13 +249,15 @@ class RuleApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/rules/" + published["id"]).status_code, 200)
         # Every member of the enterprise reads its originals.
         self.assertEqual(self.client.get(f"/files/{source['file_id']}/versions/{source['id']}/download").status_code, 200)
-        self.assertEqual(self.client.post("/rules", json=payload).status_code, 201)
-        self.assertEqual(self.submit_parse(source).status_code, 202)
+        # An ordinary member reads the rule but cannot publish or parse one.
+        for refused in (self.client.post("/rules", json=payload), self.submit_parse(source)):
+            self.assertEqual((refused.status_code, refused.json()), (403, {"error": "platform_operator_required"}))
+        # carol is a platform operator of her own tenant: that grants nothing over tenant A's rules or originals.
         self.login("carol")
         self.assertEqual(self.client.get("/rules/" + published["id"]).status_code, 403)
-        self.assertEqual(self.client.post("/rules", json=payload).status_code, 403)
+        self.assertEqual(self.client.post("/rules", json=payload).json(), {"error": "access_denied"})
         other = self.upload()
-        self.assertEqual(self.client.post("/rules", json={**payload, "source_file_version_id": other["id"], "predecessor_id": published["id"]}).status_code, 403)
+        self.assertEqual(self.client.post("/rules", json={**payload, "source_file_version_id": other["id"], "predecessor_id": published["id"]}).json(), {"error": "access_denied"})
         self.assertNotIn(published["id"], [row["id"] for row in self.client.get("/rules").json()["rules"]])
 
     def test_invalid_rule_bodies_fail_without_publishing_or_echoing_source(self):

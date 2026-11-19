@@ -43,7 +43,7 @@ def expect_login_returns_to(link, address):
 
 
 def login_config(page, login="feishu"):
-    page.route("**/api/public-config", lambda route: route.fulfill(json={"api_url": WEB + "/api", "profile": "isolated-dev", "login": login, "feishu_app_id": "test-app", "rule_upload_enabled": True}))
+    page.route("**/api/public-config", lambda route: route.fulfill(json={"api_url": WEB + "/api", "profile": "isolated-dev", "login": login, "feishu_app_id": "test-app"}))
 
 
 def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(page):

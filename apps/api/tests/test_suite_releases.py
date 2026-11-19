@@ -17,7 +17,9 @@ FILES = {"rules.json": b'{"title":"Control plan checks","rules":[{"id":"R1","rul
 
 
 def prepare_fixture(auth_store_factory):
-    store = auth_store_factory(Settings(feishu_app_id="suite-releases", usage_charge_enabled=False))
+    # All three act as platform operators: adoption is theirs alone (tests/test_platform_operator_writes.py).
+    operators = "suite-a:operator-a,suite-a:operator-b,suite-b:operator-c"
+    store = auth_store_factory(Settings(feishu_app_id="suite-releases", usage_charge_enabled=False, platform_operators=operators))
     principal = store.upsert_feishu_identity("suite-a", "operator-a", "Alice")
     peer = store.upsert_feishu_identity("suite-a", "operator-b", "Bob")
     other = store.upsert_feishu_identity("suite-b", "operator-c", "Carol")
@@ -40,7 +42,7 @@ def command(revision_id, expected_revision=0, force=True):
     return {"revision_id": revision_id, "expected_revision": expected_revision, "operation_id": str(uuid.uuid4()), "force_unverified": force}
 
 
-def test_member_can_publish_peers_candidate_with_explicit_risk_and_read_same_receipt(auth_store_factory):
+def test_operator_can_publish_peers_candidate_with_explicit_risk_and_read_same_receipt(auth_store_factory):
     store, official, creator, publisher, (alice, bob, carol) = prepare_fixture(auth_store_factory)
     path = "/suites/control-plan/active"
     assert TestClient(create_app(store.settings, auth_store=store)).get(path).status_code == 401

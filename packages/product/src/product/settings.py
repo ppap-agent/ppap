@@ -16,6 +16,8 @@ ISOLATED_DEV_SECRET = "ppap_isolated_dev"
 ISOLATED_DEV_S3_ENDPOINT = "http://127.0.0.1:9000"
 ISOLATED_DEV_LLM_BASE_URL = "https://api.trustedtunnel.app/v1"  # pragma: allowlist secret
 ISOLATED_DEV_LLM_MODEL = "gpt-5.6-luna"  # pragma: allowlist secret
+# isolated-dev fixtures alice (tenant A) and carol (tenant B); bob stays an ordinary member.
+ISOLATED_DEV_PLATFORM_OPERATORS = "isolated-dev-a:ou_alice,isolated-dev-b:ou_carol"
 
 
 def _held_production_secret(value: str) -> bool:
@@ -87,8 +89,9 @@ class Settings(BaseSettings):
     current_tenant_allowlist: str = Field(default="", alias="PPAP_CURRENT_TENANT_ALLOWLIST")
     usage_charge_enabled: bool = Field(default=True, alias="PPAP_USAGE_CHARGE_ENABLED")
     mcp_enabled: bool = Field(default=False, alias="PPAP_MCP_ENABLED")
-    # Rules are delivered by developers; users neither upload rules nor publish new versions unless enabled.
-    rule_upload_enabled: bool = Field(default=False, alias="PPAP_RULE_UPLOAD_ENABLED")
+    # Platform operators: comma-separated Feishu identities `tenant_key:open_id`. Only they upload/publish
+    # rules or adopt checker versions; tenant members only read. Empty means nobody (isolated-dev: the fixtures).
+    platform_operators: str = Field(default="", alias="PPAP_PLATFORM_OPERATORS")
     mcp_allowed_origins: list[str] = Field(default_factory=list, alias="PPAP_MCP_ALLOWED_ORIGINS")
     # Feishu Project (Meego) plugin host. Off unless the plugin credential and
     # an explicit Meego tenant -> Feishu tenant mapping are configured.
@@ -141,7 +144,10 @@ class Settings(BaseSettings):
             parsed = urlsplit(origin)
             if not parsed.hostname or parsed.scheme != "https" or "*" in origin or origin != f"{parsed.scheme}://{parsed.netloc}":
                 raise ValueError("Meego plugin origins must be explicit HTTPS origins")
+        self.platform_operator_identities()
         if self.profile == "isolated-dev":
+            if "platform_operators" not in self.model_fields_set:
+                self.platform_operators = ISOLATED_DEV_PLATFORM_OPERATORS
             if not self.model_text_base_url.strip():
                 self.model_text_base_url = ISOLATED_DEV_LLM_BASE_URL
             if not self.model_text_model.strip():
@@ -255,6 +261,20 @@ class Settings(BaseSettings):
         allowed = self.allowed_tenant_keys()
         return not allowed or tenant_key.strip() in allowed
 
+    def platform_operator_identities(self) -> frozenset[tuple[str, str]]:
+        identities = set()
+        for entry in self.platform_operators.split(","):
+            if not entry.strip():
+                continue
+            tenant_key, sep, subject = (part.strip() for part in entry.strip().partition(":"))
+            if not sep or not tenant_key or not subject or ":" in subject:
+                raise ValueError("PPAP_PLATFORM_OPERATORS entries must be tenant_key:open_id")
+            identities.add((tenant_key, subject))
+        return frozenset(identities)
+
+    def platform_operator(self, tenant_key: str, subject: str) -> bool:
+        return (tenant_key, subject) in self.platform_operator_identities()
+
     def public_config(self) -> dict[str, object]:
         return {
             "git_sha": self.git_sha,
@@ -263,7 +283,6 @@ class Settings(BaseSettings):
             "feishu_app_id": self.feishu_app_id,
             "current_access": "allowlist" if self.allowed_tenant_keys() else "open",
             "usage_charge_enabled": self.usage_charge_enabled,
-            "rule_upload_enabled": self.rule_upload_enabled,
         }
 
 

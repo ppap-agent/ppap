@@ -27,7 +27,7 @@ from worker import process_claimed
 
 @pytest.mark.parametrize("fault", ["native", "missing-binding", "no-reader", "corrupt-source", "broken-original", "unsupported-format"])
 def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory, core_system, v4_objects, monkeypatch, fault):
-    settings = Settings(usage_charge_enabled=False, feishu_notifications_enabled=False, feishu_app_id="u08-source-boundary", git_sha="a" * 40)
+    settings = Settings(usage_charge_enabled=False, feishu_notifications_enabled=False, feishu_app_id="u08-source-boundary", git_sha="a" * 40, platform_operators="u08-source-boundary:operator")
     admin = auth_store_factory(settings, objects=v4_objects)
     principal = admin.upsert_feishu_identity("u08-source-boundary", "operator")
     suites = SuiteStore(settings, v4_objects, role="migrator")

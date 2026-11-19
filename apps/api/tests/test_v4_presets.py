@@ -44,8 +44,10 @@ def test_new_enterprise_receives_all_preset_rules_without_upload(auth_store_fact
 
 
 def test_customer_upload_cannot_mint_or_replace_product_presets(auth_store_factory):
-    store = auth_store_factory(Settings(feishu_app_id="v4-preset-authority"))
-    principal = store.upsert_feishu_identity("preset-authority-" + uuid.uuid4().hex, "member")
+    tenant = "preset-authority-" + uuid.uuid4().hex
+    # Even a platform operator cannot mint or replace a product preset.
+    store = auth_store_factory(Settings(feishu_app_id="v4-preset-authority", platform_operators=tenant + ":operator"))
+    principal = store.upsert_feishu_identity(tenant, "operator")
     client = TestClient(create_app(store.settings, auth_store=store))
     client.cookies.set(SESSION_COOKIE, store.create_session(principal))
     presets = [rule for rule in client.get("/rules").json()["rules"] if rule["rule_profile"] == "v4"]

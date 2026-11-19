@@ -18,8 +18,6 @@ from psycopg.rows import dict_row
 
 # Personal models have no built-in endpoint; tests approve their controlled one.
 os.environ.setdefault("PPAP_TENANT_MODEL_ALLOWED_BASE_URLS", "https://models.example.test")
-# These suites publish rules as fixtures; the default-off switch has its own test.
-os.environ.setdefault("PPAP_RULE_UPLOAD_ENABLED", "true")
 
 _CI = bool(os.environ.get("CI"))
 # Tests reset the whole schema, so each test process owns a database it creates and migrates

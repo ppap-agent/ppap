@@ -29,7 +29,7 @@ def rule_body(text="必须填写批号", document_type="供应商自定义追溯
 
 @pytest.fixture
 def custom(auth_store_factory):
-    store = auth_store_factory(Settings(feishu_app_id="custom-suite-tests", usage_charge_enabled=False, git_sha="a" * 40))
+    store = auth_store_factory(Settings(feishu_app_id="custom-suite-tests", usage_charge_enabled=False, git_sha="a" * 40, platform_operators="custom-enterprise:alice"))
     alice = store.upsert_feishu_identity("custom-enterprise", "alice", "Alice")
     bob = store.upsert_feishu_identity("custom-enterprise", "bob", "Bob")
     foreign = store.upsert_feishu_identity("foreign-enterprise", "other", "Other")

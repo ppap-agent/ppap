@@ -57,10 +57,11 @@ def test_customer_catalog_lists_registered_customers_and_unregistered_names_as_r
 
 
 def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(auth_store_factory):
-    store = auth_store_factory(Settings(feishu_app_id="catalog-test"), reset=False)
+    tenants = ["catalog-test-" + uuid.uuid4().hex for _ in range(2)]
+    store = auth_store_factory(Settings(feishu_app_id="catalog-test", platform_operators=",".join(tenant + ":catalog-user" for tenant in tenants)), reset=False)
     clients = []
-    for _ in range(2):
-        principal = store.upsert_feishu_identity("catalog-test-" + uuid.uuid4().hex, "catalog-user")
+    for tenant in tenants:
+        principal = store.upsert_feishu_identity(tenant, "catalog-user")
         client = TestClient(create_app(store.settings, auth_store=store))
         client.cookies.set(SESSION_COOKIE, store.create_session(principal))
         clients.append(client)

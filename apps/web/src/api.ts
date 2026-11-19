@@ -78,7 +78,7 @@ export async function connect() {
   return config
 }
 const messages: Record<string,string> = {
-  unauthenticated: '请先登录飞书。', rule_upload_disabled: '规则由平台交付，当前不开放上传或修改。', access_denied: '没有访问这份资料的权限。', file_not_ready: '文件尚未上传完成。',
+  unauthenticated: '请先登录飞书。', platform_operator_required: '规则由平台统一维护，只有平台运营人员可以上传、发布或采用规则版本。', access_denied: '没有访问这份资料的权限。', file_not_ready: '文件尚未上传完成。',
   rule_required: '请为待审文件选择规则。', target_required: '请添加至少一份待审文件。', review_conflict: '复核已被更新，请刷新后核对。',
   draft_already_accepted: '此草稿已提交，请打开对应审核。',
   model_configuration_changed: '系统设置已更新，本次操作未被接收。请重新开始。',

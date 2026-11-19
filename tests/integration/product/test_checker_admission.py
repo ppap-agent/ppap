@@ -251,7 +251,7 @@ def test_first_standard_adoption_uses_tenant_heads_and_freezes_related_checks(au
     from product import build_product_store
     from product.identity import SESSION_COOKIE
 
-    store = auth_store_factory(Settings(feishu_app_id="first-standard-adoption", usage_charge_enabled=False, git_sha="a" * 40))
+    store = auth_store_factory(Settings(feishu_app_id="first-standard-adoption", usage_charge_enabled=False, git_sha="a" * 40, platform_operators="first-standard:owner"))
     principal = store.upsert_feishu_identity("first-standard", "owner")
     suites = SuiteStore(store.settings, store.objects, role="migrator")
     ordered = ("UAES:U12", "UAES:U16", "UAES:U07", "UAES:U08")
