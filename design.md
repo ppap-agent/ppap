@@ -33,7 +33,7 @@ colors:
   dark-info: "#60a5fa"
 typography:
   body:
-    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", sans-serif'
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
 rounded:
   control: 0.5rem
 components:
@@ -139,7 +139,7 @@ The palette is anchored by a sterile white canvas (`#FFFFFF`) framed by zinc and
 
 ## Typography
 
-Typography prioritizes tabular alignment, compact tracking, and vertical rhythm. Inter serves as the primary system font, complemented by PingFang SC for Simplified Chinese environments.
+Typography prioritizes tabular alignment, compact tracking, and vertical rhythm. Each platform's system UI font carries Latin text and digits (SF Pro on Apple devices, Segoe UI on Windows, Roboto on Android), with PingFang SC, Microsoft YaHei or Noto Sans SC for Simplified Chinese; no web font is loaded.
 
 - Use tabular figures (`tnum`) for part serial numbers, torque tolerances, audit timestamps, and percentage indicators.
 - Maintain compact scale tiers: `body-md` (13px) acts as the operational standard for dense grids and spec tables, while 11px uppercase labels (`label-sm`) anchor status micro-tags.
