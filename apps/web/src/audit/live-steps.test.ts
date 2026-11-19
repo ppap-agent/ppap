@@ -23,13 +23,11 @@ test('consecutive identical actions share a row and every step is counted', () =
   ])
 })
 
-test('only the latest rows stay on screen, and a new file finishes the previous one', () => {
+test('only the latest rows stay on screen, and a step without a file belongs to the file under review', () => {
   let steps = play(Array.from({length: 13}, (_, index) => ({action: index % 2 ? 'search' as const : 'run_check' as const, target: 'a'})))
   assert.equal(steps.items.length, LIVE_STEP_WINDOW)
   assert.deepEqual([steps.items[0].id, steps.items.at(-1)!.id], [3, 12])
-  assert.deepEqual([steps.current, steps.finished, steps.perTarget], ['a', [], {a: 13}])
   steps = play([{action: 'read_file', subject: 'pfmea.xlsx', target: 'b'}, {action: 'record'}], steps)
-  // A step without a file belongs to the file under review.
-  assert.deepEqual([steps.current, steps.finished, steps.perTarget], ['b', ['a'], {a: 13, b: 2}])
-  assert.deepEqual(NO_STEPS, {items: [], count: 0, perTarget: {}, finished: []})
+  assert.deepEqual([steps.current, steps.items.at(-1)!.target], ['b', 'b'])
+  assert.deepEqual(NO_STEPS, {items: [], count: 0})
 })

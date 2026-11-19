@@ -86,6 +86,9 @@ class DeepProgress(BaseModel):
     phase: Literal["reading", "planning", "checking", "validating"]
     completed_count: int | None = Field(default=None, ge=0)
     total_count: int | None = Field(default=None, ge=0)
+    # The task under way in the round: a file's check, or its deep review, and which file.
+    stage: Literal["check", "review"] | None = None
+    target: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class ActivityEnvelope(BaseModel):

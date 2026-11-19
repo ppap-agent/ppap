@@ -2692,6 +2692,23 @@ export interface components {
              */
             state: "pending" | "matching" | "matched" | "reference" | "unmatched" | "failed";
         };
+        /**
+         * AuditRun
+         * @description The task under way while a round runs: preparing or auditing one file, or summarizing the results.
+         */
+        AuditRun: {
+            /** File Version Id */
+            file_version_id?: string;
+            /** Index */
+            index?: number;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "prepare" | "audit" | "summary";
+            /** Total */
+            total?: number;
+        };
         /** AuditShareAttemptReference */
         AuditShareAttemptReference: {
             /** Attempt Id */
@@ -2898,6 +2915,7 @@ export interface components {
             round_id: string | null;
             /** Round Started At */
             round_started_at?: string | null;
+            run?: components["schemas"]["AuditRun"];
             source?: components["schemas"]["AuditTaskSource"];
             /** Source Draft Id */
             source_draft_id: string | null;
@@ -2956,6 +2974,11 @@ export interface components {
             replacement_of_file_version_id?: string;
             /** Rule Options */
             rule_options?: components["schemas"]["MatchingCandidate"][];
+            /**
+             * Run State
+             * @enum {string}
+             */
+            run_state?: "pending" | "prepared" | "processing" | "done";
             /**
              * Selection
              * @enum {string}
@@ -4294,11 +4317,20 @@ export interface components {
         RoundProgress: {
             /** Completed Count */
             completed_count?: number;
+            /** Finished */
+            finished?: string[];
             /**
              * Phase
              * @enum {string}
              */
             phase: "reading" | "planning" | "checking" | "validating";
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage?: "check" | "review";
+            /** Target */
+            target?: string;
             /** Total Count */
             total_count?: number;
             /** Updated At */

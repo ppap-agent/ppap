@@ -642,6 +642,9 @@ class RoundProgress(TypedDict):
     updated_at: str
     completed_count: NotRequired[int]
     total_count: NotRequired[int]
+    stage: NotRequired[Literal["check", "review"]]
+    target: NotRequired[str]
+    finished: NotRequired[list[str]]
 
 
 class RoundFailure(TypedDict):
@@ -1139,6 +1142,8 @@ class AuditSuiteAdmission(TypedDict):
 
 class AuditTaskFile(AuditRecognitionFile):
     suite_admission: NotRequired[AuditSuiteAdmission]
+    # While the round runs: this file's place in it.
+    run_state: NotRequired[Literal["pending", "prepared", "processing", "done"]]
     deep_review: NotRequired[AuditDeepReview | None]
     validation_scope: NotRequired[FileValidationScope]
     audit: NotRequired[AuditFileReview | None]
@@ -1379,6 +1384,15 @@ class AuditTaskConfirmationScope(TypedDict):
     excluded_files: list[AuditTaskConfirmationExclusion]
 
 
+class AuditRun(TypedDict):
+    """The task under way while a round runs: preparing or auditing one file, or summarizing the results."""
+
+    stage: Literal["prepare", "audit", "summary"]
+    file_version_id: NotRequired[str]
+    index: NotRequired[int]
+    total: NotRequired[int]
+
+
 class AuditTask(AuditTaskIdentity):
     """Persisted Task/Round view; optional delivery operations need their own API."""
 
@@ -1397,6 +1411,7 @@ class AuditTask(AuditTaskIdentity):
     objection: NotRequired[bool]
     acceptance: NotRequired[AuditAcceptance]
     progress: NotRequired[AuditProgress]
+    run: NotRequired["AuditRun"]
     completion_estimate: NotRequired[AuditCompletionEstimate | None]
     round_started_at: NotRequired[str | None]
     notification_enabled: NotRequired[bool]

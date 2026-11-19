@@ -781,3 +781,24 @@ class RoundStandingTests(unittest.TestCase):
         failed = verified_round("PASS")
         failed["execution"] = "failed"
         self.assertEqual(task_round_view(task_input(), failed)["conclusion"], "ERROR")
+
+
+def test_a_running_round_names_the_task_under_way_and_each_files_place():
+    from product.store.task_view import run_view
+
+    inputs = [{"file_version_id": name, "role": "target"} for name in ("a", "b", "c")] + [{"file_version_id": "ref", "role": "reference"}]
+    deep = {"execution": "running", "deep_mode": True, "inputs": inputs}
+    # A deep round prepares every file first ...
+    preparing = {**deep, "progress": {"phase": "checking", "stage": "check", "target": "b", "finished": ["a"]}}
+    assert run_view(preparing) == ({"stage": "prepare", "file_version_id": "b", "index": 2, "total": 3}, {"a": "prepared", "b": "processing", "c": "pending"})
+    # ... then audits each one; every file is prepared by then.
+    auditing = {**deep, "progress": {"phase": "checking", "stage": "review", "target": "a", "finished": []}}
+    assert run_view(auditing) == ({"stage": "audit", "file_version_id": "a", "index": 1, "total": 3}, {"a": "processing", "b": "prepared", "c": "prepared"})
+    # A standard round audits each file once.
+    standard = {"execution": "running", "deep_mode": False, "inputs": inputs, "progress": {"phase": "checking", "stage": "check", "target": "c", "finished": ["a", "b"]}}
+    assert run_view(standard) == ({"stage": "audit", "file_version_id": "c", "index": 3, "total": 3}, {"a": "done", "b": "done", "c": "processing"})
+    summarizing = {**deep, "progress": {"phase": "validating"}}
+    assert run_view(summarizing) == ({"stage": "summary"}, dict.fromkeys("abc", "done"))
+    # Nothing is shown before the first file, for an unknown file, or once the round ended.
+    for round in ({**deep, "progress": {"phase": "checking"}}, {**deep, "progress": {"phase": "checking", "stage": "check", "target": "ref"}}, {**preparing, "execution": "completed"}):
+        assert run_view(round) == (None, {})

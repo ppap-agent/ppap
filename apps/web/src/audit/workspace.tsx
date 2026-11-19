@@ -1,5 +1,5 @@
 // Stitch: projects/13261964020862199279/screens/fae9ff65452e4d899ded37b452347e17
-import {useContext, useEffect, useId, useState} from 'react'
+import {useContext, useEffect, useId, useRef, useState} from 'react'
 import {createPortal} from 'react-dom'
 import {FileText, RefreshCw} from 'lucide-react'
 import type {components} from '../generated/openapi'
@@ -27,7 +27,7 @@ import {FactQuestions} from './fact-questions'
 import {factMachineFindings} from './fact-answers-contract'
 import {conclusionLabel, executionLabel, reportLabel, resultLabel, resultTone, uncoveredLabel, type ResultTone} from './status-labels'
 import {deepModeTitle, deepReviewNotice} from './deep-mode'
-import {DeepTaskRows} from './deep-task-rows'
+import {RunFinished, RunStatus} from './run-status'
 import {LiveProgress} from './live-progress'
 import type {LiveSteps} from './live-steps'
 
@@ -94,7 +94,6 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   useEffect(() => {onFileOpen?.(Boolean(file)); return () => onFileOpen?.(false)}, [Boolean(file)])
   const previousFile = file && previousFiles.find(row => row.file.id === file.file.id || row.file.id === file.replacement_of_file_version_id || row.file.file_id === file.file.file_id)
   // The overview leads with what is still running and which finished items need a person.
-  const itemsDone = targets.reduce((sum, row) => sum + (row.audit?.progress.completed ?? 0), 0)
   const itemsTotal = targets.reduce((sum, row) => sum + (row.audit?.progress.total ?? 0), 0)
   const severity = (check: NonNullable<Task['files'][number]['audit']>['checks'][number]) => check.execution === 'failed' ? 1 : check.coverage !== 'executed' ? 3 : check.finding?.status === 'NG' ? 0 : check.finding?.status === 'ERR' ? 1 : 2
   const issues = targets.flatMap(row => resultConsistencyError(task, row) ? [] : filterChecks(row.audit?.checks || [], '', 'attention').filter(check => ['completed', 'failed'].includes(check.execution)).map(check => ({row, check}))).sort((a, b) => severity(a.check) - severity(b.check))
@@ -112,8 +111,23 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
     writeAuditAddress(url, 'push')
   }
   const running = task.state !== 'completed' && !progressIssue && itemsTotal > 0
+  const runFile = task.run?.file_version_id ? targets.find(row => row.file.id === task.run?.file_version_id) : undefined
+  // The round's end, once: a short check while the results are summarized, or when this page saw the run finish.
+  const [justFinished, setJustFinished] = useState(false)
+  const wasRunning = useRef(running)
+  useEffect(() => {
+    const finished = wasRunning.current && !running && task.state === 'completed' && !executionFailed
+    wasRunning.current = running
+    if (!finished) return
+    setJustFinished(true)
+    const timer = window.setTimeout(() => setJustFinished(false), 1200)
+    return () => window.clearTimeout(timer)
+  }, [running, task.state, executionFailed])
+  const finishing = running && task.run?.stage === 'summary' || justFinished
   const overview = <section aria-label="全部文件概览" className="min-w-0 space-y-4 p-4">
-    {running && <section aria-label="审核进度" className="space-y-2 rounded-lg border bg-card p-4"><div className="flex flex-wrap items-baseline justify-between gap-2"><LiveProgress label={task.deep_mode ? "正在深度审核" : "正在审核"} since={task.round_started_at} live={live}/><p className="text-sm tabular-nums text-muted-foreground">审核项 {itemsDone}/{itemsTotal} 已结束</p></div><Progress aria-label="审核项完成进度" value={Math.min(100, itemsDone / itemsTotal * 100)}/>{task.deep_mode && live && steps && <DeepTaskRows targets={targets.map(row => ({id: row.file.id, name: row.file.original_filename}))} steps={steps}/>}</section>}
+    {finishing ? <RunFinished/> : running && (runFile && task.run?.file_version_id && task.run.index && task.run.total
+      ? <RunStatus run={{...task.run, file_version_id: task.run.file_version_id, index: task.run.index, total: task.run.total}} deep={task.deep_mode} name={runFile.file.original_filename} steps={live ? steps : undefined}/>
+      : <section aria-label="审核进度" className="rounded-lg border bg-card p-4"><LiveProgress label={task.deep_mode ? '正在深度审核' : '正在审核'} since={task.round_started_at} live={live}/></section>)}
     {issues.length > 0 && <div className="space-y-4">{shownIssueGroups.map(group => <section key={group.row.file.id} aria-label={group.row.file.original_filename} className="shrink-0 overflow-hidden rounded-lg border bg-card"><div className="px-4 py-3"><h2 className="min-w-0 font-medium"><FileName truncate name={group.row.file.original_filename}/></h2></div>
         <Table aria-label={`${group.row.file.original_filename} 需关注项`}><TableHeader variant="muted"><TableRow><TableHead className="w-24">结果</TableHead><TableHead className="w-20">条款</TableHead><TableHead>审核项</TableHead></TableRow></TableHeader><TableBody>{group.items.map(check => {
           const clauses = group.row.audit?.checks.map(item => item.rule_item) ?? []
@@ -132,6 +146,9 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   const fileConclusion = (audit: NonNullable<Task['files'][number]['audit']>) => audit.confirmed_conclusion ?? audit.conclusion
   const stateTone = (row: Task['files'][number], invalid: unknown): ResultTone | 'info' => row.match?.state === 'reference' ? 'outline' : invalid ? 'warning' : !row.audit ? 'outline' : row.audit.execution === 'review_failed' ? 'destructive' : row.audit.execution !== 'completed' ? 'info' : fileConclusion(row.audit) ? resultTone(fileConclusion(row.audit)) : 'warning'
   const queueStatusLabel = (state: string) => state === '等待读取结果' ? '待读取' : state
+  // While the round runs, a file's place in it: the stage and the file under way are named once, in the status line.
+  const runLabel = {pending: '待处理', prepared: '已准备', processing: '处理中', done: '已完成'} as const
+  const runTone = {pending: 'outline', prepared: 'outline', processing: 'info', done: 'success'} as const
   const toneRail: Record<ResultTone | 'info', string> = {destructive: 'bg-destructive', warning: 'bg-warning', success: 'bg-success', info: 'bg-info', outline: 'bg-border'}
   // One secondary line: the exception, otherwise the work still open on this file.
   const queueNote = (row: Task['files'][number], invalid: unknown) => {
@@ -157,12 +174,13 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   const fileQueue = <div className="space-y-3 p-3"><div className="flex items-center justify-between gap-2 px-1"><h2 className="text-base font-semibold">文件列表</h2><Button variant={selected ? 'outline' : 'soft'} size="sm" aria-pressed={!selected} onClick={() => chooseFile('')}>全部文件概览</Button></div><nav aria-label="文件队列">{fileGroups.map(group => <section key={group.title} className="min-w-0 space-y-2">{fileGroups.length > 1 && <h2 className="px-1 text-xs font-medium text-muted-foreground">{group.title}</h2>}<div className="grid gap-2">{group.rows.map(row => {
     const invalid = resultConsistencyError(task, row)
     const state = row.match?.state === 'reference' ? '比对资料' : invalid ? '结果待确认' : row.audit ? row.audit.execution === 'completed' ? fileConclusion(row.audit) ? conclusionLabel[fileConclusion(row.audit)!] ?? '结果未知' : '结果未知' : executionLabel[row.audit.execution] : '等待读取结果'
-    const badge = queueStatusLabel(state)
-    const tone = stateTone(row, invalid)
-    const note = queueNote(row, invalid)
+    const place = running && !invalid ? row.run_state : undefined
+    const badge = place ? runLabel[place] : queueStatusLabel(state)
+    const tone = place ? runTone[place] : stateTone(row, invalid)
+    const note = place ? null : queueNote(row, invalid)
     const statusId = `${queueId}-${row.file.id}`
     const current = file?.file.id === row.file.id
-    return <div key={row.file.id} className={`relative overflow-hidden rounded-md border transition-colors ${current ? 'border-primary bg-primary-soft' : 'bg-card hover:border-primary-line'}`}><span aria-hidden="true" className={`absolute inset-y-0 left-0 w-0.5 ${toneRail[tone]}`}/><span id={statusId} hidden>{state}{row.audit && !invalid ? ` ${row.audit.progress.completed}/${row.audit.progress.total} 项 · ${reportLabel[row.audit.report.state]}` : ''}</span><Button size="row" aria-pressed={current} aria-label={row.file.original_filename} aria-describedby={statusId} variant="ghost" className="min-w-0" onClick={() => chooseFile(row.file.id)}><span className="grid min-w-0 flex-1 gap-1 pl-1"><span className="flex min-w-0 items-center justify-between gap-2"><FileName colored truncate className="min-w-0 text-primary" name={row.file.original_filename}/><Badge shape="square" variant={tone} title={badge === state ? undefined : state}>{badge}</Badge></span>{note && <span className={note.className}>{note.text}</span>}</span></Button></div>
+    return <div key={row.file.id} className={`relative overflow-hidden rounded-md border transition-colors ${current ? 'border-primary bg-primary-soft' : 'bg-card hover:border-primary-line'}`}><span aria-hidden="true" className={`absolute inset-y-0 left-0 w-0.5 ${toneRail[tone]}`}/><span id={statusId} hidden>{place ? badge : <>{state}{row.audit && !invalid ? ` ${row.audit.progress.completed}/${row.audit.progress.total} 项 · ${reportLabel[row.audit.report.state]}` : ''}</>}</span><Button size="row" aria-pressed={current} aria-label={row.file.original_filename} aria-describedby={statusId} variant="ghost" className="min-w-0" onClick={() => chooseFile(row.file.id)}><span className="grid min-w-0 flex-1 gap-1 pl-1"><span className="flex min-w-0 items-center justify-between gap-2"><FileName colored truncate className="min-w-0 text-primary" name={row.file.original_filename}/><Badge shape="square" variant={tone} title={place || badge === state ? undefined : state}>{badge}</Badge></span>{note && <span className={note.className}>{note.text}</span>}</span></Button></div>
   })}</div></section>)}</nav><AuditExcludedFiles files={task.files}/></div>
   const actions = <div hidden={report !== null}><div className="flex shrink-0 items-center gap-2">{onReaudit && task.state === "completed" && <Button variant="outline" onClick={onReaudit}>发起重审</Button>}<Button variant="outline" aria-label="审核报告" onClick={() => showReport(file?.match?.state === 'reference' ? '' : file?.file.id || '')}><FileText/><span>审核报告</span>{readyReports > 0 && <span>({readyReports})</span>}</Button><Button variant="outline" size="icon" aria-label="读取审核结果" title="刷新审核结果" disabled={busy} onClick={onRead}><RefreshCw className={busy ? 'animate-spin motion-reduce:animate-none' : ''}/></Button>{task.notification_enabled !== undefined && notificationAdapter && task.creator.mine && <CompletionNotification compact task={task} adapter={notificationAdapter} onChange={preference => onChange({...task, notification_enabled: preference.enabled, notification_revision: preference.revision})}/>}</div></div>
   return <section className="flex min-h-0 flex-1 flex-col">

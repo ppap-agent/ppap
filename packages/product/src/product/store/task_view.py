@@ -299,8 +299,39 @@ def round_read_view(round: dict, versions: dict[str, dict]) -> dict:
     return {"files": files, "unassigned_findings": [deepcopy(finding) for finding in round.get("findings", []) if finding["item_key"] not in assigned]}
 
 
+def run_view(round: dict) -> tuple[dict | None, dict[str, str]]:
+    """While a round runs: the task under way, and each target file's place in the round.
+
+    A deep round first prepares every file (its programs), then audits each one; a standard round audits each
+    file once. Read from the progress the Worker records; nothing here is stored.
+    """
+    progress = round.get("progress") or {}
+    targets = [item["file_version_id"] for item in round["inputs"] if item["role"] == "target"]
+    if round["execution"] in {"completed", "failed"} or not progress:
+        return None, {}
+    if progress.get("phase") == "validating":
+        return {"stage": "summary"}, dict.fromkeys(targets, "done")
+    stage, target = progress.get("stage"), progress.get("target")
+    if stage not in {"check", "review"} or target not in targets:
+        return None, {}
+    deep = bool(round.get("deep_mode"))
+    shown = "prepare" if deep and stage == "check" else "audit"
+    finished = [item for item in progress.get("finished") or [] if item in targets and item != target]
+    states = {}
+    for item in targets:
+        if item == target:
+            states[item] = "processing"
+        elif item in finished:
+            states[item] = "prepared" if shown == "prepare" else "done"
+        else:
+            # Every file was prepared before the first one was audited.
+            states[item] = "prepared" if deep and stage == "review" else "pending"
+    return {"stage": shown, "file_version_id": target, "index": len(finished) + 1, "total": len(targets)}, states
+
+
 def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = None) -> dict:
     finished = round["execution"] in {"completed", "failed"}
+    run, run_states = run_view(round)
     files = []
     for row in task["files"]:
         frozen = next((item for item in round["inputs"] if item["file_version_id"] == row["file"]["id"] and item["role"] == "target"), None)
@@ -314,7 +345,8 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
         if isinstance(match, dict):
             match["rule"] = deepcopy(frozen["rule"])
         deep = {"deep_review": deepcopy(frozen.get("deep_review"))} if round.get("deep_mode") else {}
-        files.append({**row, "match": match, "audit": audit, **deep})
+        place = {"run_state": run_states[row["file"]["id"]]} if row["file"]["id"] in run_states else {}
+        files.append({**row, "match": match, "audit": audit, **deep, **place})
     references = {item["file_version_id"] for item in round["inputs"] if item["role"] == "reference"}
     selected = [row for row in files if row["selection"] == "selected" and row["file"]["id"] not in references]
     ended = sum(bool(row.get("audit") and row["audit"]["execution"] in {"completed", "review_failed"}) for row in selected)
@@ -357,4 +389,5 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
             ),
         },
         "progress": {"completed": ended, "total": len(selected)},
+        **({"run": run} if run else {}),
     }

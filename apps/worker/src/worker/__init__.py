@@ -239,9 +239,20 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
         spec = spec_from_work(work, executor, revision, DEEP_PROTOCOL_REVISION, checker_snapshot_digest=payload["checker_snapshot_digest"])
         spec = spec.model_copy(update={"job_id": claimed.id, "attempt": claimed.attempt, "model_identity": payload.get("model_identity", {})})
         with audit_lease(store, claimed, ident) as cancelled:
+            # Files whose task in the current stage is over: the one before the file under way.
+            finished: list[str] = []
+            under_way: dict[str, str] = {}
 
             def progress(state):
                 safe = DeepProgress.model_validate(state).model_dump(exclude_none=True)
+                stage, target = safe.get("stage"), safe.get("target")
+                if stage and target:
+                    if under_way.get("stage") != stage:
+                        finished.clear()
+                    elif under_way.get("target") not in {None, target, *finished}:
+                        finished.append(under_way["target"])
+                    under_way.update(stage=stage, target=target)
+                    safe["finished"] = list(finished)
                 if not store.audit_progress(claimed, ident, safe):
                     cancelled.set()
                     raise DeepError("deep_lease_lost")

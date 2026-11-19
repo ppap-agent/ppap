@@ -165,12 +165,22 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
 
     files, tasks = len(snapshot.targets), job.tasks
 
-    def started(task: int) -> None:
-        _write_progress(work, Progress(phase="checking", completed_count=task, total_count=tasks))
+    def started(stage: Literal["check", "review"], index: int) -> None:
+        target = snapshot.targets[index].file_version_id
+        task = index if stage == "check" else files + index
+        _write_progress(work, Progress(phase="checking", completed_count=task, total_count=tasks, stage=stage, target=target))
 
     with grant.access_scope() if grant is not None else model_access_scope(None):
         # The validated Suite programs always run first; deep review only reads their results.
-        result = run_audit(snapshot, sources, programs, runtime=CheckerRuntime(allow_model_tools=job.allow_model_calls), unavailable_sources=unavailable, target_seconds=CHECK_SECONDS, on_task=started)
+        result = run_audit(
+            snapshot,
+            sources,
+            programs,
+            runtime=CheckerRuntime(allow_model_tools=job.allow_model_calls),
+            unavailable_sources=unavailable,
+            target_seconds=CHECK_SECONDS,
+            on_task=lambda index: started("check", index),
+        )
     deep = None
     if job.analysis_mode == "deep" and grant is None:
         # Without a model no file can be reviewed; each keeps its program result.
@@ -184,7 +194,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         runner = PiRunner(grant.model_dump(mode="json"))
         # Live steps for viewers; the Controller forwards them and nothing stores them.
         runner.activity = work / ACTIVITY_FILE
-        deep = review_targets(snapshot, sources, programs, result["findings"], runner=runner, work=work / "deep-review", unavailable=unavailable, on_task=lambda index: started(files + index))
+        deep = review_targets(snapshot, sources, programs, result["findings"], runner=runner, work=work / "deep-review", unavailable=unavailable, on_task=lambda index: started("review", index))
     _write_progress(work, Progress(phase="validating", completed_count=tasks, total_count=tasks))
     payload = {
         **result,
@@ -240,7 +250,7 @@ class CoreRuntime:
             work.mkdir()
             job = write_audit_manifest(inputs, snapshot, sources, programs, analysis_mode=analysis_mode, allow_model_calls=allow_model_calls, unavailable_sources=context.unavailable_sources)
             # Each task the guest reports is forwarded, so the Worker sees the round moving.
-            live: dict[str, Any] = {"on_progress": lambda progress: context.progress(progress.model_dump(include={"phase", "completed_count", "total_count"}, exclude_none=True))}
+            live: dict[str, Any] = {"on_progress": lambda progress: context.progress(progress.model_dump(include={"phase", "completed_count", "total_count", "stage", "target"}, exclude_none=True))}
             if analysis_mode == "deep":
                 # Only a deep review has live steps to show.
                 live["on_activity"] = context.activity
