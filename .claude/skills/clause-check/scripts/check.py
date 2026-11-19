@@ -236,17 +236,25 @@ def main(argv: list[str] | None = None) -> int:
         print("[约定] Probe_ 已不再使用：冲突和缺口由脚本自己查，查到后写成 Gap__<k> / Conflict__<k>")
         return 2
 
-    # Completeness: a disjoint group under a named parent should either cover the parent or be probed.
+    # Completeness: only values the clause itself enumerates (a quoted DisjointClasses) are asked about; groups the
+    # writer made up must be closed with DisjointUnion and an explicit "other" member, so that leftovers reach the
+    # verdicts and show up as concrete gaps instead of a generic question.
     parents: dict[str, set[str]] = {}
     for node in base:
         if node.head == "SubClassOf" and all(isinstance(arg, str) for arg in node.args[-2:]):
             parents.setdefault(node.args[-2], set()).add(node.args[-1])
     outside: dict[str, tuple[str, list[str]]] = {}
+    unquoted: list[list[str]] = []
     for node in base:
         members = [arg for arg in node.args if isinstance(arg, str)]
-        if node.head != "DisjointClasses" or len(members) != len(node.args) or len(members) < 2:
+        notes = [arg for arg in node.args if isinstance(arg, Node)]
+        if node.head != "DisjointClasses" or len(members) < 2 or any(n.head != "Annotation" for n in notes):
             continue
-        for parent in set.intersection(*(parents.get(member, set()) for member in members)):
+        shared = set.intersection(*(parents.get(member, set()) for member in members))
+        if shared and not any(local(n.args[-2]) == "quote" for n in notes):
+            unquoted.append(members)
+            continue
+        for parent in shared:
             probe = f"<{GEN}Outside{len(outside) + 1}>"
             outside[probe] = (parent, members)
             classes.add(probe)
@@ -518,6 +526,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[写法错误] {local(iri)} 不可能有成员：词汇写得自相矛盾。用 {explain} 查清后改写")
     if empty:
         found.incomplete.append(f"有 {len(empty)} 处分析写得自相矛盾，还没改好")
+
+    for members in unquoted:
+        findings += 1
+        print(
+            f"[完备性] {'、'.join(local(m) for m in members)} 是自己分的类，原文没有列举：写成 DisjointUnion 并加一类“其他”，"
+            "没结论的情况会作为缺口报出；原文自己列举了这些取值，就在 DisjointClasses 上用 :quote 引用那段列举"
+        )
+    if unquoted:
+        found.incomplete.append(f"有 {len(unquoted)} 组取值是自己分的，还没写成穷尽")
 
     for probe, (parent, members) in outside.items():
         group = "、".join(local(member) for member in members)

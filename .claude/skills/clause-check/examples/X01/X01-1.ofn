@@ -13,17 +13,17 @@ Ontology(<https://ppap.example/rules/X01/1>
   Declaration(AnnotationProperty(:chosen)) Declaration(AnnotationProperty(:answered)) Declaration(AnnotationProperty(:rewrite))
   Declaration(ObjectProperty(:hasRole))
 
-  # 词汇。签名的样子只列原文提到或明显存在的几种，不写成穷尽：原文没说只有这几种。
+  # 词汇。签法是为了写判定自己分的类，要分全：最后一类是“其他签法”，它没有结论时会作为缺口报出。
   Declaration(Class(:File)) Declaration(Class(:RoleEntry))
   Declaration(Class(:Author)) Declaration(Class(:Reviewer)) Declaration(Class(:Approver))
   SubClassOf(:Author :RoleEntry) SubClassOf(:Reviewer :RoleEntry) SubClassOf(:Approver :RoleEntry)
-  Declaration(Class(:HandSignature)) Declaration(Class(:ElectronicSignature)) Declaration(Class(:NoSignature))
-  SubClassOf(:HandSignature :RoleEntry) SubClassOf(:ElectronicSignature :RoleEntry) SubClassOf(:NoSignature :RoleEntry)
-  DisjointClasses(:HandSignature :ElectronicSignature :NoSignature)
+  Declaration(Class(:HandSignature)) Declaration(Class(:ElectronicSignature)) Declaration(Class(:NoSignature)) Declaration(Class(:OtherSignature))
+  DisjointUnion(:RoleEntry :HandSignature :ElectronicSignature :NoSignature :OtherSignature)
   AnnotationAssertion(rdfs:label :RoleEntry "一栏签名")
   AnnotationAssertion(rdfs:label :HandSignature "手写签名")
   AnnotationAssertion(rdfs:label :ElectronicSignature "电子签名")
   AnnotationAssertion(rdfs:label :NoSignature "没有签名")
+  AnnotationAssertion(rdfs:label :OtherSignature "其他签法")
   Declaration(Class(:HasDate))
 
   Declaration(Class(:HasSignatureBlock))
