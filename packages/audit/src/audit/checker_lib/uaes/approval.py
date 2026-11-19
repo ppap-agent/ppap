@@ -116,6 +116,7 @@ class UaesApprovalAgent(UaesExcelAgent):
         for category, row in rows.items():
             mark = str(sheet.cell(row.row_index, column).value() or "").strip()
             if _MARK.search(mark):
+                self.cite(sheet, row.row_index, column)
                 return category
             if mark:
                 return None
@@ -201,16 +202,19 @@ class UaesApprovalAgent(UaesExcelAgent):
                 raise unable("检查程序未能核实封面否决列的勾选，需人工复核。")
         elif rejected:
             return "NG", f"封面否决列{rejected}有实际标记，为否决件。"
-        remarks, _cell = self.remark(sheet)
+        remarks, cell = self.remark(sheet)
         full = _FULL in remarks
         conditional = [term for term in _CONDITIONAL if term in remarks]
+        if (full and conditional or not full and not conditional) and cell is not None:
+            # The basis quotes the cover remark.
+            self.cite(sheet, cell.row_index, cell.col_index)
         if full and conditional:
             return "NG", f"封面备注“{remarks}”同时含“{_FULL}”与“{'、'.join(conditional)}”，两类表述冲突，不通过，请人工复核。"
         if not full and not conditional:
             return "NG", f"封面备注“{remarks}”无法归类为完全认可或偏差/条件认可，不通过，请人工复核。"
         if full:
             return self.full_approval()
-        return self.conditional_approval(ctx, sheet, remarks)
+        return self.conditional_approval(ctx, sheet, remarks, cell)
 
     def full_approval(self) -> tuple[str, str]:
         signed = self.cover_signatures()
@@ -229,9 +233,11 @@ class UaesApprovalAgent(UaesExcelAgent):
             return "NG", "封面签字日期不是组长≤审核≤批准：" + listed + "。"
         return "PASS", "封面完全认可，" + listed + "，日期递增。"
 
-    def conditional_approval(self, ctx: RuleContext, sheet: Sheet, remarks: str) -> tuple[str, str]:
+    def conditional_approval(self, ctx: RuleContext, sheet: Sheet, remarks: str, cell: Any = None) -> tuple[str, str]:
         promised = deadlines(remarks)
         if not promised or any(item is None for item in promised):
+            if cell is not None:
+                self.cite(sheet, cell.row_index, cell.col_index)
             raise unable(f"封面备注“{remarks}”中未能读取承诺最晚期限（…前完成/截止…），预计整改时间不能代替承诺，需人工复核。")
         deadline, today = max(item for item in promised if item is not None), date.today()
         if deadline <= today:
@@ -292,16 +298,19 @@ class UaesApprovalAgent(UaesExcelAgent):
             item = str(row.value("偏差项") or "").strip() or f"第{row.row_index}行"
             found = deadlines(str(row.value("偏差备注") or ""))
             if len(found) != 1 or found[0] is None:
+                self.cite(sheet, row.row_index, row.columns["偏差备注"].header_col)
                 raise unable(f"偏差认可汇总清单{item}的备注未能唯一读取临时偏差有效期，需人工复核。")
             if found[0] <= today:
-                expired.append((found[0], item))
+                expired.append((found[0], item, row))
             elif found[0] != deadline:
-                unequal.append((found[0], item))
+                unequal.append((found[0], item, row))
         if expired:
-            day, item = min(expired)
+            day, item, row = min(expired, key=lambda entry: entry[:2])
+            self.cite(sheet, row.row_index, row.columns["偏差备注"].header_col)
             return "NG", f"{item}偏差项有效期({day})已过期，请确认已更新批准或整改闭环。"
         if unequal:
-            day, item = unequal[0]
+            day, item, row = unequal[0]
+            self.cite(sheet, row.row_index, row.columns["偏差备注"].header_col)
             return "NG", f"封面条件认可时间({deadline})与偏差汇总认可清单承诺时间({day}，{item})不一致，请复核。"
         return "PASS", f"条件认可封面承诺期限({deadline})与全部偏差行有效期一致且未过期。"
 

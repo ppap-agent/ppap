@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 from contextlib import contextmanager
@@ -18,6 +19,18 @@ def compact(value: Any) -> str:
     return "".join(unicodedata.normalize("NFKC", "" if value is None else str(value)).split()).casefold().rstrip(":：")
 
 
+class Place(str):
+    """A place written into a basis ("第12行") that remembers the cell it names, so the basis can cite it."""
+
+    cell: tuple[Any, int, int] | None = None
+
+    @classmethod
+    def of(cls, text: str, sheet: Any, row: int, column: int) -> "Place":
+        place = cls(text)
+        place.cell = (sheet, row, column)
+        return place
+
+
 class UaesExcelAgent(ExcelAgent):
     """A UAES carrier: its sheets, sections and columns come from its EXTRA_RESOURCE only."""
 
@@ -27,8 +40,9 @@ class UaesExcelAgent(ExcelAgent):
     SUPPORTED_EXTENSIONS = frozenset({".xlsx", ".xls", ".xlsm", ".pdf"})
 
     def check(self, ith: int):
-        # A need recorded by a clause that stopped early must not reach the next clause.
+        # A need or a cited cell recorded by a clause that stopped early must not reach the next clause.
         self.__dict__.pop("_need", None)
+        self.__dict__.pop("_cited", None)
         return super().check(ith)
 
     def need(self, document: str, *, part: str | None = None, found: str | None = None) -> None:
@@ -189,11 +203,55 @@ class UaesExcelAgent(ExcelAgent):
             # Neither a provider's text nor an exception name reaches the finding.
             raise GuardStop(Decision.ERR, "原件读取失败，尚未取得业务结论。") from None
 
+    def cite(self, sheet: Any, row: int, column: int) -> None:
+        """Name the cell a clause's basis points at ("第21行起") as its evidence, so the person can open it in the original.
+
+        ``sheet`` is a rule-engine Sheet or a worksheet of this file or of a same-round original. Only cells of an Excel
+        original are named: a table read from a PDF has no cell of its own. Naming a cell never changes the verdict."""
+        from openpyxl.utils.cell import get_column_letter
+
+        from audit.contracts import EvidenceSource
+
+        ws, ctx = getattr(sheet, "ws", sheet), self._shared_rule_context
+        if ctx is None or type(row) is not int or type(column) is not int or row < 1 or column < 1:
+            return
+        own = str((self.audit_file.file_metadata or {}).get("file_version_id") or self.audit_file.audit_id)
+        version = ctx.version_for_worksheet(ws) or (own if getattr(ws, "parent", None) is ctx.workbook else "")
+        files = [self.audit_file, *(self.group_context.by_audit_id.values() if self.group_context is not None else ())]
+        original = next((item for item in files if str((item.file_metadata or {}).get("file_version_id") or item.audit_id) == version), None)
+        if not version or original is None or Path(str(original.file_url)).suffix.lower() not in {".xlsx", ".xls", ".xlsm"}:
+            return
+        merged = ctx.ops.get_detailed_merge_info(ws, row, column) if ctx.ops is not None else None
+        anchor = ws.cell(row=merged.min_row, column=merged.min_col) if merged else ws.cell(row=row, column=column)
+        value = getattr(anchor, "value", None)
+        payload = {"kind": "xlsx_cell", "sheet": str(ws.title), "cell": f"{get_column_letter(anchor.column)}{anchor.row}", "file_version_id": version}
+        source = EvidenceSource(kind="structure", locator=json.dumps(payload, ensure_ascii=False, separators=(",", ":")), excerpt="" if value is None else " ".join(str(value).split())[:500])
+        cited = self.__dict__.setdefault("_cited", [])
+        # A basis names a handful of places; a long listing keeps its first ones.
+        if source not in cited and len(cited) < 20:
+            cited.append(source)
+
+    def named(self, place: str) -> str:
+        """A place for a basis; the cell it remembers becomes this clause's evidence."""
+        if isinstance(place, Place) and place.cell is not None:
+            self.cite(*place.cell)
+        return str(place)
+
     def _finalize_audit_result(self, result: Any, *, rule_no: int, phase: Any, ctx: RuleContext | None = None) -> Any:
         result = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
         need = self.__dict__.pop("_need", None)
         if need is not None and result.status == "NG" and result.supply is None:
             result = result.model_copy(update={"supply": need})
+        cited = tuple(self.__dict__.pop("_cited", ()))
+        if cited:
+            from audit.contracts import AuditEvidence
+
+            suffix: Any = Path(str(self.audit_file.file_url)).suffix.lower().lstrip(".")
+            current = result.evidence or AuditEvidence(required="structure", used="none", source_format=suffix, prepared_format=suffix, sources=())
+            # The cells the basis names are the clause's evidence; the full list of cells read stays out, a visual source stays.
+            sources = (*cited, *(source for source in current.sources if source.kind != "structure" and source not in cited))
+            used = "both" if len({source.kind for source in sources}) > 1 else sources[0].kind
+            result = result.model_copy(update={"evidence": current.model_copy(update={"sources": sources, "used": used})})
         legacy = self.__dict__.get("_legacy")
         if legacy is None or not legacy._evidence_sources:
             return result

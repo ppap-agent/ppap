@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -10,7 +11,7 @@ from typing import Any
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 
-from .excel import UaesExcelAgent, compact, unable
+from .excel import Place, UaesExcelAgent, compact, unable
 from .resources import capability, combine, pgqp1
 from .resources import flowchart as flow_resources
 
@@ -67,6 +68,8 @@ class UaesProcessFlowAgent(UaesExcelAgent):
         operations = chart.operations
         for operation in operations:
             if not operation.symbols:
+                # The basis names the operation by its description cell.
+                self.cite(chart.sheet, operation.rows[0], chart.operation)
                 if operation.unread_lane:
                     raise unable(f"{where}工序“{operation.description}”（第{operation.rows[0]}行）的符号列有未读图形，检查程序尚不能确认其符号，需人工复核。")
                 return "NG", f"{where}工序“{operation.description}”（第{operation.rows[0]}行）没有标准图形符号，只有文字。"
@@ -93,6 +96,7 @@ class UaesProcessFlowAgent(UaesExcelAgent):
             if symbols[0] not in operation.symbols:
                 if operation.unread_lane:
                     raise unable(f"{where}工序“{operation.description}”的符号列有未读图形，检查程序尚不能确认其符号，需人工复核。")
+                self.cite(chart.sheet, operation.rows[0], chart.operation)
                 return "NG", f"{where}检验类工序“{operation.description}”（第{operation.rows[0]}行）未使用检验符号{symbols[0]}，实际符号为{''.join(operation.symbols)}。"
         return "PASS", "全部工序以图例定义的符号表达，各活动列符号一致，检验类工序使用检验符号。"
 
@@ -146,14 +150,20 @@ def _number(value: Any) -> Decimal | None:
         return None
 
 
-def _capability_finding(failures: list[str], errors: list[str], gaps: list[str], subject: str, passed: str) -> tuple[str, str]:
+def _placed(text: str, *places: str) -> str:
+    """`text` remembering the cell of the first of `places` that remembers one."""
+    cell = next((place.cell for place in places if isinstance(place, Place) and place.cell is not None), None)
+    return text if cell is None else Place.of(text, *cell)
+
+
+def _capability_finding(failures: list[str], errors: list[str], gaps: list[str], subject: str, passed: str, named: Callable[[str], str] = str) -> tuple[str, str]:
     """A clear failure first; then indices the original shows as errors, which the clause fails ("无法辨识则不通过")."""
     if failures:
-        return "NG", "；".join(failures[:3]) + "。"
+        return "NG", "；".join(map(named, failures[:3])) + "。"
     if errors:
-        return "NG", "工艺能力认证报告" + "；".join(errors[:3]) + "，以上数值在原件中无法辨识，判不通过，请人工复核。"
+        return "NG", "工艺能力认证报告" + "；".join(map(named, errors[:3])) + "，以上数值在原件中无法辨识，判不通过，请人工复核。"
     if gaps:
-        raise unable(f"检查程序未能读取全部工艺能力认证报告的{subject}：" + "；".join(gaps[:3]) + "，需人工复核。")
+        raise unable(f"检查程序未能读取全部工艺能力认证报告的{subject}：" + "；".join(map(named, gaps[:3])) + "，需人工复核。")
     return "PASS", passed
 
 
@@ -205,11 +215,11 @@ class UaesCapabilityAgent(UaesExcelAgent):
                     report.values[name] = number
                     report.gaps.pop(name, None)
                 elif observed.state == "unresolved":
-                    report.errors[name] = f"{name}（第{row.row_index}行）为错误值“{raw}”"
+                    report.errors[name] = Place.of(f"{name}（第{row.row_index}行）为错误值“{raw}”", sheet, row.row_index, value_column)
                 elif raw in (None, "") and self.uncomputed(sheet, row.row_index, value_column):
-                    report.gaps[name] = f"{name}（第{row.row_index}行）是没有计算结果的公式"
+                    report.gaps[name] = Place.of(f"{name}（第{row.row_index}行）是没有计算结果的公式", sheet, row.row_index, value_column)
                 else:
-                    report.gaps[name] = f"{name}（第{row.row_index}行）为“{raw if raw is not None else ''}”，不是数值"
+                    report.gaps[name] = Place.of(f"{name}（第{row.row_index}行）为“{raw if raw is not None else ''}”，不是数值", sheet, row.row_index, value_column)
         for name in labels:
             if name not in report.values and name not in report.errors:
                 report.gaps.setdefault(name, f"未找到{name}的统计行")
@@ -237,12 +247,12 @@ class UaesCapabilityAgent(UaesExcelAgent):
                     if merged and (merged.min_row, merged.min_col) != (row, column):
                         continue
                     count += len(_NUMBER.findall(str(sheet.cell(row, column).value() or "")))
-            report = Report(f"“{sheet.title}”第{start}行起的实测数据", bounded=True)
+            report = Report(Place.of(f"“{sheet.title}”第{start}行起的实测数据", sheet, start, label_column), bounded=True)
             if count:
                 report.values["读数次数"] = Decimal(count)
             else:
                 # No number read is a reading gap, never a count of zero.
-                report.gaps["读数次数"] = f"“{sheet.title}”第{start}行起的实测数据区未读出任何数值"
+                report.gaps["读数次数"] = Place.of(f"“{sheet.title}”第{start}行起的实测数据区未读出任何数值", sheet, start, label_column)
             reports.append(report)
         return reports
 
@@ -291,18 +301,20 @@ class UaesCapabilityAgent(UaesExcelAgent):
             readings = report.values.get("读数次数")
             if readings is not None and readings < 125:
                 if report.bounded:
-                    failures.append(f"工艺能力认证报告{report.where}的实测结果区域（No.1–No.25列）最多只有{readings}个数值，读数次数与实测结果区域数量均少于125")
+                    failures.append(_placed(f"工艺能力认证报告{report.where}的实测结果区域（No.1–No.25列）最多只有{readings}个数值，读数次数与实测结果区域数量均少于125", report.where))
                 else:
                     failures.append(f"工艺能力认证报告{report.where}读数次数（Number of readings）为{readings}，少于125")
             cpk = report.values.get("Cpk")
             if cpk is not None and cpk <= Decimal("1.33"):
                 failures.append(f"工艺能力认证报告{report.where}Process Capability (Cpk)为{cpk}，必须大于1.33")
-            errors.extend(f"{report.where}{report.errors[name]}" for name in ("读数次数", "Cpk") if name in report.errors)
+            errors.extend(_placed(f"{report.where}{report.errors[name]}", report.errors[name], report.where) for name in ("读数次数", "Cpk") if name in report.errors)
             if "读数次数" not in report.errors and (readings is None or report.bounded):
-                gaps.append(f"{report.where}：" + report.gaps.get("读数次数", "实测结果区域只能确定数值上限，读数次数不能确认"))
+                gap = report.gaps.get("读数次数", "实测结果区域只能确定数值上限，读数次数不能确认")
+                gaps.append(_placed(f"{report.where}：" + gap, gap, report.where))
             if cpk is None and "Cpk" not in report.errors:
-                gaps.append(f"{report.where}：" + report.gaps.get("Cpk", "未读到Cpk"))
-        return _capability_finding(failures, errors, gaps, "读数次数与Cpk", "全部工艺能力认证报告读数次数不少于125，Cpk均大于1.33。")
+                gap = report.gaps.get("Cpk", "未读到Cpk")
+                gaps.append(_placed(f"{report.where}：" + gap, gap, report.where))
+        return _capability_finding(failures, errors, gaps, "读数次数与Cpk", "全部工艺能力认证报告读数次数不少于125，Cpk均大于1.33。", self.named)
 
     @rule("所有能力认证报告的严格Ppk阈值")
     def rule_2(self, ctx: RuleContext):
@@ -310,12 +322,13 @@ class UaesCapabilityAgent(UaesExcelAgent):
         for report in self.require_reports(ctx):
             ppk = report.values.get("Ppk")
             if "Ppk" in report.errors:
-                errors.append(f"{report.where}{report.errors['Ppk']}")
+                errors.append(_placed(f"{report.where}{report.errors['Ppk']}", report.errors["Ppk"], report.where))
             elif ppk is None:
-                gaps.append(f"{report.where}：" + report.gaps.get("Ppk", "未读到Ppk"))
+                gap = report.gaps.get("Ppk", "未读到Ppk")
+                gaps.append(_placed(f"{report.where}：" + gap, gap, report.where))
             elif ppk <= Decimal("1.67"):
                 failures.append(f"工艺能力认证报告{report.where}Performance index (Ppk)为{ppk}，必须大于1.67")
-        return _capability_finding(failures, errors, gaps, "Ppk", "全部工艺能力认证报告Ppk均大于1.67。")
+        return _capability_finding(failures, errors, gaps, "Ppk", "全部工艺能力认证报告Ppk均大于1.67。", self.named)
 
     # The capability summary list (目录 of 776/A40, the 574 "Ppk能力值汇总" page).
 
@@ -338,32 +351,36 @@ class UaesCapabilityAgent(UaesExcelAgent):
                 if not row.is_present(anchor):
                     continue
                 checked += 1
-                low = []
+                low, low_column = [], 0
                 for result, target in pairs:
                     wanted_seen, actual_seen = row.observation(target), row.observation(result)
                     wanted_raw, actual_raw = wanted_seen.value, actual_seen.value
                     # A characteristic without a stated target ("/") has nothing to compare against.
                     if wanted_seen.state != "unresolved" and compact(wanted_raw) in _NO_TARGET:
                         continue
-                    shown = [f"{name}为错误值“{seen.value}”" for name, seen in ((target, wanted_seen), (result, actual_seen)) if seen.state == "unresolved"]
+                    shown = [(name, f"{name}为错误值“{seen.value}”") for name, seen in ((target, wanted_seen), (result, actual_seen)) if seen.state == "unresolved"]
                     if shown:
-                        errors.append(f"能力汇总“{sheet.title}”第{row.row_index}行" + "、".join(shown))
+                        text = f"能力汇总“{sheet.title}”第{row.row_index}行" + "、".join(item for _name, item in shown)
+                        errors.append(Place.of(text, sheet, row.row_index, columns[shown[0][0]].header_col))
                         continue
                     wanted, actual = _number(wanted_raw), _number(actual_raw)
                     if wanted is None or actual is None:
                         column = columns[result if actual is None else target].header_col
+                        self.cite(sheet, row.row_index, column)
                         if self.uncomputed(sheet, row.row_index, column):
                             raise unable(f"能力汇总“{sheet.title}”第{row.row_index}行{result if actual is None else target}是没有计算结果的公式，需人工复核。")
                         raise unable(f"能力汇总“{sheet.title}”第{row.row_index}行{target}“{wanted_raw}”/{result}“{actual_raw}”不能读为数值，需人工复核。")
                     if actual < wanted:
                         low.append(f"{result}{actual}低于{target}{wanted}")
+                        low_column = low_column or columns[result].header_col
                 if low:
                     notes = [row.value(name) for name in ("反应计划", "汇总备注") if name in columns]
                     if not any(compact(note) for note in notes):
+                        self.cite(sheet, row.row_index, low_column)
                         return "NG", f"能力汇总“{sheet.title}”第{row.row_index}行{'，'.join(low)}，同行没有反应计划或备注。"
         if errors:
             # The clause: "如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核".
-            return "NG", "；".join(errors[:3]) + "，原件中的结果值或目标值无法辨识，判不通过，请人工复核。"
+            return "NG", "；".join(map(self.named, errors[:3])) + "，原件中的结果值或目标值无法辨识，判不通过，请人工复核。"
         if not checked:
             raise unable("能力汇总没有可确认的特性行，不能按空范围通过，需人工复核。")
         return "PASS", "能力汇总全部特性行达到目标，或低于目标的行已有反应计划/备注。"
@@ -460,6 +477,7 @@ class UaesCapabilityAgent(UaesExcelAgent):
             if not row.is_present("特性项目") or not mark:
                 continue
             if re.search(r"\d", mark):
+                self.cite(plan, row.row_index, row.columns["特殊特性"].header_col)
                 # Which characteristics are marked special cannot be told: the clause fails ("无法辨识则不通过", product owner).
                 return "NG", f"PGQP1“SC/特殊特性”列第{row.row_index}行写的是“{mark}”（特性值），不是特殊特性标记，无法辨识哪些特性被标记为特殊特性，按“无法辨识则不通过”判不通过，请人工复核。"
             special.append((row.row_index, str(row.value("特性项目")).strip()))
@@ -467,5 +485,6 @@ class UaesCapabilityAgent(UaesExcelAgent):
             raise unable("同零件号PGQP1没有被标记为特殊特性的特性，不能按空范围通过，需人工复核。")
         for row_index, name in special:
             if compact(name) not in names:
+                self.cite(plan, row_index, section.column("特性项目").header_col)
                 return "NG", f"PGQP1第{row_index}行特殊特性“{name}”不在过程能力分析报告目录“{directory.title}”中。"
         return "PASS", f"同零件号PGQP1的{len(special)}项特殊特性均在目录“{directory.title}”中。"

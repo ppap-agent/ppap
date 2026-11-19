@@ -10,7 +10,7 @@ from typing import Any
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 
-from .excel import UaesExcelAgent, compact, original_name, unable
+from .excel import Place, UaesExcelAgent, compact, original_name, unable
 from .identity import pair_identity
 from .resources import combine, pgqp1, special_list
 from .resources import pfmea as resources
@@ -64,6 +64,13 @@ class UaesPfmeaAgent(UaesExcelAgent):
     SOURCE_CLAUSE_IDS = True
     DOCUMENT_MODULE = resources
     EXTRA_RESOURCE = combine(resources.DOCUMENT, special_list.DOCUMENT, pgqp1.DOCUMENT)
+
+    def at(self, item: Item, *names: str) -> str:
+        """The item's place for a basis; its cells in `names` become this clause's evidence."""
+        for name in names:
+            if name in item.columns:
+                self.cite(item.sheet, item.row, item.columns[name])
+        return item.where()
 
     def unreadable(self) -> str | None:
         if self.untabled():
@@ -133,6 +140,7 @@ class UaesPfmeaAgent(UaesExcelAgent):
                 return items[: last + 1]
         if self.footer_seen(sheet, trailing[0].row) is True:
             return items[: last + 1]
+        self.at(trailing[0], "严重度")
         raise unable(f"PFMEA“{sheet.title}”第{trailing[0].row}行起有未填S/O/D的行，原件单元格不能说明它们是表尾图例/履历还是缺少评分的失效项，需人工复核。")
 
     def footer_seen(self, sheet: Sheet, row: int) -> bool | None:
@@ -190,6 +198,7 @@ class UaesPfmeaAgent(UaesExcelAgent):
             body = self.failure_body(sheet) if id(sheet.ws) in failure_sheets else range(0)
             for cell in sheet.scan_non_empty(row_min=1, row_max=rows, col_min=1, col_max=columns):
                 if cell.row_index not in body and (cited := self.lesson(str(cell.value()))):
+                    self.cite(sheet, cell.row_index, cell.col_index)
                     return "PASS", f"PFMEA“{sheet.title}”第{cell.row_index}行引用经验教训：{cited}"
         if str(self.audit_file.file_url).lower().endswith(".pdf"):
             import fitz
@@ -251,6 +260,8 @@ class UaesPfmeaAgent(UaesExcelAgent):
             for image in getattr(sheet.ws, "_images", []):
                 anchor = getattr(getattr(image, "anchor", None), "_from", None)
                 if anchor is None or anchor.row + 1 < header:
+                    if anchor is not None:
+                        self.cite(sheet, anchor.row + 1, anchor.col + 1)
                     places.append(f"“{sheet.title}”第{anchor.row + 1 if anchor else '?'}行")
         return "、".join(places)
 
@@ -269,6 +280,8 @@ class UaesPfmeaAgent(UaesExcelAgent):
         by_effect: dict[tuple[str, str], tuple[Item, Decimal]] = {}
         converted = str(self.audit_file.file_url).lower().endswith(".pdf")
         gaps: list[str] = []
+        # The (item, column) of each gap: only the gaps the basis lists are cited.
+        unread: list[tuple[Item, str]] = []
         for item in items:
             # Each failure item whose scores are judged is a check made; without it a PASS counts as zero checks.
             ctx.record_execution()
@@ -278,44 +291,51 @@ class UaesPfmeaAgent(UaesExcelAgent):
                 if not raw:
                     if self.uncomputed(item.sheet, item.row, item.columns[name]):
                         gaps.append(f"{item.where()}{letter}是没有计算结果的公式")
+                        unread.append((item, name))
                         break
-                    return "NG", f"{item.where()}{letter}（{name}）为空。"
+                    return "NG", f"{self.at(item, name)}{letter}（{name}）为空。"
                 value = self.score(item, name)
                 if value is None and converted and re.fullmatch(r"\d+(\s+\d+)+", raw):
                     # The PDF conversion merged the scores of neighbouring rows into one cell.
                     gaps.append(f"{item.where()}{letter}读出“{' '.join(raw.split())}”（PDF转换把相邻行的评分合在一格）")
+                    unread.append((item, name))
                     break
                 if value is None or value != value.to_integral_value() or not 1 <= value <= 10:
-                    return "NG", f"{item.where()}{letter}（{name}）为“{raw}”，不是1至10的整数。"
+                    return "NG", f"{self.at(item, name)}{letter}（{name}）为“{raw}”，不是1至10的整数。"
                 scores.append(value)
             if len(scores) < len(_SCORES):
                 continue
             s, _o, d = scores
             effect = item.values.get("失效后果", "")
             if any(term in effect for term in ("安全", "法规", "整车召回", "人员伤亡")) and s < 9:
-                return "NG", f"{item.where()}失效后果“{effect}”涉及安全/法规，严重度S={s}低于9。"
+                return "NG", f"{self.at(item, '严重度')}失效后果“{effect}”涉及安全/法规，严重度S={s}低于9。"
             if "轻微" in effect and "外观" in effect and not 2 <= s <= 4:
-                return "NG", f"{item.where()}失效后果“{effect}”仅为轻微外观，严重度S={s}不在2至4。"
+                return "NG", f"{self.at(item, '严重度')}失效后果“{effect}”仅为轻微外观，严重度S={s}不在2至4。"
             detection = item.values.get("探测控制", "")
             if compact(detection) in {"无", "无法探测", "无探测措施", "none"} and d < 10:
-                return "NG", f"{item.where()}探测控制为“{detection}”，探测度D={d}小于10。"
+                return "NG", f"{self.at(item, '探测度')}探测控制为“{detection}”，探测度D={d}小于10。"
             condition = tuple(compact(item.values.get(name, "")) for name in ("失效模式", "失效起因", "预防控制", "探测控制"))
             if condition in by_condition and by_condition[condition][1] != tuple(scores):
                 first, earlier = by_condition[condition]
-                return "NG", (f"{first.where()}与{item.where()}失效模式、失效起因、预防和探测控制均相同，S/O/D却分别为{'/'.join(map(str, earlier))}与{'/'.join(map(str, scores))}。")
+                # The first score that differs is the one the basis contrasts.
+                differs = next(name for name, old, new in zip(_SCORES, earlier, scores) if old != new)
+                places = (self.at(first, differs), self.at(item, differs))
+                return "NG", (f"{places[0]}与{places[1]}失效模式、失效起因、预防和探测控制均相同，S/O/D却分别为{'/'.join(map(str, earlier))}与{'/'.join(map(str, scores))}。")
             by_condition.setdefault(condition, (item, tuple(scores)))
             consequence = (compact(item.values["失效模式"]), compact(effect))
             if all(consequence) and consequence in by_effect and by_effect[consequence][1] != s:
                 first, severity = by_effect[consequence]
-                return "NG", f"{first.where()}与{item.where()}失效模式“{item.values['失效模式']}”及失效后果“{effect}”相同（空白格沿用上一行），严重度S却分别为{severity}与{s}。"
+                return "NG", f"{self.at(first, '严重度')}与{self.at(item, '严重度')}失效模式“{item.values['失效模式']}”及失效后果“{effect}”相同（空白格沿用上一行），严重度S却分别为{severity}与{s}。"
             by_effect.setdefault(consequence, (item, s))
         if gaps:
+            for item, name in unread[:3]:
+                self.at(item, name)
             raise unable("、".join(gaps[:3]) + "，这些行的评分尚未读取，需人工复核。")
         # Decided on what the clause states checkably (product owner): "O与预防控制矛盾" and the D of each
         # detection method are not defined beyond "无探测措施但D<10", so nothing more is inferred.
         return "PASS", (f"已核对{len(items)}个失效项：S/O/D均为1~10的整数且无空白；涉及安全/法规的后果S不低于9，仅轻微外观的后果S在2~4；无探测措施的D为10；相同失效模式、相同控制条件下的S/O/D一致。")
 
-    def batch_lists(self, ctx: RuleContext, part: str, project: str | None) -> tuple[list[tuple[str, int, str, str, str]], list[str], list[str]]:
+    def batch_lists(self, ctx: RuleContext, part: str, project: str | None) -> tuple[list[tuple[str, int, str, str, str, dict]], list[str], list[str]]:
         """(characteristics of the paired lists, lists whose project cannot be compared, of those the lists that state no project)."""
         """Marked characteristics of the same-round lists for this part and project, and the lists whose project is unknown."""
         found, undetermined, unstated = [], [], []
@@ -344,7 +364,11 @@ class UaesPfmeaAgent(UaesExcelAgent):
                         column = "特性名称" if "特性名称" in columns else "过程特性名称"
                         name = str(row.value(column)).strip() if column in columns and meaningful(row.value(column)) else ""
                         value = str(row.value("特性值")).strip() if "特性值" in columns and meaningful(row.value("特性值")) else ""
-                        rows.append((label, row.row_index, name, value, mark))
+                        # The list's own cells a basis may name: the mark and the characteristic's name.
+                        cells = {"mark": (sheet, row.row_index, row.columns["特性类别"].header_col)}
+                        if column in columns:
+                            cells["name"] = (sheet, row.row_index, row.columns[column].header_col)
+                        rows.append((label, row.row_index, name, value, mark, cells))
                 if not rows:
                     continue
                 # U07:3 pairs 同项目、同物料编号: the project must be stated alike on both originals.
@@ -390,7 +414,7 @@ class UaesPfmeaAgent(UaesExcelAgent):
         for item in items:
             own = own_class(item.values.get("功能", ""))
             if own and marks(own) <= vocabulary and not marks(item.values.get("类别", "")):
-                return "NG", f"{item.where()}“{item.values['功能']}”自标为{own}类特性，但特殊特性/分类列为空，已知关键特性未标识。"
+                return "NG", f"{self.at(item, '类别')}“{item.values['功能']}”自标为{own}类特性，但特殊特性/分类列为空，已知关键特性未标识。"
         self.require_readable(_LISTS)
         unknown = self.untyped()
         if not any(self.batch_files(kind) for kind in _LISTS):
@@ -415,23 +439,29 @@ class UaesPfmeaAgent(UaesExcelAgent):
                 raise unable(f"同批次特殊特性清单中没有零件号{part}的特性，另有{len(unknown)}份原件类型未识别，需人工复核。")
             return "NG", f"同批次特殊特性清单中没有同项目、零件号{part}的特殊特性，不存在同物料编号的特殊特性清单，请提交后复审。"
         unnamed = None
-        for label, row, name, value, mark in characteristics:
+        for label, row, name, value, mark, cells in characteristics:
             where = f"{label}第{row}行"
             symbols = marks(mark)
             if not any(marks(item.values.get("类别", "")) == symbols for item in marked):
+                self.cite(*cells["mark"])
                 return "NG", f"{where}特性“{name or value or '（名称未能从原件文字读取）'}”标识为“{mark}”，PFMEA特殊特性/分类列中没有该标识，缺项或标识不一致。"
             if not name and not value:
-                unnamed = unnamed or f"{where}特性名称与特性值未能从原件文字读取（标识“{mark}”）"
+                unnamed = unnamed or Place.of(f"{where}特性名称与特性值未能从原件文字读取（标识“{mark}”）", *cells.get("name", cells["mark"]))
                 continue
             found = [item for item in items if name and compact(name) in {compact(item.values.get("功能", "")), compact(item.values.get("要求", ""))}]
             found = found or [item for item in items if value and compact(value) in {compact(item.values.get(key, "")) for key in ("失效模式", "要求", "功能")}]
             if not found:
+                if "name" in cells:
+                    self.cite(*cells["name"])
                 return "NG", f"{where}特性“{name} {value}”（{mark}）在PFMEA功能/要求及失效模式中均未出现，缺项。"
             if not any(marks(item.values.get("类别", "")) == symbols for item in found):
+                self.cite(*cells["mark"])
+                for item in found[:3]:
+                    self.at(item, "类别")
                 shown = "、".join(f"第{item.row}行“{item.values.get('类别') or '空'}”" for item in found[:3])
                 return "NG", f"{where}特性“{name} {value}”标识为“{mark}”，PFMEA对应{shown}，标识不一致。"
         if unnamed:
-            raise unable(unnamed + "，尚不能核对其在PFMEA中的分析，需人工复核。")
+            raise unable(self.named(unnamed) + "，尚不能核对其在PFMEA中的分析，需人工复核。")
         if undetermined or unknown:
             pending = "、".join(undetermined) + "未写明项目" if undetermined else f"另有{len(unknown)}份原件类型未识别"
             raise unable(f"已配对清单的特性均一致，但{pending}，尚不能排除其中有不一致的同零件特性，需人工复核。")
@@ -460,14 +490,15 @@ class UaesPfmeaAgent(UaesExcelAgent):
                         continue
                     for row in self.section(sheet, "重要特性区").rows("特性项目"):
                         if meaningful(row.value("特性项目")):
-                            characteristics.append((sheet.title, row.row_index, str(row.value("特性项目")).strip()))
+                            where = Place.of(f"PGQP1“{sheet.title}”第{row.row_index}行", sheet, row.row_index, row.columns["特性项目"].header_col)
+                            characteristics.append((where, str(row.value("特性项目")).strip()))
         if not characteristics:
             if others:
                 return "NG", f"源错配：同批次采购件质量计划PGQP1的零件号为{'、'.join(others)}，与PFMEA零件号{part}不同，没有同零件号的PGQP1，请补充后复审。"
             return "NG", f"同批次采购件质量计划中没有零件号{part}且含重要特性的PGQP1表，请补充后复审。"
         items = self.items(ctx)
         texts = [compact(item.values.get(name, "")) for item in items for name in ("功能", "要求", "失效模式")]
-        for title, row, characteristic in characteristics:
+        for where, characteristic in characteristics:
             if not any(compact(characteristic) in text for text in texts if text):
-                return "NG", f"PGQP1“{title}”第{row}行重要特性“{characteristic}”在PFMEA功能/要求及失效模式中均未出现，缺项。"
+                return "NG", f"{self.named(where)}重要特性“{characteristic}”在PFMEA功能/要求及失效模式中均未出现，缺项。"
         return "PASS", f"PGQP1全部{len(characteristics)}项重要特性均在PFMEA中出现。"

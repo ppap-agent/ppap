@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
 
-from .excel import UaesExcelAgent, compact, unable
+from .excel import Place, UaesExcelAgent, compact, unable
 from .materials import related_by_content
 from .resources import combine
 from .resources import inspection as resources
@@ -114,6 +114,11 @@ class Report:
     nok_column: int | None
 
 
+def _at(report: Report, row: int, text: str, column: int | None) -> Place:
+    """A finding on a report row that remembers the cell it is about."""
+    return Place.of(text, report.sheet, row, column or 0)
+
+
 class UaesInspectionAgent(UaesExcelAgent):
     DOCUMENT_MODULE = resources
     EXTRA_RESOURCE = combine(resources.DOCUMENT)
@@ -197,16 +202,18 @@ class UaesInspectionAgent(UaesExcelAgent):
                 checked += 1
                 where = f"“{report.sheet.title}”第{row.row_index}行"
                 requirement = row.value(f"{report.title}要求")
+                # A listed finding names this row's result, requirement or reading cell.
+                asked = row.columns[f"{report.title}要求"].header_col
                 verdict = self.verdict(report, row.row_index)
                 if verdict is False:
-                    violations.append(f"{where}结果不是OK")
+                    violations.append(_at(report, row.row_index, f"{where}结果不是OK", report.nok_column or report.ok_column))
                     continue
                 if verdict is None:
-                    unknown.append(f"{where}结果栏没有可确认的OK")
+                    unknown.append(_at(report, row.row_index, f"{where}结果栏没有可确认的OK", report.ok_column))
                 range_ = limits(requirement)
                 if range_ is None:
                     if re.search(r"\d", _text(requirement)):
-                        unknown.append(f"{where}要求“{requirement}”的范围未能读取")
+                        unknown.append(_at(report, row.row_index, f"{where}要求“{requirement}”的范围未能读取", asked))
                     continue
                 percent = "%" in _text(requirement)
                 values, outside = [], []
@@ -216,28 +223,28 @@ class UaesInspectionAgent(UaesExcelAgent):
                         continue
                     interval = reading(cell.value(), cell.number_format(), percent)
                     if interval is None:
-                        unknown.append(f"{where}实测值“{cell.value()}”未能读取为数值")
+                        unknown.append(_at(report, row.row_index, f"{where}实测值“{cell.value()}”未能读取为数值", column))
                         continue
                     held = range_.holds(*interval)
                     if held is False:
-                        outside.append(str(cell.value()))
+                        outside.append((str(cell.value()), column))
                     elif held is None:
-                        unknown.append(f"{where}实测值“{cell.value()}”尚不能确定是否在要求“{requirement}”内")
+                        unknown.append(_at(report, row.row_index, f"{where}实测值“{cell.value()}”尚不能确定是否在要求“{requirement}”内", column))
                     values.append(interval[1])
                 if outside:
-                    violations.append(f"{where}要求“{requirement}”，实测值{'、'.join(outside)}超出要求范围")
+                    violations.append(_at(report, row.row_index, f"{where}要求“{requirement}”，实测值{'、'.join(value for value, _column in outside)}超出要求范围", outside[0][1]))
                 if not values:
-                    unknown.append(f"{where}要求“{requirement}”没有供应商实测值")
+                    unknown.append(_at(report, row.row_index, f"{where}要求“{requirement}”没有供应商实测值", asked))
                 elif math.isfinite(range_.lower) and math.isfinite(range_.upper) and range_.upper > range_.lower:
                     if all(value >= range_.upper - (range_.upper - range_.lower) * 0.1 for value in values):
-                        near.append(f"{where}“{requirement}”")
+                        near.append(_at(report, row.row_index, f"{where}“{requirement}”", asked))
         if violations:
-            return "NG", "；".join(violations[:8]) + ("等" if len(violations) > 8 else "") + "。"
+            return "NG", "；".join(map(self.named, violations[:8])) + ("等" if len(violations) > 8 else "") + "。"
         if unknown:
-            raise unable("检查程序未能确认：" + "；".join(unknown[:8]) + ("等" if len(unknown) > 8 else "") + "，需人工复核。")
+            raise unable("检查程序未能确认：" + "；".join(map(self.named, unknown[:8])) + ("等" if len(unknown) > 8 else "") + "，需人工复核。")
         if not checked:
             raise unable("四份报告的要求列下都没有内容，没有可核对的要求项，需人工复核。")
-        note = f"实测值均接近要求上限（{'、'.join(near[:5])}），请关注过程能力分析报告。" if near else ""
+        note = f"实测值均接近要求上限（{'、'.join(map(self.named, near[:5]))}），请关注过程能力分析报告。" if near else ""
         return "PASS", f"四份报告共{checked}项要求的实测值均在要求范围内且结果为OK。{note}"
 
     def verdict(self, report: Report, row: int) -> bool | None:

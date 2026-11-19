@@ -53,6 +53,7 @@ class UaesSpecialCharacteristicsAgent(UaesExcelAgent):
             # "产品名称/零件号" names each characteristic's part: both fields, once per row.
             for title, row in per_row:
                 if not compact(row.value("零件")):
+                    self.cite(row.ws, row.row_index, row.columns["零件"].header_col)
                     if self.uncomputed(Sheet(ctx, row.ws), row.row_index, row.columns["零件"].header_col):
                         raise unable(f"“{title}”第{row.row_index}行产品名称/零件号是没有计算结果的公式，需人工复核。")
                     return "NG", f"特殊特性清单“{title}”第{row.row_index}行产品名称/零件号为空。"
@@ -98,6 +99,10 @@ class UaesSpecialCharacteristicsAgent(UaesExcelAgent):
                 present = bool(name) if column is None else filled(row, column, columns)
                 if present:
                     continue
+                # The named cell is the blank one; a blank name is read in the first name column present.
+                cited = column or next((name for name in _NAMES if name in columns), None)
+                if cited is not None:
+                    self.cite(row.ws, row.row_index, columns[cited].header_col)
                 if column is not None and self.uncomputed(Sheet(ctx, row.ws), row.row_index, columns[column].header_col):
                     raise unable(f"{where}{label}是没有计算结果的公式，需人工复核。")
                 described = f"（特性“{name or value}”）" if name or value else ""

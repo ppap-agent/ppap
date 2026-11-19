@@ -13,7 +13,7 @@ from xml.etree import ElementTree
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
 
-from .excel import UaesExcelAgent, compact, unable
+from .excel import Place, UaesExcelAgent, compact, unable
 from .resources import combine, drawing_for_materials
 from .resources import materials as resources
 
@@ -165,7 +165,8 @@ class UaesMaterialsAgent(UaesExcelAgent):
                 if len(cells) != 1:
                     unknown.append(f"未能定位“{name}”字段")
                 elif not cells[0].has_data():
-                    problems.append(f"{name}（{cells[0].ws.cell(cells[0].row_index, cells[0].col_index).coordinate}）为空")
+                    text = f"{name}（{cells[0].ws.cell(cells[0].row_index, cells[0].col_index).coordinate}）为空"
+                    problems.append(Place.of(text, sheet, cells[0].row_index, cells[0].col_index))
             section = self.section(sheet, "材料清单区")
             header, serial = section.resolved.header_row, section.column("材料序号")
             _rows, width = self.extent(sheet)
@@ -196,14 +197,16 @@ class UaesMaterialsAgent(UaesExcelAgent):
                         if not any(other in filled for other, (_label, member) in leaves.items() if member == group):
                             empty_groups.add(group)
                     elif resources.PICTURE in label and pictures is None:
-                        unknown.append(f"第{index}行{label}的图片是否存在未能从原件读取")
+                        unknown.append(Place.of(f"第{index}行{label}的图片是否存在未能从原件读取", sheet, index, column))
                     else:
-                        problems.append(f"第{index}行{label}为空")
-                problems.extend(f"第{index}行{group}未选择" for group in sorted(empty_groups))
+                        problems.append(Place.of(f"第{index}行{label}为空", sheet, index, column))
+                # An unselected choice names the first column of its group.
+                first = {group: min(column for column, (_label, member) in leaves.items() if member == group) for group in empty_groups}
+                problems.extend(Place.of(f"第{index}行{group}未选择", sheet, index, first[group]) for group in sorted(empty_groups))
         if problems:
-            return "NG", "材料及分供方清单除备注外有空字段：" + "；".join(problems[:12]) + ("等" if len(problems) > 12 else "") + "。"
+            return "NG", "材料及分供方清单除备注外有空字段：" + "；".join(map(self.named, problems[:12])) + ("等" if len(problems) > 12 else "") + "。"
         if unknown:
-            raise unable("检查程序未能确认：" + "；".join(unknown[:8]) + "，需人工复核。")
+            raise unable("检查程序未能确认：" + "；".join(map(self.named, unknown[:8])) + "，需人工复核。")
         if not checked:
             raise unable("材料及分供方清单没有已填写的物料行，不能按空清单通过。")
         return "PASS", f"已逐行核实{checked}个物料行及表头字段，除备注外均已填写。"

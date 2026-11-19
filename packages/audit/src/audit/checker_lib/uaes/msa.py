@@ -11,7 +11,7 @@ from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 
 from .control_plan import UaesControlPlanAgent, operation_owners
-from .excel import UaesExcelAgent, compact, original_name, unable
+from .excel import Place, UaesExcelAgent, compact, original_name, unable
 from .resources import capability, combine, control_plan, pgqp1
 from .resources import msa as resources
 
@@ -57,11 +57,12 @@ class UaesMsaAgent(UaesExcelAgent):
 
     def plan_rows(self, ctx: RuleContext) -> list[tuple[str, str, str]]:
         """(gauge name, gauge number, place) of each numbered plan row in the workbook being read."""
-        rows = []
+        rows: list[tuple[str, str, str]] = []
         for sheet in Table(ctx).find_sheets("MSA计划表", on_missing=Decision.IGNORE):
             for row in self.section(sheet, "MSA计划区").rows("序号", "量具名称", "量具编号"):
                 if row.is_present("序号"):
-                    rows.append((str(row.value("量具名称") or "").strip(), str(row.value("量具编号") or "").strip(), f"“{sheet.title}”第{row.row_index}行"))
+                    where = Place.of(f"“{sheet.title}”第{row.row_index}行", sheet, row.row_index, row.columns["量具编号"].header_col)
+                    rows.append((str(row.value("量具名称") or "").strip(), str(row.value("量具编号") or "").strip(), where))
         return rows
 
     def reports(self, ctx: RuleContext) -> list[Report]:
@@ -135,12 +136,14 @@ class UaesMsaAgent(UaesExcelAgent):
                 if any(compact(sheet.cell(row, serial_column).value()).startswith(marker) for marker in ("编制/日期", "审核/日期", "编制人", "批准人")):
                     break
                 if values == names or not any(values):
-                    if any(self.uncomputed(sheet, row, heading.col_index) for heading in headings):
+                    if formula := next((heading for heading in headings if self.uncomputed(sheet, row, heading.col_index)), None):
+                        self.cite(sheet, row, formula.col_index)
                         raise unable(f"MSA计划“{sheet.title}”第{row}行含没有计算结果的公式，需人工复核。")
                     continue
                 checked += 1
                 for heading, value in zip(headings, values):
                     if not value:
+                        self.cite(sheet, row, heading.col_index)
                         if self.uncomputed(sheet, row, heading.col_index):
                             raise unable(f"MSA计划“{sheet.title}”第{row}行{compact(heading.value())}是没有计算结果的公式，需人工复核。")
                         return "NG", f"MSA计划“{sheet.title}”第{row}行{compact(heading.value())}为空。"
@@ -170,9 +173,9 @@ class UaesMsaAgent(UaesExcelAgent):
         for name, number, where in (row for rows in plans for row in rows):
             kind = "Kappa" if any(term in name for term in _COUNTING) else "GRR"
             if _identity(number) in _PLACEHOLDERS:
-                return "NG", f"MSA计划{where}{name}量具编号为“{number}”，无法对应编号相同的{kind}报告。"
+                return "NG", f"MSA计划{self.named(where)}{name}量具编号为“{number}”，无法对应编号相同的{kind}报告。"
             if not any(report.kind == kind and _identity(number) in report.numbers for report in reports):
-                return "NG", f"MSA计划{where}{name}（编号{number}）没有编号相同的{kind}报告。"
+                return "NG", f"MSA计划{self.named(where)}{name}（编号{number}）没有编号相同的{kind}报告。"
         for report in reports:
             if not report.conclusions:
                 raise unable(f"{report.kind}报告{report.where}的结论尚未读取到，需人工复核。")
@@ -254,6 +257,7 @@ class UaesMsaAgent(UaesExcelAgent):
         passed, open_ = [], []
         for plan in plans:
             named = f"控制计划《{original_name(plan)}》"
+            earlier = list(self.__dict__.get("_cited", ()))
             try:
                 status, reason = self.kappa_for_human_checks(ctx, plan)
             except GuardStop as stop:
@@ -262,6 +266,9 @@ class UaesMsaAgent(UaesExcelAgent):
                 open_.append(f"{named}：{stop.message}")
                 continue
             if status == "NG":
+                # The basis names this plan only: places of plans left open above are not in it.
+                cited = self.__dict__.get("_cited", [])
+                cited[:] = [source for source in cited if source not in earlier]
                 return "NG", named + reason.removeprefix("控制计划")
             passed.append(named + reason.removeprefix("控制计划"))
         if open_:
@@ -284,7 +291,8 @@ class UaesMsaAgent(UaesExcelAgent):
                     outgoing = [name for name in names if any(term in name for term in ("出货检验", "GP12"))]
                     if outgoing and any(term in method for term in _HUMAN):
                         # AIAG control plans name the gauge in the evaluation/measurement technique column.
-                        manual.append((outgoing[0], " ".join(method.split()), f"“{sheet.title}”第{row.row_index}行", len(names) > 1))
+                        where = Place.of(f"“{sheet.title}”第{row.row_index}行", sheet, row.row_index, row.columns["评价测量技术"].header_col)
+                        manual.append((outgoing[0], " ".join(method.split()), where, len(names) > 1))
         if not read:
             # An empty scope proves no absence of manual checks.
             raise unable("控制计划中未读到评价测量技术行，尚不能确认出货检验/GP12工序是否有人工检测，需人工复核。")
@@ -294,7 +302,7 @@ class UaesMsaAgent(UaesExcelAgent):
         kappas = self.kappas(ctx)
         if not kappas:
             if all(between for *_rest, between in manual):
-                raise unable(f"控制计划{manual[0][2]}“{manual[0][0]}”采用{manual[0][1]}，同批次没有Kappa报告{open_}。")
+                raise unable(f"控制计划{self.named(manual[0][2])}“{manual[0][0]}”采用{manual[0][1]}，同批次没有Kappa报告{open_}。")
             self.need("Kappa报告")
             return "NG", "控制计划出货检验/GP12有人为检测，但同批次没有Kappa报告。"
         # "同零件号": exactly the control plan's part number; an unreadable one is "无法辨识则不通过".
@@ -306,14 +314,14 @@ class UaesMsaAgent(UaesExcelAgent):
             if any("综合检具" in report.names or _exact(method) in report.names for report in same):
                 continue
             if between:
-                raise unable(f"控制计划{where}“{operation}”采用{method}，同批次没有零件号为{part}、量具名称相同或为综合检具的Kappa报告{open_}。")
+                raise unable(f"控制计划{self.named(where)}“{operation}”采用{method}，同批次没有零件号为{part}、量具名称相同或为综合检具的Kappa报告{open_}。")
             if unknown:
                 unread = "、".join(report.where for report in unknown)
-                return "NG", f"控制计划{where}“{operation}”采用{method}，同批次Kappa报告{unread}未写零件号，无法辨识是否与控制计划零件号{part}相同，判不通过，请人工复核。"
+                return "NG", f"控制计划{self.named(where)}“{operation}”采用{method}，同批次Kappa报告{unread}未写零件号，无法辨识是否与控制计划零件号{part}相同，判不通过，请人工复核。"
             if unnamed := [report.where for report in same if not report.names]:
                 # A Kappa report read without any gauge name cannot be the same-name one: "无法辨识则不通过".
                 kappa = f"同批次零件号为{part}的Kappa文件{'、'.join(unnamed)}没有量具名称"
-                return "NG", f"控制计划{where}“{operation}”采用“{method}”检验；{kappa}，无法确认与控制计划的“{method}”检验是同一量具（量具名称相同或为综合检具），判不通过，请人工复核。"
+                return "NG", f"控制计划{self.named(where)}“{operation}”采用“{method}”检验；{kappa}，无法确认与控制计划的“{method}”检验是同一量具（量具名称相同或为综合检具），判不通过，请人工复核。"
             self.need("Kappa报告", part=part)
-            return "NG", f"控制计划{where}“{operation}”采用{method}，同批次没有零件号为{part}、量具名称相同或为综合检具的Kappa报告，请复审或提交kappa文件一起审核。"
+            return "NG", f"控制计划{self.named(where)}“{operation}”采用{method}，同批次没有零件号为{part}、量具名称相同或为综合检具的Kappa报告，请复审或提交kappa文件一起审核。"
         return "PASS", "控制计划出货检验/GP12的人为检测均有量具名称相同或为综合检具的Kappa报告。"

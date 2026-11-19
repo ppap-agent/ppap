@@ -145,3 +145,27 @@ def test_a_clause_failing_only_on_a_missing_original_names_the_original_to_suppl
     # A clause that also fails on the plan's own content is not reduced to supplying a file.
     header = agent.check(names.index("rule_6"))
     assert header.status == "NG" and header.supply is None
+
+
+def _cited(result):
+    import json
+
+    return [json.loads(source.locator)["cell"] for source in (result.evidence.sources if result.evidence else ())]
+
+
+def test_a_finding_cites_the_cells_its_basis_names(tmp_path):
+    rows = _traced(incoming="ALSI12FE")
+    rows[0][2] = None
+    resources = _check(tmp_path, rows, "rule_1")
+    assert resources.status == "NG" and "第2行" in resources.suggestions
+    assert _cited(resources) == ["C2"]
+    traceability = _check(tmp_path, rows, "rule_2")
+    assert traceability.status == "NG"
+    assert _cited(traceability) == ["G2"]
+
+
+def test_citing_cells_leaves_the_verdict_and_basis_as_they_were(tmp_path):
+    result = _check(tmp_path, _traced(), "rule_2")
+    assert result.status == "PASS"
+    assert result.suggestions.endswith("写明先进先出要求。")
+    assert _cited(result) == ["G4"]

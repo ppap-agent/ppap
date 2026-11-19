@@ -12,7 +12,7 @@ from typing import Any
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 
-from .excel import UaesExcelAgent, compact, original_name, unable
+from .excel import Place, UaesExcelAgent, compact, original_name, unable
 from .resources import combine, flowchart_counterpart, pfmea_counterpart, pgqp1, pgqp1_counterpart
 from .resources import control_plan as resources
 
@@ -241,11 +241,18 @@ class UaesControlPlanAgent(UaesExcelAgent):
             texts.append(value)
         return " ".join(texts)
 
+    def at(self, row: PlanRow, *names: str) -> str:
+        """The row's place for a basis; its cells in `names` become this clause's evidence."""
+        for name in names:
+            if row.sheet is not None and name in row.columns:
+                self.cite(row.sheet, row.row, row.columns[name])
+        return row.where
+
     def graphic_in_blank(self, rows: list[PlanRow], name: str) -> str | None:
         """Where a blank `name` cell of a PDF original is filled by a picture or strokes (or cannot be placed on its page)."""
         for row in rows:
             if compact(row.cells.get(name)) in _PLACEHOLDERS and name in row.columns and self.drawn(row.sheet, row.row, row.columns[name]) is not False:
-                return row.where
+                return self.at(row, name)
         return None
 
     def plan_column(self, ctx: RuleContext, name: str) -> bool:
@@ -271,7 +278,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
         """(value, place) of each label of `aliases`: after its colon, on its last line, right of it, or below it."""
         wanted = sorted((compact(alias) for alias in aliases), key=len, reverse=True)
         rows, width = self.extent(sheet)
-        found = []
+        found: list[tuple[str, str]] = []
         for cell in sheet.scan_non_empty(row_min=1, row_max=rows if last_row is None else min(rows, last_row), col_min=1, col_max=width):
             raw = unicodedata.normalize("NFKC", str(cell.value())).strip()
             match = re.match(r"(.*?)([:：])(.*)", raw, re.S)
@@ -280,7 +287,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
             alias = next((alias for alias in wanted if alias in label and not _has_cjk(label.replace(alias, "", 1))), None)
             if alias is None:
                 continue
-            place = f"“{sheet.title}”{cell.ws.cell(cell.row_index, cell.col_index).coordinate}"
+            place = Place.of(f"“{sheet.title}”{cell.ws.cell(cell.row_index, cell.col_index).coordinate}", sheet, cell.row_index, cell.col_index)
             if colon and right.strip():
                 found.append((right.strip(), place))
                 continue
@@ -438,16 +445,17 @@ class UaesControlPlanAgent(UaesExcelAgent):
         open_: list[str] = []
         for (name, _start), items in operations.items():
             if not any(written(item) for item in items):
-                label = f"“{' '.join(name.split())}”（{items[0].where}起）"
+                label = f"“{' '.join(name.split())}”（{self.at(items[0], 'CP生产资源')}起）"
                 (open_ if any(name in item.candidates for item in between) else lacking).append(label)
         if lacking:
             # A PDF converts text only: a resource drawn into the cell is not an empty cell.
             if where := self.graphic_in_blank([item for (name, start), items in operations.items() for item in items], "CP生产资源"):
                 raise unable(f"控制计划{where}生产资源格内有图形或无法对应原页位置，检查程序未能读取其内容，需人工复核。")
-            note = f"；另{'、'.join(open_)}本身各行为空，{between[0].where}的生产资源夹在两个工序之间、原件未画分隔线，归属待人工确认" if open_ else ""
+            note = f"；另{'、'.join(open_)}本身各行为空，{self.at(between[0], 'CP生产资源')}的生产资源夹在两个工序之间、原件未画分隔线，归属待人工确认" if open_ else ""
             return "NG", f"控制计划共{len(operations)}个工序，其中{len(lacking)}个工序的生产资源列为空：{'、'.join(lacking[:12])}{'等' if len(lacking) > 12 else ''}{note}。"
         if open_:
-            raise unable(f"控制计划{'、'.join(open_)}本身各行的生产资源为空；{between[0].where}写有生产资源，但位于两个工序名称之间且原件没有分隔线，检查程序不能确定它属于哪一工序，需人工复核。")
+            shared = self.at(between[0], "CP生产资源")
+            raise unable(f"控制计划{'、'.join(open_)}本身各行的生产资源为空；{shared}写有生产资源，但位于两个工序名称之间且原件没有分隔线，检查程序不能确定它属于哪一工序，需人工复核。")
         return "PASS", f"控制计划全部{len(operations)}个工序都写明了生产资源。"
 
     @rule("生产追溯及先进先出实际措施")
@@ -469,18 +477,18 @@ class UaesControlPlanAgent(UaesExcelAgent):
             if any(word in spec(row) for row in mine for word in _TRACE):
                 continue
             if any(word in spec(row) for row in shared for word in _TRACE):
-                open_.append(f"{stage}环节的追溯标识只写在{shared[0].where}等行，这些行位于两个工序之间且原件没有分隔线")
+                open_.append(f"{stage}环节的追溯标识只写在{self.at(shared[0], 'CP规格公差')}等行，这些行位于两个工序之间且原件没有分隔线")
             elif not mine and not shared:
                 problems.append(f"控制计划中没有识别出{stage}环节的工序")
             else:
-                where = f"（{mine[0].where}起）" if mine else ""
+                where = f"（{self.at(mine[0], 'CP规格公差')}起）" if mine else ""
                 problems.append(f"{stage}环节{where}的“产品/过程规格/公差”列没有写明追溯标识方式")
                 unread += mine
         fifo = [row for row in rows if any(word in spec(row) for word in _FIFO)]
         if not fifo:
             limits = [row for row in rows if any(word in spec(row) for word in _STORAGE_LIMIT)]
             if limits:
-                problems.append(f"“产品/过程规格/公差”列只写了存放时限（{limits[0].where}“{self.spanned(limits[0], 'CP规格公差')}”），不算先进先出要求")
+                problems.append(f"“产品/过程规格/公差”列只写了存放时限（{self.at(limits[0], 'CP规格公差')}“{self.spanned(limits[0], 'CP规格公差')}”），不算先进先出要求")
             else:
                 problems.append("“产品/过程规格/公差”列没有写明先进先出要求")
         if problems:
@@ -490,7 +498,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
             return "NG", "；".join(problems) + "。"
         if open_:
             raise unable("；".join(open_) + "，检查程序不能确定其归属，需人工复核。")
-        return "PASS", f"控制计划进料、出入库、出货环节的“产品/过程规格/公差”列均写明追溯标识方式，{fifo[0].where}写明先进先出要求。"
+        return "PASS", f"控制计划进料、出入库、出货环节的“产品/过程规格/公差”列均写明追溯标识方式，{self.at(fifo[0], 'CP规格公差')}写明先进先出要求。"
 
     def plan_type(self, ctx: RuleContext) -> tuple[list[str], list[str], str]:
         """(checked options, options whose mark is unreadable, where): a form checkbox or marks written in a cell."""
@@ -514,6 +522,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
                 lead = raw[: raw.find(options[0][0])]
                 unseen = [lead.strip()] if _stage(lead) else []
                 checked = [text.strip() for mark, text in options if mark not in _UNCHECKED]
+                self.cite(sheet, cell.row_index, cell.col_index)
                 return checked, unseen, f"“{sheet.title}”{cell.ws.cell(cell.row_index, cell.col_index).coordinate}"
         return [], [], ""
 
@@ -589,7 +598,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
             if where := self.graphic_in_blank(rows, "CP特殊特性"):
                 raise unable(f"控制计划{where}特性类型格内有图形或无法对应原页位置，检查程序未能读取标记，需人工复核。")
             return "NG", f"控制计划“特性类型/特殊特性”列在全部{len(rows)}个特性行中均没有特性标记。"
-        examples = "、".join(f"{row.where}“{row.cells['CP特殊特性']}”" for row in marked[:3])
+        examples = "、".join(f"{self.at(row, 'CP特殊特性')}“{row.cells['CP特殊特性']}”" for row in marked[:3])
         return "PASS", f"控制计划“特性类型/特殊特性”列有{len(marked)}行写有特性标记，如{examples}。"
 
     @rule("跑道尺寸过程能力控制")
@@ -612,7 +621,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
             unnamed = [
                 row for row in rows if not filled(row, "CP产品特性", "CP过程特性") and filled(row, "CP特殊特性") and filled(row, "CP规格公差") and any(_manufacturing(name) for name in row.owners())
             ]
-            note = f"另有{len(unnamed)}行标有特殊特性、只写了规格/公差而特性列为空（如{unnamed[0].where}），" if unnamed else ""
+            note = f"另有{len(unnamed)}行标有特殊特性、只写了规格/公差而特性列为空（如{self.at(unnamed[0], 'CP规格公差')}），" if unnamed else ""
             return "UNABLE", f"未发现跑道尺寸，请核实：控制计划加工/制造工序中没有特性、特殊特性、规格/公差三列均有内容的尺寸类特性行，{note}需人工确认该零件的跑道尺寸。"
         lacking = [row for row in racetracks if not any(term in compact(self.spanned(row, "评价测量技术", "CP频率", "CP控制方法")) for term in _CAPABILITY)]
         if not lacking:
@@ -620,11 +629,11 @@ class UaesControlPlanAgent(UaesExcelAgent):
         # A row drawn between a manufacturing operation and an inspection may belong to the inspection.
         certain = [row for row in lacking if all(_manufacturing(name) for name in row.owners())]
         if not certain:
-            raise unable(f"缺少过程能力管控的尺寸行（{lacking[0].where}等）位于加工/制造工序与检验等工序之间且原件没有分隔线，检查程序不能确定其归属，需人工复核。")
+            raise unable(f"缺少过程能力管控的尺寸行（{self.at(lacking[0], 'CP控制方法')}等）位于加工/制造工序与检验等工序之间且原件没有分隔线，检查程序不能确定其归属，需人工复核。")
         lacking = certain
         if where := self.graphic_in_blank(lacking, "CP控制方法"):
             raise unable(f"控制计划{where}控制方法格内有图形或无法对应原页位置，检查程序未能读取，需人工复核。")
-        listed = "、".join(f"{row.where}“{self.spanned(row, 'CP产品特性', 'CP过程特性').strip()}”" for row in lacking[:8])
+        listed = "、".join(f"{self.at(row, 'CP控制方法')}“{self.spanned(row, 'CP产品特性', 'CP过程特性').strip()}”" for row in lacking[:8])
         return "NG", f"控制计划加工/制造工序共{len(racetracks)}个跑道尺寸行，其中{len(lacking)}行的评价测量技术/频率/控制方法没有SPC、控制图或Cpk/Ppk管控：{listed}{'等' if len(lacking) > 8 else ''}。"
 
     @rule("CP身份字段图纸身份及最后更改日期")
@@ -649,7 +658,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
             if not found:
                 (unknown if pdf else absent).append(label)
             elif "日期" not in label and all(compact(value) in _PLACEHOLDERS for value, _place in found):
-                failures.append(f"{label}（{found[0][1]}）为“{found[0][0] or '空'}”")
+                failures.append(f"{label}（{self.named(found[0][1])}）为“{found[0][0] or '空'}”")
         if absent:
             failures.insert(0, f"表头缺少{'、'.join(absent)}字段")
         if unknown:
@@ -769,6 +778,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
                     for name in ("U08流程产品特性", "U08流程过程特性"):
                         value = str(row.value(name) or "").strip() if name in row.columns else ""
                         if value and not _written(value, text):
+                            self.cite(sheet, row.row_index, row.columns[name].header_col)
                             gaps.append(f"过程流程图第{row.row_index}行“{' '.join(value.split())}”")
         with self.reading(ctx, found[_PFMEA], pfmea_counterpart):
             for sheet in self.counterpart_sheets(ctx, "U08PFMEA", "PFMEA"):
@@ -779,24 +789,25 @@ class UaesControlPlanAgent(UaesExcelAgent):
                         continue
                     value = str(sheet.cell(row.row_index, column.header_col).value() or "").strip()
                     if value and not _written(value, text):
+                        self.cite(sheet, row.row_index, column.header_col)
                         gaps.append(f"PFMEA第{row.row_index}行“{' '.join(value.split())}”")
         for name, spec, where in self.important(ctx, found[_PGQP1]):
             if not _written(spec, text) and not _written(name, text):
-                gaps.append(f"PGQP1{where}“{name} {spec}”")
+                gaps.append(f"PGQP1{self.named(where)}“{name} {spec}”")
         if gaps:
             return "NG", f"以下特殊/重要特性未在控制计划产品、过程、产品/过程规格/公差列出现：{'、'.join(gaps[:15])}{'等' if len(gaps) > 15 else ''}。"
         return "PASS", "过程流程图、PFMEA、PGQP1的被标识特性都在控制计划产品、过程、规格/公差列出现。"
 
     def important(self, ctx: RuleContext, plan: Any) -> list[tuple[str, str, str]]:
         """(item, specification, place) of each PGQP1 important characteristic."""
-        items = []
+        items: list[tuple[str, str, str]] = []
         with self.reading(ctx, plan, pgqp1):
             for sheet in Table(ctx).find_sheets("PGQP1", on_missing=Decision.IGNORE):
                 for row in self.section(sheet, "重要特性区").rows("特性项目", "特殊特性"):
                     name, spec = str(row.value("特性项目") or "").strip(), str(row.value("特殊特性") or "").strip()
                     # The heading repeated after a page break reads as a row without a specification.
                     if name and spec and any(char.isdigit() for char in spec):
-                        items.append((name, spec, f"第{row.row_index}行"))
+                        items.append((name, spec, Place.of(f"第{row.row_index}行", sheet, row.row_index, row.columns["特性项目"].header_col)))
         return items
 
     def plan_only(self, ctx: RuleContext) -> tuple[Any | None, str]:
@@ -836,21 +847,21 @@ class UaesControlPlanAgent(UaesExcelAgent):
         missing = [(name, spec, where) for name, spec, where in dimensions if not _written(spec, text) and not _written(name, text)]
         if missing and all(_written(spec, maybe) or _written(name, maybe) for name, spec, _where in missing):
             listed = "、".join(f"“{name} {spec}”" for name, spec, _where in missing[:8])
-            raise unable(f"PGQP1尺寸类特性{listed}只出现在{between[0].where}等行，这些行位于出货检验与相邻工序之间且原件没有分隔线，检查程序不能确定其归属，需人工复核。")
+            raise unable(f"PGQP1尺寸类特性{listed}只出现在{self.at(between[0], 'CP产品特性')}等行，这些行位于出货检验与相邻工序之间且原件没有分隔线，检查程序不能确定其归属，需人工复核。")
         missing = [item for item in missing if not (_written(item[1], maybe) or _written(item[0], maybe))]
-        absent = [f"{where}“{name} {spec}”" for name, spec, where in missing]
-        differ = [f"{where}“{name} {spec}”" for name, spec, where in dimensions if not _written(spec, text) and _written(name, text)]
+        absent = [f"{self.named(where)}“{name} {spec}”" for name, spec, where in missing]
+        differ = [f"{self.named(where)}“{name} {spec}”" for name, spec, where in dimensions if not _written(spec, text) and _written(name, text)]
         if absent:
             extra = f"；另{len(differ)}项名称出现但规格写法与PGQP1不同：{'、'.join(differ[:5])}" if differ else ""
             listed = "、".join(absent[:15]) + ("等" if len(absent) > 15 else "")
-            return "NG", f"PGQP1共{len(dimensions)}项尺寸类特性，其中{len(absent)}项未在控制计划出货检验工序（{outgoing[0].where}起）出现：{listed}{extra}。"
+            return "NG", f"PGQP1共{len(dimensions)}项尺寸类特性，其中{len(absent)}项未在控制计划出货检验工序（{self.at(outgoing[0], '工序名称')}起）出现：{listed}{extra}。"
         if differ:
             raise unable(f"PGQP1尺寸类特性名称均在控制计划出货检验工序出现，但{len(differ)}项规格写法与PGQP1不同：{'、'.join(differ[:8])}，需人工复核是否一致。")
         return "PASS", f"PGQP1全部{len(dimensions)}项尺寸类特性都在控制计划出货检验工序出现。"
 
     def product_audit(self, ctx: RuleContext, plan: Any) -> list[tuple[str, str, str]]:
         """(item, content, place) of each row of the PGQP1 product audit list, found by its title."""
-        rows = []
+        rows: list[tuple[str, str, str]] = []
         with self.reading(ctx, plan, pgqp1):
             for sheet in Table(ctx).find_sheets("PGQP1", on_missing=Decision.IGNORE):
                 height, width = self.extent(sheet)
@@ -868,7 +879,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
                     item = str(sheet.cell(row, head.col_index).value() or "").strip()
                     text = str(sheet.cell(row, content.col_index).value() or "").strip() if content is not None else ""
                     if item or text:
-                        rows.append((item, text, f"“{sheet.title}”第{row}行"))
+                        rows.append((item, text, Place.of(f"“{sheet.title}”第{row}行", sheet, row, head.col_index)))
         return rows
 
     @rule("PGQP1产品审核型式试验覆盖")
@@ -884,7 +895,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
             listed = "、".join(item or text for item, text, _where in audit)
             return "PASS", f"PGQP1产品审核要求（{listed}）中没有型式试验内容，无需在控制计划中定义。"
         text = self.characteristics(ctx)
-        absent = [f"{where}“{item or content}”" for item, content, where in tests if not _written(item or content, text)]
+        absent = [f"{self.named(where)}“{item or content}”" for item, content, where in tests if not _written(item or content, text)]
         if absent:
             return "NG", f"PGQP1产品审核要求的型式试验未在控制计划产品、过程、规格/公差列出现：{'、'.join(absent)}。"
         return "PASS", f"PGQP1产品审核要求的{len(tests)}项型式试验都在控制计划中有定义。"
