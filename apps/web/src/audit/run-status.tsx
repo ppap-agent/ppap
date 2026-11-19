@@ -2,7 +2,6 @@ import {BookOpen, Check, FileCode2, FileSpreadsheet, FileText, Image, ImageUp, t
 import {Badge} from '../components/ui/badge'
 import {Progress} from '../components/ui/progress'
 import type {components} from '../generated/openapi'
-import {FileName} from '../journey/file-name'
 import {PixelLoader} from './live-progress'
 import type {LiveSteps, StepRow} from './live-steps'
 import type {ActivityAction} from './task-events'
@@ -66,7 +65,8 @@ export function RunStatus({run, deep, name, steps}: {run: Run & {file_version_id
       <div className="flex min-w-0 items-center gap-2.5">
         <Badge shape="square" variant={preparing ? 'outline' : 'info'}>{preparing ? '准备' : '审核'}</Badge>
         {preparing && <PixelLoader/>}
-        <p role="status" className="flex min-w-0 items-center text-sm"><span className="shrink-0">{before}</span><span className="shrink-0">《</span><FileName truncate className="min-w-0 font-medium" name={name}/><span className="shrink-0">》{after}</span></p>
+        {/* One sentence that truncates as a whole; the full sentence, file name included, is its hover text. */}
+        <p role="status" className="min-w-0 truncate text-sm" title={`${before}《${name}》${after}`}>{before}《<span className="font-medium">{name}</span>》{after}</p>
       </div>
       <p className="shrink-0 text-sm tabular-nums text-muted-foreground">进度 <span className="font-semibold text-foreground">{run.index}</span>/{run.total}</p>
     </div>
