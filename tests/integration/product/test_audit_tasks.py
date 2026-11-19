@@ -17,8 +17,8 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from product import build_product_store
 from product.feishu import UserTokens
-from product.fixtures import RULE_A
-from product.identity import SESSION_COOKIE
+from product.fixtures import RULE_A, TENANT_B, USER_CAROL
+from product.identity import SESSION_COOKIE, Principal
 from product.settings import Settings
 from product.store.store import AuthStore
 from product.store.suite_releases import SuiteReleaseStore
@@ -463,6 +463,86 @@ def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, a
         assert document["document_type"] == expected["match"]["document_type"] is None
         assert archive.json()["customers"] == []
         assert archive.json()["categories"][0]["label"] == "其他"
+
+
+class NoPartNameAI(MetadataAI):
+    """Recognizes the file but not its part name, so the precheck warns W02 on it."""
+
+    def __call__(self, operation, **request):
+        if operation == "document_classification":
+            return super().__call__(operation, **request)
+        return AIResult({"customer": "测试客户", "model": "M1", "part": "", "part_number": "P-1"})
+
+
+@pytest.fixture
+def warned_task(task_system, core_system, auth_store_factory):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    rule = publish_rule(client, file)
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file]}).json()
+    process_claimed(worker, worker.claim_job("precheck-recognition"), "precheck-recognition", rule_ai=NoPartNameAI())
+    core_system.adopt(worker, rule["id"], PART_NUMBER_CHECKER)
+    migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
+    return client, worker, migrator, f"/audit-tasks/{task['id']}", file["file_version_id"]
+
+
+def frozen_precheck(migrator, task_path):
+    with migrator._conn() as conn:
+        return conn.execute("SELECT id, tenant_id, precheck FROM product.audit_rounds WHERE source_draft_id = %s", (task_path.rsplit("/", 1)[1],)).fetchall()
+
+
+def test_acceptance_freezes_the_precheck_and_every_later_read_uses_it(warned_task):
+    client, worker, migrator, path, version = warned_task
+    shown = client.get(path + "/precheck").json()
+    warning = next(item for item in shown["warnings"] if item["file_version_id"] == version and item["code"] == "W02")
+    command = confirmation_command(client, path, 0)
+    assert client.post(path + "/confirm", json=command).status_code == 201
+    [(round_id, _tenant, snapshot)] = frozen_precheck(migrator, path)
+    # The snapshot is what P3 showed when the audit was confirmed, with its cover values and time.
+    assert snapshot["precheck"] == shown and snapshot["recognition"]["part_number"] == "P-1" and snapshot["generated_at"]
+    # Every later read is the frozen one, never a recomputation: mark the snapshot and read it back.
+    with migrator._conn() as conn:
+        conn.execute(
+            "UPDATE product.audit_rounds SET precheck = jsonb_set(precheck, '{precheck,warnings,0,problem}', to_jsonb('冻结标记'::text)) WHERE id = %s",
+            (round_id,),
+        )
+    marked = client.get(path + "/precheck").json()
+    assert marked["warnings"][0]["problem"] == "冻结标记"
+    assert client.get(path + "/precheck/report").status_code == 200
+    # A replayed confirmation neither creates another Round nor refreezes the snapshot.
+    assert client.post(path + "/confirm", json=command).status_code == 201
+    assert [(row[0], row[2]["precheck"]) for row in frozen_precheck(migrator, path)] == [(round_id, marked)]
+    # The snapshot stays inside its tenant.
+    api = build_product_store(worker.settings, objects=worker.objects, role="api")
+    assert api.round_precheck(Principal(USER_CAROL, TENANT_B, "", "", "", "", "member"), round_id) is None
+    assert client.post("/isolated-dev/sessions", json={"subject": "carol"}).status_code == 200
+    assert client.get(path + "/precheck").status_code == 403
+    assert client.get(path + "/precheck/report").status_code == 403
+    assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
+    # The audit report (worker role) carries the audited file's frozen warnings in its C class.
+    process_claimed(worker, worker.claim_job("precheck-audit"), "precheck-audit")
+    report_job = worker.claim_job("precheck-pdf")
+    assert report_job.kind == "report_pdf"
+    carried = report_job.payload["report_input"]["precheck_warnings"]
+    assert [item["code"] for item in carried] == [item["code"] for item in marked["warnings"] if item["file_version_id"] == version]
+    assert carried[0]["problem"] == "冻结标记" and warning["code"] == "W02"
+    process_claimed(worker, report_job, "precheck-pdf")
+    assert client.get(path).json()["files"][0]["audit"]["report"]["state"] == "ready"
+
+
+def test_a_round_without_a_precheck_snapshot_still_gets_its_report(warned_task):
+    client, worker, migrator, path, _version = warned_task
+    assert client.post(path + "/confirm", json=confirmation_command(client, path, 0)).status_code == 201
+    # Rounds accepted before snapshots existed have none.
+    with migrator._conn() as conn:
+        conn.execute("UPDATE product.audit_rounds SET precheck = NULL WHERE source_draft_id = %s", (path.rsplit("/", 1)[1],))
+    process_claimed(worker, worker.claim_job("legacy-audit"), "legacy-audit")
+    report_job = worker.claim_job("legacy-pdf")
+    assert report_job.kind == "report_pdf" and report_job.payload["report_input"]["precheck_warnings"] == []
+    process_claimed(worker, report_job, "legacy-pdf")
+    assert client.get(path).json()["files"][0]["audit"]["report"]["state"] == "ready"
+    # Its precheck page still reads the task as it stands.
+    assert client.get(path + "/precheck").status_code == 200
 
 
 @pytest.mark.parametrize("report_state", ["pending", "ready"])

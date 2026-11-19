@@ -14,7 +14,7 @@ import re
 import unicodedata
 from collections import Counter, defaultdict
 from functools import lru_cache
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from product.precheck_content import entry_key
 
@@ -76,13 +76,6 @@ PEER_NAMES = {"T09": "过程流程图", "T10": "PFMEA", "T11": "控制计划", "
 # A placeholder or a label is not a part number that can pair two files.
 _NO_IDENTITY = {"", "/", "\\", "-", "--", "—", "——", "n/a", "na", "none", "null", "tbd", "xx", "xxx", "xxxx", "?", "无", "待填", "待定", "待确认", "未填写"}
 _NO_IDENTITY |= {"零件号", "零件编号", "partnumber", "partno", "partno."}
-# Version tokens that differ between drafts of one document: V1.2, v3, 20261108, 23.12.18, (1), 副本, 最新.
-_VERSION = re.compile(r"(?i)(?:[-_\s]*(?:v|rev|版本)\s*\d+(?:\.\d+)*)|(?:[-_\s]*\d{8})|(?:[-_\s]*\d{2}\.\d{1,2}\.\d{1,2})|(?:\s*\(\d+\))|(?:[-_\s]*(?:副本|最新|终版|final))")
-
-
-def _stem(name: str) -> str:
-    base = name.rsplit(".", 1)[0] if "." in name else name
-    return re.sub(r"[-_\s]+", "-", _VERSION.sub("", base)).strip("-").lower()
 
 
 def _finding(code: str, level: str, file: dict, problem: str, evidence: str, action: str, side: str, location: str = "") -> dict:
@@ -142,6 +135,58 @@ def _part(row: dict) -> str | None:
     value = ((row.get("match") or {}).get("metadata") or {}).get("part_number")
     text = "".join(unicodedata.normalize("NFKC", str(value or "")).split()).casefold().rstrip(":：")
     return None if text in _NO_IDENTITY else text
+
+
+def named_by_user(row: dict) -> bool:
+    """The user chose this file's rule by hand on P3 and it is the rule the file is matched to; recognition alone never is."""
+    preferred = row.get("preferred_rule_version_id")
+    return bool(preferred) and ((row.get("match") or {}).get("rule") or {}).get("id") == preferred
+
+
+def _grids(content: bytes, filename: str) -> dict[str, list[list[str]]] | None:
+    """Each worksheet's cell values by sheet name; None when the file is not a readable spreadsheet."""
+    from product.precheck_reading import read_document
+
+    doc = read_document(content, filename)
+    return {grid.name: grid.rows for grid in doc.grids} if doc.kind == "xlsx" and not doc.error else None
+
+
+def _cell_differences(first: dict[str, list[list[str]]], other: dict[str, list[list[str]]]) -> list[str]:
+    from openpyxl.utils import get_column_letter
+
+    found = []
+    for sheet in dict.fromkeys([*first, *other]):
+        if sheet not in first or sheet not in other:
+            found.append(f"工作表「{sheet}」只在{'第 1 份' if sheet in first else '另一份'}中")
+            continue
+        a, b = first[sheet], other[sheet]
+        for r in range(max(len(a), len(b))):
+            left, right = a[r] if r < len(a) else [], b[r] if r < len(b) else []
+            for c in range(max(len(left), len(right))):
+                x, y = left[c] if c < len(left) else "", right[c] if c < len(right) else ""
+                if x != y:
+                    found.append(f"{sheet}!{get_column_letter(c + 1)}{r + 1}：{x or '(空)'} → {y or '(空)'}")
+    return found
+
+
+def _duplicate_evidence(rows: list[dict], read: Callable[[dict], bytes] | None) -> str:
+    """附件 R-03: whether the copies agree only decides how the evidence reads, never the B02 itself."""
+    count, name = len(rows), rows[0]["file"]["original_filename"]
+    digests = [row["file"].get("sha256") for row in rows]
+    if all(digests) and len(set(digests)) == 1:
+        return f"{count} 份同名文件「{name}」逐字节相同"
+    try:
+        grids = [_grids(read(row), name) for row in rows] if read else None
+    except Exception:  # noqa: BLE001 - an unreadable copy leaves the content uncompared, never guessed
+        grids = None
+    sheets = [grid for grid in grids or [] if grid is not None]
+    if not grids or len(sheets) != len(grids):
+        return f"{count} 份同名文件「{name}」字节不同，内容未逐格比对"
+    differences = {index: _cell_differences(sheets[0], grid) for index, grid in enumerate(sheets[1:], 2)}
+    if not any(differences.values()):
+        return f"{count} 份同名文件「{name}」为另存／重存副本：各工作表单元格取值逐格相同"
+    parts = [f"第 1 份与第 {index} 份共 {len(found)} 处不同：" + "；".join(found) for index, found in differences.items() if found]
+    return f"{count} 份同名文件「{name}」为同一对象的{'两' if count == 2 else f' {count} '}个版本，" + "；".join(parts)
 
 
 def _counterparts(targets: list[tuple[dict, str, str]], files: list[dict], codes: dict[str, str | None]) -> tuple[list[dict], list[dict]]:
@@ -223,12 +268,13 @@ def _coverage(row: dict, entry: str, criteria: list[dict] | None) -> list[dict]:
     return [{"code": "S06", "scope": "content", "file_version_id": row["file"]["id"], "filename": row["file"]["original_filename"], "note": note, "coverage": {"judged": judged, "total": total}}]
 
 
-def unreviewed_count(statuses: list[dict]) -> int:
-    """未审条数: criteria that should have been decided and were not (S03/S04/S05/S07 one each, S06 its open criteria)."""
-    return sum(status["coverage"]["total"] - status["coverage"]["judged"] if status["code"] == "S06" else 1 for status in statuses if status["code"] in UNREVIEWED)
+def unreviewed_count(statuses: list[dict], unread: int = 0) -> int:
+    """未审条数: criteria that should have been decided and were not (S03/S04/S05/S07 one each, S06 its open criteria),
+    plus ``unread`` criteria the precheck had no means to read (总纲 §3.1 硬约束 4 注「执行方能力不足」), which carry no S06."""
+    return unread + sum(status["coverage"]["total"] - status["coverage"]["judged"] if status["code"] == "S06" else 1 for status in statuses if status["code"] in UNREVIEWED)
 
 
-def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None = None) -> dict[str, Any]:
+def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None = None, read: Callable[[dict], bytes] | None = None) -> dict[str, Any]:
     """Return the precheck of a task: findings, statuses, per-file level and batch conclusion.
 
     ``content`` maps a file version id to its ``precheck_content`` results; their 不满足 items become findings
@@ -242,7 +288,12 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
     carries the facts in ``source_mismatch`` and never blocks the file. A criterion handed to the formal audit
     is S03; a routed entry not fully decided is S06 with its ``coverage``. ``unreviewed`` counts what should
     have been decided and was not (S03–S07; S01/S02 never). S05 has no applicable entry in this period
-    (00-A v1.13 §0 纪律 4: a missing key column is B05), so it is never stated.
+    (00-A v1.13 §0 纪律 4: a missing key column is B05), so it is never stated. Criteria the original could not
+    be read for (``unread``) are no S06 but count in ``unreviewed``.
+
+    Several versions (附件 R-03, 用户裁定): two or more submitted files of one recognized part with the very same
+    file name are each B02. ``read`` (a task file row -> its bytes) lets the evidence say whether they are
+    byte-identical, saved copies with equal cell values, or two versions with their differing cells.
     """
     files = [row for row in task.get("files", []) if row.get("selection") == "selected"]
     findings: list[dict] = []
@@ -317,18 +368,18 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
         peer_statuses, peer_findings = _counterparts(targets, files, codes)
         statuses.extend(peer_statuses)
         findings.extend(peer_findings)
-    # Several drafts of one document in one batch leave no single valid version.
+    # 附件 R-03: one part, the very same file name, two or more copies → every copy is B02; no copy is the original.
     groups: dict[tuple, list[dict]] = defaultdict(list)
     replaced = {row.get("replacement_of_file_version_id") for row in files} - {None}
     for row in files:
-        match = row.get("match") or {}
-        if match.get("state") == "matched" and row["file"]["id"] not in replaced:
-            groups[(match.get("document_type"), _stem(row["file"]["original_filename"]))].append(row)
+        if (row.get("match") or {}).get("state") == "matched" and row["file"]["id"] not in replaced and (part := _part(row)):
+            groups[(part, row["file"]["original_filename"])].append(row)
     for rows in groups.values():
         if len(rows) > 1:
-            names = "、".join(row["file"]["original_filename"] for row in rows)
+            evidence = _duplicate_evidence(rows, read)
+            problem = f"同一零件提交了 {len(rows)} 份同名文件，无法确定以哪一份为准。"
             for row in rows:
-                findings.append(_finding("B02", "block", row, "同一文件的多个版本同时提交，无法确定以哪一份为准。", names, "只保留最新有效版本，移除其余版本后再开始审核。", "提交方"))
+                findings.append(_finding("B02", "block", row, problem, evidence, "只保留一份有效文件，移除其余同名文件后再开始审核。", "提交方"))
     by_file: dict[str, str] = {}
     for item in findings:
         current = by_file.get(item["file_version_id"])
@@ -344,6 +395,7 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
         item["number"] = f"B-{index:02d}"
     for index, item in enumerate(warnings, 1):
         item["number"] = f"W-{index:02d}"
+    unread = sum(1 for file_version_id, entry in entries.items() if entry for item in (content or {}).get(file_version_id, []) if item.get("unread") and item["result"] not in UNDECIDED_BY_DESIGN)
     conclusion = "not_run" if not files or pending else "fail" if blocks else "pass"
     rows = [
         {
@@ -365,6 +417,6 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
         "blocks": blocks,
         "warnings": warnings,
         "statuses": statuses,
-        "unreviewed": unreviewed_count(statuses),
+        "unreviewed": unreviewed_count(statuses, unread),
         "counts": {level: counts.get(level, 0) for level in ("ok", "warn", "block", "unmatched", "reference", "pending")},
     }

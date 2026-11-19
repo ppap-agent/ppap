@@ -3699,7 +3699,9 @@ class AuthStore:
                 return True
 
     def _queue_file_reports(self, conn, claimed: ClaimedJob, result: dict) -> None:
-        head = conn.execute("SELECT source_draft_id FROM product.audit_rounds WHERE id = %s AND tenant_id = %s", (claimed.round_id, claimed.tenant_id)).fetchone()
+        from product.precheck_snapshot import file_warnings
+
+        head = conn.execute("SELECT source_draft_id, precheck FROM product.audit_rounds WHERE id = %s AND tenant_id = %s", (claimed.round_id, claimed.tenant_id)).fetchone()
         if not head or not head[0] or not conn.execute("SELECT id FROM product.audit_drafts WHERE id = %s AND task_fingerprint IS NOT NULL", (head[0],)).fetchone():
             return
         rows = conn.execute(
@@ -3754,6 +3756,9 @@ class AuthStore:
                     # Frozen recognition, never later display corrections.
                     "recognition": recognition.get(frozen["file_version_id"], dict.fromkeys(DISPLAY_FIELDS)),
                     "audited_at": audited_at,
+                    # The audited file's own warnings in the precheck frozen at acceptance join the report's
+                    # C class (PRD §2.11 四); a Round accepted before the snapshot existed has none.
+                    "precheck_warnings": file_warnings(head[1], frozen["file_version_id"]),
                 },
             }
             conn.execute(
@@ -3761,31 +3766,6 @@ class AuthStore:
                 VALUES (%s, %s, %s, 'report_pdf', %s, 'queued') ON CONFLICT DO NOTHING""",
                 (uuid.uuid4(), claimed.tenant_id, claimed.round_id, Jsonb(payload)),
             )
-
-    def frozen_precheck_warnings(self, tenant_id: str, task_id: str, file_version_id: str) -> list[dict]:
-        """The audited file's own precheck warnings (W01～W06) on the accepted Task, read as the precheck page reads
-        them for the Task's creator; the audit report carries them as C-class problems. No model call, no write."""
-        from product.precheck import precheck_task
-        from product.precheck_content import entry_key, precheck_content
-
-        with self._conn() as conn:
-            row = conn.execute("SELECT created_by FROM product.audit_drafts WHERE id = %s AND tenant_id = %s AND task_fingerprint IS NOT NULL", (task_id, tenant_id)).fetchone()
-        if not row:
-            raise KeyError("missing")
-        creator = Principal(str(row[0]), str(tenant_id), "", "", "", "", "member")
-        task = self.get_audit_task(creator, task_id)
-        content = {}
-        target = next((item for item in task.get("files", []) if item["file"]["id"] == file_version_id), None)
-        match = (target or {}).get("match") or {}
-        customer = (match.get("metadata") or {}).get("customer") or task.get("customer_preference")
-        key = entry_key(customer, match.get("document_type"))
-        if target and key and target.get("selection") == "selected" and match.get("state") == "matched" and not target.get("reference_only"):
-            version = self.read_file_version(creator, target["file"]["file_id"], file_version_id)
-            try:
-                content[file_version_id] = precheck_content(self.version_bytes(version), version.original_filename, key, customer=customer)
-            except Exception:  # noqa: BLE001 - as on the precheck page, an unreadable file keeps only its file-level warnings
-                pass
-        return [item for item in precheck_task(task, content)["warnings"] if item["file_version_id"] == file_version_id]
 
     def _frozen_recognition(self, conn, task_id: str) -> dict[str, dict]:
         """Recognized file information of the accepted Task; corrections are separate."""
@@ -4335,6 +4315,7 @@ class AuthStore:
             raise ValueError("idempotency_conflict")
         draft_status = None
         deep_mode = False
+        precheck_task_view: dict | None = None
         recognized_metadata: dict[str, dict] = {}
         recognized_types: dict[str, str | None] = {}
         if source_draft_id:
@@ -4365,6 +4346,8 @@ class AuthStore:
                     raise ValueError("draft_already_accepted")
                 deep_mode = bool(owned["deep_mode"])
                 task = self._recognition_public(conn, principal, source_draft_id)
+                # The precheck freezes the task as confirmed, before unmatched files leave the audit.
+                precheck_task_view = task
                 selected = [row for row in task["files"] if row["selection"] == "selected"]
                 recognized_metadata = {row["file"]["id"]: dict((row.get("match") or {}).get("metadata") or {}) for row in selected}
                 recognized_types = {row["file"]["id"]: (row.get("match") or {}).get("document_type") for row in selected}
@@ -4458,6 +4441,7 @@ class AuthStore:
             # Standard payloads stay byte-identical; only deep jobs name a mode.
             execution_payload["analysis_mode"] = "deep"
         self._check_usage_policy(conn, principal, usage_policy)
+        precheck = self._freeze_precheck(principal, precheck_task_view) if precheck_task_view is not None else None
         job_id = str(uuid.uuid4())
         conn.execute(
             "INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'audit_round')",
@@ -4468,9 +4452,9 @@ class AuthStore:
             INSERT INTO product.audit_rounds (
                 id, tenant_id, created_by, source_draft_id, predecessor_id,
                 idempotency_key,
-                request_fingerprint, execution, deep_mode
+                request_fingerprint, execution, deep_mode, precheck
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 round_id,
@@ -4482,6 +4466,7 @@ class AuthStore:
                 fingerprint,
                 EXEC_QUEUED,
                 deep_mode,
+                Jsonb(precheck) if precheck is not None else None,
             ),
         )
         for row in prepared:
@@ -4534,6 +4519,22 @@ class AuthStore:
         if source_draft_id:
             self._queue_task_notification(conn, source_draft_id, "started", round_id)
         return cast(dict, self._round_public(conn, round_id))
+
+    def _freeze_precheck(self, principal: Principal, task: dict) -> dict | None:
+        """The precheck P3 shows for the confirmed task, frozen with this acceptance. Unreadable originals keep only
+        their file-level results; a precheck that cannot be computed at all never blocks the audit."""
+        from product.precheck_snapshot import current_precheck
+
+        try:
+            return current_precheck(self, principal, task)
+        except Exception:  # noqa: BLE001 - the free precheck never decides acceptance
+            return None
+
+    def round_precheck(self, principal: Principal, round_id: str) -> dict | None:
+        """The precheck frozen with an accepted Round of the caller's tenant; the caller already authorized the task."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT precheck FROM product.audit_rounds WHERE id = %s AND tenant_id = %s", (round_id, principal.tenant_id)).fetchone()
+        return row[0] if row else None
 
     def _check_usage_policy(self, conn, principal, policy) -> None:
         if not self.settings.usage_charge_enabled:

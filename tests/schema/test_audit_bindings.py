@@ -1868,7 +1868,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             text = "".join("".join(page.get_text().split()) for page in document)
             # The internal checker sample verification stays out of the delivered PDF (#331).
             self.assertNotIn("".join(verification["notice"].split()), text)
-            self.assertIn("审核结论：符合", text)
+            # An all-PASS file reads 总评 通过 and file conclusion PASS (PRD §2.11 四).
+            self.assertIn("总评：通过", text)
+            self.assertIn("文件结论：PASS", text)
 
     def test_missing_verification_mark_preserves_machine_pass_and_generates_pdf(self):
         from worker import process_claimed

@@ -165,6 +165,13 @@ def test_word_check_boxes_and_files_without_text():
     # PPAP-00-A v1.13 U13 S1: a single-page pure-image PDF also counts and only a file the user named is B03.
     pdf = results(b"%PDF", "照片.pdf", "U13")["U13:S1"]
     assert (pdf["result"], pdf["code"]) == ("未执行", None) and NOT_IMPLEMENTED in pdf["reason"]
+    # Only a file the user chose as a sample photo by hand and that is not an image is B03; recognition alone is not.
+    sheet = xlsx(["样品照片"])
+    assert precheck_content(sheet, "照片.xlsx", "U13")[0]["result"] == "未执行"
+    named = precheck_content(sheet, "照片.xlsx", "U13", named=True)[0]
+    assert (named["result"], named["code"]) == ("不满足", "B03") and "不是图片" in named["reason"]
+    assert precheck_content(b"\x89PNG", "照片.png", "U13", named=True)[0]["result"] == "满足"
+    assert precheck_content(b"%PDF", "照片.pdf", "U13", named=True)[0]["result"] == "未执行"
     scanned = results(b"\x89PNG", "包装.png", "U09")
     assert {item["reason"] for item in scanned.values()} == {NO_TEXT}
 
@@ -224,3 +231,13 @@ def test_criteria_new_in_the_package_are_listed_and_not_decided():
     assert [(cid, table[cid]["result"], table[cid]["source"]) for cid in ("U12:S8", "U12:S9")] == [(cid, "未执行", "PPAP-T12_特殊特性清单_预检规则_v1.10.md") for cid in ("U12:S8", "U12:S9")]
     assert table["U12:S1"]["source"].startswith("PPAP-00-A_")
     assert "L12:S9" in results(xlsx(["CCSC特性管理清单"]), "特殊特性.xlsx", "L12") and "N04:S8" not in results(xlsx(["特殊特性清单"]), "特殊特性.xlsx", "N04")
+
+
+def test_a_criterion_that_needs_image_recognition_is_marked_unreadable_not_left_undone():
+    workbook = Workbook()
+    workbook.active.append(["过程流程图"])
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    results = precheck_content(buffer.getvalue(), "流程图.xlsx", "U16", customer="UAES")
+    image_bound = [item for item in results if item["result"] == "未执行" and NEEDS_IMAGE in item["reason"]]
+    assert image_bound and all(item["unread"] for item in image_bound)

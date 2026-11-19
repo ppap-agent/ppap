@@ -156,6 +156,7 @@ class Ctx:
     groups: tuple[str, ...]
     tables: dict[tuple[tuple[str, ...], ...], Table | None] = field(default_factory=dict)
     cells: dict[str, list[tuple[int, int, int]]] = field(default_factory=dict)  # distinct short cell text -> (grid, row, col)
+    named: bool = False  # the user chose this file's category by hand on P3 (U13 S1)
 
     def short_cells(self) -> dict[str, list[tuple[int, int, int]]]:
         """Index of label-sized cells (merged continuations skipped), so field lookups scan distinct texts, not every cell."""
@@ -627,14 +628,17 @@ PHOTO_SUFFIXES = ("jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp", "heic")
 def _image_file() -> Check:
     """U13 S1: an image file presumes the category by its file type; any other file is not decided here.
 
-    A single-page pure-image PDF also counts, a document with pictures is W01 and only a file the user named
-    as this category is B03 — telling these apart is not implemented.
+    Only a file the user chose as this category by hand (``ctx.named``) and that is not an image is B03; a
+    category the system recognized never is. A PDF may be a single-page pure image, which counts, and a
+    document with pictures is W01 — telling these apart is not implemented.
     """
 
     def run(ctx: Ctx, miss: str, _: str) -> Outcome:
         suffix = ctx.filename.rsplit(".", 1)[-1].lower() if "." in ctx.filename else ""
         if suffix in PHOTO_SUFFIXES:
             return ok("文件", f"{ctx.filename}（按文件类型推定）")
+        if ctx.named and suffix != "pdf":
+            return bad("B03", "文件", ctx.filename, f"该文件由用户指定为生产件样品照片，但提交格式为 .{suffix or '无扩展名'}，不是图片")
         return skip(f"提交格式为 .{suffix}：单页纯图 PDF、含图文档与指定为样品照片的非图片文件需分别判定，" + NOT_IMPLEMENTED)
 
     return Check(run, needs_text=False)
@@ -1389,15 +1393,18 @@ def checks_for(key: str) -> dict[str, Check]:
 # ---------------------------------------------------------------- engine
 
 
-def precheck_content(file_bytes: bytes, filename: str, entry_key: str, *, customer: str | None = None) -> list[dict[str, Any]]:
-    """One result per criterion of the routed entry: 满足 / 不满足 (with B/W code) / S01 / S02 / S03 / 未执行 (with reason)."""
+def precheck_content(file_bytes: bytes, filename: str, entry_key: str, *, customer: str | None = None, named: bool = False) -> list[dict[str, Any]]:
+    """One result per criterion of the routed entry: 满足 / 不满足 (with B/W code) / S01 / S02 / S03 / 未执行 (with reason).
+
+    ``named``: the user chose this file's type or rule by hand (``product.precheck.named_by_user``), never the
+    system's own recognition."""
     source, criteria = entry_criteria(entry_key)
     if not criteria:
         raise KeyError(entry_key)
     checks = checks_for(entry_key)
     doc = read_document(file_bytes, filename)
     labels = tuple(label for check in checks.values() for label in check.labels)
-    ctx = Ctx(doc, filename, customer or ENTRIES.get(entry_key, ("",))[0], labels, tuple(label for check in checks.values() if check.group for label in check.labels))
+    ctx = Ctx(doc, filename, customer or ENTRIES.get(entry_key, ("",))[0], labels, tuple(label for check in checks.values() if check.group for label in check.labels), named=named)
     results = []
     for item in criteria:
         # A criterion the original could not be read for (W05, 读不出) is not S06 (总纲 v0.21 §3.1).
@@ -1418,6 +1425,8 @@ def precheck_content(file_bytes: bytes, filename: str, entry_key: str, *, custom
             except Exception as exc:  # a reading gap is never a verdict
                 outcome = skip(f"判定执行失败（{type(exc).__name__}），本项未判")
         result, code, location, evidence, reason = outcome
+        # No reading capability for this fact (image recognition is not run in the precheck): 未执行, counted as 未审, not S06.
+        unread = unread or (result == "未执行" and NEEDS_IMAGE in (reason or ""))
         if result == "不满足" and code == "B05" and check is not None and check.needs_tables and doc.kind == "pdf":
             result, code, reason = "未执行", None, "PDF 表格抽取未见所需列，不能据此判缺列：" + reason
         if result == "不满足" and not code:

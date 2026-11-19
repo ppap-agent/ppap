@@ -35,13 +35,49 @@ def test_each_file_gets_one_level_and_blocks_fail_the_batch():
     assert result["counts"] == {"ok": 1, "warn": 1, "block": 2, "unmatched": 1, "reference": 1, "pending": 0}
 
 
-def test_two_drafts_of_one_document_have_no_single_valid_version_unless_one_replaces_the_other():
-    drafts = [file("a", "控制计划-底护板-V1.6.xlsx"), file("b", "控制计划-底护板-V1.7.xlsx"), file("c", "MSA-1-卡尺.xls", doc_type="MSA"), file("d", "MSA-2-CMM.xls", doc_type="MSA")]
-    result = precheck_task({"files": drafts})
-    assert {item["file_version_id"] for item in result["blocks"]} == {"a", "b"}
-    assert all(item["code"] == "B02" for item in result["blocks"])
-    replaced = [file("a", "控制计划-底护板-V1.6.xlsx"), file("b", "控制计划-底护板-V1.7.xlsx", replacement_of_file_version_id="a")]
+def test_copies_with_one_name_of_one_part_are_each_b02_and_drafts_with_different_names_are_not():
+    """附件 R-03 (用户裁定): same part + the very same file name + two or more copies → every copy B02."""
+    twins = [file("a", "A40-粗糙度仪-Cgk.xls", doc_type="MSA"), file("b", "A40-粗糙度仪-Cgk.xls", doc_type="MSA")]
+    result = precheck_task({"files": twins})
+    assert [(item["file_version_id"], item["code"]) for item in result["blocks"]] == [("a", "B02"), ("b", "B02")] and result["conclusion"] == "fail"
+    # Another part's file of the same name, differently named drafts and an unreadable part number do not group.
+    other = [file("a", "MSA.xls", doc_type="MSA"), file("b", "MSA.xls", doc_type="MSA", part_number="P2")]
+    drafts = [file("a", "控制计划-V1.6.xlsx"), file("b", "控制计划-V1.7.xlsx")]
+    unknown = [file("a", "MSA.xls", doc_type="MSA", part_number=""), file("b", "MSA.xls", doc_type="MSA", part_number="")]
+    for batch in (other, drafts, unknown):
+        assert not [item for item in precheck_task({"files": batch})["blocks"] if item["code"] == "B02"]
+    replaced = [file("a", "控制计划.xlsx"), file("b", "控制计划.xlsx", replacement_of_file_version_id="a")]
     assert precheck_task({"files": replaced})["conclusion"] == "pass"
+
+
+def test_the_b02_evidence_says_whether_the_copies_agree():
+    import io
+
+    from openpyxl import Workbook
+
+    def book(value, *, title="Cgk"):
+        workbook = Workbook()
+        workbook.active.title = title
+        workbook.active.append(["校准值", value])
+        out = io.BytesIO()
+        workbook.save(out)
+        return out.getvalue()
+
+    def evidence(first, second, digests=("x", "y")):
+        rows = [file(id_, "Cgk.xlsx", doc_type="MSA") for id_ in ("a", "b")]
+        for row, digest in zip(rows, digests):
+            row["file"]["sha256"] = digest
+        content = {"a": first, "b": second}
+        result = precheck_task({"files": rows}, read=lambda row: content[row["file"]["id"]])
+        assert {item["evidence"] for item in result["blocks"]} == {result["blocks"][0]["evidence"]}
+        return result["blocks"][0]["evidence"]
+
+    assert evidence(b"", b"", ("same", "same")) == "2 份同名文件「Cgk.xlsx」逐字节相同"
+    assert evidence(book("1.6"), book("1.6")) == "2 份同名文件「Cgk.xlsx」为另存／重存副本：各工作表单元格取值逐格相同"
+    assert evidence(book("1.6"), book("3.2")) == "2 份同名文件「Cgk.xlsx」为同一对象的两个版本，第 1 份与第 2 份共 1 处不同：Cgk!B1：1.6 → 3.2"
+    assert "工作表「Cgk」只在第 1 份中" in evidence(book("1.6"), book("1.6", title="其他"))
+    rows = [file(id_, "Cgk.xlsx", doc_type="MSA") for id_ in ("a", "b")]
+    assert precheck_task({"files": rows})["blocks"][0]["evidence"] == "2 份同名文件「Cgk.xlsx」字节不同，内容未逐格比对"
 
 
 def test_unfinished_recognition_is_not_run_rather_than_passed():
@@ -180,7 +216,23 @@ def test_an_unreadable_original_is_not_s06():
         {"criterion_id": "A", "criterion": "a", "result": "满足"},
         {"criterion_id": "B", "criterion": "b", "result": "未执行", "reason": "文件无可读文字", "unread": True},
     ]
-    assert _status(precheck_task({"files": [file("cp", "控制计划.xlsx")]}, {"cp": criteria}), "S06") == []
+    result = precheck_task({"files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}, {"psw": criteria})
+    # 总纲 §3.1 硬约束 4 注: what the precheck had no means to read is no S06 and no level, but it is 未审.
+    assert _status(result, "S06") == [] and result["unreviewed"] == 1 and result["blocks"] == []
+
+
+def test_named_by_user_is_only_a_rule_chosen_by_hand_that_the_file_is_matched_to():
+    from product.precheck import named_by_user
+
+    chosen = file("p", "照片.xlsx", preferred_rule_version_id="photo")
+    chosen["match"]["rule"] = {"id": "photo"}
+    assert named_by_user(chosen)
+    recognized = file("p", "照片.xlsx")
+    recognized["match"]["rule"] = {"id": "photo"}
+    assert not named_by_user(recognized)
+    stale = file("p", "照片.xlsx", preferred_rule_version_id="other")
+    stale["match"]["rule"] = {"id": "photo"}
+    assert not named_by_user(stale)
 
 
 def test_unreviewed_counts_s03_to_s07_and_never_s01_or_s02():

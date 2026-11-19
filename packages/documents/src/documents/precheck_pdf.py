@@ -34,7 +34,21 @@ STATUS_CATEGORIES = (
 )
 # What an empty category reads; S05 has no controlled template on register to apply to.
 EMPTY = {"S05": "本批无（当前无在册受控模板）"}
-UNREVIEWED_NOTE = "S03、S04、S05、S06、S07 为该判而没判成的判定项，计入「未审条数」（S06 按未判条数计）；S01、S02 本就不该判，不计。"
+UNREVIEWED_NOTE = (
+    "S03、S04、S05、S06、S07 为该判而没判成的判定项，计入「未审条数」（S06 按未判条数计）；"
+    "原件读不出（文件无法读取、无文字层、未识别出表格）而未执行的判定项不记 S06、不记级别，也计入「未审条数」；S01、S02 本就不该判，不计。"
+)
+
+
+def rating(result: dict) -> str | None:
+    """PRD §2.11 四: 不通过 with any block; 有条件通过 with warnings only, always named with their count;
+    通过 with neither. 未执行 is a conclusion without an overall rating (None)."""
+    if result["conclusion"] == "not_run":
+        return None
+    if result["conclusion"] == "fail":
+        return "不通过"
+    count = len(result["warnings"])
+    return f"有条件通过 · 含警告 {count} 项" if count else "通过"
 
 
 def _rows(rows: list[tuple]) -> list[tuple[str, ...]]:
@@ -59,14 +73,18 @@ def _card(item: dict) -> str:
 
 
 def _cover(source: dict) -> str:
+    overall = rating(source["precheck"])
     recognition = source.get("recognition") or {}
     rows = [(label, dash(recognition.get(key))) for key, label in COVER_FIELDS]
     rows += [("检查日期", text(source["generated_at"][:10]))]
     rows += [(label, "") for label in READER_FIELDS]
     table = "".join(f"<tr><th>{escape(label)}</th><td>{value}</td></tr>" for label, value in rows)
     return (
-        "<h1>PPAP 数据标准化预检报告</h1>" + (f"<p class='kind'>审核任务 {text(source['task_number'])}</p>" if source.get("task_number") else "<p class='kind'>　</p>") + f"<table>{table}</table>"
-        "<p class='meta'>供应商名称、PPAP 版本与 SQE 工程师请下载后自行补充。</p>"
+        "<h1>PPAP 数据标准化预检报告</h1>"
+        + (f"<p class='kind'>审核任务 {text(source['task_number'])}</p>" if source.get("task_number") else "<p class='kind'>　</p>")
+        + f"<table>{table}</table>"
+        + (f"<p>总评：<b>{text(overall)}</b></p>" if overall else "")
+        + "<p class='meta'>供应商名称、PPAP 版本与 SQE 工程师请下载后自行补充。</p>"
     )
 
 
@@ -79,10 +97,11 @@ def render_precheck_pdf(source: dict) -> bytes:
     for item in findings:
         by_code.setdefault(item["code"], []).append(item["number"])
     sides = sorted({item["responsibility"] for item in findings})
-    conclusion = CONCLUSION[result["conclusion"]]
+    overall = rating(result)
+    verdict = f"总评：<b>{text(overall)}</b>" if overall else f"结论：{CONCLUSION[result['conclusion']]}"
     worst = blocks[0]["problem"] if blocks else warnings[0]["problem"] if warnings else "未发现阻断或警告。"
     summary = [
-        f"<p>结论：{conclusion}　能否进入正式审核：{'否' if result['conclusion'] == 'fail' else '是' if result['conclusion'] == 'pass' else '待识别完成'}</p>"
+        f"<p>{verdict}　能否进入正式审核：{'否' if result['conclusion'] == 'fail' else '是' if result['conclusion'] == 'pass' else '待识别完成'}</p>"
         f"<p>阻断 {len(blocks)} 项　警告 {len(warnings)} 项　未审 {result['unreviewed']} 条</p>"
         f"<p>原因码分布：{text('、'.join(f'{code}×{len(numbers)}' for code, numbers in sorted(by_code.items())) or '无')}</p>"
         f"<p>一句话判断：{text(worst)}</p><p>{SCOPE_NOTE}</p>",

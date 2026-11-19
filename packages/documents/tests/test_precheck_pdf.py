@@ -80,7 +80,7 @@ def test_report_has_a_cover_a_contents_page_and_the_ten_fixed_chapters_with_ever
     assert pages[1].startswith("目录封面1")
     assert pages[2].endswith(f"PPAP-1-预检报告PPAP预检报告2026-11-12第3/{len(pages)}页")
     assert "U09:S1" in text and "已判定0项" in text and "文件无可读文字" in text
-    assert "结论：不通过" in text and "「通过」只表示「能审」" in text
+    assert "总评：不通过" in cover and "总评：不通过" in pages[2] and "「通过」只表示「能审」" in text
     assert document_metadata_is_clean(render_precheck_pdf(SOURCE))
 
 
@@ -121,8 +121,24 @@ def test_status_register_lists_every_category_and_unknown_codes():
     assert "未完成全量统计S06流程图.pdf已判8/10条判据，覆盖率80%。" in register
     assert "受控模板缺结构S05—本批无（当前无在册受控模板）" in register
     assert register.startswith("六、状态登记未审3条。")
+    assert "原件读不出（文件无法读取、无文字层、未识别出表格）而未执行的判定项不记S06、不记级别，也计入「未审条数」" in register
     assert "阻断1项警告1项未审3条" in "".join(pages)
     assert "范围外S01—本批无" in register
+
+
+def test_overall_rating_has_three_tiers_and_a_conditional_pass_names_its_warning_count():
+    """PRD §2.11 四: 有条件通过 never stands alone; 未执行 gives no overall rating."""
+
+    def pages_of(result: dict) -> list[str]:
+        with pymupdf.open(stream=render_precheck_pdf({**SOURCE, "precheck": result}), filetype="pdf") as document:
+            return _flat(document)
+
+    warned = pages_of({**RESULT, "conclusion": "pass", "blocks": [], "warnings": RESULT["warnings"] * 3})
+    assert "总评：有条件通过·含警告3项" in warned[0] and "总评：有条件通过·含警告3项能否进入正式审核：是" in warned[2]
+    clean = pages_of({**RESULT, "conclusion": "pass", "blocks": [], "warnings": []})
+    assert "总评：通过" in clean[0] and "总评：通过能否进入正式审核：是" in clean[2] and "有条件" not in "".join(clean)
+    not_run = pages_of({**RESULT, "conclusion": "not_run"})
+    assert "总评" not in "".join(not_run) and "结论：未执行" in not_run[2]
 
 
 def test_a_task_without_a_number_is_named_without_any_identifier():
