@@ -2,17 +2,19 @@
 
     list                      the cases
     run   --name N [--case ID ...] [--jobs J] [--model M] [--thinking T] [--timeout MIN]
-                              one headless pi session per case runs the clause-check skill from scratch. Each case
-                              gets a folder outside the repository, ~/.cache/clause-check-bench/N/<case>/, holding
-                              only its inputs: rules.json (this one clause) and files/ (the real files). The session
-                              starts there with only a copy of the skill loaded (no context files, extensions or
-                              MCP), inside sandbox-exec that hides the whole repository, every other case folder and
-                              this machine's Claude Code files. Afterwards the report, formalization, session summary
-                              and transcript are copied to bench/clause-check/runs/N/<case>/
-    score runs/N [--rejudge]  a judging Claude Code session (independent of the model under test) compares each
-                              report with the case's reference findings and the out-of-scope list, and lists wrong
-                              statements and repeated questions; writes judge.json per case and summary.md
+                              one headless pi session per case runs the clause-check skill from scratch, in a
+                              folder outside the home directory, /private/tmp/clause-check-bench/N/<case>/, that
+                              holds only rules.json (this one clause) and files/ (the real files). It loads only a
+                              read-only copy of the skill, inside sandbox-exec that hides the whole home directory
+                              (repositories, credentials, Claude Code and earlier pi sessions) and every other case
+                              folder. Afterwards the bench regenerates the report from the session's formalization,
+                              so what is scored is what the skill's script says, and copies everything to
+                              bench/clause-check/runs/N/<case>/
+    score runs/N [--rejudge]  a judging Claude Code session (fixed model, started in an empty folder so it loads no
+                              project instructions or memory) compares each report with the case's reference findings
+                              and the out-of-scope list; writes judge.json per case and summary.md
 
+Each run records the commit, digests of the skill and of cases.json, the model and the thinking level in run.json.
 The reference findings are the starting point, not the truth: new findings the judge cannot match are listed for
 the product owner, whose verdicts are added to cases.json over time.
 """
@@ -20,13 +22,17 @@ the product owner, whose verdicts are added to cases.json over time.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -35,11 +41,28 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SKILL = ROOT / ".claude" / "skills" / "clause-check"
 DEFAULT_MODEL = "xai/grok-4.7"
-STAGE = Path.home() / ".cache" / "clause-check-bench"
+JUDGE_MODEL = "claude-opus-5-5"
+STAGE = Path("/private/tmp/clause-check-bench")
 TOOLS = STAGE / "tools"
 TOOL_PACKAGES = ("openpyxl", "xlrd")
+PI_HOME = Path.home() / ".pi" / "agent"
 MISSING = "【待补白话说明】"
 TECH_WORDS = ("OWL", "ROBOT", "HermiT", "本体", "公理", "探针", "推理机", "可满足", "Probe", "__")
+DENIED = "Operation not permitted"
+
+ACTIVE: set[subprocess.Popen] = set()
+ACTIVE_LOCK = threading.Lock()
+
+
+def stop_sessions(signum, _frame) -> None:
+    """Stopping the bench also stops every session it started (each runs in its own process group)."""
+    with ACTIVE_LOCK:
+        for process in ACTIVE:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    sys.exit(128 + signum)
 
 
 def cases() -> dict:
@@ -55,10 +78,27 @@ def clause_text(case: dict) -> str:
     return next(rule["rule_to_check"] for rule in rules["rules"] if rule["id"] == case["id"])
 
 
+def digest(paths: list[Path], base: Path) -> str:
+    """A short digest of files' names and contents, so two runs can be told apart by what they ran."""
+    hasher = hashlib.sha256()
+    for path in sorted(paths):
+        hasher.update(str(path.relative_to(base)).encode() + b"\0" + path.read_bytes())
+    return hasher.hexdigest()[:12]
+
+
+def skill_digest(folder: Path) -> str:
+    return digest([path for path in folder.rglob("*") if path.is_file() and "__pycache__" not in path.parts], folder)
+
+
+def cases_digest() -> str:
+    return digest([HERE / "cases.json"], HERE)
+
+
 def claude(prompt: str, *options: str) -> dict:
-    """One headless Claude Code session; returns its JSON result (result text, cost, duration, turns)."""
+    """One headless Claude Code session in an empty folder: no project instructions, no project memory."""
     started = time.monotonic()
-    done = subprocess.run(["claude", "-p", prompt, "--output-format", "json", *options], cwd=ROOT, capture_output=True, text=True)
+    with tempfile.TemporaryDirectory(prefix="clause-check-judge-") as empty:
+        done = subprocess.run(["claude", "-p", prompt, "--output-format", "json", "--model", JUDGE_MODEL, *options], cwd=empty, capture_output=True, text=True)
     try:
         result = json.loads(done.stdout)
     except json.JSONDecodeError:
@@ -80,14 +120,16 @@ def stage(case: dict, name: str) -> Path:
 
 
 def stage_skill(name: str) -> Path:
-    """One copy of the skill per run, outside the repository."""
+    """One read-only copy of the skill per run, outside the home directory."""
     target = STAGE / name / "skill" / SKILL.name
-    shutil.copytree(SKILL, target, ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(SKILL, target, ignore=shutil.ignore_patterns("__pycache__", "*.robot", "*.report.md"))
+    for path in [target, *target.rglob("*")]:
+        path.chmod(path.stat().st_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
     return target
 
 
 def tools() -> Path:
-    """A Python environment outside the repository with what reading the real files needs; built once."""
+    """A Python environment outside the home directory with what reading the real files needs; built once."""
     python = TOOLS / "bin" / "python"
     if not python.exists():
         subprocess.run(["uv", "venv", "--quiet", str(TOOLS)], check=True)
@@ -95,25 +137,35 @@ def tools() -> Path:
     return TOOLS / "bin"
 
 
-def hidden(work: Path) -> list[Path]:
-    """What the session in `work` must not see: the whole repository, every other case folder (this run's and
-    earlier runs'), and this machine's Claude Code sessions and scratch files. None is an ancestor of `work`."""
-    others = [folder for folder in STAGE.glob("*/*") if folder.is_dir() and folder.name != "skill" and folder.parent != TOOLS and folder.resolve() != work.resolve()]
-    return [ROOT, *others, Path.home() / ".claude", Path("/private/tmp/claude-501")]
+def others(work: Path) -> list[Path]:
+    """Every case folder under the stage except this one (this run's and earlier runs')."""
+    return [folder for folder in STAGE.glob("*/*") if folder.is_dir() and folder.name != "skill" and folder.parent != TOOLS and folder.resolve() != work.resolve()]
 
 
-def sandbox_profile(work: Path) -> str:
-    """macOS Seatbelt profile: everything allowed except reading or writing the hidden paths."""
-    deny = " ".join(f'(subpath "{path.resolve()}")' for path in hidden(work))
-    return f"(version 1)(allow default)(deny file-read* file-write* {deny})"
+def sandbox_profile(work: Path, skill: Path) -> str:
+    """macOS Seatbelt profile. Later rules win: the home directory is closed (only whether a path exists can be
+    checked) except pi's own configuration, whose earlier sessions stay closed; other case folders are closed; the
+    skill and tools can be read, not written."""
+    rules = ["(version 1)", "(allow default)"]
+    closed = [Path.home(), Path("/private/tmp/claude-501"), *others(work)]
+    rules.append("(deny file-read* file-write* " + " ".join(f'(subpath "{path.resolve()}")' for path in closed) + ")")
+    # Tools resolve paths by checking each parent exists: allow existence checks, not reading or listing.
+    rules.append(f'(allow file-read-metadata (subpath "{Path.home().resolve()}"))')
+    rules.append(f'(allow file-read* file-write* (subpath "{PI_HOME.resolve()}"))')
+    rules.append(f'(deny file-read* file-write* (subpath "{(PI_HOME / "sessions").resolve()}"))')
+    rules.append(f'(deny file-write* (subpath "{skill.resolve()}") (subpath "{TOOLS.resolve()}"))')
+    rules.append(f'(allow file-read* file-write* (subpath "{work.resolve()}"))')
+    return "".join(rules)
 
 
 def environment(work: Path) -> dict[str, str]:
-    """The caller's environment without anything that points into the repository (uv puts its venv on PATH)."""
-    paths = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry and not Path(entry).resolve().is_relative_to(ROOT)]
+    """The caller's environment without anything pointing into the home directory or the repository."""
+    home = Path.home()
+    paths = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry and not Path(entry).resolve().is_relative_to(home)]
     temp = work / ".tmp"
     temp.mkdir(exist_ok=True)
-    clean = {key: value for key, value in os.environ.items() if key not in ("VIRTUAL_ENV", "PYTHONPATH") and not key.startswith("UV_") and str(ROOT) not in value}
+    clean = {key: value for key, value in os.environ.items() if key not in ("VIRTUAL_ENV", "PYTHONPATH", "PWD", "OLDPWD") and not key.startswith("UV_")}
+    clean = {key: value for key, value in clean.items() if str(ROOT) not in value}
     return {**clean, "PATH": os.pathsep.join([str(tools()), *paths]), "TMPDIR": str(temp)}
 
 
@@ -121,19 +173,24 @@ def pi(prompt: str, work: Path, skill: Path, model: str, thinking: str, timeout_
     """One headless pi session started in `work`, with only the skill copy, inside sandbox-exec."""
     session_dir = work / ".session"
     session_dir.mkdir(exist_ok=True)
-    command = ["sandbox-exec", "-p", sandbox_profile(work)]
+    command = ["sandbox-exec", "-p", sandbox_profile(work, skill)]
     command += ["pi", "-p", "--mode", "json", "--session-dir", str(session_dir), "--no-skills", "--skill", str(skill)]
     command += ["--no-context-files", "--no-approve", "--no-extensions", "--no-mcp", "--model", model, "--thinking", thinking, prompt]
     started = time.monotonic()
-    summary: dict = {"model": model, "thinking": thinking, "models": [], "turns": 0, "tool_calls": 0, "input_tokens": 0, "output_tokens": 0, "result": "", "is_error": True}
-    # Its own process group, so a timeout (or stopping the bench) ends pi and everything it started.
+    summary: dict = {"models": [], "turns": 0, "tool_calls": 0, "input_tokens": 0, "cache_read_tokens": 0, "output_tokens": 0, "result": "", "is_error": True}
+    # Its own process group, so a timeout or stopping the bench ends pi and everything it started.
     process = subprocess.Popen(command, cwd=work, env=environment(work), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    with ACTIVE_LOCK:
+        ACTIVE.add(process)
     try:
         stdout, stderr = process.communicate(timeout=timeout_minutes * 60)
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
         stdout, stderr = process.communicate()
         summary["timed_out"] = True
+    finally:
+        with ACTIVE_LOCK:
+            ACTIVE.discard(process)
     for line in stdout.splitlines():
         try:
             event = json.loads(line)
@@ -145,7 +202,8 @@ def pi(prompt: str, work: Path, skill: Path, model: str, thinking: str, timeout_
             message = event["message"]
             usage = message.get("usage") or {}
             summary["turns"] += 1
-            summary["input_tokens"] += sum(usage.get(key) or 0 for key in ("input", "cacheRead", "cacheWrite"))
+            summary["input_tokens"] += (usage.get("input") or 0) + (usage.get("cacheWrite") or 0)
+            summary["cache_read_tokens"] += usage.get("cacheRead") or 0
             summary["output_tokens"] += usage.get("output") or 0
             used = f"{message.get('provider')}/{message.get('model')}"
             if used not in summary["models"]:
@@ -159,20 +217,39 @@ def pi(prompt: str, work: Path, skill: Path, model: str, thinking: str, timeout_
     return summary
 
 
-def hidden_reads(transcript: Path, work: Path) -> list[str]:
-    """Tool calls in the transcript that reach for a hidden path; the sandbox refuses them, this records the attempt."""
-    paths = hidden(work)
-    marks = [str(path.resolve()) for path in paths] + ["~/" + str(path.relative_to(Path.home())) for path in paths if path.is_relative_to(Path.home())]
-    found = []
+def denials(transcript: Path) -> list[str]:
+    """Tool calls the sandbox refused, found from their results however the path was written."""
+    calls: dict[str, str] = {}
+    refused = []
     for line in transcript.read_text(encoding="utf-8").splitlines() if transcript.exists() else []:
         message = json.loads(line).get("message") or {}
-        for block in message.get("content") or [] if message.get("role") == "assistant" else []:
-            if not isinstance(block, dict) or block.get("type") in ("text", "thinking"):
-                continue
-            text = json.dumps(block.get("arguments", block), ensure_ascii=False)
-            if any(mark in text for mark in marks):
-                found.append(text[:200])
-    return found
+        if message.get("role") == "assistant":
+            for block in message.get("content") or []:
+                if isinstance(block, dict) and block.get("type") not in ("text", "thinking"):
+                    calls[block.get("id", "")] = json.dumps(block.get("arguments", block), ensure_ascii=False)[:200]
+        elif message.get("role") == "toolResult" and DENIED in json.dumps(message.get("content"), ensure_ascii=False):
+            refused.append(calls.get(message.get("toolCallId", ""), "?"))
+    return refused
+
+
+def formalization(work: Path, case_id: str) -> Path | None:
+    """The session's formalization of this clause: the newest .ofn whose :clause names it."""
+    candidates = [path for path in work.rglob("*.ofn") if ".robot" not in str(path.parent) and f'#{case_id}"' in path.read_text(encoding="utf-8", errors="ignore")]
+    return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
+
+
+def regenerate(ontology: Path, skill: Path, out: Path) -> int:
+    """Run the skill's script on the session's final formalization; the report scored is the one it writes."""
+    scratch = out / ".regenerated"
+    done = subprocess.run(
+        [sys.executable, str(skill / "scripts" / "check.py"), str(ontology), "--out", str(scratch), "--report", str(out / "report.md")],
+        cwd=ontology.parent,
+        capture_output=True,
+        text=True,
+    )
+    (out / "check.txt").write_text(done.stdout + done.stderr, encoding="utf-8")
+    shutil.rmtree(scratch, ignore_errors=True)
+    return done.returncode
 
 
 def prompt_for(case: dict) -> str:
@@ -180,7 +257,7 @@ def prompt_for(case: dict) -> str:
     lines = [f"使用 clause-check 技能检查条款 {case['id']}。", "- 规则文件：当前目录下的 rules.json。", "- 当前目录就是工作目录。"]
     if case["files"]:
         lines.append("- 要对照的真实文件在 files/ 下：" + "、".join(f"`{Path(path).name}`" for path in case["files"]) + "。")
-    lines.append("- 按技能把白话说明补到没有缺项、没有质量问题为止。最后只回复报告文件的路径。")
+    lines.append("- 按技能做到检查完整（脚本退出码为 0）。最后只回复报告文件的路径。")
     return "\n".join(lines)
 
 
@@ -192,16 +269,23 @@ def run_case(case: dict, name: str, skill: Path, model: str, thinking: str, time
     sessions = sorted((work / ".session").glob("*.jsonl"))
     if sessions:
         shutil.copy(sessions[-1], out / "transcript.jsonl")
-    result["hidden_reads"] = hidden_reads(out / "transcript.jsonl", work)
+    result["denials"] = denials(out / "transcript.jsonl")
+    ontology = formalization(work, case["id"])
+    result["formalization"] = ontology.name if ontology else None
+    result["check_exit"] = None
+    result["report_matches"] = None
+    if ontology:
+        shutil.copy(ontology, out / ontology.name)
+        written = ontology.with_suffix(".report.md")
+        if written.exists():
+            shutil.copy(written, out / "session-report.md")
+        result["check_exit"] = regenerate(ontology, skill, out)
+        if written.exists() and (out / "report.md").exists():
+            result["report_matches"] = written.read_text(encoding="utf-8") == (out / "report.md").read_text(encoding="utf-8")
     (out / "session.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    reports = sorted(work.rglob("*.report.md")) or sorted(work.rglob("report.md"))
-    for report in reports:
-        shutil.copy(report, out / report.name)
-    for ontology in work.rglob("*.ofn"):
-        if ".robot" not in ontology.parent.name:
-            shutil.copy(ontology, out / ontology.name)
     state = "超时" if result.get("timed_out") else "失败" if result["is_error"] else "完成"
-    return f"{case['id']}：{state}，报告 {len(reports)} 份，{result['duration_ms'] // 1000} 秒，{result['input_tokens'] + result['output_tokens']} tokens"
+    complete = {0: "检查完整", 1: "检查未完成", 2: "形式化无法使用", None: "没有形式化"}.get(result["check_exit"], "检查出错")
+    return f"{case['id']}：{state}，{complete}，{result['duration_ms'] // 1000} 秒"
 
 
 JUDGE = """你是条款检查报告的评判。只比对，不评价条款本身，不替规则做选择。
@@ -222,7 +306,7 @@ JUDGE = """你是条款检查报告的评判。只比对，不评价条款本身
 
 1. 逐条判断每个参照发现在报告里是否被指出：found（意思相同即可，不要求措辞一致）、partial（只说到一部分）、missed。
 2. 列出报告里不对应任何参照发现的问题：kind 为 out_of_scope（属于上面的越界）或 new（其他新发现，留给人判断）。
-3. 列出报告里按条款原文明显说错的结论，例如把能让同一份文件得出相反结论的几种理解说成“结论都相同”，把并不矛盾的情况说成“原文自相矛盾”。
+3. 列出报告里按条款原文明显说错的结论，例如把能让同一份文件得出不同结论的几种理解说成“结论都相同”，把有结论的情况说成“原文没有给出结论”，把不冲突的情况说成“原文同时给出通过和不通过”。
 4. 列出“需要回答的问题”里与前面某个问题问的是同一件事的问题。
 只输出 JSON，不要其他文字：
 {{"references": [{{"reference": "...", "result": "found|partial|missed", "where": "报告中对应的句子，没有则为空"}}],
@@ -246,7 +330,8 @@ def judge(case: dict, report: str, out_of_scope: list[str]) -> dict:
         verdict = json.loads(text[start : end + 1])
     except (ValueError, json.JSONDecodeError):
         verdict = {"error": text[-2000:]}
-    verdict["cost_usd"] = result.get("total_cost_usd", 0)
+    verdict["judge_models"] = sorted(result.get("modelUsage", {})) or [JUDGE_MODEL]
+    verdict["cases_digest"] = cases_digest()
     return verdict
 
 
@@ -261,46 +346,55 @@ def plain_problems(report: str, case: dict) -> tuple[list[str], int]:
 
 def score(run: Path, rejudge: bool) -> None:
     data = cases()
-    header = "| 条款 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 说错 | 重复问题 | 技术词 | 待补 | 越界读取 | 用时 | tokens | 模型 |"
+    info = json.loads((run / "run.json").read_text(encoding="utf-8")) if (run / "run.json").exists() else {}
+    header = "| 条款 | 检查完整 | 报告与脚本一致 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 说错 | 重复问题 | 技术词 | 待补 | 被沙箱拒绝 | 用时 | 输出 tokens |"
     rows = [header, "|" + "---|" * (header.count("|") - 1)]
     details = []
+    judged_with: set[str] = set()
     for case in data["cases"]:
         folder = run / slug(case["id"])
         if not folder.exists():
             continue
-        reports = sorted(folder.glob("*report.md"))
         session = json.loads((folder / "session.json").read_text(encoding="utf-8")) if (folder / "session.json").exists() else {}
-        seconds = session.get("duration_ms", 0) // 1000
-        tokens = session.get("input_tokens", 0) + session.get("output_tokens", 0)
-        models = "、".join(session.get("models") or []) or "未知"
-        reads = session.get("hidden_reads", [])
-        if not reports:
-            rows.append(f"| {case['id']} | 没有报告 |" + " |" * 8 + f" {len(reads)} | {seconds}s | {tokens} | {models} |")
+        complete = {0: "是", 1: "否", 2: "无法使用", None: "没有形式化"}.get(session.get("check_exit"), "出错")
+        matches = {True: "是", False: "否（手改或没重跑）", None: "—"}[session.get("report_matches")]
+        refused = session.get("denials", [])
+        tail = f" {len(refused)} | {session.get('duration_ms', 0) // 1000}s | {session.get('output_tokens', 0)} |"
+        report_path = folder / "report.md"
+        if not report_path.exists():
+            rows.append(f"| {case['id']} | {complete} | {matches} |" + " |" * 9 + tail)
             continue
-        report = reports[0].read_text(encoding="utf-8")
+        report = report_path.read_text(encoding="utf-8")
         verdict_path = folder / "judge.json"
         if rejudge or not verdict_path.exists():
             verdict_path.write_text(json.dumps(judge(case, report, data["out_of_scope"]), ensure_ascii=False, indent=2), encoding="utf-8")
         verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
+        judged_with.add(f"{'、'.join(verdict.get('judge_models', []))}，参照 {verdict.get('cases_digest', '?')}")
         results = [item.get("result") for item in verdict.get("references", [])]
         extra, wrong, repeated = verdict.get("extra", []), verdict.get("wrong", []), verdict.get("repeated", [])
         words, missing = plain_problems(report, case)
         rows.append(
-            f"| {case['id']} | {results.count('found')} | {results.count('partial')} | {results.count('missed')} | "
+            f"| {case['id']} | {complete} | {matches} | {results.count('found')} | {results.count('partial')} | {results.count('missed')} | "
             f"{sum(1 for item in extra if item.get('kind') == 'new')} | {sum(1 for item in extra if item.get('kind') == 'out_of_scope')} | "
-            f"{len(wrong)} | {len(repeated)} | {len(words)} | {missing} | {len(reads)} | {seconds}s | {tokens} | {models} |"
+            f"{len(wrong)} | {len(repeated)} | {len(words)} | {missing} |" + tail
         )
         details.append(f"\n## {case['id']}\n")
         details += [f"- {item.get('result')}：{item.get('reference')}" for item in verdict.get("references", []) if item.get("result") != "found"]
         details += [f"- {item.get('kind')}：{item.get('finding')}（{item.get('why')}）" for item in extra]
         details += [f"- 说错：{item.get('statement')}（{item.get('why')}）" for item in wrong]
         details += [f"- 重复问题：{item.get('question')}（同：{item.get('same_as')}）" for item in repeated]
-        details += [f"- 越界读取：{read}" for read in reads]
+        details += [f"- 被沙箱拒绝：{call}" for call in refused]
         if words:
             details.append(f"- 技术词：{'、'.join(sorted(set(words)))}")
         if "error" in verdict:
             details.append(f"- 评判失败：{verdict['error'][:200]}")
-    text = f"# clause-check bench：{run.name}\n\n" + "\n".join(rows) + "\n" + "\n".join(details) + "\n"
+    lines = [f"# clause-check bench：{run.name}\n"]
+    if info:
+        lines.append(f"- 提交 {info.get('commit', '?')}{'（有未提交改动）' if info.get('dirty') else ''}，技能 {info.get('skill_digest', '?')}，参照 {info.get('cases_digest', '?')}")
+        lines.append(f"- 模型 {info.get('model', '?')}，思考强度 {info.get('thinking', '?')}")
+    if judged_with:
+        lines.append(f"- 评判：{'；'.join(sorted(judged_with))}" + ("（参照已和运行时不同）" if any(info.get("cases_digest", "") not in item for item in judged_with) else ""))
+    text = "\n".join(lines) + "\n\n" + "\n".join(rows) + "\n" + "\n".join(details) + "\n"
     (run / "summary.md").write_text(text, encoding="utf-8")
     print(text)
 
@@ -333,19 +427,26 @@ def main(argv: list[str] | None = None) -> int:
     if not chosen:
         print("没有匹配的条款", file=sys.stderr)
         return 2
-    if (HERE / "runs" / args.name).exists() or (STAGE / args.name).exists():
+    run = HERE / "runs" / args.name
+    if run.exists() or (STAGE / args.name).exists():
         print(f"运行 {args.name} 已存在，换一个 --name", file=sys.stderr)
         return 2
+    signal.signal(signal.SIGTERM, stop_sessions)
+    signal.signal(signal.SIGINT, stop_sessions)
     # Every case folder is staged before any session starts, so each session's sandbox can name the others.
     tools()
     skill = stage_skill(args.name)
     for case in chosen:
-        (HERE / "runs" / args.name / slug(case["id"])).mkdir(parents=True)
+        (run / slug(case["id"])).mkdir(parents=True)
         stage(case, args.name)
+    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    dirty = bool(subprocess.run(["git", "status", "--porcelain", "--", str(SKILL), str(HERE)], cwd=ROOT, capture_output=True, text=True).stdout.strip())
+    info = {"name": args.name, "commit": commit, "dirty": dirty, "skill_digest": skill_digest(skill), "cases_digest": cases_digest(), "model": args.model, "thinking": args.thinking}
+    (run / "run.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         for line in pool.map(lambda case: run_case(case, args.name, skill, args.model, args.thinking, args.timeout), chosen):
             print(line, flush=True)
-    score(HERE / "runs" / args.name, rejudge=False)
+    score(run, rejudge=False)
     return 0
 
 
