@@ -243,6 +243,16 @@ const confirmationRefusals: Record<string, string> = {
 }
 
 /** This adapter owns transport only. Task, rules and execution remain server facts. */
+/** The file name a Content-Disposition header gives (RFC 5987 ``filename*`` first); empty when none. */
+function dispositionName(response: Response): string {
+  const header = response.headers.get('Content-Disposition') || ''
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header)
+  if (encoded) {
+    try {return decodeURIComponent(encoded[1].trim())} catch {return ''}
+  }
+  return /filename="([^"]+)"/i.exec(header)?.[1] ?? ''
+}
+
 export function createNativeAuditAdapter(options: {customers: string[]; personalDriveUpload?: boolean}): AuditIntakeAdapter {
   const validations = new Map<string, string>()
   type Scope = components['schemas']['FileValidationScope']
@@ -267,7 +277,8 @@ export function createNativeAuditAdapter(options: {customers: string[]; personal
           if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
           throw withResponseTrace(new Error('预检报告暂时无法生成。'), response)
         }
-        return response.blob()
+        // XL-26: the delivered name is the server's 「{任务编号}-预检报告.pdf」.
+        return new File([await response.blob()], dispositionName(response) || '预检报告.pdf', {type: 'application/pdf'})
       }, '生成预检报告超时，请重试。'),
     },
     notifications: {

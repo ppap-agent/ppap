@@ -73,7 +73,7 @@ CUSTOMERS: tuple[Customer, ...] = (
     Customer(
         "nio",
         (
-            Template("nio-measurement-report", "1-2 尺寸测量报告.xlsm", "尺寸测量报告", "测量报告", "T01"),
+            Template("nio-measurement-report", "1-2 尺寸测量报告.xlsm", "尺寸测量报告", "测量报告", "T01a"),
             Template("nio-process-flow", "8 过程流程图.xlsx", "过程流程图", "过程流程图", "T09"),
             Template("nio-pfmea", "9 潜在过程失效模式及后果分析.xlsx", "潜在过程失效模式及后果分析", "潜在过程失效模式及后果分析（PFMEA）", "T10"),
             Template("nio-control-plan", "10 控制计划.xlsx", "控制计划", "控制计划", "T11"),

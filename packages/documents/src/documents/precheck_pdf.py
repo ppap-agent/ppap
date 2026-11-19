@@ -99,8 +99,12 @@ def render_precheck_pdf(source: dict) -> bytes:
     sides = sorted({item["responsibility"] for item in findings})
     overall = rating(result)
     verdict = f"总评：<b>{text(overall)}</b>" if overall else f"结论：{CONCLUSION[result['conclusion']]}"
+    # 总纲 §5.2 注 ①②: image-type files are stated on the first screen and asked for as a batch-level W01,
+    # outside the warning count, the file levels and the overall rating.
+    images = [row["filename"] for row in result.get("image_files") or []]
     worst = blocks[0]["problem"] if blocks else warnings[0]["problem"] if warnings else "未发现阻断或警告。"
     summary = [
+        *([f"<p><b>本批 {len(images)} 份为图像型，取值类结论需下游复核。</b></p>"] if images else []),
         f"<p>{verdict}　能否进入正式审核：{'否' if result['conclusion'] == 'fail' else '是' if result['conclusion'] == 'pass' else '待识别完成'}</p>"
         f"<p>阻断 {len(blocks)} 项　警告 {len(warnings)} 项　未审 {result['unreviewed']} 条</p>"
         f"<p>原因码分布：{text('、'.join(f'{code}×{len(numbers)}' for code, numbers in sorted(by_code.items())) or '无')}</p>"
@@ -144,6 +148,8 @@ def render_precheck_pdf(source: dict) -> bytes:
         Table(f"7.{index} {side}", ("文件", "应改为", "关联问题号"), _rows([(item["filename"], item["action"], item["number"]) for item in findings if item["responsibility"] == side]))
         for index, side in enumerate(sides, 1)
     ]
+    if images:
+        remediation.append(Table(f"7.{len(sides) + 1} 整批", ("原因码", "文件", "应改为"), _rows([("W01", "、".join(images), "补可检索文本版")]), nowrap=(0,)))
     routes = "、".join(f"{row['filename']} → {row['entry_key']}" for row in result["files"] if row.get("entry_key"))
     chapters = [
         Chapter(chapter_title(1, "结论摘要"), summary),

@@ -33,6 +33,20 @@ def test_type_sets_and_rule_coverage_from_the_installed_presets():
     assert {"E12", "E13", "E14"}.isdisjoint(uaes)
 
 
+def test_the_inspection_report_is_t01_for_li_and_t01a_for_nio():
+    # PRD §1.5: 蔚来's measurement report (01-2) is the pool member T01a; 理想's inspection report (01-1) stays T01.
+    assert customers.find("nio").type_set.types == ("T01a", "T09", "T10", "T11", "T12")
+    assert (customers.type_code("全功能检验报告", "蔚来"), customers.type_code("全功能检验报告", "理想"), customers.type_code("全功能检验报告")) == ("T01a", "T01", "T01")
+    assert customers.type_name("T01a") == customers.type_name("T01") == "全功能检验报告"
+    rules = preset_rules()
+    assert "T01a" in customers.rule_type_codes(customers.find("nio"), rules)
+    assert "T01" in customers.rule_type_codes(customers.find("li"), rules) and "T01a" not in customers.rule_type_codes(customers.find("li"), rules)
+    from product.customers import in_type_set
+
+    assert in_type_set({"customers": ["蔚来"], "type": "全功能检验报告"}) and in_type_set({"customers": ["理想"], "type": "全功能检验报告"})
+    assert not in_type_set({"customers": ["UAES"], "type": "全功能检验报告"})
+
+
 def test_rule_numerator_counts_each_type_once_and_only_rules_change_it():
     li = customers.find("li")
     rules = [rule for rule in preset_rules() if rule["customers"] == ["理想"]]

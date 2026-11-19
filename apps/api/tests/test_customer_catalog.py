@@ -75,6 +75,10 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         assert [row["customer_id"] for row in empty["customers"]] == ["uaes", "li", "nio"]
         # Installed presets give every registered customer its full rule coverage.
         assert {row["customer_id"]: (len(row["coverage"]["rule_types"]), len(row["coverage"]["types"])) for row in empty["customers"]} == {"uaes": (19, 19), "li": (17, 17), "nio": (5, 5)}
+        # PRD §1.5: 蔚来's measurement report is T01a, 理想's inspection report T01; both rules read as 全功能检验报告.
+        coverage = {row["customer_id"]: row["coverage"] for row in empty["customers"]}
+        assert "T01a" in coverage["nio"]["rule_types"] and "T01" in coverage["li"]["rule_types"]
+        assert {"code": "T01a", "rule_type": "全功能检验报告"} in coverage["nio"]["types"]
         assert custom_choices(empty) == []
 
         def publish(client, customers, kind, predecessor=None):

@@ -100,7 +100,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
       const level = (row: AuditTaskFile) => row.match?.state === 'reference' ? 'reference' as const : row.match?.state === 'unmatched' ? 'unmatched' as const : row.file.id === first?.file.id ? 'warn' as const : 'ok' as const
       const rows = files.map(row => ({file_version_id: row.file.id, filename: row.file.original_filename, level: level(row), document_type: row.match?.document_type ?? null, customer: row.match?.metadata.customer ?? null}))
       const count = (value: string) => rows.filter(row => row.level === value).length
-      return {outline_version: 'PPAP-00 v0.21', conclusion: 'pass', files: rows, blocks: [], warnings, statuses: [], unreviewed: 0, counts: {ok: count('ok'), warn: count('warn'), block: count('block'), unmatched: count('unmatched'), reference: count('reference'), pending: 0}}
+      return {outline_version: 'PPAP-00 v0.21', conclusion: 'pass', files: rows, blocks: [], warnings, statuses: [], unreviewed: 0, generated_at: '2026-11-19 10:00', counts: {ok: count('ok'), warn: count('warn'), block: count('block'), unmatched: count('unmatched'), reference: count('reference'), pending: 0}}
     },
     report: async () => new Blob(['%PDF-1.4 preview'], {type: 'application/pdf'}),
   },

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,7 @@ CUSTOMERS: tuple[RegisteredCustomer, ...] = (
         TypeSet("V3.33", _V3_33, ("T04", "T07", "T08", "T09", "T10", "T11", "T12", "T17", *(f"E{index:02d}" for index in range(1, 12)))),
     ),
     RegisteredCustomer("li", "理想汽车", "理想", TypeSet("V3.33", _V3_33, _T)),
-    RegisteredCustomer("nio", "蔚来汽车", "蔚来", TypeSet("V3.33", _V3_33, ("T01", "T09", "T10", "T11", "T12"))),
+    RegisteredCustomer("nio", "蔚来汽车", "蔚来", TypeSet("V3.33", _V3_33, ("T01a", "T09", "T10", "T11", "T12"))),
 )
 
 
@@ -76,25 +77,42 @@ def short_name(value: object) -> str:
     return customer.short_name if customer else (value.strip() if isinstance(value, str) else "")
 
 
-def type_code(rule_type: object) -> str | None:
-    """The PPAP code of a rule's document type: a customer-only E code as is, a standard type by its name."""
+def type_code(rule_type: object, customer: object = None) -> str | None:
+    """The PPAP dictionary code of a rule's document type for one customer: a customer-only E code as is, a standard type by its name.
+
+    One type name can stand for different dictionary members per customer (PRD §1.5: 蔚来's measurement report is
+    T01a, 理想's inspection report is T01, both read as 全功能检验报告). The customer's own preset entries decide;
+    a customer without an entry for that name gets the plain T code.
+    """
     if not isinstance(rule_type, str) or not rule_type.strip():
         return None
     text = rule_type.strip()
     if len(text) == 3 and text[0] == "E" and text[1:].isdigit():
         return text
-    return _standard_codes().get(text)
+    registered = resolve(customer)
+    own = _standard_codes().get(registered.short_name if registered else None, {})
+    return own.get(text) or _standard_codes()[None].get(text)
 
 
 def type_name(code: str) -> str:
     """The document type name rules use for a code (an E code names itself)."""
-    return next((name for name, value in _standard_codes().items() if value == code), code)
+    return next((name for codes in _standard_codes().values() for name, value in codes.items() if value == code), code)
 
 
-def _standard_codes() -> dict[str, str]:
+@lru_cache(maxsize=1)
+def _standard_codes() -> dict[str | None, dict[str, str]]:
+    """Type name → T code per preset customer, and under None the plain codes (T01, not T01a) every customer shares."""
     from audit.presets import customer_presets, preset_document_type
 
-    return {preset_document_type(preset): preset.source_type for preset in customer_presets() if preset.source_type.startswith("T")}
+    codes: dict[str | None, dict[str, str]] = {None: {}}
+    for preset in customer_presets():
+        if not preset.source_type.startswith("T"):
+            continue
+        name = preset_document_type(preset)
+        codes.setdefault(preset.customer, {})[name] = preset.source_type
+        if len(preset.source_type) == 3:
+            codes[None][name] = preset.source_type
+    return codes
 
 
 def covered(customer: RegisteredCustomer, codes: Iterable[str | None]) -> list[str]:
@@ -110,7 +128,7 @@ def rule_type_codes(customer: RegisteredCustomer, rules: Iterable[dict]) -> set[
         named = rule.get("customers")
         if rule.get("kind") != "engine" or not isinstance(named, list):
             continue
-        if any(resolve(value) is customer for value in named) and (code := type_code(rule.get("type"))):
+        if any(resolve(value) is customer for value in named) and (code := type_code(rule.get("type"), customer.short_name)):
             codes.add(code)
     return codes
 
@@ -122,10 +140,10 @@ def in_type_set(rule: dict) -> bool:
     unregistered customer or an unrecognised type is not judged here.
     """
     named = [customer for value in rule.get("customers") or [] if (customer := resolve(value))]
-    code = type_code(rule.get("type"))
-    if not named or code is None:
+    codes = [(customer, type_code(rule.get("type"), customer.short_name)) for customer in named]
+    if not named or any(code is None for _customer, code in codes):
         return True
-    return any(customer.type_set and code in customer.type_set.types for customer in named)
+    return any(customer.type_set and code in customer.type_set.types for customer, code in codes)
 
 
 def coverage(customer: RegisteredCustomer, template_codes: Iterable[str | None], rule_codes: Iterable[str | None]) -> dict | None:

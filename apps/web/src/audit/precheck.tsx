@@ -11,6 +11,8 @@ const ReportReader = lazy(() => import('./report-reader').then(module => ({defau
 export type Precheck = components['schemas']['AuditTaskPrecheck']
 type Task = components['schemas']['AuditTask']
 export type PrecheckAdapter = {read: (taskId: string, signal?: AbortSignal) => Promise<Precheck>; report: (taskId: string) => Promise<Blob>}
+/** The delivered file name (XL-26 「{任务编号}-预检报告.pdf」) when the report carries one. */
+export const precheckFileName = (blob: Blob) => blob instanceof File && blob.name ? blob.name : '预检报告.pdf'
 
 /** The precheck follows the recognized task; a changed file set reads it again. */
 export function usePrecheck(adapter: PrecheckAdapter | undefined, task: Task | null | undefined, enabled: boolean) {
@@ -51,7 +53,7 @@ export function PrecheckNotes({result, fileVersionId}: {result: Precheck | null;
 export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdapter; taskId: string; result: Precheck}) {
   // One PDF per precheck result: preview and download read the same bytes; a new result drops it.
   const key = JSON.stringify([taskId, result])
-  const [pdf, setPdf] = useState<{key: string; url: string} | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const [pdf, setPdf] = useState<{key: string; url: string; name: string} | null>(null), names = useRef(new Map<string, string>()), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const [target, setTarget] = useState<{index: number; nonce: number} | null>(null)
   const urls = useRef<string[]>([])
   useEffect(() => () => urls.current.forEach(url => URL.revokeObjectURL(url)), [])
@@ -60,8 +62,9 @@ export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdap
     if (current) return current
     setBusy(true); setError('')
     try {
-      const url = URL.createObjectURL(await adapter.report(taskId))
-      urls.current.push(url); setPdf({key, url})
+      const blob = await adapter.report(taskId)
+      const url = URL.createObjectURL(blob)
+      names.current.set(url, precheckFileName(blob)); urls.current.push(url); setPdf({key, url, name: precheckFileName(blob)})
       return url
     } catch {setError('预检报告暂时无法生成，预检结果不受影响，可以重试。'); return ''} finally {setBusy(false)}
   }
@@ -69,7 +72,7 @@ export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdap
   async function download() {
     const url = await read()
     if (!url) return
-    const link = document.createElement('a'); link.href = url; link.download = '预检报告.pdf'; link.click()
+    const link = document.createElement('a'); link.href = url; link.download = names.current.get(url) || '预检报告.pdf'; link.click()
   }
   const conclusion = precheckRating(result)
   return <section aria-label="预检报告" className="space-y-3 rounded-lg border bg-card p-4">
@@ -87,8 +90,8 @@ export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdap
     <p className="text-xs text-muted-foreground">预览和下载不会开始审核，也不收费。</p>
     <Dialog open={Boolean(target && current)} onOpenChange={value => {if (!value) setTarget(null)}}>
       <DialogContent className="flex h-[88dvh] flex-col overflow-hidden sm:max-w-6xl">
-        <DialogHeader><DialogTitle>预检报告</DialogTitle><DialogDescription>{conclusion}</DialogDescription></DialogHeader>
-        <div className="min-h-0 flex-1 overflow-hidden rounded-sm border">{current && <Suspense fallback={<ReadSkeleton label="正在加载报告阅读器…" kind="document"/>}><ReportReader url={current} name="预检报告.pdf" kind="预检报告" target={target}/></Suspense>}</div>
+        <DialogHeader><DialogTitle>{pdf?.name || '预检报告.pdf'}</DialogTitle><DialogDescription>预检报告 · 生成时间 {result.generated_at} · {conclusion}</DialogDescription></DialogHeader>
+        <div className="min-h-0 flex-1 overflow-hidden rounded-sm border">{current && <Suspense fallback={<ReadSkeleton label="正在加载报告阅读器…" kind="document"/>}><ReportReader url={current} name={pdf?.name || '预检报告.pdf'} kind="预检报告" target={target}/></Suspense>}</div>
       </DialogContent>
     </Dialog>
   </section>

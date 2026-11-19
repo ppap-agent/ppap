@@ -96,7 +96,8 @@ def test_recognized_customer_and_type_route_to_one_entry():
     assert entry_key("UAES", "PFMEA") == "U07"
     assert entry_key("理想", "控制计划") == "L08"
     assert entry_key("蔚来", "全功能检验报告") == "N01"
-    assert entry_key("蔚来", "T01a") == entry_key("蔚来", "T01") == "N01"
+    assert entry_key("蔚来", "T01a") == entry_key("蔚来", "测量报告") == "N01"
+    assert entry_key("蔚来", "T01") is None and entry_key("理想", "T01") == "L01"
     assert entry_key("蔚来", "检具验收报告") is None
     assert entry_key(None, "控制计划") is None
 

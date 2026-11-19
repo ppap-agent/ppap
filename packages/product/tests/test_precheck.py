@@ -107,6 +107,21 @@ def test_a_type_outside_the_customer_set_is_out_of_scope_and_only_a_type_inside_
     assert levels == {"gauge": "unmatched", "pgqp": "reference", "cp": "unmatched"}
 
 
+def test_the_inspection_report_type_is_t01_for_li_and_t01a_for_nio_so_neither_is_out_of_scope():
+    from product.precheck import type_code
+
+    # PRD §1.5: one recognized type, two dictionary members by customer; UAES has neither in its M.
+    assert (type_code("全功能检验报告", "理想"), type_code("全功能检验报告", "蔚来"), type_code("T01a")) == ("T01", "T01a", "T01a")
+    rows = []
+    for customer in ("理想", "蔚来", "UAES"):
+        row = file(customer, f"{customer}-尺寸报告.xlsx", state="unmatched", gaps=["matching_document_type_rules_missing"], doc_type="全功能检验报告")
+        row["match"]["metadata"]["customer"] = customer
+        rows.append(row)
+    result = precheck_task({"files": rows})
+    assert [item["file_version_id"] for item in _status(result, "S01") if "scope" not in item] == ["UAES"]
+    assert {item["file_version_id"] for item in _status(result, "S02") if "scope" not in item} == {"理想", "蔚来"}
+
+
 def test_a_missing_counterpart_is_s04_with_its_w01_and_a_mismatched_one_is_s07_with_its_facts():
     result = precheck_task(
         {
@@ -233,6 +248,38 @@ def test_named_by_user_is_only_a_rule_chosen_by_hand_that_the_file_is_matched_to
     stale = file("p", "照片.xlsx", preferred_rule_version_id="other")
     stale["match"]["rule"] = {"id": "photo"}
     assert not named_by_user(stale)
+    # A re-audit inherits the previous Round's rule (the first of its options): keeping it is not chosen by hand.
+    options = [{"id": "photo", "title": "照片 · 原审核版本"}, {"id": "photo-2", "title": "照片 · 较新版本"}]
+    inherited = file("p", "照片.xlsx", preferred_rule_version_id="photo", rule_options=options)
+    inherited["match"]["rule"] = {"id": "photo"}
+    assert not named_by_user(inherited)
+    # Another rule picked on P3 of the re-audit is.
+    picked = file("p", "照片.xlsx", preferred_rule_version_id="photo-2", rule_options=options)
+    picked["match"]["rule"] = {"id": "photo-2"}
+    assert named_by_user(picked)
+    # A file new to the re-audit has no original rule; a rule chosen for it is chosen by hand.
+    added = file("p", "照片.xlsx", preferred_rule_version_id="photo", rule_options=[])
+    added["match"]["rule"] = {"id": "photo"}
+    assert named_by_user(added)
+
+
+def test_image_type_files_are_one_batch_note_that_changes_no_count_level_or_conclusion():
+    """总纲 §5.2: 同批存在图像型文件 is a batch-level W01 that does not affect any single file's conclusion."""
+    from product.precheck_content import NO_TEXT
+
+    batch = [
+        file("psw", "PSW.xlsx", doc_type="零件提交保证书"),
+        file("photo", "样品照片.JPG", doc_type="零件提交保证书"),
+        file("scan", "扫描.pdf", doc_type="零件提交保证书"),
+        file("drop", "旧照片.png", selection="removed"),
+    ]
+    content = {"scan": [{"criterion_id": "A", "criterion": "a", "result": "未执行", "reason": NO_TEXT, "unread": True}]}
+    plain = precheck_task({"files": batch[:1] + [file("x", "扫描.pdf", doc_type="零件提交保证书")]}, {"x": [{"criterion_id": "A", "criterion": "a", "result": "满足"}]})
+    result = precheck_task({"files": batch}, content)
+    assert result["image_files"] == [{"file_version_id": "photo", "filename": "样品照片.JPG"}, {"file_version_id": "scan", "filename": "扫描.pdf"}]
+    assert not [item for item in result["warnings"] if item["code"] == "W01"]
+    assert [row["level"] for row in result["files"]] == ["ok", "ok", "ok"] and result["conclusion"] == "pass"
+    assert plain["image_files"] == []
 
 
 def test_unreviewed_counts_s03_to_s07_and_never_s01_or_s02():
@@ -244,3 +291,20 @@ def test_unreviewed_counts_s03_to_s07_and_never_s01_or_s02():
     result = precheck_task({"files": batch})
     assert sorted(item["code"] for item in result["statuses"]) == ["S01", "S02", "S04"]
     assert result["unreviewed"] == 1
+
+
+def test_an_unrouted_pdf_without_a_text_layer_is_an_image_type_file():
+    import pymupdf
+    from product.precheck import image_files
+
+    blank = pymupdf.open()
+    blank.new_page()
+    scan, text = blank.tobytes(), None
+    with_text = pymupdf.open()
+    with_text.new_page().insert_text((72, 72), "Control Plan")
+    text = with_text.tobytes()
+    rows = [file("scan", "扫描件.pdf", state="unmatched"), file("doc", "说明.pdf", state="unmatched")]
+    originals = {"scan": scan, "doc": text}
+    found = image_files(rows, {}, read=lambda row: originals[row["file"]["id"]])
+    assert [item["file_version_id"] for item in found] == ["scan"]
+    assert image_files(rows, {}) == []

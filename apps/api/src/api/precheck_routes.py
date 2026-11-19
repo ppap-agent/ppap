@@ -106,6 +106,8 @@ class AuditTaskPrecheck(TypedDict):
     # 未审条数: S03/S04/S05/S07 one each plus the open criteria of each S06; S01/S02 are not counted.
     unreviewed: int
     counts: PrecheckCounts
+    # When this precheck was made: the acceptance freeze once accepted, else now (IXD §3.17 P11 生成时间).
+    generated_at: str
 
 
 HEADERS = {"Cache-Control": "private, no-store"}
@@ -131,7 +133,7 @@ def register_precheck_routes(app: FastAPI, store: AuthStore, principal_of) -> No
         source, denied = read(request, task_id)
         if denied:
             return denied
-        return JSONResponse(source["precheck"], headers=HEADERS)
+        return JSONResponse({**source["precheck"], "generated_at": source["generated_at"]}, headers=HEADERS)
 
     @app.get("/audit-tasks/{task_id}/precheck/report", response_class=Response, responses={200: {"content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}}})
     def audit_task_precheck_report(task_id: str, request: Request) -> Response:

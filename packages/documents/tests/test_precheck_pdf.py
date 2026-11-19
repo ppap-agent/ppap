@@ -145,3 +145,18 @@ def test_a_task_without_a_number_is_named_without_any_identifier():
     with pymupdf.open(stream=render_precheck_pdf({**SOURCE, "task_number": None}), filetype="pdf") as document:
         assert document.metadata["title"] == "预检报告"
         assert "审核任务" not in "".join(_flat(document))
+
+
+def test_image_type_files_are_declared_first_and_asked_for_as_a_batch_w01_outside_the_counts():
+    """总纲 §5.2 注 ①②: the first chapter states the image-type files and chapter seven carries one batch-level W01."""
+    result = {**RESULT, "conclusion": "pass", "blocks": [], "image_files": [{"file_version_id": "scan", "filename": "流程图.pdf"}, {"file_version_id": "photo", "filename": "样品.jpg"}]}
+    with pymupdf.open(stream=render_precheck_pdf({**SOURCE, "precheck": result}), filetype="pdf") as document:
+        pages = _flat(document)
+    summary = next(page for page in pages if "一、结论摘要" in page and "能否进入正式审核" in page)
+    assert summary.index("本批2份为图像型，取值类结论需下游复核。") < summary.index("总评：有条件通过·含警告1项")
+    assert "警告1项" in summary
+    remediation = next(page for page in pages if "七、整改建议汇总" in page and "应改为" in page)
+    assert "W01流程图.pdf、样品.jpg补可检索文本版" in remediation
+
+    with pymupdf.open(stream=render_precheck_pdf(SOURCE), filetype="pdf") as document:
+        assert "图像型" not in "".join(_flat(document)) and "可检索文本版" not in "".join(_flat(document))

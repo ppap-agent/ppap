@@ -2979,6 +2979,8 @@ export interface components {
             counts: components["schemas"]["PrecheckCounts"];
             /** Files */
             files: components["schemas"]["PrecheckFile"][];
+            /** Generated At */
+            generated_at: string;
             /** Outline Version */
             outline_version: string;
             /** Statuses */

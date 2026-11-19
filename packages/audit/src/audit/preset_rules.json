@@ -1363,7 +1363,7 @@
   {
     "customer": "蔚来",
     "entry_id": "N01",
-    "source_type": "T01",
+    "source_type": "T01a",
     "level": "L1",
     "title": "1-2规则-测量报告",
     "source_path": "assets/nio/rules/1-2规则-测量报告.docx",

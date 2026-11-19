@@ -13,10 +13,10 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter, defaultdict
-from functools import lru_cache
 from typing import Any, Callable, Mapping
 
-from product.precheck_content import entry_key
+from product.precheck_content import NO_TEXT, entry_key
+from product.precheck_reading import IMAGE_SUFFIXES, read_document
 
 OUTLINE_VERSION = "PPAP-00 v0.21"
 
@@ -96,20 +96,6 @@ def _finding(code: str, level: str, file: dict, problem: str, evidence: str, act
     }
 
 
-@lru_cache(maxsize=1)
-def _presets() -> dict[Any, str]:
-    """Document kind -> T code, as the product presets name each standard type."""
-    from audit.kinds import PpapDocumentType
-    from audit.presets import customer_presets, preset_document_type
-
-    kinds = {}
-    for preset in customer_presets():
-        kind = PpapDocumentType.from_string(preset_document_type(preset))
-        if kind != PpapDocumentType.UNKNOWN:
-            kinds[kind] = preset.source_type
-    return kinds
-
-
 def customer_types(customer: str | None) -> frozenset[str] | None:
     """M: the registered customer's type set; None when the customer is not registered or has no M configured."""
     from product.customers import resolve
@@ -118,16 +104,23 @@ def customer_types(customer: str | None) -> frozenset[str] | None:
     return frozenset(registered.type_set.types) if registered and registered.type_set and registered.type_set.types else None
 
 
-def type_code(document_type: str | None) -> str | None:
-    """The 00-A dictionary code (T01…T17, E01…) of a recognized type; None when it has none."""
+def type_code(document_type: str | None, customer: str | None = None) -> str | None:
+    """The PRD §1.5 dictionary code (T01, T01a…T17, E01…) of a recognized type for this customer; None when it has none.
+
+    The same recognized type can be a different dictionary member per customer (蔚来's measurement report is T01a,
+    理想's inspection report T01), so the customer's own entries decide.
+    """
     text = (document_type or "").strip()
-    if re.fullmatch(r"[TE]\d{2}", text):
+    if re.fullmatch(r"[TE]\d{2}a?", text):
         return text
     if not text:
         return None
     from audit.kinds import PpapDocumentType
 
-    return _presets().get(PpapDocumentType.from_string(text))
+    from product.customers import type_code as dictionary_code
+
+    kind = PpapDocumentType.from_string(text)
+    return dictionary_code(kind.get_type_name(), customer) if kind != PpapDocumentType.UNKNOWN else None
 
 
 def _part(row: dict) -> str | None:
@@ -138,9 +131,35 @@ def _part(row: dict) -> str | None:
 
 
 def named_by_user(row: dict) -> bool:
-    """The user chose this file's rule by hand on P3 and it is the rule the file is matched to; recognition alone never is."""
+    """The user chose this file's rule by hand on P3 and it is the rule the file is matched to; recognition alone never is.
+
+    A re-audit row inherits the previous Round's rule as its preferred rule; that rule is the first of its
+    ``rule_options`` (原审核版本), so keeping it is no choice by hand — only another rule picked on P3 is.
+    """
     preferred = row.get("preferred_rule_version_id")
-    return bool(preferred) and ((row.get("match") or {}).get("rule") or {}).get("id") == preferred
+    if not preferred or ((row.get("match") or {}).get("rule") or {}).get("id") != preferred:
+        return False
+    original = next(iter(row.get("rule_options") or []), None)
+    return not (original and original.get("id") == preferred)
+
+
+def image_files(files: list[dict], content: Mapping[str, list[dict]] | None, read: Callable[[dict], bytes] | None = None) -> list[dict]:
+    """总纲 §5.2 「同批存在图像型文件」: picture files by their extension, and scans — files without a text layer,
+    found by the content level or, for a PDF no rule entry read, by reading its text layer once. No OCR or model call."""
+    found = []
+    for row in files:
+        name = row["file"]["original_filename"]
+        suffix = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+        scanned = any(item.get("reason") == NO_TEXT for item in (content or {}).get(row["file"]["id"], []))
+        if not scanned and suffix == ".pdf" and row["file"]["id"] not in (content or {}) and read is not None:
+            try:
+                document = read_document(read(row), name)
+                scanned = not document.error and not document.has_text
+            except Exception:  # noqa: BLE001 - an unreadable file is the file level's matter (B01/W05), not a scan
+                scanned = False
+        if suffix in IMAGE_SUFFIXES or scanned:
+            found.append({"file_version_id": row["file"]["id"], "filename": name})
+    return found
 
 
 def _grids(content: bytes, filename: str) -> dict[str, list[list[str]]] | None:
@@ -294,6 +313,9 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
     Several versions (附件 R-03, 用户裁定): two or more submitted files of one recognized part with the very same
     file name are each B02. ``read`` (a task file row -> its bytes) lets the evidence say whether they are
     byte-identical, saved copies with equal cell values, or two versions with their differing cells.
+
+    ``image_files`` lists the batch's image-type files (总纲 §5.2 整批级 W01). It is no finding: it counts in no
+    warning, changes no file level and not the conclusion; the report states it and asks for a text version.
     """
     files = [row for row in task.get("files", []) if row.get("selection") == "selected"]
     findings: list[dict] = []
@@ -301,10 +323,14 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
     pending: list[str] = []
     entries: dict[str, str | None] = {}
     targets: list[tuple[dict, str, str]] = []
-    codes = {row["file"]["id"]: type_code((row.get("match") or {}).get("document_type")) for row in files}
+
+    def customer_of(row: dict) -> str | None:
+        return ((row.get("match") or {}).get("metadata") or {}).get("customer") or task.get("customer_preference")
+
+    codes = {row["file"]["id"]: type_code((row.get("match") or {}).get("document_type"), customer_of(row)) for row in files}
     for row in files:
         name, validation, match = row["file"]["original_filename"], row.get("validation") or {}, row.get("match") or {}
-        customer = (match.get("metadata") or {}).get("customer") or task.get("customer_preference")
+        customer = customer_of(row)
         scope, code = customer_types(customer), codes[row["file"]["id"]]
         outside = scope is not None and code is not None and code not in scope
         reasons = "；".join(str(reason) for reason in validation.get("reasons") or [])
@@ -418,5 +444,6 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
         "warnings": warnings,
         "statuses": statuses,
         "unreviewed": unreviewed_count(statuses, unread),
+        "image_files": image_files(files, content, read),
         "counts": {level: counts.get(level, 0) for level in ("ok", "warn", "block", "unmatched", "reference", "pending")},
     }

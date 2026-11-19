@@ -50,6 +50,8 @@ def preset_document_type(preset: CustomerPreset) -> str:
 
     types = {
         "T01": T.DIMENSION_MEASUREMENT_REPORT,
+        # PRD §1.5: 蔚来's measurement report (01-2) is its own dictionary member; its rules still read as this type.
+        "T01a": T.DIMENSION_MEASUREMENT_REPORT,
         "T02": T.DVP_R,
         "T03": T.DPVR,
         "T04": T.SUB_SUPPLIER_LIST,

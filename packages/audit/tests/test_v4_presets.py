@@ -1,13 +1,15 @@
 """Independent V4 source identities; these tests do not certify Checker coverage."""
 
 import pytest
-from audit.presets import preset_rule
+from audit.presets import preset_rule, preset_rule_body
 
 
 def test_preset_matrix_uses_customer_identity_not_legacy_filename_numbers():
     assert (preset_rule("UAES", "U16").source_type, preset_rule("UAES", "U16").level) == ("T09", "L2")
     assert (preset_rule("理想", "L07").source_type, preset_rule("理想", "L07").level) == ("T10", "L1")
-    assert preset_rule("蔚来", "N01").source_type == "T01"
+    assert preset_rule("蔚来", "N01").source_type == "T01a"
+    # The dictionary code changed; the rule's document type and so its stored body did not.
+    assert preset_rule_body("蔚来", "N01")["type"] == preset_rule_body("理想", "L01")["type"] == "全功能检验报告"
     with pytest.raises(ValueError, match="unknown_customer_rule"):
         preset_rule("理想", "U07")
     with pytest.raises(ValueError, match="unknown_customer_rule"):
