@@ -5,7 +5,7 @@ import {createPortal} from 'react-dom'
 import {requestTrace} from '../api'
 import {analysisNotice} from '../helpers'
 import {MatchingFeedback, SourceMismatchNotice, isMatchingReason} from './matching-feedback'
-import {faAnglesRight, faArrowLeft, faArrowRight, faArrowsRotate, faBookOpen, faChartPie, faCheck, faChevronDown, faCircleInfo, faCircleQuestion, faCloud, faFileShield, faFolderOpen, faLayerGroup, faSliders, faXmark} from '@fortawesome/free-solid-svg-icons'
+import {faAnglesRight, faArrowLeft, faArrowRight, faArrowsRotate, faBookOpen, faChartPie, faCheck, faChevronDown, faCircleInfo, faCircleQuestion, faCloud, faFileShield, faFolderOpen, faLayerGroup, faSliders, faWandMagicSparkles, faXmark} from '@fortawesome/free-solid-svg-icons'
 import {Icon} from '../components/ui/icon'
 import {Segmented} from '../components/segmented'
 import type {components} from '../generated/openapi'
@@ -866,12 +866,12 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     for (const key of rulesAddressKeys) url.searchParams.delete(key)
     writeAuditAddress(url)
   }
-  // One 64px icon rail: each item is its icon over its short name; the current page carries a bar on its left edge.
-  const railItem = 'relative flex size-11 flex-col items-center justify-center gap-1 rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground aria-[current=page]:bg-primary-soft aria-[current=page]:text-primary'
+  // One 64px dark icon rail: each item is its icon over its short name; the current page is solid primary.
+  const railItem = 'flex size-11 flex-col items-center justify-center gap-1 rounded-lg text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-[current=page]:bg-sidebar-primary aria-[current=page]:text-sidebar-primary-foreground'
   const navigation = <nav aria-label="产品导航" className="grid justify-items-center gap-2">
     {productLinks.filter(link => link.view !== 'requirements' || rules).map(({view, label, short, icon}) => {
       const active = surface === view
-      const content = <>{active && <span aria-hidden="true" className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-primary"/>}<Icon icon={icon} aria-hidden="true" className="size-4.5"/><span aria-hidden="true" className="text-2xs leading-none">{short}</span></>
+      const content = <><Icon icon={icon} aria-hidden="true" className="size-4.5"/><span aria-hidden="true" className="text-2xs leading-none">{short}</span></>
       return <Tooltip key={view}><TooltipTrigger asChild>{view === 'templates' && !templateAdapter
         ? <a className={railItem} href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer" aria-label="模板库（在飞书新窗口打开）">{content}</a>
         : <button type="button" className={railItem} aria-label={label} aria-current={active ? 'page' : undefined} onClick={() => view === 'requirements' ? openRules() : showSurface(view)}>{content}</button>}</TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>
@@ -1039,9 +1039,9 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }
   return <TooltipProvider><SupportEntryContext.Provider value={openSupport}><div className="flex h-dvh overflow-hidden bg-canvas text-sm text-foreground">
     <a href="#audit-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-background focus:p-3 focus-visible:outline-ring focus-visible:ring-2 focus-visible:ring-ring">跳到主要内容</a>
-    <aside aria-label="产品侧栏" className="flex h-dvh w-16 shrink-0 flex-col items-center justify-between border-r bg-card py-4">
-      <div className="grid justify-items-center gap-6"><span className="flex size-10 items-center justify-center rounded-lg bg-primary text-base font-bold tracking-wider text-primary-foreground"><span aria-hidden="true">PA</span><span className="sr-only">PPAP Audit</span></span>{navigation}</div>
-      <Tooltip><TooltipTrigger asChild><Button size="icon-lg" variant="quiet" aria-label="联系支持" onClick={() => openSupport({scenario: supportScenario})}><Icon icon={faCircleQuestion} aria-hidden="true" className="size-4.5"/></Button></TooltipTrigger><TooltipContent side="right">联系支持</TooltipContent></Tooltip>
+    <aside aria-label="产品侧栏" className="flex h-dvh w-16 shrink-0 flex-col items-center justify-between bg-sidebar py-4">
+      <div className="grid justify-items-center gap-6"><span className="flex size-10 items-center justify-center rounded-lg bg-linear-135 from-brand-light to-primary text-primary-foreground"><Icon icon={faWandMagicSparkles} aria-hidden="true" className="size-5"/><span className="sr-only">PPAP Audit</span></span>{navigation}</div>
+      <Tooltip><TooltipTrigger asChild><button type="button" className={railItem} aria-label="联系支持" onClick={() => openSupport({scenario: supportScenario})}><Icon icon={faCircleQuestion} aria-hidden="true" className="size-4.5"/></button></TooltipTrigger><TooltipContent side="right">联系支持</TooltipContent></Tooltip>
     </aside>
     <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
       <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-6 py-2"><div className="flex min-w-0 items-center gap-3">
@@ -1086,11 +1086,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
           {task && <p className="text-xs text-muted-foreground">{reauditing ? reauditNote : '系统识别每份文件的要素并匹配客户规则；核对规则后点击【开始审核】。'}</p>}
           {task && foreign && <p className="text-xs text-muted-foreground">{task.creator.name || '同事'} 发起，只有发起人可以确认规则和开始审核。</p>}
         </div>{task && <p role="status" className="pt-1 text-xs tabular-nums text-muted-foreground">当前客户：{task.customer_preference ? customerShortName(coverageSource?.customers, task.customer_preference) : '自动识别'}{taskCoverage && <> · 规则覆盖 {taskCoverage.supported}/{taskCoverage.total} 类</>} · {submitted === null ? '送审 待确认' : `送审 ${submitted} 份`}</p>}</header>}
-        {step === 'match' && <div className="rounded-lg border bg-card px-4 py-2.5">{stepper}</div>}
-        {step === 'match' && task?.state === 'pending_confirm' && reauditing && newerRules.length > 0 && <section aria-labelledby="rule-update-title" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary-line bg-primary-soft p-3.5">
-          <div className="flex min-w-0 items-center gap-3"><span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary-soft-hover text-primary"><Icon icon={faCircleInfo} className="size-3"/></span><div className="min-w-0"><h2 id="rule-update-title" className="text-sm font-semibold">审核规则已更新</h2><p className="text-xs">{newerRules.join('、')}在上次审核后有新版本。</p></div></div>
-          <div className="flex items-center gap-3"><Segmented label="本次使用的规则版本" value={ruleVersionChoice(files)} options={[['newer', '使用新版本'], ['original', '沿用上次版本']]} disabled={recognitionLocked || confirmationLocked || Boolean(blocked)} onChange={chooseRuleVersion}/><span className="text-xs text-muted-foreground">可随时切换。</span></div>
-        </section>}
         <input ref={input} disabled={!customerReady} type="file" className="sr-only" aria-label="选择审核文件" multiple accept={acceptedUploads(customer).accept} onChange={event => {receive(Array.from(event.target.files || [])); event.target.value = ''}}/>
         {step === 'upload' && <section aria-label="上传文件" data-dragging={dragging} className="rounded-lg border bg-card transition-colors data-[dragging=true]:border-primary" onDragOver={event => {event.preventDefault(); setDragging(true)}} onDragLeave={event => {if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false)}} onDrop={event => {event.preventDefault(); setDragging(false); receive(Array.from(event.dataTransfer.files))}}>
           <fieldset disabled={recognizing} className="min-w-0 space-y-5 p-6">
@@ -1119,7 +1114,12 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         </section>}
         {step === 'match' && task && <>
           {task.state === 'matching' && readStatus[task.id]?.error && <Alert variant="destructive"><AlertTitle>暂时无法读取</AlertTitle><AlertDescription><p>{readStatus[task.id].error}</p><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={readStatus[task.id]?.busy} onClick={() => void readMatching(task)}>{readStatus[task.id]?.busy ? '正在读取识别结果…' : '重新读取识别结果'}</Button><Button variant="outline" size="sm" onClick={() => contactReadSupport(task)}>联系支持</Button></div></AlertDescription></Alert>}
-          {task.state === 'pending_confirm' && templates.length > 0 && <div className="flex flex-wrap items-center gap-3"><Label htmlFor="rule-template">客户规则</Label><Select value={templateChoice || undefined} disabled={recognitionLocked || confirmationLocked || Boolean(blocked)} onValueChange={chooseTemplate}><SelectTrigger id="rule-template" className="w-64 max-w-full"><SelectValue placeholder="按文件自动匹配"/></SelectTrigger><SelectContent>{templates.map(key => <SelectItem key={key} value={key} description={key === lastTemplate() ? '上次使用' : undefined}>{templateName(key)}</SelectItem>)}</SelectContent></Select></div>}
+          {/* One row: the customer rules on the left, the step line on the right, kept there when there is no rule choice. */}
+          <div className="flex flex-wrap items-center justify-between gap-3">{task.state === 'pending_confirm' && templates.length > 0 ? <div className="flex flex-wrap items-center gap-3"><Label htmlFor="rule-template">客户规则</Label><Select value={templateChoice || undefined} disabled={recognitionLocked || confirmationLocked || Boolean(blocked)} onValueChange={chooseTemplate}><SelectTrigger id="rule-template" className="w-64 max-w-full"><SelectValue placeholder="按文件自动匹配"/></SelectTrigger><SelectContent>{templates.map(key => <SelectItem key={key} value={key} description={key === lastTemplate() ? '上次使用' : undefined}>{templateName(key)}</SelectItem>)}</SelectContent></Select></div> : <span/>}{stepper}</div>
+          {task.state === 'pending_confirm' && reauditing && newerRules.length > 0 && <section aria-labelledby="rule-update-title" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary-line bg-primary-soft p-3.5">
+          <div className="flex min-w-0 items-center gap-3"><span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary-soft-hover text-primary"><Icon icon={faCircleInfo} className="size-3"/></span><div className="min-w-0"><h2 id="rule-update-title" className="text-sm font-semibold">审核规则已更新</h2><p className="text-xs">{newerRules.join('、')}在上次审核后有新版本。</p></div></div>
+          <div className="flex items-center gap-3"><Segmented label="本次使用的规则版本" value={ruleVersionChoice(files)} options={[['newer', '使用新版本'], ['original', '沿用上次版本']]} disabled={recognitionLocked || confirmationLocked || Boolean(blocked)} onChange={chooseRuleVersion}/><span className="text-xs text-muted-foreground">可随时切换。</span></div>
+        </section>}
           {!precheck.result && task.state !== 'matching' && matchGroups.length > 1 && <dl aria-label="识别结果统计" className="grid grid-cols-4 gap-3">{matchGroups.map(group => <div key={group.title} className="flex flex-col-reverse rounded-lg border bg-card px-4 py-3 text-center"><dt className="text-xs text-muted-foreground">{group.title}</dt><dd className={`text-2xl font-semibold tabular-nums ${matchGroupTone[group.title]?.[0] ?? ''}`}>{group.rows.length}</dd></div>)}</dl>}
           <div className="flex flex-col gap-5 xl:flex-row xl:items-start"><div className="min-w-0 flex-1 space-y-5">
           {task.state === 'matching' ? <div className="space-y-2">{matchingFiles.map(row => matchRow(row))}</div> : <div className="space-y-5">
