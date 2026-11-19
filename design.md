@@ -199,6 +199,19 @@ The layout is built on a condensed 12-column fluid grid tailored for maximum das
 - **Vertical Rhythm**: Compact table row heights (36px default, 32px dense) allow high-volume scanning of line items without scroll exhaustion.
 - **Reflow Rules**: On viewports below 1024px, secondary inspector panels collapse into sliding drawer sheets; tables shift to horizontally scrollable viewports with frozen primary identifier columns.
 
+## Page Frame
+
+Layout follows what the person is doing on the page; visual form follows this document. Reference images (including the PRD's) explain intent but are not the reason for a layout.
+
+- **Single-action pages** (upload; precheck and rule matching) fold the task list, keep what the decision rests on at the top (title, the one-line verdict, the step line) and the action at the bottom (estimate, deep mode, start). Only the material between them scrolls (`PageLayout` in `apps/web/src/components/page-layout.tsx`), so neither leaves the screen at 1280 × 800.
+- **Result pages** keep the task list open for moving between tasks and put their own heading (status, progress, estimate) in the top bar, once.
+- **Library pages** (files, templates, rules, usage) have no task list.
+- The page kinds and their frame regions live in one table, `pageFrames` in `apps/web/src/audit/intake.tsx`; change the table, not scattered conditions.
+- Each fact appears once: a count belongs to its section heading; the top verdict says only what the start depends on (files sent, blocked, needing a hand, unmatched).
+- A control whose change redoes work says so beside it (changing the rules re-recognizes the whole batch).
+- A completed step is shown in the primary colour with ✓, never in green: green means compliant here.
+- Narrow windows fold auxiliary areas, never the main action, the verdict or the reasons for a block; nothing tells the person their window is too small.
+
 ## Elevation & Depth
 
 This design system avoids heavy blurred drop shadows, utilizing low-contrast ghost outlines and crisp structural borders to construct depth.

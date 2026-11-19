@@ -237,7 +237,9 @@ def test_the_rule_update_reminder_names_the_changed_rules_and_defaults_to_the_ne
     page, commands = reaudit_page
     files = recognition_command(page, commands)
     assert [file["preferred_rule_version_id"] for file in files[:2]] == ["rule-A-new", "rule-B"]
-    expect(page.get_by_role("heading", name="关联重审", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="预检并匹配规则", exact=True)).to_be_visible()
+    # The page names the step; the re-audit is marked beside it.
+    expect(page.get_by_text("关联重审", exact=True)).to_be_visible()
     reminder = page.get_by_role("region", name="审核规则已更新", exact=True)
     expect(reminder).to_contain_text("原规则 A在上次审核后有新版本。")
     versions = reminder.get_by_role("group", name="本次使用的规则版本", exact=True)
@@ -288,9 +290,9 @@ def test_server_readback_retains_the_automatic_exclusion_until_replacement_is_cl
     choose_replacement(page, "替换：原文件A.xlsx")
     recognition_command(page, commands)
     # Recognition results open on the confirm-rules page, also after a reload.
-    expect(page.get_by_role("heading", name="关联重审", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="预检并匹配规则", exact=True)).to_be_visible()
     page.reload()
-    expect(page.get_by_role("heading", name="关联重审", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="预检并匹配规则", exact=True)).to_be_visible()
     page.get_by_role("button", name="上一步", exact=True).click()
     expect(page.get_by_role("checkbox", name="选择 原文件A.xlsx", exact=True)).to_have_count(0)
     choose_replacement(page, "新增文件 · 重新匹配")
@@ -308,11 +310,31 @@ def test_unselected_replacement_readback_retains_its_explicit_relation(reaudit_p
     assert [file["selection"] for file in files] == ["selected", "selected", "unselected"]
     assert files[2]["replacement_of_file_version_id"] == "A"
     # Recognition results open on the confirm-rules page, also after a reload.
-    expect(page.get_by_role("heading", name="关联重审", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="预检并匹配规则", exact=True)).to_be_visible()
     page.reload()
-    expect(page.get_by_role("heading", name="关联重审", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="预检并匹配规则", exact=True)).to_be_visible()
     page.get_by_role("button", name="上一步", exact=True).click()
     page.get_by_role("checkbox", name="选择 补件C.xlsx", exact=True).check()
     expect(page.get_by_role("checkbox", name="选择 原文件A.xlsx", exact=True)).to_have_count(0)
     expect(page.get_by_role("combobox", name="补件C.xlsx 的补件关系", exact=True)).to_have_text("替换：原文件A.xlsx")
     assert len(commands) == 1
+
+
+@pytest.mark.parametrize("reaudit_page", [True], indirect=True)
+def test_the_decision_and_the_start_stay_on_screen_at_the_smallest_supported_window(reaudit_page):
+    page, commands = reaudit_page
+    page.set_viewport_size({"width": 1280, "height": 800})
+    recognition_command(page, commands)
+    heading = page.get_by_role("heading", name="预检并匹配规则", exact=True)
+    start = page.get_by_role("button", name="开始审核", exact=True)
+    expect(heading).to_be_in_viewport()
+    expect(page.get_by_role("list", name="审核步骤", exact=True)).to_be_in_viewport()
+    expect(start).to_be_in_viewport()
+    # Only the file list scrolls; the page itself never does.
+    assert page.evaluate("document.scrollingElement.scrollHeight <= window.innerHeight")
+    # A single-action page keeps the task list folded, with the way back to it.
+    expect(page.get_by_role("button", name="展开审核任务", exact=True)).to_be_visible()
+    page.mouse.move(800, 400)
+    page.mouse.wheel(0, 2000)
+    expect(heading).to_be_in_viewport()
+    expect(start).to_be_in_viewport()

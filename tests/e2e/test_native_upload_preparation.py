@@ -266,12 +266,12 @@ def test_begin_recognition_promotes_and_reopens_the_same_draft_without_resubmiss
         # A lost reply is read once from the same request by the upload page itself; it is never sent again.
         expect(page).to_have_url(re.compile(rf"/tasks/{draft_id}(?:\?|$)"))
         # Recognition progress is shown on the confirm-rules page; reopening the address shows the same task.
-        expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="预检并匹配规则", exact=True)).to_be_visible()
         expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_be_visible()
         assert len(http.task_commands) == 1 and http.task_commands[0]["request_id"] != draft_id
         page.goto(saved_url)
         expect(page).to_have_url(re.compile(rf"/tasks/{draft_id}(?:\?|$)"))
-        expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="预检并匹配规则", exact=True)).to_be_visible()
         expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_be_visible()
         assert len(http.task_commands) == 1 and len(http.creates) == len(http.blobs) == 1
         browser.close()
@@ -302,11 +302,11 @@ def test_failed_preparation_read_after_back_does_not_leave_the_previous_task_act
         page.go_back()
         expect(page).to_have_url(saved_url)
         expect(page.get_by_role("button", name="读取准备记录", exact=True)).to_be_visible()
-        expect(page.get_by_role("heading", name="确认规则", exact=True)).to_have_count(0)
+        expect(page.get_by_role("heading", name="预检并匹配规则", exact=True)).to_have_count(0)
         expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_have_count(0)
         http.fail_draft_read = False
         page.get_by_role("button", name="读取准备记录", exact=True).click()
-        expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="预检并匹配规则", exact=True)).to_be_visible()
         expect(page.get_by_role("status").filter(has_text=RECOGNIZING)).to_be_visible()
         assert len(http.task_commands) == 1
         browser.close()
@@ -449,7 +449,7 @@ def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task(
         expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
         page.get_by_role("combobox", name="已接收.xlsx 的适用规则", exact=True).click()
         page.get_by_role("option", name="规则 B", exact=True).click()
-        expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="预检并匹配规则", exact=True)).to_be_visible()
         expect(page.get_by_role("combobox", name="已接收.xlsx 的适用规则", exact=True)).to_contain_text("规则 B")
         expect(page.get_by_role("status").filter(has_text="文件或规则选择已有变更，请重新识别后再开始审核。")).to_be_visible()
         expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()

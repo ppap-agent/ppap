@@ -2,7 +2,6 @@ import {lazy, Suspense, useEffect, useRef, useState} from 'react'
 import {faCircleNotch, faDownload, faEye} from '@fortawesome/free-solid-svg-icons'
 import {Icon} from '../components/ui/icon'
 import type {components} from '../generated/openapi'
-import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
 import {ReadSkeleton} from '../components/read-skeleton'
@@ -71,19 +70,17 @@ export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdap
     const link = document.createElement('a'); link.href = url; link.download = names.current.get(url) || '预检报告.pdf'; link.click()
   }
   const conclusion = precheckRating(result)
-  // A side panel: the conclusion and counts, preview and download, then the chapters, each opening the reader at its page.
-  return <section aria-label="预检报告" className="space-y-4 rounded-lg border bg-card p-4">
-    <div className="space-y-2"><h2 className={`text-xs font-semibold ${result.conclusion === 'fail' ? 'text-destructive' : ''}`}>预检报告 · {conclusion}</h2>
-      <p className="flex flex-wrap gap-2 tabular-nums"><Badge variant="success">合规 {result.counts.ok}</Badge><Badge variant="warning">警告 {result.counts.warn}</Badge><Badge variant="destructive">阻断 {result.counts.block}</Badge></p></div>
-    <div className="grid gap-2">
-      <Button variant="outline" size="sm" disabled={busy} onClick={() => void open(0)}>{busy ? <Icon icon={faCircleNotch} className="animate-spin motion-reduce:animate-none"/> : <Icon icon={faEye}/>}预览预检报告</Button>
-      <Button variant="outline" size="sm" disabled={busy} onClick={() => void download()}><Icon icon={faDownload}/>下载预检报告(PDF)</Button>
-      {busy && <p role="status" className="text-center text-xs text-muted-foreground">正在生成预检报告…</p>}
-      {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
-      <p className="text-center text-2xs text-muted-foreground">预览和下载不会开始审核，也不收费。</p>
-    </div>
-    <div className="space-y-2.5 border-t pt-4"><h3 className="text-xs font-semibold">预检报告目录</h3>
-      <ol aria-label="预检报告目录" className="grid gap-0.5 text-xs text-muted-foreground">{precheckReportChapters.map((title, index) => <li key={title}><button type="button" disabled={busy} title={title} className="w-full truncate rounded-sm px-1 py-1 text-left hover:bg-muted hover:text-foreground focus-visible:outline-ring disabled:opacity-60" onClick={() => void open(index)}>{title}</button></li>)}</ol></div>
+  // A card after the file sections: the conclusion with preview and download, then the chapters, each opening the reader at its page.
+  return <section aria-label="预检报告" className="space-y-3 rounded-lg border bg-card p-4">
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className={`text-sm font-semibold ${result.conclusion === 'fail' ? 'text-destructive' : ''}`}>预检报告 · {conclusion}</h2>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => void open(0)}>{busy ? <Icon icon={faCircleNotch} className="animate-spin motion-reduce:animate-none"/> : <Icon icon={faEye}/>}预览预检报告</Button>
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => void download()}><Icon icon={faDownload}/>下载预检报告(PDF)</Button>
+      </div></div>
+    <ol aria-label="预检报告目录" className="flex flex-wrap gap-1.5">{precheckReportChapters.map((title, index) => <li key={title} className="min-w-0"><button type="button" disabled={busy} title={title} className="max-w-full truncate rounded-md border bg-header px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-ring disabled:opacity-60" onClick={() => void open(index)}>{title}</button></li>)}</ol>
+    {busy && <p role="status" className="text-xs text-muted-foreground">正在生成预检报告…</p>}
+    {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    <p className="text-xs text-muted-foreground">预览和下载不会开始审核，也不收费。</p>
     <Dialog open={Boolean(target && current)} onOpenChange={value => {if (!value) setTarget(null)}}>
       <DialogContent className="flex h-[88dvh] flex-col overflow-hidden sm:max-w-6xl">
         <DialogHeader><DialogTitle>{pdf?.name || '预检报告.pdf'}</DialogTitle><DialogDescription>预检报告 · 生成时间 {result.generated_at} · {conclusion}</DialogDescription></DialogHeader>

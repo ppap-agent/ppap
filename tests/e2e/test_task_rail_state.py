@@ -168,6 +168,8 @@ def test_opened_task_remains_in_the_rail_until_its_list_page_is_loaded():
         # The first list page does not contain the open task; its detail keeps it in the rail.
         expect(listing.get_by_role("button", name="PPAP-另一任务", exact=True)).to_be_visible()
         expect(current).to_have_attribute("aria-current", "page")
+        # A result page carries one heading: the frame shows the page's own title, not a second trail to the task.
+        expect(page.get_by_text("任务详情", exact=True)).to_have_count(0)
         listing.get_by_role("button", name="加载更多任务", exact=True).click()
         expect(listing.get_by_role("button", name="加载更多任务", exact=True)).to_have_count(0)
         expect(listing.get_by_role("list").get_by_role("button")).to_have_count(2)

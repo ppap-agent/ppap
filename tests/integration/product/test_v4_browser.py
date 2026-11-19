@@ -239,7 +239,7 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
             # The file stays on the upload page; recognition starts only when asked and its results are confirmed on the next step.
             expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled(timeout=30000)
             page.get_by_role("button", name="开始识别", exact=True).click()
-            expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible(timeout=30000)
+            expect(page.get_by_role("heading", name="预检并匹配规则", exact=True)).to_be_visible(timeout=30000)
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled(timeout=30000)
             # Reload reads the same actual database record.
             page.reload()
