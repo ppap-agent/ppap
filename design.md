@@ -226,7 +226,7 @@ This design system avoids heavy blurred drop shadows, utilizing low-contrast gho
 The geometric signature is grounded at a default radius of 8px (`0.5rem`). This strikes a balance between sharp industrial discipline and modern software ergonomics.
 
 - **Inputs, Buttons, and Cards**: Standardize on `rounded` (8px).
-- **Pills and Status Indicators**: Badges and status pills leverage full rounding (`rounded-full` / 9999px) to visually contrast against square-aligned data grids.
+- **Badges**: 6px (`0.375rem`) rounded tags, one step inside the 8px controls; not pills, which sit poorly around short Chinese labels.
 - **Nested Elements**: Inner nested elements (e.g., input addons, segmented control items) use 6px (`0.375rem`) to ensure concentric alignment with outer 8px containers.
 
 ## Components
@@ -237,7 +237,7 @@ The geometric signature is grounded at a default radius of 8px (`0.5rem`). This 
 - **Ghost**: Transparent fill, `#646F82` text. Hover: `#F1F3F7`, text `#1B2430`.
 
 ### Badges & Tag Pills
-- **Style**: Height 20px, uppercase 11px font (`label-sm`), tracking wide, fully rounded (pill) or 4px subtle rounded tags.
+- **Style**: Height 20px, 11px medium font (`label-sm`), normal tracking, 6px rounded tags.
 - **Variants**:
   - *Compliant / Pass*: Background `#EAF7EF`, text `#15803D`, border 1px solid `#BBF7D0`.
   - *Review / Warning*: Background `#FEF3E2`, text `#B45309`, border 1px solid `#FDE68A`.
