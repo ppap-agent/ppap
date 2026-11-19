@@ -292,5 +292,6 @@ def render_report(*, cover: str, chapters: list[Chapter], name: str, kind: str, 
         # Properties carry the report name and type only: no internal identifier, build or tool version.
         document.set_metadata({"title": name, "subject": kind, "author": "", "keywords": "", "creator": "", "producer": "", "creationDate": "", "modDate": "", "trapped": ""})
         document.del_xml_metadata()
-        document.subset_fonts()
+        # fontTools subsets the Noto CJK faces; MuPDF's own subsetter rejects their CFF and leaves them whole.
+        document.subset_fonts(fallback=True)
         return document.tobytes(garbage=4, deflate=True)

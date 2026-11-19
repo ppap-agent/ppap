@@ -441,3 +441,12 @@ def test_an_undecided_clause_is_counted_and_keeps_minor_failures_from_a_conditio
     assert "符合0不符合1无法判断1不适用0" in summary
     assert "总评：不通过" in summary and "有条件通过" not in "".join(pages)
     assert "签字区域未能读取，需人工复核。" in "".join(pages)
+
+
+def test_every_embedded_report_font_is_a_subset():
+    """A whole CJK face is ~17 MB; the report embeds only the glyphs it uses, whichever font the runtime has."""
+    pdf = render_audit_pdf(report_source())
+    with pymupdf.open(stream=pdf, filetype="pdf") as document:
+        names = {font[3] for page in document for font in page.get_fonts(full=True)}
+    assert names and all(re.match(r"^[A-Z]{6}\+", name) for name in names), names
+    assert len(pdf) < 2_000_000
