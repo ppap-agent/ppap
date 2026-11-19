@@ -2,7 +2,8 @@ import {displayTime} from '../helpers'
 import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/bf7f2f7d5c4742a193c29da18e7688bf
 import {useEffect, useRef, useState} from 'react'
-import {ArrowLeft} from 'lucide-react'
+import {faArrowLeft} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from '../components/ui/icon'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
@@ -84,7 +85,7 @@ export function ArchiveHistory({document, documentId, initialAddress, onNavigate
   return <section className="flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="文档历史审核">{reportView && detail && <HistoryReport detail={detail} adapter={reportAdapter} sharingAdapter={sharingAdapter} onChange={next => setDetail(latest => latest && sameSnapshot(latest.entry.reference, next.entry.reference) ? next : latest)} onBack={() => {setReportView(false); onNavigate(detail.entry.reference, false)}} onRead={() => {setDetail(null); setReload(value => value + 1)}}/>}
     <div className={reportView && detail ? 'hidden' : '-mx-6 flex min-h-0 min-w-0 flex-1 overflow-hidden'}>
         <aside aria-label="历次审核" className="flex min-h-0 w-64 shrink-0 flex-col overflow-hidden border-r bg-muted">
-          <div className="flex items-center gap-1 border-b p-3">{loading && !(detail?.file.file.original_filename || history?.document.title || document?.title) ? <div className="min-w-0 flex-1"><h1 className="sr-only">历史审核</h1><ReadSkeleton label="正在读取文档…" kind="inline"/></div> : <><Button variant="ghost" size="icon" aria-label={backLabel} onClick={onBack}><ArrowLeft/></Button><h1 className="min-w-0 text-sm font-semibold"><FileName name={detail?.file.file.original_filename || history?.document.title || document?.title || '历史审核'} colored/></h1></>}</div>
+          <div className="flex items-center gap-1 border-b p-3">{loading && !(detail?.file.file.original_filename || history?.document.title || document?.title) ? <div className="min-w-0 flex-1"><h1 className="sr-only">历史审核</h1><ReadSkeleton label="正在读取文档…" kind="inline"/></div> : <><Button variant="ghost" size="icon" aria-label={backLabel} onClick={onBack}><Icon icon={faArrowLeft}/></Button><h1 className="min-w-0 text-sm font-semibold"><FileName name={detail?.file.file.original_filename || history?.document.title || document?.title || '历史审核'} colored/></h1></>}</div>
           <div className="grid min-h-0 flex-1 gap-2 overflow-y-auto p-3"><h2 className="px-1 pt-1 text-sm font-semibold">历次审核{history && <span className="ml-1 font-normal text-muted-foreground">({history.entries.length})</span>}</h2>{history ? list : loading && <ReadSkeleton label="正在读取历次审核…" kind="inline"/>}</div>
         </aside>
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-canvas">

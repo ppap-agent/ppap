@@ -1,7 +1,8 @@
 import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/639a2a5ebe7841d1adfc76ae28577f93
 import {useEffect, useId, useRef, useState} from 'react'
-import {ChevronRight, Folder, Search, X} from 'lucide-react'
+import {faChevronRight, faFolder, faMagnifyingGlass, faXmark} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from '../components/ui/icon'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
@@ -55,9 +56,9 @@ export function FeishuFolderPicker({source, files, onChoose, onClose, descriptio
   }, [source, revision])
   return <Dialog open onOpenChange={open => {if (!open) onClose()}}><DialogContent className="max-h-[90dvh] grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden" onCloseAutoFocus={event => {event.preventDefault(); document.getElementById('audit-main')?.focus()}}>
     <DialogHeader><DialogTitle>保存到飞书</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
-    <nav aria-label="上传目录" className="flex flex-wrap items-center gap-1">{path.map((folder, index) => <Button key={folder.token} variant="ghost" size="sm" disabled={index === path.length - 1} onClick={() => void load(path.slice(0, index + 1))}>{index > 0 && <ChevronRight/>}{folder.name}</Button>)}</nav>
+    <nav aria-label="上传目录" className="flex flex-wrap items-center gap-1">{path.map((folder, index) => <Button key={folder.token} variant="ghost" size="sm" disabled={index === path.length - 1} onClick={() => void load(path.slice(0, index + 1))}>{index > 0 && <Icon icon={faChevronRight}/>}{folder.name}</Button>)}</nav>
     <ScrollArea className="min-h-40 max-h-[55dvh] min-w-0"><section aria-label="选择上传目录" className="space-y-4 pr-3">
-      <ItemGroup>{listing.files.map(folder => <Item key={folder.token} size="xs" asChild><Button variant="ghost" className="h-auto w-full justify-start whitespace-normal text-left" aria-label={`打开文件夹 ${folder.name}`} onClick={() => void load([...path, {token: folder.token, name: folder.name}])}><Folder className="shrink-0"/><span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{folder.name}</span><ChevronRight className="shrink-0"/></Button></Item>)}</ItemGroup>
+      <ItemGroup>{listing.files.map(folder => <Item key={folder.token} size="xs" asChild><Button variant="ghost" className="h-auto w-full justify-start whitespace-normal text-left" aria-label={`打开文件夹 ${folder.name}`} onClick={() => void load([...path, {token: folder.token, name: folder.name}])}><Icon icon={faFolder} className="shrink-0"/><span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{folder.name}</span><Icon icon={faChevronRight} className="shrink-0"/></Button></Item>)}</ItemGroup>
       {listing.loading || !current && !listing.error ? <ReadSkeleton label="正在读取文件夹…" kind={listing.files.length ? 'inline' : 'list'}/> : listing.error ? <Alert variant="destructive"><AlertTitle>文件夹未能读取</AlertTitle><AlertDescription><p>{listing.error}</p><Button variant="outline" size="sm" onClick={() => current ? void load(path, listing.nextPage || undefined) : setRevision(value => value + 1)}>重新读取文件夹</Button></AlertDescription></Alert> : !listing.files.length && <p className="text-sm text-muted-foreground">没有子文件夹。</p>}
       {listing.nextPage && !listing.loading && !listing.error && <Button variant="outline" size="sm" onClick={() => void load(path, listing.nextPage)}>更多文件夹</Button>}
       <section className="space-y-2 border-t pt-4"><h3 className="text-sm font-medium">本次上传 · {files.length} 份</h3><ItemGroup>{files.map((file, index) => <Item key={index} size="xs"><ItemContent className="min-w-0"><FileName name={file.name}/></ItemContent></Item>)}</ItemGroup></section>
@@ -125,7 +126,7 @@ export function FeishuPicker({source, onAdd, onClose, trigger}: {source: DrivePi
             if (next && !folders[file.token]?.loaded && !folders[file.token]?.error) void load(file.token)
           }}>
             <CollapsibleTrigger asChild><Item size="xs" asChild><Button variant="ghost" className="h-auto w-full justify-start whitespace-normal text-left" aria-label={`${open ? '收起' : '展开'}文件夹 ${file.name}`}>
-              <ChevronRight className={`size-4 shrink-0 text-muted-foreground ${open ? 'rotate-90' : ''}`}/><ItemContent className="min-w-0"><span className="flex min-w-0 items-start gap-2"><Folder className="mt-0.5 size-4 shrink-0 text-muted-foreground"/><span className="min-w-0 [overflow-wrap:anywhere]">{file.name}</span></span></ItemContent>
+              <Icon icon={faChevronRight} className={`size-4 shrink-0 text-muted-foreground ${open ? 'rotate-90' : ''}`}/><ItemContent className="min-w-0"><span className="flex min-w-0 items-start gap-2"><Icon icon={faFolder} className="mt-0.5 size-4 shrink-0 text-muted-foreground"/><span className="min-w-0 [overflow-wrap:anywhere]">{file.name}</span></span></ItemContent>
             </Button></Item></CollapsibleTrigger>
             <CollapsibleContent><div className="ml-4 border-l pl-2">{listing([...path, {token: file.token, name: file.name}])}</div></CollapsibleContent>
           </Collapsible>
@@ -143,8 +144,8 @@ export function FeishuPicker({source, onAdd, onClose, trigger}: {source: DrivePi
     </>
   }
   return <Dialog open onOpenChange={open => {if (!open) onClose()}}><DialogContent layout="file-picker" showCloseButton={false} className="h-[min(46rem,calc(100dvh-2rem))] max-h-dvh w-[calc(100%-2rem)] max-w-none grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-5xl" onCloseAutoFocus={event => {event.preventDefault(); (trigger?.isConnected ? trigger : document.getElementById('audit-main'))?.focus()}}>
-    <div className="px-4 py-3"><DialogHeader><div className="flex items-center justify-between gap-3"><div><DialogTitle>从飞书选择文件</DialogTitle><DialogDescription className="sr-only">选择要添加的 Excel、Word 或 PDF 文件。</DialogDescription></div><DialogClose asChild><Button variant="ghost" size="icon" aria-label="关闭"><X/></Button></DialogClose></div></DialogHeader></div>
-    <div className="px-4 pb-4"><Label htmlFor={`${id}-search`} className="sr-only">搜索飞书文件名</Label><div className="flex items-center gap-2"><Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/><Input id={`${id}-search`} placeholder="搜索文件名" value={query} onChange={event => {setQuery(event.target.value); setFilterExpansion(new Map())}}/></div></div>
+    <div className="px-4 py-3"><DialogHeader><div className="flex items-center justify-between gap-3"><div><DialogTitle>从飞书选择文件</DialogTitle><DialogDescription className="sr-only">选择要添加的 Excel、Word 或 PDF 文件。</DialogDescription></div><DialogClose asChild><Button variant="ghost" size="icon" aria-label="关闭"><Icon icon={faXmark}/></Button></DialogClose></div></DialogHeader></div>
+    <div className="px-4 pb-4"><Label htmlFor={`${id}-search`} className="sr-only">搜索飞书文件名</Label><div className="flex items-center gap-2"><Icon icon={faMagnifyingGlass} aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/><Input id={`${id}-search`} placeholder="搜索文件名" value={query} onChange={event => {setQuery(event.target.value); setFilterExpansion(new Map())}}/></div></div>
     <div className="grid min-h-0 grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] grid-rows-1 border-t">
       <section aria-label="云盘文件" className="flex min-h-0 min-w-0 flex-col px-4">
         <div className="flex min-h-12 items-center px-2.5"><h2 className="text-sm font-medium">我的云盘</h2></div>
@@ -152,7 +153,7 @@ export function FeishuPicker({source, onAdd, onClose, trigger}: {source: DrivePi
       </section>
       <section aria-label="已选文件" className="flex min-h-0 min-w-0 flex-col border-l px-4">
         <div className="flex min-h-12 items-center justify-between gap-2 px-2.5"><h2 className="text-sm font-medium">已选文件 <span aria-live="polite" className="text-muted-foreground">{picked.length}</span></h2>{picked.length > 0 && <Button variant="ghost" size="sm" onClick={() => setSelected([])}>清空选择</Button>}</div>
-        {picked.length ? <ScrollArea type="auto" className="min-h-0 flex-1"><div className="pb-2"><ItemGroup>{picked.map(({file, folder}) => <Item role="listitem" key={file.token} size="xs" className="items-start"><ItemContent className="min-w-0"><FileName name={file.name} format={nativeSources.get(file.type)?.format}/><ItemDescription wrap>{folder}</ItemDescription></ItemContent><ItemActions><Button variant="ghost" size="icon" aria-label={`取消选择 ${file.name}`} onClick={() => unselect(file.token)}><X/></Button></ItemActions></Item>)}</ItemGroup></div></ScrollArea> : <p className="px-2.5 pb-4 text-sm text-muted-foreground">尚未选择文件</p>}
+        {picked.length ? <ScrollArea type="auto" className="min-h-0 flex-1"><div className="pb-2"><ItemGroup>{picked.map(({file, folder}) => <Item role="listitem" key={file.token} size="xs" className="items-start"><ItemContent className="min-w-0"><FileName name={file.name} format={nativeSources.get(file.type)?.format}/><ItemDescription wrap>{folder}</ItemDescription></ItemContent><ItemActions><Button variant="ghost" size="icon" aria-label={`取消选择 ${file.name}`} onClick={() => unselect(file.token)}><Icon icon={faXmark}/></Button></ItemActions></Item>)}</ItemGroup></div></ScrollArea> : <p className="px-2.5 pb-4 text-sm text-muted-foreground">尚未选择文件</p>}
       </section>
     </div>
     <DialogFooter className="m-0 items-center"><Button variant="outline" onClick={onClose}>取消</Button><Button disabled={!picked.length} onClick={() => onAdd(picked.map(row => row.file))}>添加 {picked.length} 份文件</Button></DialogFooter>

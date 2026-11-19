@@ -1,5 +1,6 @@
 import {useRef} from 'react'
-import {X} from 'lucide-react'
+import {faXmark} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from '../components/ui/icon'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {FileTypeBadge} from './file-type-badge'
@@ -33,7 +34,7 @@ export function TransferItem({row, onRead, onResume, onRetry, onRemove, onCheckD
       {onResume && canResumeUpload(row) && <Button size="sm" variant="outline" aria-label={`继续传输 ${name}`} onClick={() => onResume(row.id)}>继续传输</Button>}
       {onCheckDrive && personalUnknown && <Button size="sm" variant="outline" disabled={row.busy} aria-label={`从飞书核对 ${name}`} onClick={event => onCheckDrive(event.currentTarget)}>从飞书核对</Button>}
       {canRetryUpload(row) && <Button size="sm" variant="outline" aria-label={`重试传输 ${name}`} onClick={() => onRetry(row.id)}>重试</Button>}
-      {!row.removed && <Button variant="ghost" size="icon-sm" aria-label={`移除传输 ${name}`} onClick={() => onRemove(row.id)}><X/></Button>}
+      {!row.removed && <Button variant="ghost" size="icon-sm" aria-label={`移除传输 ${name}`} onClick={() => onRemove(row.id)}><Icon icon={faXmark}/></Button>}
     </div>
     {note && <p className="text-xs text-muted-foreground">{note}</p>}
     {row.inputIssue && <p role="alert" className="text-xs">{row.inputIssue}</p>}

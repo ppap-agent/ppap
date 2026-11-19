@@ -1,5 +1,6 @@
 import type {ReactNode} from 'react'
-import {ChevronRight} from 'lucide-react'
+import {faChevronRight} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from './ui/icon'
 import {Button} from './ui/button'
 import {Collapsible, CollapsibleContent, CollapsibleTrigger} from './ui/collapsible'
 
@@ -7,7 +8,7 @@ import {Collapsible, CollapsibleContent, CollapsibleTrigger} from './ui/collapsi
 export function Disclosure({summary, children, className, defaultOpen, open, onOpenChange}: {summary: ReactNode; children: ReactNode; className?: string; defaultOpen?: boolean; open?: boolean; onOpenChange?: (open: boolean) => void}) {
   return <div className={className}>
     <Collapsible defaultOpen={defaultOpen} open={open} onOpenChange={onOpenChange}>
-      <CollapsibleTrigger asChild><Button variant="ghost" size="sm" className="group h-auto min-h-8 max-w-full justify-start whitespace-normal text-left"><ChevronRight aria-hidden="true" className="transition-transform group-data-[state=open]:rotate-90"/><span className="min-w-0">{summary}</span></Button></CollapsibleTrigger>
+      <CollapsibleTrigger asChild><Button variant="ghost" size="sm" className="group h-auto min-h-8 max-w-full justify-start whitespace-normal text-left"><Icon icon={faChevronRight} aria-hidden="true" className="transition-transform group-data-[state=open]:rotate-90"/><span className="min-w-0">{summary}</span></Button></CollapsibleTrigger>
       {/* Like <details>, closed content stays in the page (hidden), so its state and text survive a collapse. */}
       <CollapsibleContent forceMount className="data-[state=closed]:hidden"><div className="space-y-3 pt-2">{children}</div></CollapsibleContent>
     </Collapsible>

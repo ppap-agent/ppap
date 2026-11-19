@@ -1,4 +1,5 @@
-import {PanelLeftClose, Plus, Search} from 'lucide-react'
+import {faAnglesLeft, faMagnifyingGlass, faPlus} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from '../components/ui/icon'
 import {displayTime} from '../helpers'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Badge} from '../components/ui/badge'
@@ -34,10 +35,10 @@ export function TaskRail({customerName, currentId, tasks, labels, query, onQuery
   return <nav aria-label="审核任务列表" className="flex min-h-0 flex-1 flex-col gap-3 p-3">
     <div className="flex items-center justify-between gap-2 px-1"><h2 className="text-base font-semibold">审核任务</h2><div className="flex items-center gap-1">
       <Select value={filter} onValueChange={onFilter}><SelectTrigger size="sm" aria-label="任务状态"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部任务</SelectItem>{Object.entries(labels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
-      <Button variant="quiet" size="xs" onClick={onCollapse}><PanelLeftClose aria-hidden="true"/>收起</Button>
+      <Button variant="quiet" size="xs" onClick={onCollapse}><Icon icon={faAnglesLeft} aria-hidden="true"/>收起</Button>
     </div></div>
-    <label className="flex items-center gap-2"><span className="sr-only">搜索审核任务</span><Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/><Input placeholder="搜索任务编号 / 车型 / 文件名" value={query} onChange={event => onQuery(event.target.value)}/></label>
-    <Button variant="soft" size="lg" onClick={onNew}><Plus aria-hidden="true"/>新建审核任务</Button>
+    <label className="flex items-center gap-2"><span className="sr-only">搜索审核任务</span><Icon icon={faMagnifyingGlass} aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/><Input placeholder="搜索任务编号 / 车型 / 文件名" value={query} onChange={event => onQuery(event.target.value)}/></label>
+    <Button variant="soft" size="lg" onClick={onNew}><Icon icon={faPlus} aria-hidden="true"/>新建审核任务</Button>
     <div className="min-h-0 flex-1 overflow-y-auto">
       <ul className="grid">{tasks.map(task => <TaskRailItem key={task.id} task={task} current={task.id === currentId} labels={labels} onOpen={onOpen} customerName={customerName}/>)}</ul>
       {busy && <ReadSkeleton label="正在读取任务…" kind={tasks.length ? 'inline' : 'list'}/>}

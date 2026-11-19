@@ -1,6 +1,7 @@
 import {displayTime} from '../helpers'
 import {useCallback, useContext, useEffect, useMemo, useRef, useState} from 'react'
-import {RefreshCw} from 'lucide-react'
+import {faArrowsRotate} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from '../components/ui/icon'
 import {apiUrl} from '../api'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
@@ -108,7 +109,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
   return <section aria-label="原件事实确认" className="min-w-0 border-b px-6 py-2" data-fact-answer-state={saving ? 'saving' : pending ? 'unknown' : 'ready'}>
     <Disclosure open={expanded || Boolean(error)} onOpenChange={setExpanded} summary={<><span className="font-medium">原件事实确认</span><span className="ml-3 text-muted-foreground">{pending ? '回答结果待确认' : error ? '读取失败' : loading && !view ? '读取中…' : `待确认 ${questions.filter(question => !question.answered).length} 项 · 人工确认结果 ${results.length} 项`}</span></>}>
     <div className="space-y-4 py-4">
-    <header className="flex justify-end"><Button variant="ghost" size="icon-sm" aria-label="读取最新事实问题" title="读取最新事实问题" disabled={loading || saving} onClick={() => void read()}><RefreshCw className={loading ? 'animate-spin motion-reduce:animate-none' : ''}/></Button></header>
+    <header className="flex justify-end"><Button variant="ghost" size="icon-sm" aria-label="读取最新事实问题" title="读取最新事实问题" disabled={loading || saving} onClick={() => void read()}><Icon icon={faArrowsRotate} className={loading ? 'animate-spin motion-reduce:animate-none' : ''}/></Button></header>
     {loading && !view && <ReadSkeleton label="正在读取可确认的问题…" rows={2}/>}
     {error && <Alert variant="destructive"><AlertTitle>{pending ? '回答结果待确认' : '事实确认暂不可用'}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     {notice && <p role="status" className="text-sm">{notice}</p>}

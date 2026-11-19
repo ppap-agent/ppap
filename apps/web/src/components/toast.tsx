@@ -1,5 +1,6 @@
 import {useEffect, useState} from 'react'
-import {Check} from 'lucide-react'
+import {faCheck} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from './ui/icon'
 
 // A brief confirmation for actions whose own surface closes on success; failures stay inline.
 type Toast = {id: number; text: string}
@@ -22,6 +23,6 @@ export function Toaster() {
     return () => {listeners.delete(add)}
   }, [])
   return <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-6 z-[60] flex flex-col items-center gap-2 px-4">
-    {toasts.map(toast => <div key={toast.id} role="status" className="flex items-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm text-background shadow-lg animate-in fade-in-0 slide-in-from-bottom-2 duration-200 motion-reduce:animate-none"><Check aria-hidden="true" className="size-4"/>{toast.text}</div>)}
+    {toasts.map(toast => <div key={toast.id} role="status" className="flex items-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm text-background shadow-lg animate-in fade-in-0 slide-in-from-bottom-2 duration-200 motion-reduce:animate-none"><Icon icon={faCheck} aria-hidden="true" className="size-4"/>{toast.text}</div>)}
   </div>
 }

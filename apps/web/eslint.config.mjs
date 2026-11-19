@@ -20,7 +20,9 @@ export default defineConfig([
       'shadcn/no-raw-colors': 'error',
       'shadcn/require-static-classes': 'error',
       'shadcn/no-unknown-classes': 'error',
-      'shadcn/no-restyle': ['error', {allow: ['layout']}],
+      // An icon is drawn in currentColor like text, so a page may tone it and animate it (a spinner, a disclosure turn)
+      // with token classes; its shape stays in src/components/ui/icon.tsx.
+      'shadcn/no-restyle': ['error', {allow: ['layout'], contracts: [{pattern: '^Icon$', allow: ['layout', 'color', 'motion']}]}],
     },
   },
   // Primitives own appearance (docs/DESIGN_SYSTEM.md): their visual values come from tokens too. Layout and motion are not

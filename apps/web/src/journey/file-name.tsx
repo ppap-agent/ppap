@@ -1,4 +1,5 @@
-import {File, FileImage, FileSpreadsheet, FileText, FileType2} from 'lucide-react'
+import {faFile, faFileExcel, faFileImage, faFilePdf, faFileWord} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from '../components/ui/icon'
 import {cn} from '../lib/utils'
 
 type FileFormat = 'excel' | 'word' | 'pdf' | 'image' | 'file'
@@ -8,11 +9,10 @@ export function FileIcon({name, format, colored = false, className}: {name: stri
   const type = format ?? (extension && ['xlsx', 'xls', 'xlsm', 'xlsb', 'xltx', 'xltm', 'csv', 'ods'].includes(extension) ? 'excel'
     : extension && ['doc', 'docx', 'docm', 'dotx', 'dotm', 'odt', 'rtf'].includes(extension) ? 'word'
       : extension === 'pdf' ? 'pdf' : extension && ['png', 'jpg', 'jpeg', 'webp', 'gif', 'tif', 'tiff', 'bmp'].includes(extension) ? 'image' : 'file')
-  const Icon = {excel: FileSpreadsheet, word: FileText, pdf: FileType2, image: FileImage, file: File}[type]
-  const tone = {excel: 'text-success', word: 'text-primary', pdf: 'text-destructive', image: 'text-warning', file: 'text-muted-foreground'}[type]
+  const icon = {excel: faFileExcel, word: faFileWord, pdf: faFilePdf, image: faFileImage, file: faFile}[type]
   // A coloured tile names the format at a glance, like a file browser.
   const tile = {excel: 'bg-success', word: 'bg-primary', pdf: 'bg-destructive', image: 'bg-warning', file: 'bg-muted-foreground'}[type]
-  return colored ? <span aria-hidden="true" className={cn('flex size-6 shrink-0 items-center justify-center rounded-sm text-white', tile, className)}><Icon data-file-type={type} className="size-3.5"/></span> : <Icon data-file-type={type} aria-hidden="true" className={cn('size-4 shrink-0', tone, className)}/>
+  return colored ? <span aria-hidden="true" className={cn('flex size-6 shrink-0 items-center justify-center rounded-sm text-white', tile, className)}><Icon icon={icon} data-file-type={type} className="size-3.5"/></span> : <Icon icon={icon} data-file-type={type} aria-hidden="true" className={cn('size-4 shrink-0', type === 'excel' ? 'text-success' : type === 'word' ? 'text-primary' : type === 'pdf' ? 'text-destructive' : type === 'image' ? 'text-warning' : 'text-muted-foreground', className)}/>
 }
 
 export function FileName({name, format, colored = false, truncate = false, className}: {name: string; format?: FileFormat; colored?: boolean; truncate?: boolean; className?: string}) {

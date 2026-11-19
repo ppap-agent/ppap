@@ -1,4 +1,5 @@
-import {BookOpen, Check, FileSpreadsheet, FileText, Image, type LucideIcon} from 'lucide-react'
+import {faBookOpen, faCheck, faFileExcel, faFileLines, faImage} from '@fortawesome/free-solid-svg-icons'
+import {Icon, type IconDefinition} from '../components/ui/icon'
 import {Badge} from '../components/ui/badge'
 import {Progress} from '../components/ui/progress'
 import type {components} from '../generated/openapi'
@@ -13,21 +14,21 @@ type Run = components['schemas']['AuditRun']
 /** How many of the file's latest steps stay on screen; they are only a live notice, never kept. */
 const SHOWN_STEPS = 5
 
-const ACTIONS: Record<ActivityAction, {label: string; icon: LucideIcon}> = {
-  load_rules: {label: '加载规则', icon: BookOpen},
-  read_file: {label: '阅读文件', icon: FileText},
-  read_sheet: {label: '阅读表格', icon: FileSpreadsheet},
-  view_image: {label: '查看图片', icon: Image},
+const ACTIONS: Record<ActivityAction, {label: string; icon: IconDefinition}> = {
+  load_rules: {label: '加载规则', icon: faBookOpen},
+  read_file: {label: '阅读文件', icon: faFileLines},
+  read_sheet: {label: '阅读表格', icon: faFileExcel},
+  view_image: {label: '查看图片', icon: faImage},
 }
 
 function StepLine({row, current, age}: {row: StepRow; current: boolean; age: number}) {
-  const {label, icon: Icon} = ACTIONS[row.action]
+  const {label, icon} = ACTIONS[row.action]
   const subject = row.subjects.length > 1 ? `${row.subjects[0]} 等 ${row.subjects.length} 个` : row.subjects[0]
   // Older steps fade; the newest one is the step under way.
   const fade = current ? '' : ['opacity-90', 'opacity-75', 'opacity-60', 'opacity-40'][Math.min(age - 1, 3)]
   const text = subject ? `${label}《${subject}》` : label
   return <li className={`flex h-7 min-w-0 items-center gap-2 motion-safe:animate-fade-up ${fade}`}>
-    <Icon aria-hidden="true" className={`size-3.5 shrink-0 ${current ? 'text-primary' : 'text-muted-foreground'}`}/>
+    <Icon icon={icon} aria-hidden="true" className={`size-3.5 shrink-0 ${current ? 'text-primary' : 'text-muted-foreground'}`}/>
     <span className="min-w-0 truncate text-xs" title={text}>{text}</span>
     {current && <PixelLoader/>}
   </li>
@@ -36,7 +37,7 @@ function StepLine({row, current, age}: {row: StepRow; current: boolean; age: num
 /** The round finished: a short pop-in check, before the results take its place. */
 export function RunFinished() {
   return <div role="status" className="flex items-center justify-center gap-3 rounded-lg border border-success/25 bg-success/10 px-4 py-6">
-    <span className="flex size-10 items-center justify-center rounded-full bg-success text-white motion-safe:animate-pop-in"><Check aria-hidden="true" className="size-5" strokeWidth={3}/></span>
+    <span className="flex size-10 items-center justify-center rounded-full bg-success text-white motion-safe:animate-pop-in"><Icon icon={faCheck} aria-hidden="true" className="size-5"/></span>
     <span className="text-base font-semibold text-success">审核完成</span>
   </div>
 }

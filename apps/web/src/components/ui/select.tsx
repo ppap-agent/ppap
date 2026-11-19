@@ -1,7 +1,8 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import { Select as SelectPrimitive } from "radix-ui"
-import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
+import {faCheck, faChevronDown, faChevronUp} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from './icon'
 
 function Select({
   ...props
@@ -48,7 +49,7 @@ function SelectTrigger({
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <ChevronDownIcon className="pointer-events-none size-4 text-muted-foreground" />
+        <Icon icon={faChevronDown} className="pointer-events-none size-4 text-muted-foreground" />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   )
@@ -128,7 +129,7 @@ function SelectItem({
     >
       <span className="pointer-events-none absolute right-2 flex size-4 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
-          <CheckIcon className="pointer-events-none" />
+          <Icon icon={faCheck} className="pointer-events-none" />
         </SelectPrimitive.ItemIndicator>
       </span>
       {described ? (
@@ -169,7 +170,7 @@ function SelectScrollUpButton({
       )}
       {...props}
     >
-      <ChevronUpIcon
+      <Icon icon={faChevronUp}
       />
     </SelectPrimitive.ScrollUpButton>
   )
@@ -188,7 +189,7 @@ function SelectScrollDownButton({
       )}
       {...props}
     >
-      <ChevronDownIcon
+      <Icon icon={faChevronDown}
       />
     </SelectPrimitive.ScrollDownButton>
   )

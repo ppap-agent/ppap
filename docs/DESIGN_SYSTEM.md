@@ -71,6 +71,10 @@ hard-coded value there would survive a token change. Their rules differ from the
 - Named exceptions, each with its reason in `apps/web/eslint.config.mjs`: `bg-[Canvas]` /
   `text-[CanvasText]` (system colours for native `<option>` lists) and `rounded-[inherit]`.
 
+Icons are Font Awesome Free solid icons (CC BY 4.0) drawn by `src/components/ui/icon.tsx`
+(`<Icon icon={faXmark}/>`); there is no second icon set. An icon is drawn in currentColor at
+1em, so pages may size, tone and animate it with token classes; its shape stays in the primitive.
+
 ## Changing the visual language
 
 Edit `apps/web/tokens/*.tokens.json`, run `pnpm design:update`, review design.md (frontmatter

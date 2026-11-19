@@ -1,6 +1,7 @@
 // Report reader: the cover and ten chapters on the left, the fixed PDF on the right. Pages render locally with pdf.js.
 import {useEffect, useRef, useState, type CSSProperties, type FormEvent, type RefObject} from 'react'
-import {Minus, PanelLeftClose, PanelLeftOpen, Plus, Search} from 'lucide-react'
+import {faAnglesLeft, faAnglesRight, faMagnifyingGlass, faMinus, faPlus} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from '../components/ui/icon'
 import {getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask} from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import {Badge} from '../components/ui/badge'
@@ -83,22 +84,22 @@ export function ReportReader({url, name, kind, target}: {url: string; name: stri
   if (!pdf) return <ReadSkeleton label="正在加载报告…" kind="document" className="min-h-96 p-4"/>
   return <div className="flex h-full min-h-0 min-w-0">
     {chapters.length > 0 && open && <nav aria-label="报告目录" className="flex w-56 shrink-0 flex-col border-r bg-card">
-      <div className="flex items-center justify-between gap-2 border-b px-3 py-2"><span className="text-sm font-semibold">目录</span><Button variant="ghost" size="xs" onClick={() => setOpen(false)}><PanelLeftClose aria-hidden="true"/>收起目录</Button></div>
+      <div className="flex items-center justify-between gap-2 border-b px-3 py-2"><span className="text-sm font-semibold">目录</span><Button variant="ghost" size="xs" onClick={() => setOpen(false)}><Icon icon={faAnglesLeft} aria-hidden="true"/>收起目录</Button></div>
       <ol className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2 text-sm">{chapters.map((chapter, index) => <li key={`${index}-${chapter.title}`}>
         <button type="button" aria-current={index === current ? 'location' : undefined} title={chapter.title} onClick={() => goToPage(chapter.page)} className="w-full truncate rounded-sm px-2 py-1.5 text-left text-muted-foreground hover:bg-muted aria-[current=location]:bg-primary-soft aria-[current=location]:font-medium aria-[current=location]:text-primary focus-visible:outline-ring">{chapter.title}</button>
       </li>)}</ol>
     </nav>}
     <div className="flex min-w-0 flex-1 flex-col">
       <div role="toolbar" aria-label="PDF 阅读工具" className="flex shrink-0 flex-wrap items-center gap-1 border-b px-2 py-1">
-        {chapters.length > 0 && !open && <Button variant="ghost" size="sm" onClick={() => setOpen(true)}><PanelLeftOpen aria-hidden="true"/>展开目录（{chapters.length}）</Button>}
+        {chapters.length > 0 && !open && <Button variant="ghost" size="sm" onClick={() => setOpen(true)}><Icon icon={faAnglesRight} aria-hidden="true"/>展开目录（{chapters.length}）</Button>}
         <Badge shape="square" variant="outline">{kind}</Badge>
         <label className="flex items-center gap-1 whitespace-nowrap text-xs">第 <Input aria-label="PDF 页码" className="h-7 w-14" type="number" min={1} max={pdf.numPages} value={page} onChange={event => {const next = Number(event.target.value); if (Number.isInteger(next) && next >= 1 && next <= pdf.numPages) goToPage(next)}}/> / {pdf.numPages} 页</label>
-        <Button variant="ghost" size="icon-sm" aria-label="缩小 PDF" disabled={zoom <= .5} onClick={() => setZoom(value => Math.max(.5, value - .25))}><Minus/></Button>
+        <Button variant="ghost" size="icon-sm" aria-label="缩小 PDF" disabled={zoom <= .5} onClick={() => setZoom(value => Math.max(.5, value - .25))}><Icon icon={faMinus}/></Button>
         <Button variant="ghost" size="sm" onClick={() => setZoom(1)}>{zoom === 1 ? '适合宽度' : `适宽 × ${zoom}`}</Button>
-        <Button variant="ghost" size="icon-sm" aria-label="放大 PDF" disabled={zoom >= 3} onClick={() => setZoom(value => Math.min(3, value + .25))}><Plus/></Button>
+        <Button variant="ghost" size="icon-sm" aria-label="放大 PDF" disabled={zoom >= 3} onClick={() => setZoom(value => Math.min(3, value + .25))}><Icon icon={faPlus}/></Button>
         <form role="search" aria-label="在报告中查找" className="ml-auto flex items-center gap-1" onSubmit={event => void find(event)}>
           <Input aria-label="查找内容" className="h-7 w-36" value={query} placeholder="查找" onChange={event => {setQuery(event.target.value); setFound('')}}/>
-          <Button type="submit" variant="ghost" size="icon-sm" aria-label="查找下一处" disabled={!query.trim()}><Search/></Button>
+          <Button type="submit" variant="ghost" size="icon-sm" aria-label="查找下一处" disabled={!query.trim()}><Icon icon={faMagnifyingGlass}/></Button>
           <span role="status" className="min-w-12 text-xs text-muted-foreground">{found}</span>
         </form>
       </div>

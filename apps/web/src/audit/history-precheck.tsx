@@ -1,5 +1,6 @@
 import {lazy, Suspense, useEffect, useId, useRef, useState} from 'react'
-import {BookOpen, Download, Loader2} from 'lucide-react'
+import {faBookOpen, faCircleNotch, faDownload} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from '../components/ui/icon'
 import {Button} from '../components/ui/button'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
 import {ReadSkeleton} from '../components/read-skeleton'
@@ -37,14 +38,14 @@ export function HistoryPrecheck({adapter, taskId, label}: {adapter?: PrecheckAda
   return <div className="grid gap-1 px-2 pb-1">
     <span id={describedBy} className="sr-only">{label}</span>
     <div className="flex flex-wrap gap-1" title={missing}>
-      <Button variant="ghost" size="xs" aria-describedby={describedBy} disabled={!adapter || busy} onClick={() => void preview()}>{busy ? <Loader2 className="animate-spin motion-reduce:animate-none"/> : <BookOpen/>}预览预检报告</Button>
-      <Button variant="ghost" size="xs" aria-describedby={describedBy} disabled={!adapter || busy} onClick={() => void download()}><Download/>下载预检报告</Button>
+      <Button variant="ghost" size="xs" aria-describedby={describedBy} disabled={!adapter || busy} onClick={() => void preview()}>{busy ? <Icon icon={faCircleNotch} className="animate-spin motion-reduce:animate-none"/> : <Icon icon={faBookOpen}/>}预览预检报告</Button>
+      <Button variant="ghost" size="xs" aria-describedby={describedBy} disabled={!adapter || busy} onClick={() => void download()}><Icon icon={faDownload}/>下载预检报告</Button>
     </div>
     {busy && <p role="status" className="text-xs text-muted-foreground">正在读取预检报告…</p>}
     {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     <Dialog open={open && Boolean(url)} onOpenChange={setOpen}>
       <DialogContent className="flex h-[88dvh] flex-col overflow-hidden sm:max-w-6xl">
-        <div className="flex flex-wrap items-end justify-between gap-2 pr-8"><DialogHeader><DialogTitle>{name.current}</DialogTitle><DialogDescription>预检报告 · {label}{generatedAt ? ` · 生成时间 ${generatedAt}` : ''}</DialogDescription></DialogHeader><Button size="sm" variant="outline" onClick={() => void download()}><Download/>下载报告</Button></div>
+        <div className="flex flex-wrap items-end justify-between gap-2 pr-8"><DialogHeader><DialogTitle>{name.current}</DialogTitle><DialogDescription>预检报告 · {label}{generatedAt ? ` · 生成时间 ${generatedAt}` : ''}</DialogDescription></DialogHeader><Button size="sm" variant="outline" onClick={() => void download()}><Icon icon={faDownload}/>下载报告</Button></div>
         <div className="min-h-0 flex-1 overflow-hidden rounded-sm border">{url && <Suspense fallback={<ReadSkeleton label="正在加载报告阅读器…" kind="document"/>}><ReportReader url={url} name={name.current} kind="预检报告"/></Suspense>}</div>
       </DialogContent>
     </Dialog>

@@ -1,5 +1,6 @@
 import {lazy, Suspense, useEffect, useState, type ReactNode} from 'react'
-import {Download, Info, Share2} from 'lucide-react'
+import {faCircleInfo, faDownload, faShareNodes} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from '../components/ui/icon'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
@@ -20,7 +21,7 @@ export function ReportTime({value}: {value: string}) {
 
 /** Sharing the report being read; it sits beside its download on every report page. */
 export function ReportShareButton({disabled, onOpen}: {disabled: boolean; onOpen: (trigger: HTMLButtonElement) => void}) {
-  return <Button size="sm" variant="outline" disabled={disabled} onClick={event => onOpen(event.currentTarget)}><Share2/>分享</Button>
+  return <Button size="sm" variant="outline" disabled={disabled} onClick={event => onOpen(event.currentTarget)}><Icon icon={faShareNodes}/>分享</Button>
 }
 
 /** The same fixed-artifact reader is used by P6 and P11; the current report's own actions (share, download) live only in its header. */
@@ -43,7 +44,7 @@ export function ReportPreview({name, rule, reference, report, ready, issue, adap
       <p className="flex min-w-0 gap-1"><span className="shrink-0">报告名称：</span><span className="[overflow-wrap:anywhere] text-foreground">{report?.artifact?.filename || auditReportFilename(name)}</span></p><h2 className="sr-only">{name}</h2>
       <p className="flex shrink-0 gap-1"><span>生成时间：</span><span className="text-foreground">{generated}</span></p>
       <div className="ml-auto flex flex-wrap items-center gap-1">
-      <Sheet><SheetTrigger asChild><Button variant="ghost" size="sm"><Info/>报告信息</Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>报告信息</SheetTitle><SheetDescription>查看本报告的来源与审核记录。</SheetDescription></SheetHeader>
+      <Sheet><SheetTrigger asChild><Button variant="ghost" size="sm"><Icon icon={faCircleInfo}/>报告信息</Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>报告信息</SheetTitle><SheetDescription>查看本报告的来源与审核记录。</SheetDescription></SheetHeader>
         <div className="min-h-0 space-y-6 overflow-y-auto px-4 pb-6 text-sm">
           {/* Only what the user needs about this report: its name, when it was made, the original file and the rule. */}
           <dl className="grid gap-4 [&>div]:grid [&>div]:grid-cols-[5rem_minmax(0,1fr)] [&>div]:gap-3 [&_dt]:text-muted-foreground [&_dd]:[overflow-wrap:anywhere]">
@@ -51,7 +52,7 @@ export function ReportPreview({name, rule, reference, report, ready, issue, adap
           </dl>
         </div>
       </SheetContent></Sheet>
-      {actions}{share && <ReportShareButton {...share}/>}<Button size="sm" variant="outline" disabled={!currentPdf?.url} onClick={download}><Download/>下载当前报告</Button>
+      {actions}{share && <ReportShareButton {...share}/>}<Button size="sm" variant="outline" disabled={!currentPdf?.url} onClick={download}><Icon icon={faDownload}/>下载当前报告</Button>
     </div>
     </header>
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">

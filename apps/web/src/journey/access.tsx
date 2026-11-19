@@ -1,7 +1,8 @@
 // Stitch: projects/13261964020862199279/screens/5a80a77a4f524928b808862728d5677a (login)
 // and screens/9a6cb6189e92450da32d95a31820b41c (connection failure).
 import {createContext, useContext, useEffect, useRef, useState, type ReactNode} from 'react'
-import {ArrowRight, ChevronDown, LogOut, Sparkles} from 'lucide-react'
+import {faArrowRight, faChevronDown, faRightFromBracket, faWandMagicSparkles} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from '../components/ui/icon'
 import {apiUrl, connect, feishuAppId, request, type HostLoginRequest, type PrincipalPublic} from '../api'
 import {isFeishuHost, requestHostCode} from '../hostLogin'
 import {ReadSkeleton} from '../components/read-skeleton'
@@ -22,10 +23,10 @@ export function AccountMenu({compact = false, className}: {compact?: boolean; cl
   return <DropdownMenu>
     <DropdownMenuTrigger asChild><Button variant="ghost" className={className} size={compact ? 'profile-icon' : 'profile'} aria-label={`${name}，账号菜单`}>
       <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm text-foreground">{name.slice(0, 1)}</span>
-      {!compact && <><span className={"min-w-0 flex-1 truncate text-left"}>{name}</span><ChevronDown/></>}
+      {!compact && <><span className={"min-w-0 flex-1 truncate text-left"}>{name}</span><Icon icon={faChevronDown}/></>}
     </Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end"><DropdownMenuLabel>{name}</DropdownMenuLabel><DropdownMenuSeparator/>
-      <DropdownMenuItem onSelect={access?.logout}><LogOut/>退出登录</DropdownMenuItem>
+      <DropdownMenuItem onSelect={access?.logout}><Icon icon={faRightFromBracket}/>退出登录</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
 }
@@ -83,16 +84,16 @@ export function ProductAccess({children}: {children: ReactNode}) {
   </AccessContext.Provider>
   }
   return <div className={"flex min-h-dvh flex-col bg-background text-foreground"}>
-    <header className="flex items-center gap-2 p-6 text-base font-semibold"><span className="flex size-6.5 shrink-0 items-center justify-center rounded-md bg-linear-135 from-brand-light to-primary text-primary-foreground"><Sparkles aria-hidden="true" className="size-3.5"/></span>PPAP Audit</header>
+    <header className="flex items-center gap-2 p-6 text-base font-semibold"><span className="flex size-6.5 shrink-0 items-center justify-center rounded-md bg-linear-135 from-brand-light to-primary text-primary-foreground"><Icon icon={faWandMagicSparkles} aria-hidden="true" className="size-3.5"/></span>PPAP Audit</header>
     <main className={"m-auto flex w-full max-w-md flex-col gap-5 px-6 pb-16"}>
       {/* A signed-in user should not see a sign-in screen while the session is still being read. */}
       {!ready ? <ReadSkeleton label="正在确认登录状态…" kind="inline"/> : <div className="space-y-2"><h1 className={"text-2xl font-semibold tracking-tight"}>登录 PPAP Audit</h1><p className="text-sm text-muted-foreground">按客户规则逐项审核 PPAP 文件，结果保留原件证据与报告。登录后回到当前页面。</p></div>}
       {!ready ? null : error ? <>
         <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
         {/* After a cancelled or failed sign-in, signing in again is the way forward; reading the service again is secondary. */}
-        {canSignIn && <Button asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<ArrowRight/></a></Button>}
+        {canSignIn && <Button asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<Icon icon={faArrowRight}/></a></Button>}
         <Button variant={canSignIn ? 'outline' : 'default'} onClick={() => setRevision(value => value + 1)}>重试</Button>
-      </> : canSignIn ? <Button asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<ArrowRight/></a></Button> : <>
+      </> : canSignIn ? <Button asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<Icon icon={faArrowRight}/></a></Button> : <>
         <Alert><AlertDescription>当前无法使用飞书登录，请稍后重试。</AlertDescription></Alert>
         <Button onClick={() => setRevision(value => value + 1)}>重试</Button>
       </>}

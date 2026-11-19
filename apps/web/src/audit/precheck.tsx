@@ -1,5 +1,6 @@
 import {lazy, Suspense, useEffect, useRef, useState} from 'react'
-import {BookOpen, Download, Loader2} from 'lucide-react'
+import {faBookOpen, faCircleNotch, faDownload} from '@fortawesome/free-solid-svg-icons'
+import {Icon} from '../components/ui/icon'
 import type {components} from '../generated/openapi'
 import {Button} from '../components/ui/button'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
@@ -79,8 +80,8 @@ export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdap
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="space-y-1"><h2 className="font-semibold">预检报告 · {conclusion}</h2><p className="text-sm tabular-nums">合规 {result.counts.ok} · 警告 {result.counts.warn} · 阻断 {result.counts.block}</p></div>
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" disabled={busy} onClick={() => void open(0)}>{busy ? <Loader2 className="animate-spin motion-reduce:animate-none"/> : <BookOpen/>}预览预检报告</Button>
-        <Button variant="outline" disabled={busy} onClick={() => void download()}><Download/>下载预检报告(PDF)</Button>
+        <Button variant="outline" disabled={busy} onClick={() => void open(0)}>{busy ? <Icon icon={faCircleNotch} className="animate-spin motion-reduce:animate-none"/> : <Icon icon={faBookOpen}/>}预览预检报告</Button>
+        <Button variant="outline" disabled={busy} onClick={() => void download()}><Icon icon={faDownload}/>下载预检报告(PDF)</Button>
       </div>
     </div>
     {/* The cover and the ten chapters; each opens the reader at its page. */}
