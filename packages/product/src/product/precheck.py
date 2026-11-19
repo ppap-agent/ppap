@@ -18,7 +18,7 @@ from typing import Any, Mapping
 
 from product.precheck_content import entry_key
 
-OUTLINE_VERSION = "PPAP-00 v0.14"
+OUTLINE_VERSION = "PPAP-00 v0.21"
 
 CODES = {
     "B01": "文件无法解析",
@@ -198,17 +198,51 @@ def _counterparts(targets: list[tuple[dict, str, str]], files: list[dict], codes
     return statuses, findings
 
 
+# Criterion results the precheck is not meant to decide: out of scope, no adapted rule, handed to the formal audit.
+UNDECIDED_BY_DESIGN = {"S01", "S02", "S03"}
+# Status codes of a criterion that should have been decided and was not; S01 / S02 are not counted.
+UNREVIEWED = {"S03", "S04", "S05", "S06", "S07"}
+
+
+def _coverage(row: dict, entry: str, criteria: list[dict] | None) -> list[dict]:
+    """S06 when the routed entry was not fully decided: the judged share of the criteria the precheck should decide.
+
+    S06 is only 「该判而没判完」 (总纲 v0.21 §3.1): an original that could not be read is W05, not S06, so a
+    file without content and criteria left open because the original was unreadable are not counted.
+    """
+    if criteria is None:
+        return []
+    else:
+        due = [item for item in criteria if item["result"] not in UNDECIDED_BY_DESIGN and not item.get("unread")]
+        open_ = [item for item in due if item["result"] not in {"满足", "不满足"}]
+        total, judged = len(due), len(due) - len(open_)
+        missed = "；".join(f"{item['criterion_id']}（{item.get('reason') or item['result']}）" for item in open_)
+    if not total or judged == total:
+        return []
+    note = f"已判 {judged}/{total} 条判据，覆盖率 {judged * 100 // total}%；未判：{missed}。"
+    return [{"code": "S06", "scope": "content", "file_version_id": row["file"]["id"], "filename": row["file"]["original_filename"], "note": note, "coverage": {"judged": judged, "total": total}}]
+
+
+def unreviewed_count(statuses: list[dict]) -> int:
+    """未审条数: criteria that should have been decided and were not (S03/S04/S05/S07 one each, S06 its open criteria)."""
+    return sum(status["coverage"]["total"] - status["coverage"]["judged"] if status["code"] == "S06" else 1 for status in statuses if status["code"] in UNREVIEWED)
+
+
 def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None = None) -> dict[str, Any]:
     """Return the precheck of a task: findings, statuses, per-file level and batch conclusion.
 
     ``content`` maps a file version id to its ``precheck_content`` results; their 不满足 items become findings
     and the full list is attached to the file row. Files whose (customer, type) has no 00-A entry get a
-    content-level S02 status that does not change the file level.
+    content-level status that does not change the file level: S01 when the type is outside the customer's M,
+    else S02.
 
     Routing: a type outside the customer's type set M is S01 (out of scope), also when a counterpart-only
     type is submitted on its own; only a type inside M without an adapted effective rule is S02. A missing
     same-batch counterpart is S04 with its W01; an associated counterpart of another part is S07, which
-    carries the facts in ``source_mismatch`` and never blocks the file.
+    carries the facts in ``source_mismatch`` and never blocks the file. A criterion handed to the formal audit
+    is S03; a routed entry not fully decided is S06 with its ``coverage``. ``unreviewed`` counts what should
+    have been decided and was not (S03–S07; S01/S02 never). S05 has no applicable entry in this period
+    (00-A v1.13 §0 纪律 4: a missing key column is B05), so it is never stated.
     """
     files = [row for row in task.get("files", []) if row.get("selection") == "selected"]
     findings: list[dict] = []
@@ -260,7 +294,10 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
         entries[row["file"]["id"]] = entry = entry_key(metadata.get("customer") or task.get("customer_preference"), match.get("document_type"))
         if customer and code:
             targets.append((row, customer, code))
-        if entry is None:
+        if entry is None and outside:
+            note = "该文件类型不在本客户的预检范围内，内容级不预检；不影响正式审核。"
+            statuses.append({"code": "S01", "scope": "content", "file_version_id": row["file"]["id"], "filename": name, "note": note})
+        elif entry is None:
             note = "预检规则未覆盖该客户与文件类型（PPAP-00-A 路由表无此条目），内容级不预检；不影响正式审核。"
             statuses.append({"code": "S02", "scope": "content", "file_version_id": row["file"]["id"], "filename": name, "note": note})
         for item in (content or {}).get(row["file"]["id"], []) if entry else []:
@@ -268,6 +305,11 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
                 code, problem = item["code"], f"{item['criterion_id']} {item['criterion']}：{item['reason']}".rstrip("：")
                 action = CONTENT_ACTIONS.get(code, CONTENT_ACTIONS["B"] if code.startswith("B") else "核对后修正。")
                 findings.append(_finding(code, "block" if code.startswith("B") else "warn", row, problem, item["evidence"], action, "材料侧", item["location"]))
+            elif item["result"] == "S03":
+                note = f"{item['criterion_id']} {item['criterion']}：{item['reason']}".rstrip("：")
+                statuses.append({"code": "S03", "scope": "content", "file_version_id": row["file"]["id"], "filename": name, "note": note})
+        if entry and content is not None:
+            statuses.extend(_coverage(row, entry, content.get(row["file"]["id"])))
         for field, label in (("part_number", "零件号"), ("part", "零件名称")):
             if not (metadata.get(field) or "").strip():
                 findings.append(_finding("W02", "warn", row, f"文件中未识别到{label}。", "(空)", f"在文件表头填写{label}，与图纸和其他 PPAP 文件保持一致。", "材料侧"))
@@ -323,5 +365,6 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
         "blocks": blocks,
         "warnings": warnings,
         "statuses": statuses,
+        "unreviewed": unreviewed_count(statuses),
         "counts": {level: counts.get(level, 0) for level in ("ok", "warn", "block", "unmatched", "reference", "pending")},
     }

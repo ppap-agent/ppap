@@ -55,6 +55,13 @@ class PrecheckMissingPeer(TypedDict):
     part_number: NotRequired[str]
 
 
+class PrecheckCoverage(TypedDict):
+    """S06: `judged` of the `total` criteria the precheck should decide for this file."""
+
+    judged: int
+    total: int
+
+
 class PrecheckStatus(TypedDict):
     code: str
     scope: NotRequired[str]
@@ -63,6 +70,7 @@ class PrecheckStatus(TypedDict):
     note: str
     source_mismatch: NotRequired[PrecheckSourceMismatch]
     missing: NotRequired[PrecheckMissingPeer]
+    coverage: NotRequired[PrecheckCoverage]
 
 
 class PrecheckCriterion(TypedDict):
@@ -102,6 +110,8 @@ class AuditTaskPrecheck(TypedDict):
     blocks: list[PrecheckFinding]
     warnings: list[PrecheckFinding]
     statuses: list[PrecheckStatus]
+    # 未审条数: S03/S04/S05/S07 one each plus the open criteria of each S06; S01/S02 are not counted.
+    unreviewed: int
     counts: PrecheckCounts
 
 

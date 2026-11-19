@@ -3,7 +3,7 @@ from documents.precheck_pdf import render_precheck_pdf
 
 FINDING = {"file_version_id": "locked", "filename": "加密.xlsx", "location": "加密.xlsx", "responsibility": "材料侧"}
 RESULT = {
-    "outline_version": "PPAP-00 v0.14",
+    "outline_version": "PPAP-00 v0.21",
     "conclusion": "fail",
     "files": [
         {"file_version_id": "locked", "filename": "加密.xlsx", "level": "block", "document_type": None, "customer": None},
@@ -37,6 +37,7 @@ RESULT = {
         }
     ],
     "statuses": [],
+    "unreviewed": 0,
     "counts": {"ok": 0, "warn": 1, "block": 1, "unmatched": 0, "reference": 0, "pending": 0},
 }
 
@@ -106,16 +107,21 @@ def test_findings_are_cards_with_the_outline_fields_and_unknown_fields_read_as_a
 def test_status_register_lists_every_category_and_unknown_codes():
     statuses = [
         {"code": "S07", "scope": "content", "file_version_id": "scan", "filename": "流程图.pdf", "note": "比对源零件号不一致，该项无法比对。"},
+        {"code": "S06", "scope": "content", "file_version_id": "scan", "filename": "流程图.pdf", "note": "已判 8/10 条判据，覆盖率 80%。", "coverage": {"judged": 8, "total": 10}},
         {"code": "S09", "file_version_id": "scan", "filename": "流程图.pdf", "note": "新状态。"},
     ]
-    result = {**RESULT, "statuses": statuses}
+    result = {**RESULT, "statuses": statuses, "unreviewed": 3}
     with pymupdf.open(stream=render_precheck_pdf({**SOURCE, "precheck": result}), filetype="pdf") as document:
         pages = _flat(document)
         toc = {entry: page for _level, entry, page in document.get_toc()}
     register = pages[toc["六、状态登记"] - 1]
-    for code in ("S01", "S02", "S03", "S04", "S05", "S07", "未执行", "S09"):
+    for code in ("S01", "S02", "S03", "S04", "S05", "S06", "S07", "未执行", "S09"):
         assert code in register, code
-    assert "比对源零件号不一致S07流程图.pdf比对源零件号不一致，该项无法比对。" in register
+    assert "比对源错配S07流程图.pdf比对源零件号不一致，该项无法比对。" in register
+    assert "未完成全量统计S06流程图.pdf已判8/10条判据，覆盖率80%。" in register
+    assert "受控模板缺结构S05—本批无（当前无在册受控模板）" in register
+    assert register.startswith("六、状态登记未审3条。")
+    assert "阻断1项警告1项未审3条" in "".join(pages)
     assert "范围外S01—本批无" in register
 
 

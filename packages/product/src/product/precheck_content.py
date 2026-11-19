@@ -57,7 +57,8 @@ ENTRIES: dict[str, tuple[str, tuple[str, ...]]] = {
     "L15": ("理想", ("T15", "项目问题清单", "APQP项目问题清单")),
     "L16": ("理想", ("T16", "零部件年度试验要求")),
     "L17": ("理想", ("T17", "零件提交保证书")),
-    "N01": ("蔚来", ("T01", "全功能检验报告", "测量报告")),
+    # 00-A v1.13 registers 蔚来's measurement report as T01a; the product dictionary still names it T01.
+    "N01": ("蔚来", ("T01a", "T01", "全功能检验报告", "测量报告")),
     "N02": ("蔚来", ("T10", "潜在过程失效模式及后果分析")),
     "N03": ("蔚来", ("T11", "控制计划")),
     "N04": ("蔚来", ("T12", "过程特殊特性清单", "特殊特性清单")),
@@ -97,14 +98,20 @@ def rule_source(name: str) -> dict[str, Any]:
 
 
 def entry_criteria(key: str) -> tuple[str, list[dict[str, Any]]]:
-    """(source document, criteria) of one entry: the L1 spec it routes to, else its L2 required_structure."""
+    """(source document, criteria) of one entry: the L1 spec it routes to, else its L2 required_structure.
+
+    An L2 entry also carries the basis criteria the outline registers outside the 155 (总纲 附录 A.2: PPAP-T12
+    ``S8`` / ``S9``); each of those names its own source document.
+    """
     l1 = rule_source("l1.json")
     spec = l1["routing"].get(key)
     if spec is not None:
         return l1["specs"][spec]["source"], [{"criterion_id": item["criterion_id"], "criterion": item["criterion"], "outcome": ""} for item in l1["specs"][spec]["criteria"]]
     l2 = rule_source("l2.json")
-    rows = l2["entries"].get(key, [])
-    return l2["source"], [{"criterion_id": item["id"], "criterion": item["criterion"], "outcome": item["outcome"]} for item in rows]
+    rows = [{"criterion_id": item["id"], "criterion": item["criterion"], "outcome": item["outcome"]} for item in l2["entries"].get(key, [])]
+    basis = l2["basis"]
+    rows += [{"criterion_id": item["id"], "criterion": item["criterion"], "outcome": item["outcome"], "source": basis["source"]} for item in basis["entries"].get(key, [])]
+    return l2["source"], rows
 
 
 # ---------------------------------------------------------------- reading primitives
@@ -613,10 +620,22 @@ def _section_content(label: str, *siblings: str) -> Check:
     return Check(run, labels=(label,))
 
 
+# PPAP-00-A v1.13 §2.1 U13 S1: the image types that make the category presumed present.
+PHOTO_SUFFIXES = ("jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp", "heic")
+
+
 def _image_file() -> Check:
+    """U13 S1: an image file presumes the category by its file type; any other file is not decided here.
+
+    A single-page pure-image PDF also counts, a document with pictures is W01 and only a file the user named
+    as this category is B03 — telling these apart is not implemented.
+    """
+
     def run(ctx: Ctx, miss: str, _: str) -> Outcome:
         suffix = ctx.filename.rsplit(".", 1)[-1].lower() if "." in ctx.filename else ""
-        return ok("文件", ctx.filename) if ctx.doc.kind == "image" else bad("B03", "文件", ctx.filename, f"提交格式为 .{suffix}，不是图片")
+        if suffix in PHOTO_SUFFIXES:
+            return ok("文件", f"{ctx.filename}（按文件类型推定）")
+        return skip(f"提交格式为 .{suffix}：单页纯图 PDF、含图文档与指定为样品照片的非图片文件需分别判定，" + NOT_IMPLEMENTED)
 
     return Check(run, needs_text=False)
 
@@ -768,7 +787,7 @@ L2: dict[str, Check] = {
     "U12:S6": columns(("特性类型", "特性类别")),
     "U12:S7": rows_filled(("编号", "序号"), ("产品特性", "过程特性", "特殊特性名称"), ("特性及公差", "特性值"), ("特性类型", "特性类别")),
     "U13:S1": _image_file(),
-    "U13:S2": handoff("照片是否符合要求需人工确认，移交正式审核"),
+    "U13:S2": handoff("本类目按文件类型推定，未核验图像内容；需人工确认样品照片是否符合要求"),
     "U14:S1": controlled(),
     "U15:S1": present("流转记录"),
     "U15:S2": present("试装结论"),
@@ -1208,16 +1227,18 @@ def _cp_columns() -> Check:
 
 
 def _cp_class_column() -> Check:
+    """M-05 (10 分则 v2.6): a value in the column passes; 「整列空白」 needs the whole-file count and the four
+    false-empty exclusions of 总纲 §7.2.2, which are not implemented, so an empty column is left undecided."""
+
     def run(ctx: Ctx, miss: str, last: str) -> Outcome:
         table = ctx.table([("特性分类", "特殊特性", "特性类型")])
         if table is None:
             return skip("未找到特性分类列（由 M-04 判定）")
         values = [r for r in range(table.header + 1, len(table.grid.rows)) if not blank(table.grid.cell(r, table.cols[0]))]
-        return (
-            ok(table.grid.ref(values[0], table.cols[0]), table.grid.cell(values[0], table.cols[0]))
-            if values
-            else bad("B05", table.grid.ref(table.header, table.cols[0]), table.titles[0], "特性分类列全列为空")
-        )
+        if values:
+            return ok(table.grid.ref(values[0], table.cols[0]), table.grid.cell(values[0], table.cols[0]))
+        location = table.grid.ref(table.header, table.cols[0])
+        return skip("该列在本表未见取值；判「整列空白」须全文件逐页统计并排除四种假空，" + NOT_IMPLEMENTED, location, table.titles[0])
 
     return Check(run, needs_tables=True)
 
@@ -1379,16 +1400,18 @@ def precheck_content(file_bytes: bytes, filename: str, entry_key: str, *, custom
     ctx = Ctx(doc, filename, customer or ENTRIES.get(entry_key, ("",))[0], labels, tuple(label for check in checks.values() if check.group for label in check.labels))
     results = []
     for item in criteria:
+        # A criterion the original could not be read for (W05, 读不出) is not S06 (总纲 v0.21 §3.1).
+        unread = False
         check = checks.get(item["criterion_id"])
         miss, last = _codes(item["outcome"])
         if check is None:
             outcome = skip(NOT_IMPLEMENTED)
         elif check.needs_text and doc.error:
-            outcome = skip(doc.error)
+            outcome, unread = skip(doc.error), True
         elif check.needs_text and not doc.has_text:
-            outcome = skip(NO_TEXT)
+            outcome, unread = skip(NO_TEXT), True
         elif check.needs_tables and not doc.grids:
-            outcome = skip("未识别出表格结构，表格类判定未执行")
+            outcome, unread = skip("未识别出表格结构，表格类判定未执行"), True
         else:
             try:
                 outcome = check.run(ctx, miss, last)
@@ -1400,6 +1423,16 @@ def precheck_content(file_bytes: bytes, filename: str, entry_key: str, *, custom
         if result == "不满足" and not code:
             result, reason = "未执行", "规则未给出该情形的原因码，本期未判：" + reason
         results.append(
-            {"criterion_id": item["criterion_id"], "criterion": item["criterion"], "result": result, "code": code, "location": location, "evidence": evidence, "reason": reason, "source": source}
+            {
+                "criterion_id": item["criterion_id"],
+                "criterion": item["criterion"],
+                "result": result,
+                "code": code,
+                "location": location,
+                "evidence": evidence,
+                "reason": reason,
+                "source": item.get("source", source),
+                "unread": unread,
+            }
         )
     return results

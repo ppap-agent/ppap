@@ -129,7 +129,7 @@ def test_the_counterpart_graph_is_the_one_ppap_00_a_registers():
 
     from product.precheck import PEERS
 
-    text = (Path(__file__).resolve().parents[3] / "assets/uaes/prechecks/PPAP-00-A_客户与文件类型覆盖矩阵_路由表_v1.7.md").read_text(encoding="utf-8")
+    text = (Path(__file__).resolve().parents[3] / "assets/uaes/prechecks/PPAP-00-A_客户与文件类型覆盖矩阵_路由表_v1.13.md").read_text(encoding="utf-8")
     section = text.split("### 4.1 同批关联图", 1)[1].split("### 4.2", 1)[0]
     for (customer, target), peers in PEERS.items():
         row = next(line for line in section.splitlines() if line.startswith(f"| {customer} |") and f"`{target}`" in line.split("|")[2])
@@ -141,3 +141,54 @@ def test_a_file_without_a_recognized_customer_routes_by_the_task_customer():
     row["match"]["metadata"]["customer"] = None
     assert "S02" not in [item["code"] for item in precheck_task({"customer_preference": "UAES", "files": [row]})["statuses"]]
     assert [item["code"] for item in precheck_task({"customer_preference": None, "files": [row]})["statuses"]] == ["S02"]
+
+
+def _criterion(id_, result, reason=""):
+    return {"criterion_id": id_, "criterion": f"判据 {id_}", "result": result, "code": "W02" if result == "不满足" else None, "location": "", "evidence": "", "reason": reason, "source": "10"}
+
+
+def test_a_criterion_handed_to_the_formal_audit_is_s03_and_an_entry_not_fully_decided_is_s06_with_its_coverage():
+    criteria = [
+        *(_criterion(f"M-{i:02d}", "满足") for i in range(1, 8)),
+        _criterion("M-08", "不满足", "未填"),
+        _criterion("P-05", "未执行", "需与同批其他文件比对"),
+        _criterion("X-05", "未执行", "需要图像识别"),
+        _criterion("S-01", "S03", "超差判断移交正式审核"),
+        _criterion("R-02", "S02", "该客户无此要求"),
+    ]
+    result = precheck_task({"files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}, {"psw": criteria})
+    s03, s06 = _status(result, "S03"), _status(result, "S06")
+    assert [item["note"] for item in s03] == ["S-01 判据 S-01：超差判断移交正式审核"]
+    # S02 and S03 are not the precheck's to decide: 8 of the 10 due criteria were judged.
+    assert s06[0]["coverage"] == {"judged": 8, "total": 10}
+    assert s06[0]["note"].startswith("已判 8/10 条判据，覆盖率 80%；未判：P-05（需与同批其他文件比对）")
+    assert result["unreviewed"] == 1 + 2
+    # Statuses never change the file level or the conclusion.
+    assert [row["level"] for row in result["files"]] == ["warn"] and result["conclusion"] == "pass"
+
+    decided = precheck_task({"files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}, {"psw": [_criterion("M-01", "满足"), _criterion("R-02", "S02")]})
+    assert decided["statuses"] == [] and decided["unreviewed"] == 0
+    # Without content results the caller did not run the content level: no coverage is claimed either way.
+    assert not _status(precheck_task({"files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}), "S06")
+
+
+def test_an_unreadable_original_is_not_s06():
+    """总纲 v0.21 §3.1: S06 is only 「该判而没判完」; 「读不出」 is W05, not S06."""
+    result = precheck_task({"files": [file("cp", "控制计划.xlsx")]}, {})
+    assert _status(result, "S06") == []
+    criteria = [
+        {"criterion_id": "A", "criterion": "a", "result": "满足"},
+        {"criterion_id": "B", "criterion": "b", "result": "未执行", "reason": "文件无可读文字", "unread": True},
+    ]
+    assert _status(precheck_task({"files": [file("cp", "控制计划.xlsx")]}, {"cp": criteria}), "S06") == []
+
+
+def test_unreviewed_counts_s03_to_s07_and_never_s01_or_s02():
+    batch = [
+        file("gauge", "检具验收报告.xlsx", state="unmatched", gaps=["matching_document_type_rules_missing"], doc_type="检具验收报告"),
+        file("cp", "控制计划.xlsx", state="unmatched", gaps=["matching_customer_rules_missing"]),
+        file("cpk", "过程能力.xlsx", doc_type="过程能力研究", part_number="P1"),
+    ]
+    result = precheck_task({"files": batch})
+    assert sorted(item["code"] for item in result["statuses"]) == ["S01", "S02", "S04"]
+    assert result["unreviewed"] == 1

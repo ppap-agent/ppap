@@ -28,9 +28,13 @@ STATUS_CATEGORIES = (
     ("移交", "S03"),
     ("对端未到", "S04"),
     ("受控模板缺结构", "S05"),
-    ("比对源零件号不一致", "S07"),
+    ("未完成全量统计", "S06"),
+    ("比对源错配", "S07"),
     ("未执行", "未执行"),
 )
+# What an empty category reads; S05 has no controlled template on register to apply to.
+EMPTY = {"S05": "本批无（当前无在册受控模板）"}
+UNREVIEWED_NOTE = "S03、S04、S05、S06、S07 为该判而没判成的判定项，计入「未审条数」（S06 按未判条数计）；S01、S02 本就不该判，不计。"
 
 
 def _rows(rows: list[tuple]) -> list[tuple[str, ...]]:
@@ -79,7 +83,7 @@ def render_precheck_pdf(source: dict) -> bytes:
     worst = blocks[0]["problem"] if blocks else warnings[0]["problem"] if warnings else "未发现阻断或警告。"
     summary = [
         f"<p>结论：{conclusion}　能否进入正式审核：{'否' if result['conclusion'] == 'fail' else '是' if result['conclusion'] == 'pass' else '待识别完成'}</p>"
-        f"<p>阻断 {len(blocks)} 项　警告 {len(warnings)} 项　状态项 {len(statuses)} 项</p>"
+        f"<p>阻断 {len(blocks)} 项　警告 {len(warnings)} 项　未审 {result['unreviewed']} 条</p>"
         f"<p>原因码分布：{text('、'.join(f'{code}×{len(numbers)}' for code, numbers in sorted(by_code.items())) or '无')}</p>"
         f"<p>一句话判断：{text(worst)}</p><p>{SCOPE_NOTE}</p>",
         f"<p class='meta'>总纲版本：{text(result['outline_version'])}　生成时间：{text(source['generated_at'])}</p>",
@@ -116,7 +120,7 @@ def render_precheck_pdf(source: dict) -> bytes:
     others = tuple((code, code) for code in dict.fromkeys(row["code"] for row in statuses) if code not in known)
     for category, code in STATUS_CATEGORIES + others:
         rows = [row for row in statuses if row["code"] == code]
-        register_rows += [(category, code, row["filename"], row["note"]) for row in rows] or [(category, code, "—", "本批无")]
+        register_rows += [(category, code, row["filename"], row["note"]) for row in rows] or [(category, code, "—", EMPTY.get(code, "本批无"))]
     remediation: list = [
         Table(f"7.{index} {side}", ("文件", "应改为", "关联问题号"), _rows([(item["filename"], item["action"], item["number"]) for item in findings if item["responsibility"] == side]))
         for index, side in enumerate(sides, 1)
@@ -128,7 +132,9 @@ def render_precheck_pdf(source: dict) -> bytes:
         Chapter(chapter_title(3, "问题总览"), overview),
         Chapter(chapter_title(4, "阻断项明细"), [_card(item) for item in blocks] or ["<p>无阻断项。</p>"]),
         Chapter(chapter_title(5, "警告项明细"), [f"<p>{WARN_NOTE}</p>", *([_card(item) for item in warnings] or ["<p>无警告项。</p>"])]),
-        Chapter(chapter_title(6, "状态登记"), [Table("表 6-1 状态登记", ("类别", "状态", "条目", "说明"), _rows(register_rows), nowrap=(1,))]),
+        Chapter(
+            chapter_title(6, "状态登记"), [f"<p>未审 {result['unreviewed']} 条。{UNREVIEWED_NOTE}</p>", Table("表 6-1 状态登记", ("类别", "状态", "条目", "说明"), _rows(register_rows), nowrap=(1,))]
+        ),
         Chapter(chapter_title(7, "整改建议汇总"), remediation or ["<p>无需整改。</p>"]),
         Chapter(chapter_title(8, "结论作用域与局限性声明"), ["".join(f"<p>· {line}</p>" for line in LIMITS)]),
         Chapter(
