@@ -64,7 +64,7 @@ export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdap
     if (!url) return
     const link = document.createElement('a'); link.href = url; link.download = '预检报告.pdf'; link.click()
   }
-  const conclusion = {pass: '通过：可以进入正式审核', fail: '不通过：存在阻断项', not_run: '未执行：识别尚未完成'}[result.conclusion]
+  const conclusion = {pass: '通过：可以进入正式审核', fail: '不通过：存在阻断项', not_run: result.files.length ? '未执行：识别尚未完成' : '未执行：没有送审文件'}[result.conclusion]
   return <section aria-label="预检报告" className="space-y-3 rounded-lg border bg-card p-4">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="space-y-1"><h2 className="font-semibold">预检报告 · {conclusion}</h2><p className="text-sm tabular-nums">合规 {result.counts.ok} · 警告 {result.counts.warn} · 阻断 {result.counts.block}</p></div>
