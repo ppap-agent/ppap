@@ -90,8 +90,11 @@ def alignment(path: Path, ontology) -> tuple[list[str], Clause | None, list[str]
         starts = [match.start() for match in re.finditer(re.escape(fragment), text)] if fragment else []
         if not starts:
             problems.append(f"引用与原文不符：「{quote}」")
-        for start in starts:
-            covered[start : start + len(fragment)] = [True] * len(fragment)
+            continue
+        # One quote covers one occurrence: a fragment the clause repeats must be quoted once per occurrence.
+        free = [start for start in starts if not all(covered[start : start + len(fragment)])]
+        start = (free or starts)[0]
+        covered[start : start + len(fragment)] = [True] * len(fragment)
     for is_covered, group in itertools.groupby(enumerate(text), key=lambda pair: covered[pair[0]]):
         span = "".join(char for _, char in group)
         if not is_covered and set(span) - PUNCTUATION:
@@ -127,12 +130,15 @@ def limits(base: list[Node]) -> list[tuple[str | None, str, str | None, list[str
 
 
 ASCII_WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
-TECH_WORDS = ("本体", "公理", "探针", "推理", "可满足", "读法", "类名", "类型表达式", "OWL", "ROBOT", "HermiT", "Probe", "__", ":")
+TECH_WORDS = ("本体", "公理", "探针", "推理", "可满足", "读法", "谓词", "开放世界", "形式化", "类名", "类型表达式", "OWL", "ROBOT", "HermiT", "Probe", "__")
+NAME_LIKE = re.compile(r":[A-Za-z_]")  # a prefixed name such as :Signed; "10:30" is fine
 
 
 def lint(text: str, kind: str, allowed: set[str]) -> list[str]:
     """Plain-language problems in a text that goes into the report."""
     problems = [f"有技术词“{word}”" for word in TECH_WORDS if word in text]
+    if NAME_LIKE.search(text):
+        problems.append("有本体里的名字写法（如 :Signed）")
     problems += [f"有英文标识符“{word}”" for word in ASCII_WORD.findall(text) if word.casefold() not in allowed]
     if kind == "rewrite":
         return problems
@@ -194,6 +200,20 @@ def main(argv: list[str] | None = None) -> int:
         print("[原文对齐] 原文全部写进本体")
 
     base = list(ontology.axioms)
+    # The skill's own annotation properties (:quote, :says, ...) are declared here for the writer. Any other name
+    # used without a declaration is reported by name; the DL check would only call it an undeclared entity.
+    declared = {node.args[0].args[0] for node in base if node.head == "Declaration"}
+    annotation_properties = {
+        item.args[-3] if item.head == "AnnotationAssertion" else item.args[-2] for node in base for item in walk(node) if isinstance(item, Node) and item.head in ("Annotation", "AnnotationAssertion")
+    }
+    for name in sorted(annotation_properties - declared):
+        if not name.startswith("<http://www.w3.org/"):
+            base.append(Node("Declaration", [Node("AnnotationProperty", [name])]))
+            declared.add(name)
+    unknown = sorted({local(item) for node in base for item in walk(node) if isinstance(item, str) and item.startswith("<") and not item.startswith("<http://www.w3.org/") and item not in declared})
+    if unknown:
+        print(f"[约定] 用了没声明的名字：{'、'.join(unknown)}。每个类和属性都要写 Declaration")
+        return 2
     classes = {node.args[0].args[0] for node in base if node.head == "Declaration" and node.args[0].head == "Class"} - {THING, NOTHING}
     special = {name: next((iri for iri in classes if local(iri) == name), None) for name in ("Judged", "PassWhen", "FailWhen")}
     missing = [name for name, iri in special.items() if iri is None]
@@ -267,10 +287,6 @@ def main(argv: list[str] | None = None) -> int:
             if ambiguity_of.setdefault(point, match.group(2)) != match.group(2):
                 print(f"[读法] {local(point)} 同时属于两处歧义，请拆成两个类")
                 return 2
-    undeclared = sorted({local(item) for node in base for item in walk(node) if isinstance(item, str) and READING.match(item.strip("<>")) and item not in classes})
-    if undeclared:
-        print(f"[约定] 读法类没有声明：{'、'.join(undeclared)}。每个读法都要写 Declaration(Class(...))")
-        return 2
     ids = sorted(set(ambiguity_of.values()), key=int)
     letters = [sorted({letter for point, readings in points.items() if ambiguity_of[point] == i for letter in readings}) for i in ids]
     for point, readings in points.items():
