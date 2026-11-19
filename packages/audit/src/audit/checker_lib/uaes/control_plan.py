@@ -343,7 +343,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
             return same[0], ""
         if unknown:
             raise unable(f"同批次{label}{'、'.join(unknown)}未能读出零件号，尚不能确认是否与本控制计划（{mine}）同零件号，需人工复核。")
-        return None, f"同批次{label}{'、'.join(other)}与本控制计划零件号{mine}不同，没有同零件号的{label}"
+        return None, f"源错配：同批次{label}{'、'.join(other)}与本控制计划零件号{mine}不同，没有同零件号的{label}"
 
     def parts_of(self, ctx: RuleContext, item: Any, document: Any) -> set[str]:
         """Part numbers an original states: its 零件号 fields, else every part number in its text."""

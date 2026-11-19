@@ -327,7 +327,7 @@ class ControlPlanAgent(ExcelAgent):
                 self._shared_rule_context.note_unresolved(REFERENCE_IDENTITY_UNRESOLVED)
             return None
         if not part_numbers_compatible(left_keys, right_keys):
-            return "NG", "请上传同零件号的待审文件进行审核"
+            return "NG", "源错配：请上传同零件号的待审文件进行审核"
         return None
 
     def _extract_cp_rows(self, wb: Any) -> Any:

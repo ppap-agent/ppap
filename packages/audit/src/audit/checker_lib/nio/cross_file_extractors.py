@@ -395,7 +395,7 @@ def check_reference_identity(ctx, target: Workbook, reference: Workbook) -> None
 
     target_keys, reference_keys = keys(target), keys(reference)
     if target_keys and reference_keys and not part_numbers_compatible(target_keys, reference_keys):
-        raise GuardStop(Decision.NG, "关联资料与当前文件不是同零件号，不能借用其他零件的审核证据。")
+        raise GuardStop(Decision.NG, "源错配：关联资料与当前文件不是同零件号，不能借用其他零件的审核证据。")
     for part in levels[id(target)].keys() & levels[id(reference)].keys():
         if levels[id(target)][part] != levels[id(reference)][part]:
             raise GuardStop(Decision.NG, "同零件号的工程更改水平不一致，不能作为同版本对象进行核对。")

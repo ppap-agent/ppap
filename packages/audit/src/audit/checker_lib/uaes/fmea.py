@@ -461,7 +461,7 @@ class UaesPfmeaAgent(UaesExcelAgent):
                             characteristics.append((sheet.title, row.row_index, str(row.value("特性项目")).strip()))
         if not characteristics:
             if others:
-                return "NG", f"同批次采购件质量计划PGQP1的零件号为{'、'.join(others)}，与PFMEA零件号{part}不同，没有同零件号的PGQP1，请补充后复审。"
+                return "NG", f"源错配：同批次采购件质量计划PGQP1的零件号为{'、'.join(others)}，与PFMEA零件号{part}不同，没有同零件号的PGQP1，请补充后复审。"
             return "NG", f"同批次采购件质量计划中没有零件号{part}且含重要特性的PGQP1表，请补充后复审。"
         items = self.items(ctx)
         texts = [compact(item.values.get(name, "")) for item in items for name in ("功能", "要求", "失效模式")]
