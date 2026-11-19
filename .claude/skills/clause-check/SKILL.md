@@ -66,7 +66,17 @@ description: 交付规则前检查一条审核条款的原文：把条款当逻�
 - **取值不要写死成穷尽。** 原文没说只有这几种的，用 `SubClassOf(:A :父类)` 加 `DisjointClasses(:A :B :C)`，脚本会问“还可能是别的样子吗”。只有按定义就穷尽的（如“早于 / 不早于 / 没法比较”），才写 `DisjointUnion(:父类 :A :B :C)`。
 - **“否则”写成补集。** “……则通过，否则不通过”的不通过条件是“不满足通过条件”（`ObjectComplementOf`），不要列举几种不满足的样子；列举会凭空留下没列到的情况。
 - **“每个……都……”在一个都没有时也成立。** 通过条件里写了 `ObjectAllValuesFrom`，又没写至少要有一个，一个都没有时就会判通过。原文的通过以“有”为前提（如“如果存在……则……”），就加上 `ObjectSomeValuesFrom`；脚本会报出 `[一个都没有也通过]`。只有原文确实这样说，才在这个属性上写 `:passesWhenNone "<逐字引用原文依据>"`。
-- **兜底句管到哪里是一处歧义。** “如果无法辨识则不通过”这类兜底句，没说哪些情况算“无法辨识”。把它写成歧义点（如 `:Unreadable`），列出几种理解（如只指原件看不清 / 也包括写法对不上、没法比较），接进 `:FailWhen`。不要把它可能兜住的情况报成“原文没有给出结论”。
+- **“无法辨识”是一种取值，不是附加的标记。** 读不出来的值谈不上满足或不满足：把“看不清”和其他取值并列、互斥（如一个结果值：达标 / 低于 / 原件看不清 / 写法对不上），通过条件只认“达标”。不要把“无法辨识”写成文件额外带的标记再和“满足”并存，那会造出原文没有的冲突。
+- **兜底句管到哪里是一处歧义。** “如果无法辨识则不通过”没说哪些取值算“无法辨识”。把这个范围写成歧义点，每种理解指向几种取值，接进 `:FailWhen`；不要把它可能兜住的情况报成“原文没有给出结论”。写法：
+
+  ```
+  SubClassOf(:Meets :Value) SubClassOf(:Below :Value) SubClassOf(:Illegible :Value) SubClassOf(:Mismatched :Value)
+  DisjointClasses(:Meets :Below :Illegible :Mismatched)
+  EquivalentClasses(:Unreadable__3A :Illegible)                        # 只指原件看不清
+  EquivalentClasses(:Unreadable__3B ObjectUnionOf(:Illegible :Mismatched))  # 也包括写法对不上
+  EquivalentClasses(:PassWhen ObjectIntersectionOf(:File ... ObjectAllValuesFrom(:hasValue :Meets)))
+  EquivalentClasses(:FailWhen ObjectIntersectionOf(:File ObjectSomeValuesFrom(:hasValue ObjectUnionOf(:Below :Unreadable))))
+  ```
 - **比较默认不归一化。** `010` 不等于 `10`，`ok` 不等于 `OK`，除非原文写了怎么处理。
 
 写不出的部分（逐字的比较、计数、“不存在”）也要引用，并在引用上标类别：
