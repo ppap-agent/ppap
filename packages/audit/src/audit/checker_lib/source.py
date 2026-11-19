@@ -19,11 +19,10 @@ from typing import Any, cast
 from documents.model_access import ModelUnavailable
 
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
-from audit.document_tools import ReadLimits, TableReader, snapshot, source_title_location
+from audit.document_tools import ReadLimits, TableReader, snapshot
 from audit.engine.rule_engine.context import GuardStop
 from audit.evidence import EvidenceBudget, cell_locator
 from audit.fact_questions import BooleanFactEvaluation, FactQuestion
-from audit.kinds import PpapDocumentType
 
 
 class UnknownFact(Exception):
@@ -39,19 +38,6 @@ class MissingFact(Exception):
     """An observed complete structure lacks a required literal fact."""
 
     def __init__(self, message, *, need=None):
-        super().__init__(message)
-        self.need = need
-
-
-class SourceMismatch(Exception):
-    """The related original is present but names another identity its clause requires to match.
-
-    The clause fails as a source mismatch (源错配) without a content comparison;
-    its need names the file to replace. It is neither a content defect nor a
-    missing file, and an unreadable identity stays unknown instead.
-    """
-
-    def __init__(self, message, *, need):
         super().__init__(message)
         self.need = need
 
@@ -94,46 +80,6 @@ def header(value: Any, aliases: tuple[str, ...]) -> bool:
 def _identity(value):
     text = "" if value is None else unicodedata.normalize("NFKC", str(value))
     return "".join(text.split()).casefold()
-
-
-def pair_identity(value) -> str | None:
-    """A pairing key must be actual source data, not a placeholder or a label."""
-    normalized = _identity(value)
-    placeholders = {"", "/", "-", "--", "—", "–", "na", "n/a", "n.a.", "none", "null", "tbd", "xx", "xxx", "xxxx", "无", "待填", "待定", "待确认", "未填写"}
-    labels = {
-        _identity(label)
-        for label in (
-            "零件号",
-            "零件编号",
-            "零件名称",
-            "物料编号",
-            "物料名称",
-            "理想汽车零件号",
-            "客户零件号",
-            "Part number",
-            "Part No",
-            "Part No.",
-            "版本",
-            "版本号",
-            "工程更改版本",
-            "Revision",
-            "版次",
-            "修订版次",
-            "项目",
-            "项目名称",
-            "车型项目",
-            "项目代号",
-            "UAES项目编号",
-            "客户",
-            "客户名称",
-            "Customer",
-            "Customer Name",
-            "供应商名称",
-            "供应商代码",
-            "日期",
-        )
-    }
-    return None if normalized in placeholders or normalized.rstrip(":：") in labels else normalized
 
 
 class NativeFacts:
@@ -243,19 +189,6 @@ class NativeFacts:
         if self.has_unread_content():
             raise UnknownFact(f"未能从可读取原件确认“{text}”，图像或未知内容仍需核对。")
         raise MissingFact(f"原件缺少“{text}”。")
-
-    def require_source_title(self, aliases):
-        location = source_title_location(self.data, aliases)
-        if location is None:
-            raise UnknownFact("原件尚未定位到明确的关联文件标题，正文引用不能代替对端身份。")
-        if "row" in location:
-            table = next(table for table in self.data["tables"] if table["id"] == location["table"])
-            self.cell(table, location["row"], location["column"])
-        elif location.get("kind") == "docx_paragraph":
-            self.witness(location, self.data["paragraphs"][location["paragraph"] - 1]["text"], self.version)
-        elif location.get("kind") == "pdf_block":
-            page = next(page for page in self.data["pages"] if page["page"] == location["page"])
-            self.witness(location, page["blocks"][location["block"] - 1]["text"], self.version)
 
     def tables(self, title: tuple[str, ...] = ()):
         unresolved = self.data.get("coverage", {}).get("unresolved_pages", [])
@@ -432,14 +365,6 @@ def any_row(rows, predicate) -> bool:
 
 
 # Identities a cross-file clause can name, with the labels that state them.
-_IDENTITY = {
-    "part": ("零件号", ("零件号", "零件编号", "物料编号", "客户零件号", "part number")),
-    "project": ("项目", ("项目", "项目名称", "项目号", "UAES项目编号", "车型项目")),
-    "name": ("零件名称", ("零件名称", "物料名称", "part name")),
-}
-_IDENTITY_LABELS = {key(alias) for _label, aliases in _IDENTITY.values() for alias in aliases} | {key("版本"), key("日期")}
-
-
 class NativeRow(Mapping[str, Any]):
     def __init__(self, native, table, row, columns):
         self.native, self.table, self.row, self.columns = native, table, row, columns
@@ -452,25 +377,6 @@ class NativeRow(Mapping[str, Any]):
 
     def __len__(self):
         return len(self.columns)
-
-
-def _kind_names(kind) -> list[str]:
-    from audit.presets import customer_presets
-
-    names = [str(kind)]
-    resolved = PpapDocumentType.from_string(str(kind))
-    if resolved != PpapDocumentType.UNKNOWN:
-        names.append(resolved.get_type_name())
-    names.extend(preset.title for preset in customer_presets() if preset.customer == "UAES" and preset.source_type == kind)
-    return names
-
-
-def _kind_matches(kind, terms) -> bool:
-    """A term names a type by its text or by the document type it resolves to, such as PFMEA."""
-    if any(key(term) in key(name) for term in terms for name in _kind_names(kind)):
-        return True
-    resolved = PpapDocumentType.from_string(str(kind))
-    return resolved != PpapDocumentType.UNKNOWN and any(PpapDocumentType.from_string(term) == resolved for term in terms)
 
 
 class _Clause:
@@ -564,11 +470,6 @@ class SourceAudit:
         except UnknownFact as exc:
             status, message = "UNABLE", str(exc)
             questions, evaluation = exc.questions, exc.evaluation
-        except SourceMismatch as exc:
-            # Both identities were read and differ: NG of nature 源错配 (supply kind), never compared.
-            status, message = "NG", str(exc)
-            completed = 1
-            supply = exc.need
         except MissingFact as exc:
             status, message = "NG", str(exc)
             completed = 1
@@ -651,89 +552,6 @@ class SourceAudit:
                         evaluation = BooleanFactEvaluation(file_version_id=self.audit_file.audit_id, facts={"visual." + name: value for name, value in values.items()}, description=description)
             raise UnknownFact(description + "尚未全部核实，需人工确认原件。", questions=questions, evaluation=evaluation)
         return "PASS", "已从完整原件核实：" + description
-
-    def related(self, terms, *, same):
-        """The one original of `terms` in this frozen GroupContext; `same` lists the identities its clause names, never order."""
-        if self.group_context is None:
-            raise UnknownFact("当前批次没有关联资料，需补充同零件的独立原件。")
-        for kind in self.group_context.unavailable_files.values():
-            if not kind or key(kind) in {"unknown", "未知", "未知类型"}:
-                raise OSError("当前批次有类别未确认且无法读取的原件，尚不能排除所需对端。")
-            names = _kind_names(kind)
-            relevant = _kind_matches(kind, terms)
-            # A broad MSA type can contain the requested Kappa/GRR/plan subtype.
-            broad_msa = any("测量系统分析" in name or "msa" in key(name) for name in names)
-            if relevant or broad_msa and any(key(term) in {"kappa", "grr", "msa计划", "测量系统分析计划"} for term in terms):
-                raise OSError("当前批次有已提供但无法读取的关联资料。")
-        candidates = {item.audit_id: item for kind, items in self.group_context.by_doc_type.items() if _kind_matches(kind, terms) for item in items if item.audit_id != self.audit_file.audit_id}
-        photos = {item.audit_id for kind, items in self.group_context.by_doc_type.items() if key(kind) in {"e07", "生产件样品照片"} for item in items}
-        # A broad type does not identify its Kappa/GRR subtype, so it stays open.
-        classified = {item.audit_id for kind, items in self.group_context.by_doc_type.items() if not ("测量系统分析" in kind or "msa" in key(kind)) for item in items}
-        undetermined = False
-        for item in self.group_context.by_audit_id.values():
-            if item.audit_id == self.audit_file.audit_id or item.audit_id in photos:
-                continue
-            if item.audit_id in candidates:
-                continue
-            # A broad type (for example MSA) does not identify its Kappa/GRR
-            # subtype. An unclassified reference can also carry the source.
-            # Read its own title; an upload name or a body reference is not identity.
-            original = self._source_facts(item)
-            try:
-                original.require_source_title(terms)
-            except UnknownFact:
-                # A classified file of another type is not the source; an
-                # unclassified one without a located title cannot be excluded.
-                undetermined = undetermined or item.audit_id not in classified
-                continue
-            candidates[item.audit_id] = item
-        if not candidates and not undetermined:
-            need = {"kind": "missing", "document": terms[0]}
-            if "part" in same:
-                # The supply list names the part the missing file is for, when this file states it.
-                try:
-                    part = str(self.native().field(_IDENTITY["part"][1])).strip()
-                except UnknownFact:
-                    part = ""
-                if pair_identity(key(part)) and key(part) not in _IDENTITY_LABELS:
-                    need["part_number"] = part[:200]
-            raise MissingFact("当前批次缺少所需关联原件（" + terms[0] + "），请补充后复审。", need=need)
-        if len(candidates) != 1 or undetermined:
-            raise UnknownFact("当前批次缺少唯一关联原件，需补充或确认候选，不能任取一份。")
-        item = next(iter(candidates.values()))
-        other = self._source_facts(item)
-
-        def mismatch(label, mine, theirs):
-            # Both identities were read from the originals and differ: the file
-            # must be replaced. This is neither a content defect nor a missing file.
-            parts = {"part_number": mine[:200], "found_part_number": theirs[:200]} if label == _IDENTITY["part"][0] else {}
-            need = {"kind": "source_mismatch", "document": terms[0], **parts, "found_file_version_id": item.audit_id}
-            return SourceMismatch(f"比对源《{terms[0]}》{label} {theirs} 与被审文件{label} {mine} 不一致，未做内容比对，请换交与被审文件一致的{terms[0]}。", need=need)
-
-        # Only the identities the clause names (同零件号、同项目、同名称) pair the two originals.
-        for name in same:
-            label, aliases = _IDENTITY[name]
-            mine, theirs = str(self.native().field(aliases)).strip(), str(other.field(aliases)).strip()
-            if not pair_identity(key(mine)) or not pair_identity(key(theirs)):
-                raise UnknownFact(f"关联原件{label}尚未确认，不能用占位值配对。")
-            if key(mine) in _IDENTITY_LABELS or key(theirs) in _IDENTITY_LABELS:
-                raise UnknownFact(f"关联原件{label}值可能是相邻字段标签，需核对原件。")
-            if key(mine) != key(theirs):
-                # Literal comparison only: no "looks like the same part" relaxation.
-                raise mismatch(label, mine, theirs)
-        return other
-
-    def related_all(self, *term_sets, same):
-        """A missing or mismatched source fails the clause, whatever is still unknown about the other sources."""
-        sources, unknown = [], None
-        for terms in term_sets:
-            try:
-                sources.append(self.related(terms, same=same))
-            except UnknownFact as exc:
-                unknown = unknown or exc
-        if unknown is not None:
-            raise unknown
-        return sources
 
     def controlled_stamp(self):
         observed = self.visual_pdf({"controlled_stamp": "文件中存在真实盖上的受控章；只有“受控章/受控/盖章处”文字标签、空白盖章栏时不算。"}, existential_fields=("controlled_stamp",))

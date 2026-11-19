@@ -20,14 +20,12 @@ from openpyxl.utils.cell import coordinate_to_tuple
 
 from audit.checker_lib.li.base_agent import BaseAgent
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
-from audit.document_tools import ReadLimits, TableReader, ref, snapshot, source_title_location
+from audit.document_tools import ReadLimits, TableReader, ref, snapshot
 from audit.engine.checkers.rule_declarations import discover_declared_rules
 from audit.engine.rule_engine.context import GuardStop
 from audit.evidence import EvidenceBudget, cell_locator
 from audit.fact_questions import BooleanFactEvaluation, FactQuestion
 from audit.kinds import PpapDocumentType
-
-from .identity import pair_identity
 
 
 class UnknownFact(Exception):
@@ -207,19 +205,6 @@ class NativeFacts:
         if self.has_unread_content():
             raise UnknownFact(f"未能从可读取原件确认“{text}”，图像或未知内容仍需核对。")
         raise MissingFact(f"原件缺少“{text}”。")
-
-    def require_source_title(self, aliases):
-        location = source_title_location(self.data, aliases)
-        if location is None:
-            raise UnknownFact("原件尚未定位到明确的关联文件标题，正文引用不能代替对端身份。")
-        if "row" in location:
-            table = next(table for table in self.data["tables"] if table["id"] == location["table"])
-            self.cell(table, location["row"], location["column"])
-        elif location.get("kind") == "docx_paragraph":
-            self.witness(location, self.data["paragraphs"][location["paragraph"] - 1]["text"], self.version)
-        elif location.get("kind") == "pdf_block":
-            page = next(page for page in self.data["pages"] if page["page"] == location["page"])
-            self.witness(location, page["blocks"][location["block"] - 1]["text"], self.version)
 
     def tables(self, title: tuple[str, ...] = ()):
         available = [table for table in self.data.get("tables", []) if not any(word in key(table["id"]) for word in ("填写指南", "填表说明", "填写说明", "评分", "準則", "准则", "数据库"))]
@@ -447,16 +432,7 @@ def any_row(rows, predicate) -> bool:
 
 
 # Identities a cross-file clause can name, with the labels that state them.
-_IDENTITY = {
-    "part": ("零件号", ("零件号", "零件号码", "零件编号", "物料编号", "客户零件号", "part number", "part no")),
-    "project": ("项目", ("项目", "项目名称", "项目号", "UAES项目编号", "车型项目")),
-    "name": ("零件名称", ("零件名称", "物料名称", "part name")),
-}
 # A part number carries digits; a label beside it does not.
-_ACCEPT = {"part": lambda value: bool(re.search(r"\d", str(value or "")))}
-_IDENTITY_LABELS = {key(alias) for _label, aliases in _IDENTITY.values() for alias in aliases} | {key("版本"), key("日期")}
-
-
 class NativeRow(Mapping[str, Any]):
     def __init__(self, native, table, row, columns, inherited=None):
         self.native, self.table, self.row, self.columns = native, table, row, columns
@@ -671,80 +647,6 @@ class UaesSourceAgent(BaseAgent):
                         evaluation = BooleanFactEvaluation(file_version_id=self.audit_file.audit_id, facts={"visual." + name: value for name, value in values.items()}, description=description)
             raise UnknownFact(description + "尚未全部核实，需人工确认原件。", questions=questions, evaluation=evaluation)
         return "PASS", "已从完整原件核实：" + description
-
-    def related_facts(self, item):
-        """Read each same-batch original once per target; every clause reuses it."""
-        cache = self.__dict__.setdefault("_related_facts", {})
-        if item.audit_id not in cache:
-            cache[item.audit_id] = NativeFacts(item.file_url, item.audit_id, self.witness)
-        return cache[item.audit_id]
-
-    def related(self, terms, *, same):
-        """The one original of `terms` in this frozen GroupContext; `same` lists the identities its clause names, never order."""
-        if self.group_context is None:
-            raise UnknownFact("当前批次没有关联资料，需补充同零件的独立原件。")
-        for kind in self.group_context.unavailable_files.values():
-            if not kind or key(kind) in {"unknown", "未知", "未知类型"}:
-                raise OSError("当前批次有类别未确认且无法读取的原件，尚不能排除所需对端。")
-            names = _kind_names(kind)
-            relevant = _kind_matches(kind, terms)
-            # A broad MSA type can contain the requested Kappa/GRR/plan subtype.
-            broad_msa = any("测量系统分析" in name or "msa" in key(name) for name in names)
-            if relevant or broad_msa and any(key(term) in {"kappa", "grr", "msa计划", "测量系统分析计划"} for term in terms):
-                raise OSError("当前批次有已提供但无法读取的关联资料。")
-        candidates = {item.audit_id: item for kind, items in self.group_context.by_doc_type.items() if _kind_matches(kind, terms) for item in items if item.audit_id != self.audit_file.audit_id}
-        photos = {item.audit_id for kind, items in self.group_context.by_doc_type.items() if key(kind) in {"e07", "生产件样品照片"} for item in items}
-        # A broad type does not identify its Kappa/GRR subtype, so it stays open.
-        classified = {item.audit_id for kind, items in self.group_context.by_doc_type.items() if not ("测量系统分析" in kind or "msa" in key(kind)) for item in items}
-        undetermined = False
-        for item in self.group_context.by_audit_id.values():
-            if item.audit_id == self.audit_file.audit_id or item.audit_id in photos:
-                continue
-            if item.audit_id in candidates:
-                continue
-            # A broad type (for example MSA) does not identify its Kappa/GRR
-            # subtype. An unclassified reference can also carry the source.
-            # Read its own title; an upload name or a body reference is not identity.
-            original = self.related_facts(item)
-            try:
-                original.require_source_title(terms)
-            except UnknownFact:
-                # A classified file of another type is not the source; an
-                # unclassified one without a located title cannot be excluded.
-                undetermined = undetermined or item.audit_id not in classified
-                continue
-            candidates[item.audit_id] = item
-        if not candidates and not undetermined:
-            raise MissingFact("当前批次缺少所需关联原件（" + terms[0] + "），请补充后复审。")
-        if len(candidates) != 1:
-            raise UnknownFact("当前批次缺少唯一关联原件，需补充或确认候选，不能任取一份。")
-        item = next(iter(candidates.values()))
-        other = self.related_facts(item)
-        # Only the identities the clause names (同零件号、同项目、同名称) pair the two originals.
-        for name in same:
-            label, aliases = _IDENTITY[name]
-            mine, theirs = key(self.native().field(aliases, accept=_ACCEPT.get(name))), key(other.field(aliases, accept=_ACCEPT.get(name)))
-            if not pair_identity(mine) or not pair_identity(theirs):
-                raise UnknownFact(f"关联原件{label}尚未确认，不能用占位值配对。")
-            if mine in _IDENTITY_LABELS or theirs in _IDENTITY_LABELS:
-                raise UnknownFact(f"关联原件{label}值可能是相邻字段标签，需核对原件。")
-            if mine != theirs:
-                if name == "name":
-                    raise MissingFact(f"同批次{terms[0]}的{label}与本文件不一致。")
-                raise UnknownFact(f"关联原件{label}与本文件不一致，不能用于当前核对。")
-        return other
-
-    def related_all(self, *term_sets, same):
-        """A missing source fails the clause, whatever is still unknown about the other sources."""
-        sources, unknown = [], None
-        for terms in term_sets:
-            try:
-                sources.append(self.related(terms, same=same))
-            except UnknownFact as exc:
-                unknown = unknown or exc
-        if unknown is not None:
-            raise unknown
-        return sources
 
     def controlled_stamp(self, *, fails_unidentified=False):
         facts = self.native()
