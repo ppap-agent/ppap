@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from product.feishu_drive import OPEN_API
 
 AUDIT_COST_PER_FILE = 500
-DEEP_SURCHARGE_PER_FILE = 250
 
 
 class FeishuUsageError(Exception):
@@ -25,11 +24,6 @@ def remaining_trial_points(free_quota: int, consumed: int) -> int:
 
 def audit_usage_points(file_count: int) -> int:
     return max(0, int(file_count)) * AUDIT_COST_PER_FILE
-
-
-def audit_estimate_points(file_count: int, *, deep_mode: bool = False) -> int:
-    """Deep mode bills 1.5x: 500 at acceptance plus 250 once a file's deep result is committed."""
-    return audit_usage_points(file_count) + (max(0, int(file_count)) * DEEP_SURCHARGE_PER_FILE if deep_mode else 0)
 
 
 def split_trial_and_partner(remaining_trial: int, points: int) -> list[tuple[int, bool]]:
@@ -252,7 +246,6 @@ def estimate_audit(
     remaining_trial: int,
     partner: PartnerAiItem | None,
     charge_enabled: bool = True,
-    deep_mode: bool = False,
 ) -> dict[str, object]:
     remaining = max(0, int(remaining_trial))
     if partner is None:
@@ -267,7 +260,7 @@ def estimate_audit(
         payload["accept_allowed"] = True
         payload["accept_reason"] = "current_preview_not_charged"
         return payload
-    points = audit_estimate_points(target_count, deep_mode=deep_mode)
+    points = audit_usage_points(target_count)
     allowed = points == 0 or bool(partner and partner.enabled and (remaining > 0 or partner.user_quota > 0))
     if allowed:
         reason = ""

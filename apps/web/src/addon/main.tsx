@@ -285,8 +285,8 @@ function Confirm({task, call, open, onReselect, onConfirmed, setPrimary, notify}
   const [quota, setQuota] = useState<Quota | 'unavailable' | null>(null)
   const matched = task.files.filter(row => row.selection === 'selected' && row.match?.state === 'matched').length
   useEffect(() => {
-    call<Quota>(`/integrations/feishu/usage/quota?target_count=${matched}&deep_mode=${task.deep_mode ? 'true' : 'false'}`).then(setQuota, () => setQuota('unavailable'))
-  }, [call, matched, task.deep_mode])
+    call<Quota>(`/integrations/feishu/usage/quota?target_count=${matched}`).then(setQuota, () => setQuota('unavailable'))
+  }, [call, matched])
   const blocked = quota !== null && quota !== 'unavailable' && !quota.unavailable && quota.accept_allowed === false
   const refusal = quota !== null && quota !== 'unavailable' ? quota.accept_reason || quota.detailed_message || quota.message || '' : ''
   const confirm = useCallback(async () => {

@@ -38,7 +38,8 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
         row = min(slices, key=lambda item: item["created_at"])
         accepted_at = _time(row["accepted_at"])
         acceptance_times = {_time(row["accepted_at"]) for row in slices}
-        # 500 at acceptance; a committed deep result adds one 250-point surcharge.
+        # 500 at acceptance. Deep rounds accepted before V3.33 may also hold one historical
+        # 250-point 'deep_surcharge'; it is read as recorded, and no new one is written.
         audit_points = sum(item["consumed_points"] for item in slices if (item.get("charge") or "audit") == "audit")
         surcharge_points = sum(item["consumed_points"] for item in slices if item.get("charge") == "deep_surcharge")
         if accepted_at is None or acceptance_times != {accepted_at} or audit_points != 500 or surcharge_points not in {0, 250} or len({row["ai_item_id"] for row in slices}) != 1:

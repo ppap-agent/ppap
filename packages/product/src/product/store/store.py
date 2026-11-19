@@ -37,10 +37,8 @@ from product.feishu import CardAction, UserTokens
 from product.feishu_notifications import task_notification_card
 from product.feishu_personal_upload import PersonalDriveClient, UploadRejected, UploadUnknown
 from product.feishu_usage import (
-    DEEP_SURCHARGE_PER_FILE,
     FeishuUsageError,
     PartnerAiItem,
-    audit_estimate_points,
     audit_usage_points,
     remaining_trial_points,
     split_trial_and_partner,
@@ -2534,9 +2532,7 @@ class AuthStore:
             "completion_reason": draft["task_completion_reason"],
             "confirmation_basis_digest": None,
             "confirmation_scope": None,
-            "estimated_points": None
-            if matching or any(row["match"]["state"] == "failed" for row in selected)
-            else audit_estimate_points(sum(row["match"]["state"] == "matched" for row in selected), deep_mode=draft["deep_mode"]),
+            "estimated_points": None if matching or any(row["match"]["state"] == "failed" for row in selected) else audit_usage_points(sum(row["match"]["state"] == "matched" for row in selected)),
             "deep_mode": draft["deep_mode"],
             "deep_mode_option": self._deep_mode_option(conn, principal.tenant_id),
         }
@@ -2646,7 +2642,7 @@ class AuthStore:
                 "reference_file_version_ids": sorted(row["file"]["id"] for row in selected if row["match"]["state"] == "reference"),
                 "excluded_files": sorted(exclusions, key=lambda row: row["file_version_id"]),
             }
-            task["estimated_points"] = audit_estimate_points(len(task["confirmation_scope"]["target_file_version_ids"]), deep_mode=task["deep_mode"])
+            task["estimated_points"] = audit_usage_points(len(task["confirmation_scope"]["target_file_version_ids"]))
         if targets and ready:
             # current_selection holds the publication locks through admission's
             # transaction. Bind source identity, clauses, code, related Suites
@@ -3695,63 +3691,10 @@ class AuthStore:
                         ),
                     )
                 if outcome == "succeeded":
-                    self._record_deep_surcharge(conn, claimed, coverage)
                     self._queue_file_reports(conn, claimed, result)
                 if task_id:
                     self._queue_finished_notification(conn, task_id, claimed.round_id)
                 return True
-
-    def _record_deep_surcharge(self, conn, claimed: ClaimedJob, coverage: dict) -> None:
-        """Commit-time 250-point surcharge for each file whose deep result this commit holds.
-
-        Acceptance already recorded 500 per target file. A file that fell back to its
-        Suite program, or a failed round, adds nothing. Without an acceptance charge
-        (charging off at acceptance) there is nothing to add to.
-        """
-        completed = sorted(version for version, review in _deep_reviews(coverage).items() if review.get("state") == "completed")
-        if not completed:
-            return
-        round_id = str(claimed.round_id)
-        head = conn.execute("SELECT tenant_id, deep_mode FROM product.audit_rounds WHERE id = %s", (round_id,)).fetchone()
-        if not head or not head[1]:
-            return
-        tenant_id = str(head[0])
-        for version in completed:
-            base = conn.execute(
-                """SELECT ai_item_id, user_id FROM product.usage_events
-                   WHERE tenant_id = %s AND round_id = %s AND file_version_id = %s AND charge = 'audit' ORDER BY created_at, id LIMIT 1""",
-                (tenant_id, round_id, version),
-            ).fetchone()
-            if not base:
-                continue
-            item_id, user_id = base[0], str(base[1])
-            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("usage:" + tenant_id + ":" + item_id,))
-            if conn.execute(
-                "SELECT 1 FROM product.usage_events WHERE tenant_id = %s AND round_id = %s AND file_version_id = %s AND charge = 'deep_surcharge'", (tenant_id, round_id, version)
-            ).fetchone():
-                continue
-            remaining = remaining_trial_points(self._trial_quota(conn, tenant_id), self._trial_ledger_consumed(conn, tenant_id, item_id))
-            for amount, trial in split_trial_and_partner(remaining, DEEP_SURCHARGE_PER_FILE):
-                conn.execute(
-                    """INSERT INTO product.usage_events
-                       (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                        external_status, trace_id, round_id, file_version_id, charge)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'deep_surcharge') ON CONFLICT DO NOTHING""",
-                    (
-                        str(uuid.uuid4()),
-                        tenant_id,
-                        user_id,
-                        item_id,
-                        amount,
-                        trial,
-                        "none" if trial else "pending",
-                        round_id + ":" + version + ":deep" + (":trial" if trial else ":partner"),
-                        round_id,
-                        version,
-                    ),
-                )
-                if trial:
-                    remaining -= amount
 
     def _queue_file_reports(self, conn, claimed: ClaimedJob, result: dict) -> None:
         head = conn.execute("SELECT source_draft_id FROM product.audit_rounds WHERE id = %s AND tenant_id = %s", (claimed.round_id, claimed.tenant_id)).fetchone()

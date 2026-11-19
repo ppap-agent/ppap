@@ -900,7 +900,7 @@ def create_app(
         return JSONResponse({"tasks": tasks, "next_offset": None})
 
     @app.get("/integrations/feishu/usage/quota", response_model=wc.QuotaEstimate)
-    def feishu_usage_quota(request: Request, ai_item_id: str = "", target_count: int | None = Query(None, ge=0, le=200), deep_mode: bool = False) -> JSONResponse:
+    def feishu_usage_quota(request: Request, ai_item_id: str = "", target_count: int | None = Query(None, ge=0, le=200)) -> JSONResponse:
         from product.feishu_usage import estimate_audit
 
         session = session_of(request)
@@ -929,7 +929,7 @@ def create_app(
             body = quota_payload(partner, remaining)
             body["usage_charge_enabled"] = settings.usage_charge_enabled
             return JSONResponse(body)
-        return JSONResponse(estimate_audit(target_count, remaining, partner, settings.usage_charge_enabled, deep_mode=deep_mode))
+        return JSONResponse(estimate_audit(target_count, remaining, partner, settings.usage_charge_enabled))
 
     register_report_routes(app, store, session_of, http, settings)
     register_office_routes(app, store, principal_of, settings)

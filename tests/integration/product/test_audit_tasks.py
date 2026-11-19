@@ -2306,8 +2306,8 @@ def test_v4_t12_explicit_reference_remains_free_and_restores_its_role(auth_store
 
 
 # Task-level deep mode: choice, acceptance, per-file fallback and billing. The controlled
-# Core guest has no model, so the deep review fails and the Suite programs' results stand;
-# the committed-deep-result surcharge goes through the worker's commit path.
+# Core guest has no model, so the deep review fails and the Suite programs' results stand.
+# Every mode bills 500 per target file at acceptance; a committed deep result adds nothing.
 
 
 @pytest.fixture
@@ -2323,7 +2323,7 @@ def choose_deep(client, path, revision=0):
     return response.json()
 
 
-def test_deep_mode_is_chosen_before_acceptance_frozen_on_the_round_and_estimated_at_1_5x(matched_task, deep_offered):
+def test_deep_mode_is_chosen_before_acceptance_frozen_on_the_round_and_estimated_at_500_per_file(matched_task, deep_offered):
     client, worker, path, _body, _rule = matched_task
     task = client.get(path).json()
     assert task["deep_mode"] is False and task["estimated_points"] == 500
@@ -2332,7 +2332,7 @@ def test_deep_mode_is_chosen_before_acceptance_frozen_on_the_round_and_estimated
 
     deep = choose_deep(client, path)
     TypeAdapter(wc.AuditTask).validate_python(deep)
-    assert deep["deep_mode"] is True and deep["estimated_points"] == 750
+    assert deep["deep_mode"] is True and deep["estimated_points"] == 500
     assert deep["input_revision"] == 0
     assert deep["confirmation_basis_digest"] not in {None, standard["expected_confirmation_basis_digest"]}
     conflict = client.put(path + "/deep-mode", json={"deep_mode": False, "expected_revision": 1})
@@ -2376,7 +2376,7 @@ def test_deep_mode_is_refused_when_unavailable(matched_task):
             assert conn.execute("SELECT count(*) FROM product.audit_rounds WHERE source_draft_id = %s", (task["id"],)).fetchone() == (0,)
 
 
-def test_a_file_whose_deep_review_did_not_complete_is_billed_500_and_says_so(executable_task, core_system, deep_offered):
+def test_a_file_whose_deep_review_did_not_complete_keeps_the_standard_result_at_500(executable_task, core_system, deep_offered):
     _client, worker, path, body, _rule = executable_task
     worker.settings.feishu_free_trial_quota_points = 10_000
     client, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 0, "ai_package_purchased": False})
@@ -2401,7 +2401,7 @@ def test_a_file_whose_deep_review_did_not_complete_is_billed_500_and_says_so(exe
 
 
 @pytest.mark.parametrize("state", ["completed", "degraded"])
-def test_the_surcharge_is_recorded_once_and_only_with_a_committed_deep_result(matched_task, deep_offered, state):
+def test_a_committed_deep_result_adds_no_charge(matched_task, deep_offered, state):
     _client, worker, path, body, _rule = matched_task
     worker.settings.feishu_free_trial_quota_points = 600
     client, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 10_000, "ai_package_purchased": True})
@@ -2409,43 +2409,44 @@ def test_the_surcharge_is_recorded_once_and_only_with_a_committed_deep_result(ma
         choose_deep(client, path)
         accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
         assert accepted.status_code == 201, accepted.text
-        # Acceptance charges 500 per file whatever the mode.
-        assert sorted(row["consumed_points"] for row in client.get("/usage").json()["events"]) == [500]
         version = body["files"][0]["file_version_id"]
         claimed = worker.claim_job("deep-commit")
         review = {"state": "completed"} if state == "completed" else {"state": "degraded", "reason": "deep_review_failed"}
         result = {"findings": [], "coverage": {"checker_execution": {"analysis_mode": "deep", "targets": [{"file_version_id": version, "deep_review": review}]}}}
         assert worker.complete_job(claimed, "deep-commit", result, "succeeded") is True
-        assert worker.complete_job(claimed, "deep-commit", result, "succeeded") is False
-        events = client.get("/usage").json()["events"]
-        surcharge = sorted((row["consumed_points"], row["is_free_trial"]) for row in events if row["charge"] == "deep_surcharge")
-        entries = client.get("/audit-usage").json()["entries"]
         round_input = next(row for row in client.get(f"/rounds/{accepted.json()['round_id']}").json()["inputs"] if row["file_version_id"] == version)
         assert round_input["deep_review"] == review
-        if state == "completed":
-            # 100 free points remained after the 500 audit slice; the rest is a partner charge.
-            assert surcharge == [(100, True), (150, False)]
-            assert [row["points"] for row in entries] == [750]
-            assert entries[0]["allocation"]["free_points"] + entries[0]["allocation"]["paid_points"] == 750
-        else:
-            assert surcharge == []
-            assert [row["points"] for row in entries] == [500]
+        assert [(row["consumed_points"], row["charge"]) for row in client.get("/usage").json()["events"]] == [(500, "audit")]
+        assert [row["points"] for row in client.get("/audit-usage").json()["entries"]] == [500]
     finally:
         client.close()
         http.close()
 
 
-def test_a_failed_deep_round_adds_no_surcharge(matched_task, deep_offered):
+def test_a_historical_deep_surcharge_still_reads_as_recorded(matched_task, deep_offered):
+    # Deep rounds accepted before V3.33 recorded 500 + 250; the ledger keeps them as they are.
     _client, worker, path, body, _rule = matched_task
-    worker.settings.feishu_free_trial_quota_points = 10_000
-    client, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 0, "ai_package_purchased": False})
+    worker.settings.feishu_free_trial_quota_points = 600
+    client, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 10_000, "ai_package_purchased": True})
     try:
         choose_deep(client, path)
-        assert client.post(path + "/confirm", json=confirmation_command(client, path, 0)).status_code == 201
-        claimed = worker.claim_job("deep-failed")
-        coverage = {"checker_execution": {"analysis_mode": "deep", "targets": [{"file_version_id": body["files"][0]["file_version_id"], "deep_review": {"state": "completed"}}]}}
-        assert worker.complete_job(claimed, "deep-failed", {"findings": [], "coverage": coverage, "note": str(uuid.uuid4())}, "failed") is True
-        assert [row["charge"] for row in client.get("/usage").json()["events"]] == ["audit"]
+        accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
+        assert accepted.status_code == 201, accepted.text
+        round_id, version = accepted.json()["round_id"], body["files"][0]["file_version_id"]
+        with worker._conn() as conn:
+            tenant_id, user_id, item_id = conn.execute(
+                "SELECT tenant_id, user_id, ai_item_id FROM product.usage_events WHERE round_id = %s AND file_version_id = %s AND charge = 'audit'", (round_id, version)
+            ).fetchone()
+            for amount, trial in ((100, True), (150, False)):
+                conn.execute(
+                    """INSERT INTO product.usage_events
+                       (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial, external_status, trace_id, round_id, file_version_id, charge)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'deep_surcharge')""",
+                    (str(uuid.uuid4()), tenant_id, user_id, item_id, amount, trial, "none" if trial else "pending", f"{round_id}:{version}:deep:{trial}", round_id, version),
+                )
+        entries = client.get("/audit-usage").json()["entries"]
+        assert [row["points"] for row in entries] == [750]
+        assert entries[0]["allocation"] == {"free_points": 600, "paid_points": 150, "reason": None}
     finally:
         client.close()
         http.close()
