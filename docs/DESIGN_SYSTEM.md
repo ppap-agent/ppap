@@ -41,7 +41,7 @@ consistency is checked on its own, not repaired as a side effect of building.
 ## Token boundary
 
 Tokenize reusable design decisions: semantic colours (light and dark resolve the same roles),
-the font family and the control radius. Add a token only when a real decision needs one; do
+the font family, the dense font size and the control radius. Add a token only when a real decision needs one; do
 not pre-build layers or brands.
 
 Keep content-driven breakpoints, grid tracks, chart coordinates, percentages and measured
@@ -59,6 +59,17 @@ runtime geometry with the code that owns them. Motion (`--animate-*`) stays in `
 
 Primitives in `src/components/ui` own appearance, state and interaction; pages bind data and
 operations and do not redefine tokens or reach into primitives to repair appearance.
+
+Primitives are linted for tokens as well, because that is where most visual decisions live; a
+hard-coded value there would survive a token change. Their rules differ from the page rules:
+
+- No arbitrary colour, typography, spacing, shape or effects values; use a token or the
+  Tailwind scale. A decision that has no token yet (a hover colour, a dense font size) gets one.
+- Layout and motion values are allowed (a transition property list is not a visual decision).
+- One primitive composing another is not a page restyling it, so `no-restyle` does not apply.
+- Inline styles may carry runtime geometry only (`transform`).
+- Named exceptions, each with its reason in `apps/web/eslint.config.mjs`: `bg-[Canvas]` /
+  `text-[CanvasText]` (system colours for native `<option>` lists) and `rounded-[inherit]`.
 
 ## Changing the visual language
 

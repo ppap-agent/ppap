@@ -10,6 +10,7 @@ function variableName(token: TokenNormalized): string {
   if (token.id.startsWith("color.")) return token.id.slice("color.".length);
   if (token.id === "rounded.control") return "radius";
   if (token.id === "font.sans") return "font-family-sans";
+  if (token.id === "font.size-dense") return "font-size-dense";
   return token.id.replaceAll(".", "-");
 }
 

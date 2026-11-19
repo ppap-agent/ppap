@@ -14,6 +14,13 @@
         "Segoe UI",
         "sans-serif"
       ]
+    },
+    "size-dense": {
+      "$type": "dimension",
+      "$value": {
+        "value": 13,
+        "unit": "px"
+      }
     }
   },
   "rounded": {

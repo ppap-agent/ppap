@@ -110,3 +110,17 @@ test("page classes use tokens: an arbitrary colour class and an inline colour st
   const token = await eslint.lintText('export function Sample() { return <div className="bg-primary text-primary-foreground" /> }\n', { filePath: file });
   assert.equal(token[0]?.errorCount, 0);
 });
+
+test("primitives use tokens too, but motion, runtime transform and composition are not visual decisions", async () => {
+  const eslint = new ESLint({ cwd: web.pathname });
+  const file = new URL("src/components/ui/sample.tsx", web).pathname;
+  const lint = async (code: string) => (await eslint.lintText(code, { filePath: file }))[0];
+  const radius = await lint('export function Sample() { return <div className="rounded-[3px] focus-visible:ring-[3px]" /> }\n');
+  assert.equal(radius?.errorCount, 2);
+  const colour = await lint('export function Sample() { return <div className="hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]" /> }\n');
+  assert.ok((colour?.errorCount ?? 0) > 0);
+  const allowed = await lint(
+    'export function Sample({ x }: { x: number }) { return <div className="transition-[color,box-shadow] bg-secondary hover:bg-secondary-hover text-dense rounded-md ring-3" style={{ transform: `translateX(${x}%)` }} /> }\n',
+  );
+  assert.equal(allowed?.errorCount, 0, allowed?.messages.map((message) => message.message).join("\n"));
+});

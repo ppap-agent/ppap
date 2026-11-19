@@ -43,6 +43,9 @@
   --color-primary-soft: var(--primary-soft);
   --color-primary-line: var(--primary-line);
   --color-primary-strong: var(--primary-strong);
+  --color-primary-soft-hover: var(--primary-soft-hover);
+  --color-secondary-hover: var(--secondary-hover);
+  --text-dense: var(--font-size-dense);
   --color-header: var(--header);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);

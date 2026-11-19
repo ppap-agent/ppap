@@ -313,6 +313,18 @@
         "hex": "#eff6ff"
       }
     },
+    "primary-soft-hover": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.8588235294,
+          0.9176470588,
+          0.9960784314
+        ],
+        "hex": "#dbeafe"
+      }
+    },
     "primary-strong": {
       "$type": "color",
       "$value": {
@@ -359,6 +371,18 @@
           0.1647058824
         ],
         "hex": "#0f172a"
+      }
+    },
+    "secondary-hover": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.8862745098,
+          0.9098039216,
+          0.9411764706
+        ],
+        "hex": "#e2e8f0"
       }
     },
     "sidebar": {

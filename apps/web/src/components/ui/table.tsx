@@ -23,7 +23,7 @@ function TableHeader({ className, variant = "default", sticky = false, ...props 
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", variant === "muted" && "bg-header [&_th]:font-semibold [&_th]:text-[13px]", sticky && "[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-header", className)}
+      className={cn("[&_tr]:border-b", variant === "muted" && "bg-header [&_th]:font-semibold [&_th]:text-dense", sticky && "[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-header", className)}
       {...props}
     />
   )
