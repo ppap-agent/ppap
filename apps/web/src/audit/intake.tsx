@@ -5,8 +5,9 @@ import {createPortal} from 'react-dom'
 import {requestTrace} from '../api'
 import {analysisNotice} from '../helpers'
 import {MatchingFeedback, SourceMismatchNotice, isMatchingReason} from './matching-feedback'
-import {faAnglesLeft, faAnglesRight, faArrowLeft, faArrowRight, faArrowUpRightFromSquare, faBookOpen, faChartSimple, faCheck, faChevronDown, faCircleQuestion, faCloud, faFileLines, faSquareCheck, faTableColumns, faWandMagicSparkles, faXmark} from '@fortawesome/free-solid-svg-icons'
+import {faAnglesRight, faArrowLeft, faArrowRight, faArrowsRotate, faBookOpen, faChartPie, faCheck, faChevronDown, faCircleInfo, faCircleQuestion, faCloud, faFileShield, faFolderOpen, faLayerGroup, faSliders, faXmark} from '@fortawesome/free-solid-svg-icons'
 import {Icon} from '../components/ui/icon'
+import {Segmented} from '../components/segmented'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
@@ -18,7 +19,7 @@ import {Label} from '../components/ui/label'
 import {Switch} from '../components/ui/switch'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 import {Tooltip, TooltipContent, TooltipProvider, TooltipTrigger} from '../components/ui/tooltip'
-import {FileName} from '../journey/file-name'
+import {FileIcon, FileName} from '../journey/file-name'
 import {FileTypeBadge} from './file-type-badge'
 import {AccountMenu, useAccess} from '../journey/access'
 import {FeishuPicker, FeishuFolderPicker, type DrivePickerSource} from './feishu-picker'
@@ -52,7 +53,7 @@ import {TaskRecovery, type TaskRecoveryState} from './task-recovery'
 import {TaskRail, taskStateTone} from './task-switcher'
 import {deepModeControl, deepModeDescription, deepModeTitle, pointsBasis} from './deep-mode'
 import {TemplateLibraryPage, type TemplateLibraryAdapter} from './template-library'
-import {PrecheckCounts, PrecheckNotes, PrecheckReport, usePrecheck} from './precheck'
+import {PrecheckNotes, PrecheckReport, usePrecheck} from './precheck'
 import {taskListStatus} from './task-list-status'
 import {createUploadPreparation, describeUploads, preparationFiles, restoreUploads, type PreparationAdapter, type UploadPreparation} from './upload-preparation'
 
@@ -61,7 +62,7 @@ import {customerCoverage, customerFileSlots, customerTypeSetMissing, type Covera
 import {customerFullName, customerShortName} from './customer-register'
 import {AuditDurationEstimate} from './duration-estimate'
 import {listedTypes, matchStatus, recognitionHold, sourceMismatches, uploadFileStatus, type UploadFileStatus} from './upload-board'
-import {chooseReauditRecognition, reauditRecognition, type ReauditRecognition} from './reaudit-intent'
+import {newerRuleOf, ruleName, ruleVersionChoice, withRuleVersion, type RuleVersionChoice} from './reaudit-intent'
 
 export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
@@ -95,12 +96,13 @@ type RuleChoice = {id: string; title: string; type?: string; template?: string; 
 const lastTemplateKey = 'ppap.rule-template'
 const lastTemplate = () => {try {return localStorage.getItem(lastTemplateKey) ?? ''} catch {return ''}}
 const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewing: executionLabel.running, completed: executionLabel.completed}
+// The icon rail shows each page's short name under its icon; the full name is its accessible name and tooltip.
 const productLinks = [
-  {view: 'audit', label: 'PPAP Audit', icon: faWandMagicSparkles},
-  {view: 'archive', label: '审核文件', icon: faFileLines},
-  {view: 'templates', label: '模板库', icon: faTableColumns},
-  {view: 'requirements', label: '审核规则库', icon: faSquareCheck},
-  {view: 'usage', label: '用量记录', icon: faChartSimple},
+  {view: 'audit', label: 'PPAP Audit', short: '审核', icon: faFileShield},
+  {view: 'archive', label: '审核文件', short: '文件', icon: faFolderOpen},
+  {view: 'templates', label: '模板库', short: '模板库', icon: faLayerGroup},
+  {view: 'requirements', label: '审核规则库', short: '规则库', icon: faSliders},
+  {view: 'usage', label: '用量记录', short: '用量', icon: faChartPie},
 ] as const
 type ProductSurface = typeof productLinks[number]['view']
 type IntakeDraft = {files: AuditTaskFile[]; uploads: UploadRow[]; customer: string; step: 'upload' | 'match'; predecessorId?: string}
@@ -154,9 +156,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
   const ruleDetail = () => {const params = new URL(location.href).searchParams; return params.has('systemRule')}
   const [ruleDetailOpen, setRuleDetailOpen] = useState(ruleDetail)
-  // The product navigation starts as an icon rail; the person may expand it.
-  const [navigationMode, setNavigationMode] = useState<'expanded' | 'collapsed'>('collapsed')
-  const [navigationTooltip, setNavigationTooltip] = useState<string | null>(null)
   const [pageActions, setPageActions] = useState<HTMLDivElement | null>(null)
   const [supportSnapshot, setSupportSnapshot] = useState<SupportSnapshot | null>(null)
   const supportReturnTargets = useRef<(HTMLElement | null)[]>([])
@@ -296,7 +295,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const endInputsDirty = Boolean(task && (task.customer_preference !== (customer === 'auto' ? null : customer) || !onlyEndExclusions(task.files, files)))
   const canEnd = noMatches && !endInputsDirty
   const workbench = task?.state === 'reviewing' || task?.state === 'completed' && task.completion_reason === 'processed'
-  const navigationCollapsed = navigationMode === 'collapsed'
   function saveTask(next: AuditTask, {activate = false, updateActive = true} = {}) {
     const listed = mergeTaskSnapshot(latestTasks.current.find(row => row.id === next.id), next)
     const combined = mergeTaskSnapshot(task?.id === next.id ? task : undefined, listed)
@@ -509,7 +507,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       const prepared = await adapter.prepareReaudit(roundId)
       if (epoch !== draftEpoch.current) return
       if (prepared.predecessor_id !== roundId) throw new Error('重审来源不一致。')
-      setFiles(prepared.files); setCustomer(prepared.customer_preference || 'auto'); setPredecessorId(roundId); setStep('upload')
+      // A rule with a newer version is audited with it unless the person keeps the original's (P3 reminder).
+      setFiles(prepared.files.map(file => withRuleVersion(file, 'newer'))); setCustomer(prepared.customer_preference || 'auto'); setPredecessorId(roundId); setStep('upload')
     } catch {if (epoch === draftEpoch.current) setError('未能查看原审核的固定输入。原任务没有改变，请返回原任务后重试。')}
     finally {setPreparingReaudit(false)}
   }
@@ -867,20 +866,15 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     for (const key of rulesAddressKeys) url.searchParams.delete(key)
     writeAuditAddress(url)
   }
-  // Only the collapsed icon rail needs tooltips; text navigation already names each item.
-  const navigationTooltipProps = (id: string, compact = navigationCollapsed) => ({
-    open: compact && navigationTooltip === id,
-    onOpenChange: (open: boolean) => {
-      if (!compact) return
-      setNavigationTooltip(current => open ? id : current === id ? null : current)
-    },
-  })
-  const navigation = (compact = false) => <nav aria-label="产品导航" className="grid gap-1">
-    {productLinks.filter(link => link.view !== 'requirements' || rules).map(({view, label, icon}) => {
+  // One 64px icon rail: each item is its icon over its short name; the current page carries a bar on its left edge.
+  const railItem = 'relative flex size-11 flex-col items-center justify-center gap-1 rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground aria-[current=page]:bg-primary-soft aria-[current=page]:text-primary'
+  const navigation = <nav aria-label="产品导航" className="grid justify-items-center gap-2">
+    {productLinks.filter(link => link.view !== 'requirements' || rules).map(({view, label, short, icon}) => {
       const active = surface === view
-      const itemClass = compact ? 'justify-center' : 'justify-start'
-      const item = <Tooltip key={view} {...navigationTooltipProps(view, compact)}><TooltipTrigger asChild>{view === 'templates' && !templateAdapter ? <Button asChild size="lg" className={itemClass} variant="ghost"><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer" aria-label="模板库（在飞书新窗口打开）"><Icon icon={icon} aria-hidden="true"/><span className={compact ? 'sr-only' : ''}>{label}</span>{!compact && <Icon icon={faArrowUpRightFromSquare} className="ml-auto size-3 text-muted-foreground" aria-hidden="true"/>}</a></Button> : <Button size="lg" className={itemClass} aria-label={label} aria-current={active ? 'page' : undefined} variant={active ? 'soft' : 'ghost'} onClick={() => view === 'requirements' ? openRules() : showSurface(view)}><Icon icon={icon} aria-hidden="true"/><span className={compact ? 'sr-only' : ''}>{label}</span></Button>}</TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>
-      return item
+      const content = <>{active && <span aria-hidden="true" className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-primary"/>}<Icon icon={icon} aria-hidden="true" className="size-4.5"/><span aria-hidden="true" className="text-2xs leading-none">{short}</span></>
+      return <Tooltip key={view}><TooltipTrigger asChild>{view === 'templates' && !templateAdapter
+        ? <a className={railItem} href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer" aria-label="模板库（在飞书新窗口打开）">{content}</a>
+        : <button type="button" className={railItem} aria-label={label} aria-current={active ? 'page' : undefined} onClick={() => view === 'requirements' ? openRules() : showSurface(view)}>{content}</button>}</TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>
     })}
   </nav>
   // Files stopped for the same reason need the same action, so the advice appears once above them.
@@ -938,12 +932,13 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   // One card per file: format, name and where it came from; the recognized facts; then the rule or what to do next.
   const matchRow = (row: typeof matchingFiles[number], grouped = false, tone: keyof typeof cardTone = 'ok', selectable = false) => {
     const [badgeVariant, badgeLabel] = matchBadge(row)
-    return <section key={row.file.id} className={`flex gap-3 rounded-lg border p-4 ${cardTone[tone]}`}>
+    const newer = row.match?.rule && row.match.rule.id === newerRuleOf(row)?.id
+    return <section key={row.file.id} className={`flex gap-3 rounded-lg border p-3.5 ${cardTone[tone]}`}>
             {selectable && <Checkbox className="mt-0.5" aria-label={`送审 ${row.file.original_filename}`} checked={row.selection === 'selected'} disabled={confirmationLocked} onCheckedChange={value => toggle(row.file.id, value === true)}/>}
             <div className="min-w-0 flex-1 space-y-2.5">
-            <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2.5 gap-y-1"><h3 className="flex min-w-0 items-center gap-2 font-semibold"><FileTypeBadge name={row.file.original_filename}/><span className="[overflow-wrap:anywhere]">{row.file.original_filename}</span></h3><span className="text-xs text-muted-foreground">{row.file.origin?.available && row.file.origin.provider === 'feishu' ? '飞书云盘' : '本地上传'}</span></div>{/* A group heading already names matched, unmatched, reference and waiting files. */}{!(grouped && ['已匹配', '未匹配', '比对资料', '等待识别'].includes(badgeLabel)) && <Badge variant={badgeVariant}>{badgeLabel}</Badge>}</div>
+            <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex min-w-0 flex-1 items-start gap-3"><span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-card"><FileIcon name={row.file.original_filename}/></span><div className="min-w-0 flex-1 space-y-0.5"><div className="flex flex-wrap items-center gap-2"><h3 className="min-w-0 text-sm font-semibold [overflow-wrap:anywhere]">{row.file.original_filename}</h3><Badge variant="outline">{row.file.origin?.available && row.file.origin.provider === 'feishu' ? '飞书云盘' : '本地上传'}</Badge></div>
             {/* Recognized facts appear once recognition has produced them, never as placeholders. */}
-            {!matchPending(row) && <p className="text-xs leading-relaxed text-muted-foreground">{matchFields(row).map(([label, value], index) => <span key={label}>{index > 0 && <span aria-hidden="true" className="mx-1.5 text-muted-foreground/60">·</span>}{label}：<span className="font-semibold text-foreground">{value || '—'}</span></span>)}</p>}
+            {!matchPending(row) && <p className="text-xs leading-relaxed text-muted-foreground">{matchFields(row).map(([label, value], index) => <span key={label}>{index > 0 && <span aria-hidden="true" className="mx-1.5 text-muted-foreground/60">·</span>}{label}：{value || '—'}</span>)}</p>}</div></div>{/* A group heading already names matched, unmatched, reference and waiting files. */}{!(grouped && ['已匹配', '未匹配', '比对资料', '等待识别'].includes(badgeLabel)) && <Badge variant={badgeVariant}>{badgeLabel}</Badge>}</div>
             <PrecheckNotes result={precheck.result} fileVersionId={row.file.id}/>
             {sourceMismatches(precheck.result?.statuses, row.file.id).map(fact => {
               // S07 only: the counterpart is associated but names another part. A missing counterpart (S04) never comes here.
@@ -953,7 +948,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
               return <SourceMismatchNotice key={found} fact={fact} choices={choices} removeHeld={removeHeld} disabled={confirmationLocked || inputLocked || recognizing}
                 onReplace={() => remove(found, `已更换为本批其他《${fact.document}》`)} onReassign={() => setStep('upload')} onRemove={() => remove(found, `与被审文件${fact.identity}不一致，已移除比对引用`)}/>
             })}
-            {row.match?.state === 'matched' && row.match.rule ? <Collapsible data-rule-version={row.match.rule.id}><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">{ruleCustomer(row.match.rule) && <>{ruleCustomer(row.match.rule)} · </>}<span>{row.match.rule.title}</span></p><div className="flex flex-wrap items-center gap-1">{ruleChoiceButton(row)}<CollapsibleTrigger asChild><Button variant="ghost" size="sm" className="group" aria-label={`查看 ${row.file.original_filename} 的条款`}>{row.match.rule.body.kind === 'engine' ? `${row.match.rule.body.rules.length} 条条款` : '文件存在性检查'}<Icon icon={faChevronDown} aria-hidden="true" className="transition-transform group-data-[state=open]:rotate-180"/></Button></CollapsibleTrigger></div></div><CollapsibleContent><ul aria-label={`${row.file.original_filename} · 匹配条款`} className="grid gap-1 pt-2">{row.match.rule.body.kind === 'engine' ? row.match.rule.body.rules.map(clause => <li key={clause.id}><Button variant="ghost" size="sm" className="h-auto max-w-full justify-start whitespace-normal text-left" onClick={event => {ruleTrigger.current = event.currentTarget; setRuleSource({rule: row.match!.rule!, clause, filename: row.file.original_filename})}}><Icon icon={faBookOpen} aria-hidden="true"/>{clauseLabel(row.match!.rule!.body.kind === 'engine' ? row.match!.rule!.body.rules : [], clause.id)}</Button></li>) : <li><Button variant="ghost" size="sm" className="justify-start" onClick={event => {ruleTrigger.current = event.currentTarget; setRuleSource({rule: row.match!.rule!, clause: null, filename: row.file.original_filename})}}>文件存在性检查</Button></li>}</ul></CollapsibleContent></Collapsible>
+            {row.match?.state === 'matched' && row.match.rule ? <Collapsible data-rule-version={row.match.rule.id}><div className="flex flex-wrap items-center justify-between gap-2"><p className="flex flex-wrap items-center gap-1.5 text-xs"><span className="font-medium">{ruleCustomer(row.match.rule) && <>{ruleCustomer(row.match.rule)} · </>}{row.match.rule.title}</span>{newer && <Badge variant="info">新版本</Badge>}</p><div className="flex flex-wrap items-center gap-1">{ruleChoiceButton(row)}<CollapsibleTrigger asChild><Button variant="ghost" size="sm" className="group" aria-label={`查看 ${row.file.original_filename} 的条款`}>{row.match.rule.body.kind === 'engine' ? `${row.match.rule.body.rules.length} 条条款` : '文件存在性检查'}<Icon icon={faChevronDown} aria-hidden="true" className="transition-transform group-data-[state=open]:rotate-180"/></Button></CollapsibleTrigger></div></div><CollapsibleContent><ul aria-label={`${row.file.original_filename} · 匹配条款`} className="grid gap-1 pt-2">{row.match.rule.body.kind === 'engine' ? row.match.rule.body.rules.map(clause => <li key={clause.id}><Button variant="ghost" size="sm" className="h-auto max-w-full justify-start whitespace-normal text-left" onClick={event => {ruleTrigger.current = event.currentTarget; setRuleSource({rule: row.match!.rule!, clause, filename: row.file.original_filename})}}><Icon icon={faBookOpen} aria-hidden="true"/>{clauseLabel(row.match!.rule!.body.kind === 'engine' ? row.match!.rule!.body.rules : [], clause.id)}</Button></li>) : <li><Button variant="ghost" size="sm" className="justify-start" onClick={event => {ruleTrigger.current = event.currentTarget; setRuleSource({rule: row.match!.rule!, clause: null, filename: row.file.original_filename})}}>文件存在性检查</Button></li>}</ul></CollapsibleContent></Collapsible>
               : row.match?.state === 'reference' ? null
               : row.match?.state === 'matching' || !row.match || row.match.state === 'pending' ? <ReadSkeleton label="等待识别结果…" kind="inline"/>
               : sectionOf(row) === 'outside' ? <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">{precheck.result?.statuses.find(status => status.code === 'S01' && status.file_version_id === row.file.id)?.note}</p><Button variant="ghost" size="sm" onClick={() => remove(row.file.id)}>移除</Button></div>
@@ -968,17 +963,26 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const railCollapsed = railChoice === 'folded' || railChoice === 'auto' && (newAuditUpload || !wideRail && (reportView || fileOpen))
   const taskRail = surface === 'audit' && (railCollapsed
     ? <aside aria-label="审核任务" className="flex w-12 shrink-0 flex-col items-center border-r bg-card py-3"><Button variant="quiet" size="icon" aria-label="展开审核任务" onClick={() => setRailChoice('open')}><Icon icon={faAnglesRight} aria-hidden="true"/></Button></aside>
-    : <aside aria-label="审核任务" className="flex min-h-0 w-72 shrink-0 flex-col self-stretch overflow-hidden border-r bg-card"><TaskRail customerName={value => workbench ? customerFullName(coverageSource?.customers, value) : customerShortName(coverageSource?.customers, value)} currentId={task?.id} tasks={shownTasks} labels={taskLabels} query={query} onQuery={setQuery} filter={filter} onFilter={setFilter} busy={listStatus.busy} ready={listStatus.ready} error={listStatus.error} hasMore={taskListNext !== null} hasTasks={summaries.length > 0} onMore={() => void loadTasks(listStatus.error ? 0 : taskListNext!)} onNew={newTask} onOpen={id => {taskAddress(id); void recover(id)}} onCollapse={() => setRailChoice('folded')}/></aside>)
+    : <aside aria-label="审核任务" className="flex min-h-0 w-70 shrink-0 flex-col self-stretch overflow-hidden border-r bg-card"><TaskRail customerName={value => workbench ? customerFullName(coverageSource?.customers, value) : customerShortName(coverageSource?.customers, value)} currentId={task?.id} tasks={shownTasks} labels={taskLabels} query={query} onQuery={setQuery} filter={filter} onFilter={setFilter} busy={listStatus.busy} ready={listStatus.ready} error={listStatus.error} hasMore={taskListNext !== null} hasTasks={summaries.length > 0} onMore={() => void loadTasks(listStatus.error ? 0 : taskListNext!)} onNew={newTask} onOpen={id => {taskAddress(id); void recover(id)}} onCollapse={() => setRailChoice('folded')}/></aside>)
   const supportScenario = surface === 'archive' ? '审核文件' : surface === 'requirements' ? '审核规则' : surface === 'usage' ? '用量记录' : surface === 'templates' ? '模板库' : workbench ? '审核结果' : '上传与文件核对'
   function contactReadSupport(current: AuditTask) {openSupport({scenario: '读取审核任务', traceId: readStatus[current.id]?.traceId, facts: [{label: '任务标识', value: current.id}, ...(current.round_id ? [{label: '审核轮次', value: current.round_id}] : []), {label: '服务说明', value: readStatus[current.id]?.error || ''}]})}
   const recognitionSupport = recognitionState && <Button variant="outline" size="sm" onClick={() => openSupport({scenario: '识别文件与匹配规则', traceId: recognitionState.traceId, facts: [{label: '任务标识', value: recognitionState.taskId}, {label: '识别请求', value: recognitionState.requestId}, {label: '文件', value: files.map(row => row.file.original_filename).join('\n')}, {label: '服务说明', value: recognitionState.message}]})}>联系支持</Button>
   const pageContext = surface !== 'audit' ? productLinks.find(link => link.view === surface)?.label : task ? task.number : recovery ? reportView ? '审核报告' : '审核任务' : '新建审核'
   const taskCoverage = task?.customer_preference ? coverageOf(task.customer_preference) : null
-  // The one step line of the audit, worded as on the upload page: ① 上传文件 › ② 预检并匹配规则 › ③ AI 审核.
-  const stepper = <ol aria-label="审核步骤" className="flex shrink-0 items-center gap-1.5 text-sm whitespace-nowrap text-muted-foreground">{['① 上传文件', '② 预检并匹配规则', '③ AI 审核'].map((label, index) => {
-    const current = step === 'match' ? 1 : 0, done = index < current
-    return <li key={label} aria-current={current === index ? 'step' : undefined} data-state={done ? 'complete' : current === index ? 'current' : 'upcoming'} className={`flex items-center gap-1.5 ${current === index ? 'font-semibold text-primary' : done ? 'text-success' : ''}`}>{label}{index < 2 && <span aria-hidden="true" className="text-muted-foreground/60">›</span>}</li>
+  // The one step line of the audit: 上传文件 › 预检并匹配规则 › AI 审核, each with its number, or a check once done.
+  const stepper = <ol aria-label="审核步骤" className="flex shrink-0 items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground">{['上传文件', '预检并匹配规则', 'AI 审核'].map((label, index) => {
+    const current = step === 'match' ? 1 : 0, done = index < current, now = current === index
+    return <li key={label} aria-current={now ? 'step' : undefined} data-state={done ? 'complete' : now ? 'current' : 'upcoming'} className={`flex items-center gap-1.5 ${now ? 'font-semibold text-primary' : done ? 'font-medium text-success' : ''}`}>
+      <span aria-hidden="true" className={`flex size-4 items-center justify-center rounded-full border text-2xs leading-none ${now ? 'border-primary bg-primary text-primary-foreground' : done ? 'border-success/30 bg-success/10' : 'bg-muted'}`}>{done ? <Icon icon={faCheck} className="size-2"/> : index + 1}</span>{label}{index < 2 && <span aria-hidden="true" className="ml-1.5 font-normal text-muted-foreground/60">›</span>}</li>
   })}</ol>
+  const reauditing = Boolean(predecessorId || task?.predecessor_id)
+  const reauditNote = '原任务和报告都保留。本次重新审核所有文件，人工复核从头开始。'
+  // Rules that changed since the original audit, named once each; switching versions recognizes the files again.
+  const newerRules = [...new Set(files.filter(file => file.selection === 'selected').map(newerRuleOf).filter(rule => rule !== undefined).map(ruleName))]
+  function chooseRuleVersion(choice: RuleVersionChoice) {
+    setFiles(rows => rows.map(row => withRuleVersion(row, choice)))
+    setTemplateApply(value => value + 1)
+  }
   const fileSlots = customerFileSlots(coverageSource, customer)
   const neededTypes = listedTypes(fileSlots ?? [], typesOpen)
   // Transfers still on their way are lines among the files. A removed one whose outcome is still open joins the removed files, where its
@@ -1015,7 +1019,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     const selectable = row.validation.state === 'valid'
     const reaudit = Boolean(predecessorId) && row.selection === 'selected'
     const purpose = selectable && v4Mode && <Select value={row.reference_only ? 'reference' : 'target'} onValueChange={value => setPurpose(row.file.id, value)}><SelectTrigger size="sm" aria-label={`${name} 本轮用途`}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="target" description="正式审核收费">待审文件</SelectItem><SelectItem value="reference" description="不单独审核或收费">比对资料</SelectItem></SelectContent></Select>
-    const recognitionChoice = reaudit && !row.reference_only && Boolean(row.rule_options?.length) && <Select value={reauditRecognition(row)} onValueChange={value => setFiles(rows => rows.map(file => file.file.id === row.file.id ? chooseReauditRecognition(file, value as ReauditRecognition) : file))}><SelectTrigger size="sm" aria-label={`${name} 的识别方式`}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="source">沿用上次的规则</SelectItem>{reauditRecognition(row) === 'selected' && <SelectItem value="selected">保留已选的规则</SelectItem>}<SelectItem value="rematch">重新识别规则</SelectItem></SelectContent></Select>
     const replacement = reaudit && (row.replacement_of_file_version_id || !row.rule_options?.length && !row.reference_only) && <Select value={row.replacement_of_file_version_id || 'new'} onValueChange={id => chooseReplacement(row.file.id, id)}><SelectTrigger size="sm" aria-label={`${name} 的补件关系`}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="new">新增文件 · 重新匹配</SelectItem>{files.filter(other => other.file.id !== row.file.id && !other.replacement_of_file_version_id && (other.rule_options?.length || other.reference_only)).map(other => <SelectItem key={other.file.id} value={other.file.id} disabled={files.some(file => file.file.id !== row.file.id && file.selection === 'selected' && file.replacement_of_file_version_id === other.file.id)}>替换：{other.file.original_filename}</SelectItem>)}</SelectContent></Select>
     const status = uploadFileStatus(row)
     // A reference file's purpose control already says so; without one, the state says it is not audited on its own.
@@ -1025,7 +1028,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         {selectable && <Checkbox aria-label={`选择 ${name}`} aria-describedby={statusLabel ? statusId : undefined} checked={row.selection === 'selected'} onCheckedChange={value => toggle(row.file.id, value === true)}/>}
         <FileTypeBadge name={name}/>
         <span className="min-w-0 flex-1 basis-40 truncate text-sm" title={name}>{name}</span>
-        {purpose}{recognitionChoice}{replacement}
+        {purpose}{replacement}
         {statusLabel && <Badge id={statusId} variant={status!.tone}>{statusLabel}</Badge>}
         <Button variant="ghost" size="icon-sm" aria-label={`移除 ${name}`} onClick={() => remove(row.file.id)}><Icon icon={faXmark}/></Button>
       </div>
@@ -1036,26 +1039,22 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }
   return <TooltipProvider><SupportEntryContext.Provider value={openSupport}><div className="flex h-dvh overflow-hidden bg-canvas text-sm text-foreground">
     <a href="#audit-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-background focus:p-3 focus-visible:outline-ring focus-visible:ring-2 focus-visible:ring-ring">跳到主要内容</a>
-    <aside aria-label="产品侧栏" className={`flex h-dvh shrink-0 flex-col overflow-hidden gap-5 border-r bg-card pt-3.5 pb-2.5 ${navigationCollapsed ? 'w-18 px-3' : 'w-55 px-3'}`}>
-      <div className={`flex items-center gap-2 px-2 pt-1 text-base font-semibold ${navigationCollapsed ? 'justify-center' : ''}`}><span className="flex size-6.5 shrink-0 items-center justify-center rounded-md bg-linear-135 from-brand-light to-primary text-primary-foreground"><Icon icon={faWandMagicSparkles} aria-hidden="true" className="size-3.5"/></span><span className={navigationCollapsed ? 'sr-only' : ''}>PPAP Audit</span></div>
-      {navigation(navigationCollapsed)}
-      <div className={`mt-auto gap-1 border-t pt-2.5 ${navigationCollapsed ? 'grid' : 'flex items-center'}`}>
-        <Tooltip {...navigationTooltipProps('support')}><TooltipTrigger asChild><Button size="lg" className={navigationCollapsed ? 'justify-center' : 'flex-1 justify-start'} variant="quiet" aria-label="联系支持" onClick={() => openSupport({scenario: supportScenario})}><Icon icon={faCircleQuestion} aria-hidden="true"/><span className={navigationCollapsed ? 'sr-only' : ''}>联系支持</span></Button></TooltipTrigger><TooltipContent side="right">联系支持</TooltipContent></Tooltip>
-        <Tooltip {...navigationTooltipProps('toggle')}><TooltipTrigger asChild><Button size="lg" className="justify-center" variant="quiet" aria-label={navigationCollapsed ? '展开产品导航' : '折叠产品导航'} onClick={() => {setNavigationTooltip(null); setNavigationMode(navigationCollapsed ? 'expanded' : 'collapsed')}}>{navigationCollapsed ? <Icon icon={faAnglesRight} aria-hidden="true"/> : <Icon icon={faAnglesLeft} aria-hidden="true"/>}</Button></TooltipTrigger><TooltipContent side="right">展开产品导航</TooltipContent></Tooltip>
-      </div>
+    <aside aria-label="产品侧栏" className="flex h-dvh w-16 shrink-0 flex-col items-center justify-between border-r bg-card py-4">
+      <div className="grid justify-items-center gap-6"><span className="flex size-10 items-center justify-center rounded-lg bg-primary text-base font-bold tracking-wider text-primary-foreground"><span aria-hidden="true">PA</span><span className="sr-only">PPAP Audit</span></span>{navigation}</div>
+      <Tooltip><TooltipTrigger asChild><Button size="icon-lg" variant="quiet" aria-label="联系支持" onClick={() => openSupport({scenario: supportScenario})}><Icon icon={faCircleQuestion} aria-hidden="true" className="size-4.5"/></Button></TooltipTrigger><TooltipContent side="right">联系支持</TooltipContent></Tooltip>
     </aside>
     <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-6 py-2"><div className="flex min-w-0 items-center gap-3">
+      <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-6 py-2"><div className="flex min-w-0 items-center gap-3">
         {surface === 'audit' && reportView ? <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <li className="flex min-w-0 items-center gap-1">{task && !recovery ? <a href={taskResultsAddress().href} aria-label="返回审核结果" className="font-medium hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showTaskResults()}}}>{task.number}</a> : <span className="text-muted-foreground">审核任务</span>}</li>
           <li aria-hidden="true" className="text-muted-foreground">/</li><li aria-current="page" className="font-medium">审核报告</li>
-        </ol></nav> : <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1"><li aria-current="page" className="flex min-w-0 items-center gap-1 font-medium">{surface === 'requirements' && ruleDetailOpen ? <a href="/requirements" className="min-w-0 truncate hover:underline" onClick={event => {if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); const url = new URL(location.href); for (const key of rulesAddressKeys) url.searchParams.delete(key); url.pathname = surfaceAddress('requirements'); url.searchParams.delete('view'); writeAuditAddress(url)}}>{pageContext}</a> : (surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) || surface === 'audit' && !task && !recovery && step === 'upload') ? <h1 className={`min-w-0 truncate ${surface === 'audit' && step === 'upload' ? 'text-base font-semibold' : 'text-sm font-medium'}`}>{pageContext}</h1> : <span className="min-w-0 truncate">{pageContext}</span>}</li></ol></nav>}
+        </ol></nav> : <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-3 gap-y-1">{surface === 'audit' && task && !recovery && <><li className="text-xs text-muted-foreground">任务详情</li><li aria-hidden="true" className="text-muted-foreground/60">/</li></>}<li aria-current="page" className="flex min-w-0 items-center gap-1 font-medium">{surface === 'requirements' && ruleDetailOpen ? <a href="/requirements" className="min-w-0 truncate hover:underline" onClick={event => {if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); const url = new URL(location.href); for (const key of rulesAddressKeys) url.searchParams.delete(key); url.pathname = surfaceAddress('requirements'); url.searchParams.delete('view'); writeAuditAddress(url)}}>{pageContext}</a> : (surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) || surface === 'audit' && !task && !recovery && step === 'upload') ? <h1 className={`min-w-0 truncate ${surface === 'audit' && step === 'upload' ? 'text-base font-semibold' : 'text-sm font-medium'}`}>{pageContext}</h1> : surface === 'audit' && task && !recovery ? <span className="min-w-0 truncate font-semibold">{task.number}</span> : <span className="min-w-0 truncate">{pageContext}</span>}</li>{surface === 'audit' && task && !recovery && !workbench && <li><span role="status"><Badge variant={taskStateTone(task.state)}>{task.state === 'matching' ? `识别中 ${matchingFiles.filter(row => row.match && ['matched', 'unmatched', 'reference', 'failed'].includes(row.match.state)).length}/${matchingFiles.length}` : taskLabels[task.state]}</Badge></span></li>}</ol></nav>}
       </div><div className="flex shrink-0 items-center gap-4"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && <AccountMenu compact/>}</div></header>
       {/* PPAP Audit keeps its task list on the left, on the new-audit page and on every task. */}
       <main id="audit-main" tabIndex={-1} className="flex min-h-0 w-full flex-1 overflow-hidden">
         {taskRail}
         <div className={surface === 'audit' && workbench && !reportView ? 'h-full w-full min-w-0' : surface === 'archive' || surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-6' : 'min-w-0 flex-1 overflow-y-auto p-6'}>
-        <div className={surface === 'audit' && workbench && !reportView ? 'h-full' : surface === 'archive' || surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) ? 'flex min-h-0 min-w-0 flex-1 flex-col' : `mx-auto w-full space-y-6 ${recovery || workbench || surface !== 'audit' ? '' : step === 'match' ? 'max-w-7xl' : 'max-w-5xl'}`}>
+        <div className={surface === 'audit' && workbench && !reportView ? 'h-full' : surface === 'archive' || surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) ? 'flex min-h-0 min-w-0 flex-1 flex-col' : `mx-auto w-full space-y-6 ${recovery || workbench || surface !== 'audit' ? '' : step === 'match' ? '' : 'max-w-5xl'}`}>
         {archiveOpened && <div className={surface === 'archive' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}>{archiveAdapter ? <AuditArchive active={surface === 'archive'} adapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} precheckAdapter={adapter.precheck} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>审核文件暂不可用</AlertTitle><AlertDescription>请稍后重试。</AlertDescription></Alert>}</div>}
         {rulesOpened && <div className={surface !== 'requirements' ? 'hidden' : ruleDetailOpen ? 'min-w-0' : 'flex min-h-0 min-w-0 flex-1 flex-col'}>{rules?.(surface === 'requirements', surface === 'requirements' ? pageActions : null)}</div>}
         {templatesOpened && templateAdapter && <div className={surface === 'templates' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}><TemplateLibraryPage adapter={templateAdapter}/></div>}
@@ -1063,7 +1062,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         <div className={surface !== 'audit' ? 'hidden' : workbench && !reportView ? 'flex h-full flex-col' : 'space-y-6'}>
         {error && <Alert variant="destructive"><AlertTitle>操作未完成</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
         {preparingReaudit && <ReadSkeleton label="正在读取原审核的文件和规则…" kind={'detail'}/>}
-        {predecessorId && !workbench && <Alert><AlertTitle>新建关联重审</AlertTitle><AlertDescription>原任务和报告都保留。本次用当前规则重新审核所有文件，人工复核从头开始。</AlertDescription></Alert>}
+        {predecessorId && !workbench && step === 'upload' && <Alert><AlertTitle>新建关联重审</AlertTitle><AlertDescription>{reauditNote}</AlertDescription></Alert>}
         {recognitionState && recognitionLocked && <Alert data-request-id={recognitionState.requestId}><AlertTitle>{recognitionState.phase === 'sending' ? '正在提交识别请求' : '识别请求待确认'}</AlertTitle><AlertDescription><p>{recognitionState.message || '正在等待同一请求的结果，文件与选择已保留。'}</p>{['unknown', 'reading'].includes(recognitionState.phase) && <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={recognitionState.phase === 'reading'} onClick={readRecognition}>{recognitionState.phase === 'reading' ? '正在读取识别结果…' : '读取识别结果'}</Button>{recognitionSupport}</div>}</AlertDescription></Alert>}
         {recognitionState?.phase === 'rejected' && <Alert data-request-id={recognitionState.requestId}><AlertTitle>本次识别未被接收</AlertTitle><AlertDescription><p>{recognitionState.message}</p><div className="flex flex-wrap gap-2">{task?.id === recognitionState.taskId && <Button variant="outline" size="sm" onClick={readCurrentRecognition}>读取当前任务</Button>}{recognitionSupport}</div></AlertDescription></Alert>}
         {recognitionState?.phase === 'conflict' && <Alert data-request-id={recognitionState.requestId}><AlertTitle>任务输入版本已更新</AlertTitle><AlertDescription><p>{recognitionState.message}</p><Button variant="outline" size="sm" onClick={readCurrentRecognition}>读取当前任务</Button></AlertDescription></Alert>}
@@ -1082,10 +1081,16 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         {!task && preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'error' && <Alert variant="destructive"><AlertTitle>上传准备待确认</AlertTitle><AlertDescription><p>{preparationStatus.message}</p><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => void readPreparation(activeUploadDraftId.current!)}>读取准备记录</Button>{preparationStatus.conflict && <Button variant="outline" size="sm" onClick={() => {retainDraft(); void readPreparation(activeUploadDraftId.current!, true)}}>载入已保存资料</Button>}</div></AlertDescription></Alert>}
         <fieldset hidden={preparationStatus.id === activeUploadDraftId.current && preparationStatus.phase === 'reading'} disabled={inputLocked || preparingReaudit || foreign} className="min-w-0 space-y-6">
         {surface === 'audit' && step === 'upload' && pageActions && createPortal(stepper, pageActions)}
-        {step === 'match' && <header className="flex items-start justify-between gap-6"><div className="min-w-0 flex-1 space-y-1.5">
-          <h1 className="text-2xl font-semibold tracking-tight">确认规则</h1>
-          {task && <div className="space-y-0.5 text-sm leading-relaxed text-muted-foreground"><p>系统识别每份文件的要素并匹配客户规则；核对规则后点击【开始审核】。</p>{foreign && <p>{task.creator.name || '同事'} 发起，只有发起人可以确认规则和开始审核。</p>}<p className="tabular-nums">当前客户：{task.customer_preference ? customerShortName(coverageSource?.customers, task.customer_preference) : '自动识别'}{taskCoverage && <> · 规则覆盖 {taskCoverage.supported}/{taskCoverage.total} 类</>}</p></div>}
-        </div>{stepper}</header>}
+        {step === 'match' && <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-1"><div className="min-w-0 flex-1 space-y-1">
+          <h1 className="text-xl font-semibold tracking-tight">{reauditing ? '关联重审' : '确认规则'}</h1>
+          {task && <p className="text-xs text-muted-foreground">{reauditing ? reauditNote : '系统识别每份文件的要素并匹配客户规则；核对规则后点击【开始审核】。'}</p>}
+          {task && foreign && <p className="text-xs text-muted-foreground">{task.creator.name || '同事'} 发起，只有发起人可以确认规则和开始审核。</p>}
+        </div>{task && <p role="status" className="pt-1 text-xs tabular-nums text-muted-foreground">当前客户：{task.customer_preference ? customerShortName(coverageSource?.customers, task.customer_preference) : '自动识别'}{taskCoverage && <> · 规则覆盖 {taskCoverage.supported}/{taskCoverage.total} 类</>} · {submitted === null ? '送审 待确认' : `送审 ${submitted} 份`}</p>}</header>}
+        {step === 'match' && <div className="rounded-lg border bg-card px-4 py-2.5">{stepper}</div>}
+        {step === 'match' && task?.state === 'pending_confirm' && reauditing && newerRules.length > 0 && <section aria-labelledby="rule-update-title" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary-line bg-primary-soft p-3.5">
+          <div className="flex min-w-0 items-center gap-3"><span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary-soft-hover text-primary"><Icon icon={faCircleInfo} className="size-3"/></span><div className="min-w-0"><h2 id="rule-update-title" className="text-sm font-semibold">审核规则已更新</h2><p className="text-xs">{newerRules.join('、')}在上次审核后有新版本。</p></div></div>
+          <div className="flex items-center gap-3"><Segmented label="本次使用的规则版本" value={ruleVersionChoice(files)} options={[['newer', '使用新版本'], ['original', '沿用上次版本']]} disabled={recognitionLocked || confirmationLocked || Boolean(blocked)} onChange={chooseRuleVersion}/><span className="text-xs text-muted-foreground">可随时切换。</span></div>
+        </section>}
         <input ref={input} disabled={!customerReady} type="file" className="sr-only" aria-label="选择审核文件" multiple accept={acceptedUploads(customer).accept} onChange={event => {receive(Array.from(event.target.files || [])); event.target.value = ''}}/>
         {step === 'upload' && <section aria-label="上传文件" data-dragging={dragging} className="rounded-lg border bg-card transition-colors data-[dragging=true]:border-primary" onDragOver={event => {event.preventDefault(); setDragging(true)}} onDragLeave={event => {if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false)}} onDrop={event => {event.preventDefault(); setDragging(false); receive(Array.from(event.dataTransfer.files))}}>
           <fieldset disabled={recognizing} className="min-w-0 space-y-5 p-6">
@@ -1113,14 +1118,13 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
           </footer>}
         </section>}
         {step === 'match' && task && <>
-          <div className="flex flex-wrap items-center gap-2 tabular-nums"><span role="status"><Badge variant={taskStateTone(task.state)}>{task.state === 'matching' ? `识别中 ${matchingFiles.filter(row => row.match && ['matched', 'unmatched', 'reference', 'failed'].includes(row.match.state)).length}/${matchingFiles.length}` : taskLabels[task.state]}</Badge></span><span role="status" className="text-sm font-medium">{submitted === null ? '送审 待确认' : `送审 ${submitted} 份`}</span></div>
           {task.state === 'matching' && readStatus[task.id]?.error && <Alert variant="destructive"><AlertTitle>暂时无法读取</AlertTitle><AlertDescription><p>{readStatus[task.id].error}</p><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={readStatus[task.id]?.busy} onClick={() => void readMatching(task)}>{readStatus[task.id]?.busy ? '正在读取识别结果…' : '重新读取识别结果'}</Button><Button variant="outline" size="sm" onClick={() => contactReadSupport(task)}>联系支持</Button></div></AlertDescription></Alert>}
           {task.state === 'pending_confirm' && templates.length > 0 && <div className="flex flex-wrap items-center gap-3"><Label htmlFor="rule-template">客户规则</Label><Select value={templateChoice || undefined} disabled={recognitionLocked || confirmationLocked || Boolean(blocked)} onValueChange={chooseTemplate}><SelectTrigger id="rule-template" className="w-64 max-w-full"><SelectValue placeholder="按文件自动匹配"/></SelectTrigger><SelectContent>{templates.map(key => <SelectItem key={key} value={key} description={key === lastTemplate() ? '上次使用' : undefined}>{templateName(key)}</SelectItem>)}</SelectContent></Select></div>}
-          {precheck.result ? <PrecheckCounts result={precheck.result} matched={matched.length}/> : task.state !== 'matching' && matchGroups.length > 1 && <dl aria-label="识别结果统计" className="grid grid-cols-4 gap-3">{matchGroups.map(group => <div key={group.title} className="flex flex-col-reverse rounded-lg border bg-card px-4 py-3 text-center"><dt className="text-xs text-muted-foreground">{group.title}</dt><dd className={`text-2xl font-semibold tabular-nums ${matchGroupTone[group.title]?.[0] ?? ''}`}>{group.rows.length}</dd></div>)}</dl>}
+          {!precheck.result && task.state !== 'matching' && matchGroups.length > 1 && <dl aria-label="识别结果统计" className="grid grid-cols-4 gap-3">{matchGroups.map(group => <div key={group.title} className="flex flex-col-reverse rounded-lg border bg-card px-4 py-3 text-center"><dt className="text-xs text-muted-foreground">{group.title}</dt><dd className={`text-2xl font-semibold tabular-nums ${matchGroupTone[group.title]?.[0] ?? ''}`}>{group.rows.length}</dd></div>)}</dl>}
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start"><div className="min-w-0 flex-1 space-y-5">
           {task.state === 'matching' ? <div className="space-y-2">{matchingFiles.map(row => matchRow(row))}</div> : <div className="space-y-5">
-            {precheck.result && <p className="text-sm font-semibold">预检分区</p>}
             {matchSections.map(section => <section key={section.key} aria-label={section.title} className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2"><h2 className={`flex items-center gap-2 text-sm font-semibold ${section.tone}`}><span aria-hidden="true" className="size-2 rounded-full bg-current"/>{section.title} · {section.rows.length} 份{section.note && <span className="font-normal text-muted-foreground"> · {section.note}</span>}</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="flex items-center gap-2 text-xs font-semibold"><span aria-hidden="true" className={`size-2 rounded-full bg-current ${section.tone}`}/>{section.title} · {section.rows.length} 份{section.note && <span className="font-normal text-muted-foreground"> · {section.note}</span>}</h2>
                 {section.selectable ? <label className="flex items-center gap-1.5 text-xs text-foreground"><Checkbox aria-label={`全选${section.title}`} disabled={confirmationLocked} checked={section.rows.every(row => row.selection === 'selected') ? true : section.rows.some(row => row.selection === 'selected') ? 'indeterminate' : false} onCheckedChange={value => section.rows.forEach(row => toggle(row.file.id, value === true))}/>全选</label>
                   : (section.key === 'block' || section.key === 'handle' && section.rows.length > 1) && <Button variant="outline" size="sm" disabled={confirmationLocked} onClick={() => section.rows.forEach(row => remove(row.file.id))}>全部移除</Button>}</div>
               {(section.key === 'handle' || section.key === 'unmatched' ? sameReasonBatches(section.rows) : section.rows.map(row => [row])).map(batch => batch.length > 1 ? <section key={batch[0].file.id} className="space-y-2">
@@ -1129,13 +1133,13 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
           </section> : matchRow(batch[0], true, section.card, Boolean(section.selectable)))}
             </section>)}
           </div>}
-          {precheck.result && adapter.precheck && !recognitionDirty && <PrecheckReport adapter={adapter.precheck} taskId={task.id} result={precheck.result}/>}
           {task.state === 'pending_confirm' && adapter.deepMode && !recognitionDirty && !noMatches && (() => {
             const control = deepModeControl(task, deepSaving === task.id || confirmationLocked)
             return <section aria-label={deepModeTitle} className="flex items-start justify-between gap-4 rounded-lg border bg-card p-4"><div className="min-w-0 space-y-1"><Label htmlFor="deep-mode">{deepModeTitle}</Label><p id="deep-mode-description" className="text-sm text-muted-foreground">{deepModeDescription}</p>{control.reason && <p role="status" className="text-xs text-muted-foreground">{control.reason}</p>}{deepError?.taskId === task.id && <p role="alert" className="text-xs text-destructive">{deepError.message}</p>}</div><Switch id="deep-mode" aria-describedby="deep-mode-description" checked={task.deep_mode} disabled={control.disabled} onCheckedChange={value => void changeDeepMode(task, value)}/></section>
           })()}
           {precheck.error && <p className="text-xs text-muted-foreground">{precheck.error}</p>}
           {removedList}
+          </div>{precheck.result && adapter.precheck && !recognitionDirty && <aside aria-label="预检" className="shrink-0 xl:sticky xl:top-0 xl:w-90"><PrecheckReport adapter={adapter.precheck} taskId={task.id} result={precheck.result}/></aside>}</div>
           <footer className="sticky bottom-0 z-10 -mx-6 space-y-4 border-t bg-card/95 px-6 py-4 backdrop-blur-sm">{noMatches && <p className="text-muted-foreground">{zeroTargetNote(files)}点击【开始审核】后任务直接完成，不扣费、不生成审核报告。</p>}
             {precheckHolds.length > 0 && !recognitionDirty && <p role="status" className="text-destructive">预检发现 {precheckHolds.length} 项阻断（{[...new Set(precheckHolds.map(item => item.title))].join('、')}），请先处理：{precheckHolds[0].action}</p>}
             {task.state === 'pending_confirm' && scope && !recognitionDirty && !noMatches && !scope.target_file_version_ids.length && <p role="status" className="text-muted-foreground">没有可接收的待审文件。请先处理排除原因，再核对审核依据。</p>}
@@ -1143,7 +1147,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
             {confirmation?.message && <Alert data-request-id={confirmation.requestId} variant={confirmation.phase === 'rejected' ? 'default' : 'destructive'}><AlertTitle>{confirmation.phase === 'rejected' ? '本次未被接收' : '提交结果待确认'}</AlertTitle><AlertDescription><p>{confirmation.staleBasisDigest && task.confirmation_basis_digest && !basisNeedsRefresh ? '已读取当前审核依据，请核对后重新确认。' : confirmation.message}</p><Button variant="outline" size="sm" onClick={() => openSupport({scenario: '确认审核', traceId: confirmation.traceId, facts: [{label: '任务标识', value: task.id}, {label: '确认请求', value: confirmation.requestId}, {label: '接收状态', value: confirmation.phase === 'rejected' ? '明确未被接收' : '尚未确认'}, {label: '服务说明', value: confirmation.message}]})}>联系支持</Button></AlertDescription></Alert>}
             {task.state === 'pending_confirm' && suiteBlocks.length > 0 && <Alert><AlertTitle>部分文件的检查程序需要先验证</AlertTitle><AlertDescription><p>检查程序由平台离线准备；如需准备或更新，请联系支持。处理后点“刷新审核依据”。</p><ul className="mb-2">{suiteBlocks.map(file => <li key={file.file.id}><FileName name={file.file.original_filename}/></li>)}</ul><Button variant="outline" size="sm" disabled={confirmationLocked || readStatus[task.id]?.busy} onClick={() => void recover(task.id)}>刷新审核依据</Button></AlertDescription></Alert>}
             {task.state === 'pending_confirm' && matched.length > 0 && !confirmationLocked && (basisNeedsRefresh || !task.confirmation_basis_digest || !scope) && <Alert><AlertTitle>请刷新审核依据</AlertTitle><AlertDescription><p>刷新只读取当前规则，不会开始审核。核对后需要再次确认。</p><Button variant="outline" size="sm" onClick={() => void recover(task.id)}>刷新审核依据</Button></AlertDescription></Alert>}
-            <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={confirmationLocked || endStatus[task.id] === 'sending' || endStatus[task.id] === 'unknown'} onClick={() => setStep('upload')}><Icon icon={faArrowLeft}/>上一步</Button>{/* The same files can be recognized again, e.g. after a rule changed under them. */}{task.state === 'pending_confirm' && !noMatches && !recognitionDirty && <Button variant="outline" disabled={recognitionLocked || confirmationLocked || inputLocked || Boolean(blocked)} onClick={() => void startMatching()}>重新识别</Button>}</div>{noMatches ? <Button disabled={Boolean(endStatus[task.id]) || endInputsDirty} onClick={() => void endTask(task)}>{endStatus[task.id] === 'sending' ? '正在提交…' : '开始审核'}<Icon icon={faArrowRight}/></Button> : <div className="flex flex-wrap gap-2">{confirmation && ['unknown', 'reading'].includes(confirmation.phase) && <Button variant="outline" disabled={confirmation.phase === 'reading'} onClick={() => void acceptance.reconcile(task)}>{confirmation.phase === 'reading' ? '正在读取提交结果…' : '读取提交结果'}</Button>}{task.estimated_points != null && <Tooltip><TooltipTrigger asChild><span tabIndex={0} className="self-center text-sm tabular-nums text-muted-foreground underline decoration-dotted underline-offset-4">预计 {task.estimated_points} 点</span></TooltipTrigger><TooltipContent className="max-w-80">飞书通用AI点数{pointsBasis(task)}</TooltipContent></Tooltip>}<Button disabled={!canConfirm || precheckHolds.length > 0} onClick={() => confirm(task)}>{confirmation?.phase === 'sending' ? '正在确认…' : '开始审核'}<Icon icon={faArrowRight}/></Button></div>}</div>
+            <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={confirmationLocked || endStatus[task.id] === 'sending' || endStatus[task.id] === 'unknown'} onClick={() => setStep('upload')}><Icon icon={faArrowLeft}/>上一步</Button>{/* The same files can be recognized again, e.g. after a rule changed under them. */}{task.state === 'pending_confirm' && !noMatches && !recognitionDirty && <Button variant="outline" disabled={recognitionLocked || confirmationLocked || inputLocked || Boolean(blocked)} onClick={() => void startMatching()}><Icon icon={faArrowsRotate} aria-hidden="true"/>重新识别</Button>}</div>{noMatches ? <Button disabled={Boolean(endStatus[task.id]) || endInputsDirty} onClick={() => void endTask(task)}>{endStatus[task.id] === 'sending' ? '正在提交…' : '开始审核'}<Icon icon={faArrowRight}/></Button> : <div className="flex flex-wrap gap-2">{confirmation && ['unknown', 'reading'].includes(confirmation.phase) && <Button variant="outline" disabled={confirmation.phase === 'reading'} onClick={() => void acceptance.reconcile(task)}>{confirmation.phase === 'reading' ? '正在读取提交结果…' : '读取提交结果'}</Button>}{task.estimated_points != null && <Tooltip><TooltipTrigger asChild><span tabIndex={0} className="self-center text-sm tabular-nums text-muted-foreground underline decoration-dotted underline-offset-4">预计 {task.estimated_points} 点</span></TooltipTrigger><TooltipContent className="max-w-80">飞书通用AI点数{pointsBasis(task)}</TooltipContent></Tooltip>}<Button disabled={!canConfirm || precheckHolds.length > 0} onClick={() => confirm(task)}>{confirmation?.phase === 'sending' ? '正在确认…' : '开始审核'}<Icon icon={faArrowRight}/></Button></div>}</div>
           </footer>
         </>}
 

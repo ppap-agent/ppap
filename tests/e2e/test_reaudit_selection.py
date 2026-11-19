@@ -25,7 +25,8 @@ def reaudit_routes(page, *, accept=False):
             "validation_id": "validation-" + letter,
             "match": None,
             "preferred_rule_version_id": "rule-" + letter,
-            "rule_options": [{"id": "rule-" + letter, "title": "原规则 " + letter}],
+            # The original audit's rule version first; rule A has a newer version since.
+            "rule_options": [{"id": "rule-" + letter, "title": f"原规则 {letter} · 原审核版本"}] + ([{"id": "rule-A-new", "title": "原规则 A · 较新版本"}] if letter == "A" else []),
         }
         for letter, name in [("A", "原文件A.xlsx"), ("B", "原文件B.xlsx")]
     ]
@@ -220,36 +221,28 @@ def test_changing_and_clearing_a_replacement_restores_the_previously_selected_or
     assert all(not file.get("replacement_of_file_version_id") for file in files)
 
 
-def test_replacement_inherits_the_explicit_choice_to_match_current_rules(reaudit_page):
+def test_a_newer_rule_version_is_used_by_default_and_inherited_by_a_replacement(reaudit_page):
     page, commands = reaudit_page
-    page.get_by_role("combobox", name="原文件A.xlsx 的识别方式", exact=True).click()
-    expect(page.get_by_role("option", name="原规则 A", exact=True)).to_have_count(0)
-    page.get_by_role("option", name="重新识别规则", exact=True).click()
-    expect(page.get_by_role("combobox", name="原文件A.xlsx 的识别方式", exact=True)).to_have_text("重新识别规则")
+    # Rule versions are chosen once for the whole re-audit, never per file on the upload page.
+    expect(page.get_by_role("combobox", name="原文件A.xlsx 的识别方式", exact=True)).to_have_count(0)
     choose_replacement(page, "替换：原文件A.xlsx")
     files = recognition_command(page, commands)
+    assert files[1]["preferred_rule_version_id"] == "rule-B"
     assert files[2]["replacement_of_file_version_id"] == "A"
-    assert not files[2].get("preferred_rule_version_id")
-    expect(page.get_by_role("combobox", name="补件C.xlsx 的识别方式", exact=True)).to_have_text("重新识别规则")
+    assert files[2]["preferred_rule_version_id"] == "rule-A-new"
 
 
 @pytest.mark.parametrize("reaudit_page", [True], indirect=True)
-def test_current_rule_matching_choice_survives_readback_and_releasing_the_replacement(reaudit_page):
+def test_the_rule_update_reminder_names_the_changed_rules_and_defaults_to_the_new_version(reaudit_page):
     page, commands = reaudit_page
-    page.get_by_role("combobox", name="原文件A.xlsx 的识别方式", exact=True).click()
-    expect(page.get_by_role("option", name="原规则 A", exact=True)).to_have_count(0)
-    page.get_by_role("option", name="重新识别规则", exact=True).click()
-    choose_replacement(page, "替换：原文件A.xlsx")
     files = recognition_command(page, commands)
-    assert not files[2].get("preferred_rule_version_id")
-    # Recognition results open on the confirm-rules page, also after a reload.
-    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
-    page.reload()
-    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
-    page.get_by_role("button", name="上一步", exact=True).click()
-    expect(page.get_by_role("combobox", name="补件C.xlsx 的识别方式", exact=True)).to_have_text("重新识别规则")
-    choose_replacement(page, "新增文件 · 重新匹配")
-    expect(page.get_by_role("combobox", name="原文件A.xlsx 的识别方式", exact=True)).to_have_text("重新识别规则")
+    assert [file["preferred_rule_version_id"] for file in files[:2]] == ["rule-A-new", "rule-B"]
+    expect(page.get_by_role("heading", name="关联重审", exact=True)).to_be_visible()
+    reminder = page.get_by_role("region", name="审核规则已更新", exact=True)
+    expect(reminder).to_contain_text("原规则 A在上次审核后有新版本。")
+    versions = reminder.get_by_role("group", name="本次使用的规则版本", exact=True)
+    expect(versions.get_by_role("button", name="使用新版本", exact=True)).to_have_attribute("aria-pressed", "true")
+    expect(versions.get_by_role("button", name="沿用上次版本", exact=True)).to_have_attribute("aria-pressed", "false")
     assert len(commands) == 1
 
 
@@ -295,9 +288,9 @@ def test_server_readback_retains_the_automatic_exclusion_until_replacement_is_cl
     choose_replacement(page, "替换：原文件A.xlsx")
     recognition_command(page, commands)
     # Recognition results open on the confirm-rules page, also after a reload.
-    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="关联重审", exact=True)).to_be_visible()
     page.reload()
-    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="关联重审", exact=True)).to_be_visible()
     page.get_by_role("button", name="上一步", exact=True).click()
     expect(page.get_by_role("checkbox", name="选择 原文件A.xlsx", exact=True)).to_have_count(0)
     choose_replacement(page, "新增文件 · 重新匹配")
@@ -315,12 +308,11 @@ def test_unselected_replacement_readback_retains_its_explicit_relation(reaudit_p
     assert [file["selection"] for file in files] == ["selected", "selected", "unselected"]
     assert files[2]["replacement_of_file_version_id"] == "A"
     # Recognition results open on the confirm-rules page, also after a reload.
-    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="关联重审", exact=True)).to_be_visible()
     page.reload()
-    expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="关联重审", exact=True)).to_be_visible()
     page.get_by_role("button", name="上一步", exact=True).click()
     page.get_by_role("checkbox", name="选择 补件C.xlsx", exact=True).check()
     expect(page.get_by_role("checkbox", name="选择 原文件A.xlsx", exact=True)).to_have_count(0)
     expect(page.get_by_role("combobox", name="补件C.xlsx 的补件关系", exact=True)).to_have_text("替换：原文件A.xlsx")
-    expect(page.get_by_role("combobox", name="补件C.xlsx 的识别方式", exact=True)).to_have_text("沿用上次的规则")
     assert len(commands) == 1

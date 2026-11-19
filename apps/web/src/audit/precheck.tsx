@@ -1,7 +1,8 @@
 import {lazy, Suspense, useEffect, useRef, useState} from 'react'
-import {faBookOpen, faCircleNotch, faDownload} from '@fortawesome/free-solid-svg-icons'
+import {faCircleNotch, faDownload, faEye} from '@fortawesome/free-solid-svg-icons'
 import {Icon} from '../components/ui/icon'
 import type {components} from '../generated/openapi'
+import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
 import {ReadSkeleton} from '../components/read-skeleton'
@@ -35,19 +36,13 @@ export function precheckRating(result: Pick<Precheck, 'conclusion' | 'warnings' 
   return result.warnings.length ? `有条件通过 · 含警告 ${result.warnings.length} 项：可以进入正式审核` : '通过：可以进入正式审核'
 }
 
-/** The stat row of the precheck: compliant, warning, blocked, matched and unmatched files, and references when there are any. */
-export function PrecheckCounts({result, matched}: {result: Precheck; matched: number}) {
-  const cards: [string, number, string][] = [['合规', result.counts.ok, 'text-success'], ['警告', result.counts.warn, 'text-warning'], ['阻断', result.counts.block, 'text-destructive'], ['已匹配', matched, 'text-success'], ['未匹配', result.counts.unmatched, 'text-foreground'], ...result.counts.reference ? [['比对资料', result.counts.reference, 'text-primary'] as [string, number, string]] : []]
-  return <dl aria-label="预检结果统计" className={`grid gap-3 ${cards.length > 5 ? 'grid-cols-6' : 'grid-cols-5'}`}>{cards.map(([label, value, tone]) => <div key={label} className="flex flex-col-reverse rounded-lg border bg-card px-4 py-3 text-center"><dt className="text-xs text-muted-foreground">{label}</dt><dd className={`text-2xl font-semibold tabular-nums ${tone}`}>{value}</dd></div>)}</dl>
-}
-
 /** What the precheck found for one file, under its name in the matching list. */
 export function PrecheckNotes({result, fileVersionId}: {result: Precheck | null; fileVersionId: string}) {
   if (!result) return null
   const items = [...result.blocks, ...result.warnings].filter(item => item.file_version_id === fileVersionId)
   // A warning never holds the start; a file-level block does until the file is removed; a content-level block goes to the formal audit.
   const effect = (item: Precheck['blocks'][number]) => item.level === 'warn' ? '仍可勾选送审' : item.scope === 'file' ? '移除后才能开始审核' : '不阻止开始审核，正式审核将核对'
-  return items.length > 0 && <ul aria-label="预检发现" className="space-y-1 text-xs">{items.map(item => <li key={item.number} className={item.level === 'block' ? 'text-destructive' : 'text-warning'}><span className="font-medium">{item.level === 'block' ? '阻断' : '警告'} · {item.code} {item.title}</span>：{item.problem}（{effect(item)}）<span className="text-muted-foreground"> 整改：{item.action}</span></li>)}</ul>
+  return items.length > 0 && <ul aria-label="预检发现" className="space-y-1.5 rounded-md border bg-card p-2.5 text-xs">{items.map(item => <li key={item.number} className="flex items-start gap-2"><span className={`shrink-0 rounded-sm px-1.5 text-2xs leading-4 font-semibold text-primary-foreground ${item.level === 'block' ? 'bg-destructive' : 'bg-warning'}`}>{item.level === 'block' ? '阻断' : '警告'}</span><span className="min-w-0"><span className="font-medium">{item.code} {item.title}</span>：{item.problem}（{effect(item)}）<span className="text-muted-foreground"> 整改：{item.action}</span></span></li>)}</ul>
 }
 
 /** The cover-and-ten-chapter report of this precheck: read from the same precheck the page shows, never billed, never filed with audit results. */
@@ -76,19 +71,19 @@ export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdap
     const link = document.createElement('a'); link.href = url; link.download = names.current.get(url) || '预检报告.pdf'; link.click()
   }
   const conclusion = precheckRating(result)
-  return <section aria-label="预检报告" className="space-y-3 rounded-lg border bg-card p-4">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="space-y-1"><h2 className="font-semibold">预检报告 · {conclusion}</h2><p className="text-sm tabular-nums">合规 {result.counts.ok} · 警告 {result.counts.warn} · 阻断 {result.counts.block}</p></div>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" disabled={busy} onClick={() => void open(0)}>{busy ? <Icon icon={faCircleNotch} className="animate-spin motion-reduce:animate-none"/> : <Icon icon={faBookOpen}/>}预览预检报告</Button>
-        <Button variant="outline" disabled={busy} onClick={() => void download()}><Icon icon={faDownload}/>下载预检报告(PDF)</Button>
-      </div>
+  // A side panel: the conclusion and counts, preview and download, then the chapters, each opening the reader at its page.
+  return <section aria-label="预检报告" className="space-y-4 rounded-lg border bg-card p-4">
+    <div className="space-y-2"><h2 className={`text-xs font-semibold ${result.conclusion === 'fail' ? 'text-destructive' : ''}`}>预检报告 · {conclusion}</h2>
+      <p className="flex flex-wrap gap-2 tabular-nums"><Badge variant="success">合规 {result.counts.ok}</Badge><Badge variant="warning">警告 {result.counts.warn}</Badge><Badge variant="destructive">阻断 {result.counts.block}</Badge></p></div>
+    <div className="grid gap-2">
+      <Button variant="outline" size="sm" disabled={busy} onClick={() => void open(0)}>{busy ? <Icon icon={faCircleNotch} className="animate-spin motion-reduce:animate-none"/> : <Icon icon={faEye}/>}预览预检报告</Button>
+      <Button variant="outline" size="sm" disabled={busy} onClick={() => void download()}><Icon icon={faDownload}/>下载预检报告(PDF)</Button>
+      {busy && <p role="status" className="text-center text-xs text-muted-foreground">正在生成预检报告…</p>}
+      {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+      <p className="text-center text-2xs text-muted-foreground">预览和下载不会开始审核，也不收费。</p>
     </div>
-    {/* The cover and the ten chapters; each opens the reader at its page. */}
-    <ol aria-label="预检报告目录" className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">{precheckReportChapters.map((title, index) => <li key={title}><button type="button" disabled={busy} title={title} className="w-full truncate rounded-md bg-muted/40 px-3 py-1.5 text-left hover:bg-muted focus-visible:outline-ring disabled:opacity-60" onClick={() => void open(index)}>{title}</button></li>)}</ol>
-    {busy && <p role="status" className="text-xs text-muted-foreground">正在生成预检报告…</p>}
-    {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
-    <p className="text-xs text-muted-foreground">预览和下载不会开始审核，也不收费。</p>
+    <div className="space-y-2.5 border-t pt-4"><h3 className="text-xs font-semibold">预检报告目录</h3>
+      <ol aria-label="预检报告目录" className="grid gap-0.5 text-xs text-muted-foreground">{precheckReportChapters.map((title, index) => <li key={title}><button type="button" disabled={busy} title={title} className="w-full truncate rounded-sm px-1 py-1 text-left hover:bg-muted hover:text-foreground focus-visible:outline-ring disabled:opacity-60" onClick={() => void open(index)}>{title}</button></li>)}</ol></div>
     <Dialog open={Boolean(target && current)} onOpenChange={value => {if (!value) setTarget(null)}}>
       <DialogContent className="flex h-[88dvh] flex-col overflow-hidden sm:max-w-6xl">
         <DialogHeader><DialogTitle>{pdf?.name || '预检报告.pdf'}</DialogTitle><DialogDescription>预检报告 · 生成时间 {result.generated_at} · {conclusion}</DialogDescription></DialogHeader>
