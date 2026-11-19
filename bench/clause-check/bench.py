@@ -257,7 +257,7 @@ def prompt_for(case: dict) -> str:
     lines = [f"使用 clause-check 技能检查条款 {case['id']}。", "- 规则文件：当前目录下的 rules.json。", "- 当前目录就是工作目录。"]
     if case["files"]:
         lines.append("- 要对照的真实文件在 files/ 下：" + "、".join(f"`{Path(path).name}`" for path in case["files"]) + "。")
-    lines.append("- 按技能做到检查完整（脚本退出码为 0）。最后只回复报告文件的路径。")
+    lines.append("- 按技能做到脚本退出码为 0。最后只回复报告文件的路径。")
     return "\n".join(lines)
 
 
@@ -284,7 +284,7 @@ def run_case(case: dict, name: str, skill: Path, model: str, thinking: str, time
             result["report_matches"] = written.read_text(encoding="utf-8") == (out / "report.md").read_text(encoding="utf-8")
     (out / "session.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     state = "超时" if result.get("timed_out") else "失败" if result["is_error"] else "完成"
-    complete = {0: "检查完整", 1: "检查未完成", 2: "形式化无法使用", None: "没有形式化"}.get(result["check_exit"], "检查出错")
+    complete = {0: "发现已确认", 1: "有发现没确认", 2: "形式化无法使用", None: "没有形式化"}.get(result["check_exit"], "检查出错")
     return f"{case['id']}：{state}，{complete}，{result['duration_ms'] // 1000} 秒"
 
 
@@ -350,7 +350,7 @@ def plain_problems(report: str, case: dict) -> tuple[list[str], int]:
 def score(run: Path, rejudge: bool) -> None:
     data = cases()
     info = json.loads((run / "run.json").read_text(encoding="utf-8")) if (run / "run.json").exists() else {}
-    header = "| 条款 | 检查完整 | 报告与脚本一致 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 说错 | 重复问题 | 技术词 | 待补 | 被沙箱拒绝 | 用时 | 输出 tokens |"
+    header = "| 条款 | 发现已确认 | 报告与脚本一致 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 说错 | 重复问题 | 技术词 | 待补 | 被沙箱拒绝 | 用时 | 输出 tokens |"
     rows = [header, "|" + "---|" * (header.count("|") - 1)]
     details = []
     judged_with: set[str] = set()

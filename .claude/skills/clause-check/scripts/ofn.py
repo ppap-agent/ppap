@@ -121,12 +121,6 @@ def walk(item):
             yield from walk(arg)
 
 
-def rename(item, mapping: dict[str, str]):
-    if isinstance(item, Node):
-        return Node(item.head, [rename(arg, mapping) for arg in item.args])
-    return mapping.get(item, item)
-
-
 def write(path: Path, iri: str, axioms: list[Node]) -> None:
     lines = [f"Prefix({name}:=<{base}>)" for name, base in STANDARD.items()]
     lines.append(f"Ontology({iri}")

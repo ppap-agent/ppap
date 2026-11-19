@@ -4,16 +4,16 @@ Prefix(rdfs:=<http://www.w3.org/2000/01/rdf-schema#>)
 Prefix(xsd:=<http://www.w3.org/2001/XMLSchema#>)
 Ontology(<https://ppap.example/rules/X01/1>
   # 虚构条款 X01:1 的完整示例。运行：python3 <技能目录>/scripts/check.py <技能目录>/examples/X01/X01-1.ofn
-  # 只写原文说了什么；通过、不通过、没有结论、冲突都由脚本从 :PassWhen / :FailWhen 推出。
+  # 只写原文说了什么；写不下去、要替原文做选择的地方就是发现。脚本用例子确认每一处。
   Annotation(:clause "X01/rules.json#X01:1")
   Declaration(AnnotationProperty(:clause)) Declaration(AnnotationProperty(:quote))
-  Declaration(AnnotationProperty(:limit)) Declaration(AnnotationProperty(:open))
+  Declaration(AnnotationProperty(:open))
   Declaration(AnnotationProperty(:issue)) Declaration(AnnotationProperty(:question))
   Declaration(AnnotationProperty(:says)) Declaration(AnnotationProperty(:case))
   Declaration(AnnotationProperty(:chosen)) Declaration(AnnotationProperty(:answered)) Declaration(AnnotationProperty(:rewrite))
   Declaration(ObjectProperty(:hasRole))
 
-  # 词汇。签法是为了写判定自己分的类，要分全：最后一类是“其他签法”，它没有结论时会作为缺口报出。
+  # 词汇。签法只列判定用得到的几种，加一类“其他签法”兜住其余写法。
   Declaration(Class(:File)) Declaration(Class(:RoleEntry))
   Declaration(Class(:Author)) Declaration(Class(:Reviewer)) Declaration(Class(:Approver))
   SubClassOf(:Author :RoleEntry) SubClassOf(:Reviewer :RoleEntry) SubClassOf(:Approver :RoleEntry)
@@ -27,15 +27,12 @@ Ontology(<https://ppap.example/rules/X01/1>
   Declaration(Class(:HasDate))
 
   Declaration(Class(:HasSignatureBlock))
-  AnnotationAssertion(Annotation(:limit "open-world")
-    Annotation(:says "判断“签字栏不存在”时，要能确认封面上确实没有签字栏，才能判不通过。")
-    :quote :HasSignatureBlock "签字栏不存在则不通过")
+  AnnotationAssertion(:quote :HasSignatureBlock "签字栏不存在则不通过")
 
-  # 写不出的比较：批准日期和编制日期的先后。三种情况按定义就穷尽了（没法比较也是一种）。
+  # 写不出的比较：批准日期和编制日期的先后。写的时候卡住的地方，用 :open 问出来。
   Declaration(Class(:ApprovedInOrder)) Declaration(Class(:ApprovedEarly)) Declaration(Class(:DatesNotComparable))
   DisjointUnion(:File :ApprovedInOrder :ApprovedEarly :DatesNotComparable)
-  AnnotationAssertion(Annotation(:limit "predicate")
-    Annotation(:open "日期只写到月份（如“2024.05”）时，“不得早于”怎么比较？")
+  AnnotationAssertion(Annotation(:open "日期只写到月份（如“2024.05”）时，“不得早于”怎么比较？")
     Annotation(:open "批准日期早于编制日期时，判不通过吗？")
     :quote :ApprovedInOrder "批准日期不得早于编制日期")
 
@@ -49,7 +46,7 @@ Ontology(<https://ppap.example/rules/X01/1>
       ObjectAllValuesFrom(:hasRole ObjectIntersectionOf(:Signed :HasDate))))
   EquivalentClasses(Annotation(:quote "任一为空则不通过") :FailWhen
     ObjectIntersectionOf(:File ObjectUnionOf(ObjectComplementOf(:HasSignatureBlock) ObjectSomeValuesFrom(:hasRole :Empty))))
-  AnnotationAssertion(Annotation(:limit "output") Annotation(:says "判定不通过时，提示用户补签。") :quote :FailWhen "并提示用户补签")
+  AnnotationAssertion(:quote :FailWhen "并提示用户补签")
 
   # 歧义 1：“已签名”包括哪些签法
   AnnotationAssertion(:issue :Signed "“已签名”包括哪些签法")
@@ -87,7 +84,7 @@ Ontology(<https://ppap.example/rules/X01/1>
     ObjectSomeValuesFrom(:hasRole ObjectIntersectionOf(:Approver :HandSignature ObjectComplementOf(:HasDate)))
     ObjectAllValuesFrom(:hasRole :HandSignature)))
 
-  # 脚本报出“原文没有给出结论”的情况后，用白话把它们写出来；脚本核对写的确实是这种情况、并且写全了。
+  # 原文没有给出结论的文件：写的时候发现的具体情况，脚本核对它确实没有结论。
   Declaration(Class(:Gap__1)) Declaration(Class(:Gap__2))
   AnnotationAssertion(:says :Gap__1 "签字栏里缺了编制、审核、批准中的某一栏，其余各栏都不为空的封面")
   EquivalentClasses(:Gap__1 ObjectIntersectionOf(:File :HasSignatureBlock ObjectAllValuesFrom(:hasRole ObjectComplementOf(:Empty))

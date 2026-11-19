@@ -2,23 +2,22 @@
 
     python3 check.py CLAUSE.ofn [--out DIR] [--report FILE]
 
-The writer formalizes what the clause says; the script derives everything else (see SKILL.md, 约定速查):
+Formalizing a clause is how its flaws are found: wherever the writer cannot go on without choosing for the
+clause, something is unclear. The script only confirms each such spot with a concrete example, it does not
+try to prove the formalization complete (see SKILL.md, 约定速查):
 
 - `:Judged` is what the clause judges; `:PassWhen` / `:FailWhen` are the conditions under which the clause itself
-  says pass / fail (`owl:Nothing` when it says none). Pass and fail are NOT declared disjoint: a thing meeting both
-  is the clause's own conflict. Every verdict is derived: pass, fail, no verdict (a gap) or both (a conflict).
-- `Point__<n><L>` classes are reading L of ambiguity n for the undefined class `Point`; every combination of
-  readings gets its own copy of the classes that depend on a point. Two readings are a real ambiguity only when
-  some thing gets different verdicts under them; `Example__<n>` is a concrete thing that shows it.
-- Gaps and conflicts are searched for by the script in every combination; the writer describes them as
-  `Gap__<k>` / `Conflict__<k>`, and the script checks each description really is one and that together they
-  cover all of them.
-- `:clause` / `:quote` align the ontology with the clause text; `:limit` / `:open` / `:says` mark what OWL cannot
-  state; classes carrying `:case "file name"` describe real files with closed facts (classes, not individuals:
+  says pass / fail (`owl:Nothing` when it says none). A thing in neither gets no verdict; a thing in both, both.
+- `Point__<n><L>` is reading L of ambiguity n for the undefined class `Point`. `Example__<n>` must get different
+  verdicts under the readings of ambiguity n while every other ambiguity stays undecided, so it shows this one.
+- `Gap__<k>` / `Conflict__<k>` are concrete things the clause gives no verdict / both verdicts for; `:under "2B"`
+  says which readings they assume.
+- `:clause` / `:quote` tie the ontology to the clause text; `:open` on a quote asks what the clause leaves
+  undefined; classes carrying `:case "file name"` describe real files with closed facts (classes, not individuals:
   an ABox makes HermiT minutes slower).
 
-Exit status: 0 when the check is complete (findings are in the report), 1 when it is not (the report says so at
-the top), 2 when the input could not be used.
+Exit status: 0 when every finding in the report is confirmed, 1 when one is not (the report says so at the top),
+2 when the input could not be used.
 """
 
 from __future__ import annotations
@@ -33,8 +32,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from ofn import NOTHING, THING, Node, literal_text, local, parse, rename, walk, write
-from report import MISSING, Clause, Found, compress, render
+from ofn import NOTHING, THING, Node, literal_text, local, parse, walk, write
+from report import MISSING, Clause, Found, render
 
 ROBOT = Path(__file__).resolve().with_name("robot")
 UNSAT = re.compile(r"unsatisfiable: (\S+)")
@@ -43,8 +42,10 @@ READING = re.compile(r"^(.+)__(\d+)([A-Z])$")
 EXAMPLE = re.compile(r"[#/]Example__(\d+)$")
 GAP = re.compile(r"[#/]Gap__(\d+)$")
 CONFLICT = re.compile(r"[#/]Conflict__(\d+)$")
+UNDER = re.compile(r"^(\d+)([A-Z])$")
 PUNCTUATION = set("，。；;？?、：:,.!！（）()“”\"'‘’《》【】[] 　")
 GEN = "urn:clause-check#"
+TESTS = ("pass", "fail", "nopass", "nofail")
 
 
 def robot(*args: str) -> subprocess.CompletedProcess:
@@ -103,32 +104,6 @@ def alignment(path: Path, ontology) -> tuple[list[str], Clause | None, list[str]
     return problems, info, spans
 
 
-LIMIT_KINDS = {"predicate": "写不出的谓词", "open-world": "开放世界", "output": "对检查程序的要求"}
-
-
-def limits(base: list[Node]) -> list[tuple[str | None, str, str | None, list[str], str | None]]:
-    """(kind or None, quoted fragment, subject class or None, undefined situations, plain sentence or None)
-    for every quote marked with :limit or :open."""
-    found = []
-    for item in (sub for node in base for sub in walk(node)):
-        if not isinstance(item, Node) or item.head not in ("Annotation", "AnnotationAssertion"):
-            continue
-        assertion = item.head == "AnnotationAssertion"
-        if local(item.args[-3 if assertion else -2]) != "quote":
-            continue
-        meta = [arg for arg in item.args if isinstance(arg, Node) and arg.head == "Annotation"]
-        kinds = [literal_text(arg.args[-1]) for arg in meta if local(arg.args[-2]) == "limit"]
-        situations = []
-        for arg in meta:
-            if local(arg.args[-2]) == "open":
-                answers = [literal_text(n.args[-1]) for n in arg.args if isinstance(n, Node) and n.head == "Annotation" and local(n.args[-2]) == "answered"]
-                situations.append((literal_text(arg.args[-1]), answers[0] if answers else None))
-        says = next((literal_text(arg.args[-1]) for arg in meta if local(arg.args[-2]) == "says"), None)
-        if kinds or situations:
-            found.append((kinds[0] if kinds else None, literal_text(item.args[-1]), item.args[-2] if assertion else None, situations, says))
-    return found
-
-
 ASCII_WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 TECH_WORDS = ("本体", "公理", "探针", "推理", "可满足", "读法", "谓词", "开放世界", "形式化", "类名", "类型表达式", "OWL", "ROBOT", "HermiT", "Probe", "__")
 NAME_LIKE = re.compile(r":[A-Za-z_]")  # a prefixed name such as :Signed; "10:30" is fine
@@ -154,29 +129,36 @@ def lint(text: str, kind: str, allowed: set[str]) -> list[str]:
     return problems
 
 
-def with_none(item, found: list | None = None, rebuild=lambda node: node) -> list[tuple[str, Node]]:
-    """(property, expression) for every ObjectAllValuesFrom in `item`, with that one replaced by "there are none"."""
-    found = [] if found is None else found
-    if isinstance(item, Node):
-        if item.head == "ObjectAllValuesFrom":
-            found.append((item.args[0], rebuild(Node("ObjectAllValuesFrom", [item.args[0], NOTHING]))))
-        for index, arg in enumerate(item.args):
-            with_none(arg, found, lambda new, node=item, index=index, outer=rebuild: outer(Node(node.head, [*node.args[:index], new, *node.args[index + 1 :]])))
+def opens(base: list[Node]) -> list[tuple[str, list[tuple[str, str | None]]]]:
+    """(quoted fragment, [(question, the user's answer or None)]) for every quote carrying :open."""
+    found = []
+    for item in (sub for node in base for sub in walk(node)):
+        if not isinstance(item, Node) or item.head not in ("Annotation", "AnnotationAssertion"):
+            continue
+        if local(item.args[-3 if item.head == "AnnotationAssertion" else -2]) != "quote":
+            continue
+        questions = []
+        for arg in item.args:
+            if isinstance(arg, Node) and arg.head == "Annotation" and local(arg.args[-2]) == "open" and literal_text(arg.args[-1]) != "无":
+                answers = [literal_text(n.args[-1]) for n in arg.args if isinstance(n, Node) and n.head == "Annotation" and local(n.args[-2]) == "answered"]
+                questions.append((literal_text(arg.args[-1]), answers[0] if answers else None))
+        if questions:
+            found.append((literal_text(item.args[-1]), questions))
     return found
 
 
-def mentions(axiom: Node, iris: set[str]) -> bool:
-    return any(isinstance(item, str) and item in iris for item in walk(axiom))
-
-
-def show(patterns: list[tuple], ids: list[str], letters: list[list[str]]) -> str:
-    def part(i: int, chosen) -> str:
-        return f"{ids[i]}*" if len(chosen) == len(letters[i]) else ids[i] + "|".join(sorted(chosen))
-
-    return "；".join("·".join(part(i, chosen) for i, chosen in enumerate(pattern)) for pattern in patterns)
-
-
-VERDICTS = ("PASS", "NG", "NONE", "BOTH")
+def verdict(holds: dict[str, bool], possible: bool) -> str:
+    if not possible:
+        return "IMPOSSIBLE"
+    if holds["pass"] and holds["fail"]:
+        return "BOTH"
+    if holds["pass"] and holds["nofail"]:
+        return "PASS"
+    if holds["fail"] and holds["nopass"]:
+        return "NG"
+    if holds["nopass"] and holds["nofail"]:
+        return "NONE"
+    return "OPEN"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -198,17 +180,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"读取失败（语法错误）：{error}")
         return 2
 
-    findings = 0
     found = Found()
     problems, clause, spans = alignment(path, ontology)
-    if clause:
-        found.clauses.append(clause)
-    found.unaligned += spans
-    findings += len(problems)
+    if clause is None:
+        print(f"[约定] {problems[0]}")
+        return 2
+    found.clauses.append(clause)
+    # Not a gate: a sentence left unread is a hint to go back to it, not a flaw of the clause.
     for problem in problems:
-        print(f"[原文对齐] {problem}")
-    if not problems:
-        print("[原文对齐] 原文全部写进本体")
+        print(f"[原文对齐] {problem}（提示，不影响报告）")
 
     base = list(ontology.axioms)
     # The skill's own annotation properties (:quote, :says, ...) are declared here for the writer. Any other name
@@ -232,68 +212,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[约定] 缺少 {'、'.join(':' + name for name in missing)}：先写被判定的对象和原文给出的通过、不通过条件")
         return 2
     judged, pass_when, fail_when = special["Judged"], special["PassWhen"], special["FailWhen"]
-    if any(local(iri).startswith("Probe_") for iri in classes):
-        print("[约定] Probe_ 已不再使用：冲突和缺口由脚本自己查，查到后写成 Gap__<k> / Conflict__<k>")
-        return 2
-
-    # Completeness: only values the clause itself enumerates (a quoted DisjointClasses) are asked about; groups the
-    # writer made up must be closed with DisjointUnion and an explicit "other" member, so that leftovers reach the
-    # verdicts and show up as concrete gaps instead of a generic question.
-    parents: dict[str, set[str]] = {}
-    for node in base:
-        if node.head == "SubClassOf" and all(isinstance(arg, str) for arg in node.args[-2:]):
-            parents.setdefault(node.args[-2], set()).add(node.args[-1])
-    outside: dict[str, tuple[str, list[str]]] = {}
-    unquoted: list[list[str]] = []
-    for node in base:
-        members = [arg for arg in node.args if isinstance(arg, str)]
-        notes = [arg for arg in node.args if isinstance(arg, Node)]
-        if node.head != "DisjointClasses" or len(members) < 2 or any(n.head != "Annotation" for n in notes):
-            continue
-        shared = set.intersection(*(parents.get(member, set()) for member in members))
-        if shared and not any(local(n.args[-2]) == "quote" for n in notes):
-            unquoted.append(members)
-            continue
-        for parent in shared:
-            probe = f"<{GEN}Outside{len(outside) + 1}>"
-            outside[probe] = (parent, members)
-            classes.add(probe)
-            base += [
-                Node("Declaration", [Node("Class", [probe])]),
-                Node("EquivalentClasses", [probe, Node("ObjectIntersectionOf", [parent, *(Node("ObjectComplementOf", [m]) for m in members)])]),
-            ]
-
-    exhaustive = {member for node in base if node.head == "DisjointUnion" for member in node.args[1:] if isinstance(member, str)}
-    probed = {member for _, members in outside.values() for member in members}
-    for kind, quote, subject, situations, says in limits(base):
-        undefined = [(text, answer) for text, answer in situations if text != "无"]
-        if undefined:
-            found.undefined.append((quote, undefined))
-        if kind is None:
-            continue
-        if kind == "output":
-            found.requirements.append(says or f"原文要求：{quote}。")
-        if kind == "open-world":
-            found.requirements.append(says or f"判断「{quote}」时，要能确认文件里确实没有，才能判“不存在”。")
-        if kind not in LIMIT_KINDS:
-            findings += 1
-            print(f"[表达局限] 「{quote}」：未知类别 {kind}，只能是 {'、'.join(LIMIT_KINDS)}")
-            continue
-        line = f"[表达局限] {LIMIT_KINDS[kind]}「{quote}」"
-        if kind == "predicate":
-            line += f" → {local(subject) if subject else '（未挂到类上）'}"
-            if not subject or subject not in exhaustive | probed:
-                findings += 1
-                line += "；抽象出的类不在穷尽或受完备性检查的互斥组里"
-            if not situations:
-                findings += 1
-                line += '；没有列出原文没定义的情况（全部有定义就写 :open "无"）'
-            elif undefined:
-                findings += sum(1 for _, answer in undefined if not answer)
-                line += "；原文没定义：" + "；".join(text + ("（已答复）" if answer else "") for text, answer in undefined)
-            else:
-                line += "；原文定义了全部情况"
-        print(line)
 
     # Readings: Point__<n><L>.
     points: dict[str, dict[str, str]] = {}
@@ -309,51 +227,26 @@ def main(argv: list[str] | None = None) -> int:
     ids = sorted(set(ambiguity_of.values()), key=int)
     letters = [sorted({letter for point, readings in points.items() if ambiguity_of[point] == i for letter in readings}) for i in ids]
     for point, readings in points.items():
-        gap = set(letters[ids.index(ambiguity_of[point])]) - set(readings)
-        if gap:
-            print(f"[读法] {local(point)} 缺少读法 {'、'.join(sorted(gap))}：同一处歧义的每个歧义点都要有全部读法")
+        lacking = set(letters[ids.index(ambiguity_of[point])]) - set(readings)
+        if lacking:
+            print(f"[读法] {local(point)} 缺少读法 {'、'.join(sorted(lacking))}：同一处歧义的每个歧义点都要有全部读法")
             return 2
-    if ids:
-        print("[读法] " + "；".join(f"歧义 {i}：{'、'.join(ls)}" for i, ls in zip(ids, letters)) + f"；共 {len(list(itertools.product(*letters)))} 种组合")
-
-    # Only classes whose meaning depends on a reading are copied per combination; facts stay shared,
-    # so the copies describe the same file and can be compared.
-    dependent = set(points)
-    changed = True
-    while changed:
-        changed = False
-        for node in base:
-            if node.head == "EquivalentClasses" and isinstance(node.args[-2], str) and mentions(node.args[-1], dependent):
-                grown = {node.args[-2]}
-            elif node.head == "SubClassOf":
-                sub, sup = node.args[-2], node.args[-1]
-                grown = {sub} if isinstance(sub, str) and mentions(sup, dependent) else set()
-                grown |= {sup} if isinstance(sup, str) and mentions(sub, dependent) else set()
-            else:
-                continue
-            if grown - dependent:
-                dependent |= grown
-                changed = True
+    found.ids, found.offered = ids, letters
 
     # Answers written back: `:chosen "A"` (and the user's words in `:answered`) on any point of an ambiguity.
     plain = {name: dict(annotation_values(base, name)) for name in ("issue", "question", "label", "says", "chosen", "answered")}
-    found.offered = [list(ls) for ls in letters]
     for point in points:
         position = ids.index(ambiguity_of[point])
         chosen = plain["chosen"].get(point)
         if chosen is None:
             continue
-        if chosen not in found.offered[position]:
+        if chosen not in letters[position]:
             print(f"[答复] {local(point)} 选了不存在的读法 {chosen}")
             return 2
-        letters[position] = [chosen]
+        found.chosen[position] = chosen
         found.answered[position] = plain["answered"].get(point, MISSING)
-    if found.answered:
-        print("[答复] " + "；".join(f"歧义 {ids[p]} 取 {letters[p][0]}" for p in sorted(found.answered)))
     found.rewrites = [text for _, text in annotation_values(ontology.annotations, "rewrite")]
-
-    combos = list(itertools.product(*letters))
-    found.ids, found.letters, found.combos = ids, letters, combos
+    found.undefined = opens(base)
     for point, readings in points.items():
         position = ids.index(ambiguity_of[point])
         for name, target in (("issue", found.issue), ("question", found.question)):
@@ -372,107 +265,74 @@ def main(argv: list[str] | None = None) -> int:
     for position, i in enumerate(ids):
         if i in examples and examples[i] in plain["says"]:
             found.example[position] = plain["says"][examples[i]]
+    under: dict[str, dict[int, str]] = {}
+    for subject, text in annotation_values(base, "under"):
+        match = UNDER.match(text.strip())
+        if not match or match.group(1) not in ids or match.group(2) not in letters[ids.index(match.group(1))]:
+            print(f'[约定] {local(subject or "")} 的 :under「{text}」不是已写出的理解（如 "2B"）')
+            return 2
+        under.setdefault(subject, {})[ids.index(match.group(1))] = match.group(2)
 
-    # What the report needs from the writer: every ambiguity, reading, example and described situation in words.
-    texts: list[tuple[str, str, str, str | None]] = []  # (where, annotation, kind, text)
-    for position, i in enumerate(ids):
-        where = f"歧义 {i}（{'、'.join(local(p) for p in points if ambiguity_of[p] == i)}）"
-        texts += [(where, ":issue", "title", found.issue.get(position)), (where, ":question", "question", found.question.get(position))]
-        if position not in found.answered:
-            texts.append((f"{where} 的例子 Example__{i}", ":says", "sentence", found.example.get(position)))
-        for letter in found.offered[position]:
-            texts += [(f"{where} 读法 {letter}", "rdfs:label", "label", found.label.get((position, letter))), (f"{where} 读法 {letter}", ":says", "sentence", found.says.get((position, letter)))]
-    for k, iri in sorted({**{f"Gap__{k}": v for k, v in gaps.items()}, **{f"Conflict__{k}": v for k, v in conflicts.items()}}.items()):
-        texts.append((k, ":says", "phrase", plain["says"].get(iri)))
-    for _, quote, _, situations, says in limits(base):
-        texts += [(f"「{quote}」", ":open", "question", text) for text, _ in situations if text != "无"]
-        if says:
-            texts.append((f"「{quote}」", ":says", "sentence", says))
-    texts += [("条款", ":rewrite", "rewrite", text) for text in found.rewrites]
+    # Each context fixes some ambiguities to one reading and leaves the rest undecided: the base context fixes
+    # only answered ones, an ambiguity's own contexts add one of its readings, a gap or conflict adds what it assumes.
+    contexts: list[dict[int, str]] = [dict(found.chosen)]
 
-    names: dict[tuple, dict[str, str]] = {}
-    shared: list[Node] = [axiom for axiom in base if not mentions(axiom, dependent)]
-    copies: dict[tuple, list[Node]] = {}
-    for combo in combos:
-        suffix = "__k" + "".join(i + letter for i, letter in zip(ids, combo)) if ids else ""
-        mapping = {iri: f"{iri[:-1]}{suffix}>" if iri in dependent else iri for iri in classes}
-        for point, readings in points.items():
-            mapping[point] = mapping[readings[combo[ids.index(ambiguity_of[point])]]]
-        names[combo] = mapping
-        copies[combo] = [rename(axiom, mapping) for axiom in base if mentions(axiom, dependent)]
+    def context(assign: dict[int, str]) -> int:
+        full = {**found.chosen, **assign}
+        if full not in contexts:
+            contexts.append(full)
+        return contexts.index(full)
 
-    def region(combo: tuple, verdict: str) -> Node:
-        """The judged things that get `verdict` under this combination, from the clause's own conditions."""
-        passes, fails = names[combo][pass_when], names[combo][fail_when]
-        parts = {
-            "PASS": [passes, Node("ObjectComplementOf", [fails])],
-            "NG": [fails, Node("ObjectComplementOf", [passes])],
-            "NONE": [Node("ObjectComplementOf", [passes]), Node("ObjectComplementOf", [fails])],
-            "BOTH": [passes, fails],
-        }[verdict]
-        return Node("ObjectIntersectionOf", [names[combo][judged], *parts])
+    open_positions = [position for position in range(len(ids)) if position not in found.chosen]
+    own = {(position, letter): context({position: letter}) for position in open_positions for letter in letters[position]}
+    on_example = {(position, letter): context({**under.get(examples[ids[position]], {}), position: letter}) for position in open_positions if ids[position] in examples for letter in letters[position]}
+    for position in open_positions:
+        if ids[position] in examples:
+            found.example_under[position] = sorted((p, letter) for p, letter in under.get(examples[ids[position]], {}).items() if p != position)
+    situated = {iri: context(under.get(iri, {})) for iri in [*gaps.values(), *conflicts.values()]}
 
-    # All copies in one ontology make every tableau node carry every copy's axioms (minutes).
-    # So each comparison gets its own small ontology: a pair of combinations differing in one reading.
-    groups: dict[tuple, list[Node]] = {}
-    for left, right in itertools.combinations(combos, 2):
-        if sum(a != b for a, b in zip(left, right)) == 1:
-            groups[(left, right)] = []
-    for combo in combos:
-        if not any(combo in group for group in groups):
-            groups[(combo,)] = []
-    home = {combo: next(group for group in groups if combo in group) for combo in combos}
-    probes: dict[str, tuple] = {}  # generated class -> what it asks
+    probes: dict[str, tuple] = {}
+    extra: list[list[Node]] = [[] for _ in contexts]
 
-    def ask(group: tuple, meaning: tuple, expression: Node) -> None:
+    def ask(index: int, meaning: tuple, expression: Node | str) -> None:
         probe = f"<{GEN}Q{len(probes) + 1}>"
         probes[probe] = meaning
-        groups[group] += [Node("Declaration", [Node("Class", [probe])]), Node("EquivalentClasses", [probe, expression])]
+        extra[index] += [Node("Declaration", [Node("Class", [probe])]), Node("EquivalentClasses", [probe, expression])]
 
-    def union(items: list[str]) -> Node | str:
-        return items[0] if len(items) == 1 else Node("ObjectUnionOf", items)
+    def judge(index: int, subject: str) -> None:
+        ask(index, ("subject", index, subject), subject)
+        for test, expression in zip(TESTS, (Node("ObjectComplementOf", [pass_when]), Node("ObjectComplementOf", [fail_when]), pass_when, fail_when)):
+            ask(index, (test, index, subject), Node("ObjectIntersectionOf", [subject, expression]))
 
-    for combo in combos:
-        group, mapping = home[combo], names[combo]
-        passes, fails = mapping[pass_when], mapping[fail_when]
-        ask(group, ("region", combo, "NONE"), region(combo, "NONE"))
-        ask(group, ("region", combo, "BOTH"), region(combo, "BOTH"))
-        for kind, described, verdict in (("gap", gaps, "NONE"), ("conflict", conflicts, "BOTH")):
-            if described:
-                rest = [Node("ObjectComplementOf", [mapping[iri]]) for iri in described.values()]
-                ask(group, ("uncovered", combo, kind), Node("ObjectIntersectionOf", [region(combo, verdict), *rest]))
-            for number, iri in described.items():
-                # A gap has no verdict at all; a conflict has both. Either must also be possible.
-                wrong = union([passes, fails]) if kind == "gap" else Node("ObjectComplementOf", [Node("ObjectIntersectionOf", [passes, fails])])
-                ask(group, ("possible", combo, kind, number), Node("ObjectIntersectionOf", [mapping[judged], mapping[iri]]))
-                ask(group, ("misdescribed", combo, kind, number), Node("ObjectIntersectionOf", [mapping[iri], wrong]))
-        for subject in [*cases, *examples.values()]:
-            thing = mapping[subject]
-            ask(group, ("subject", combo, subject), thing)
-            for test, expression in (("pass", Node("ObjectComplementOf", [passes])), ("fail", Node("ObjectComplementOf", [fails])), ("nopass", passes), ("nofail", fails)):
-                ask(group, ("entail", combo, subject, test), Node("ObjectIntersectionOf", [thing, expression]))
-    # "Every X is ..." holds when there is no X at all. Ask whether the clause would then pass, for each such
-    # condition in the pass condition, unless the writer quoted the clause saying so (:passesWhenNone).
-    pass_definition = next((node.args[-1] for node in base if node.head == "EquivalentClasses" and node.args[-2] == pass_when and not isinstance(node.args[-1], str)), None)
-    clause_text = re.sub(r"\s+", "", found.clauses[0].text) if found.clauses else ""
-    allowed_empty = {subject for subject, text in annotation_values(base, "passesWhenNone") if re.sub(r"\s+", "", text) and re.sub(r"\s+", "", text) in clause_text}
-    universals = [(prop, expression) for prop, expression in (with_none(pass_definition) if pass_definition is not None else []) if prop not in allowed_empty]
-    for combo in combos:
-        mapping = names[combo]
-        for number, (prop, expression) in enumerate(universals):
-            ask(home[combo], ("empty", combo, number), Node("ObjectIntersectionOf", [mapping[judged], rename(expression, mapping), Node("ObjectComplementOf", [mapping[fail_when]])]))
-    for group in [group for group in groups if len(group) == 2]:
-        position = next(i for i in range(len(ids)) if group[0][i] != group[1][i])
-        left, right = group
-        for first, second in itertools.permutations(VERDICTS, 2):
-            ask(group, ("diverge", position, left, right, first, second), Node("ObjectIntersectionOf", [region(left, first), region(right, second)]))
+    for (position, letter), index in on_example.items():
+        judge(index, examples[ids[position]])
+    for iri, index in situated.items():
+        judge(index, iri)
+    for index in sorted({0, *own.values()}):
+        for subject in cases:
+            judge(index, subject)
+    # A hint only: whether the clause, with every ambiguity still open, leaves room for no verdict or both.
+    ask(0, ("region", "NONE"), Node("ObjectIntersectionOf", [judged, Node("ObjectComplementOf", [pass_when]), Node("ObjectComplementOf", [fail_when])]))
+    ask(0, ("region", "BOTH"), Node("ObjectIntersectionOf", [judged, pass_when, fail_when]))
 
     targets = []
-    for number, (group, extra) in enumerate(groups.items(), 1):
-        target = out / (f"expanded-{number}.ofn" if len(groups) > 1 else "expanded.ofn")
-        write(target, "<https://ppap.example/rules/expanded>", shared + [axiom for combo in group for axiom in copies[combo]] + extra)
+    for index, assign in enumerate(contexts):
+        # A decided point is its reading. An undecided one lies between what all its readings share and what any
+        # of them allows, so whatever follows here follows under every reading (sound, not complete).
+        fixed = []
+        for point, readings in points.items():
+            position = ids.index(ambiguity_of[point])
+            if position in assign:
+                fixed.append(Node("EquivalentClasses", [point, readings[assign[position]]]))
+            elif len(readings) > 1:
+                fixed += [
+                    Node("SubClassOf", [Node("ObjectIntersectionOf", list(readings.values())), point]),
+                    Node("SubClassOf", [point, Node("ObjectUnionOf", list(readings.values()))]),
+                ]
+        target = out / f"context-{index + 1}.ofn"
+        write(target, "<https://ppap.example/rules/context>", base + fixed + extra[index])
         targets.append(target)
-    for stale in out.glob("expanded*.ofn"):
+    for stale in out.glob("*.ofn"):
         if stale not in targets:
             stale.unlink()
 
@@ -486,182 +346,103 @@ def main(argv: list[str] | None = None) -> int:
         # HermiT only reasons over OWL 2 DL; results past this point would not mean anything.
         print("[超出 OWL 2 DL] 多半是用了没声明的名字（每个类、属性、注解属性都要 Declaration），或用了 DL 不允许的写法：")
         print(profile_report.read_text(encoding="utf-8").strip())
-        return 1
-    print("[OWL 2 DL] 符合")
+        return 2
 
-    # Only list the unsatisfiable classes; explaining every expected-unsatisfiable generated probe takes minutes.
     def reason(target: Path) -> tuple[Path, subprocess.CompletedProcess]:
-        return target, robot("reason", "--reasoner", "hermit", "--input", str(target), "--dump-unsatisfiable", str(target.with_suffix(".unsat.ofn")), "-vv")
+        return target, robot("reason", "--reasoner", "hermit", "--input", str(target), "--dump-unsatisfiable", str(target.with_suffix(".unsat")), "-vv")
 
     unsat: set[str] = set()
     with ThreadPoolExecutor(max_workers=max(1, (os.cpu_count() or 2) // 2)) as pool:
         for target, reasoned in pool.map(reason, targets):
             log = reasoned.stdout + reasoned.stderr
             if "inconsistent" in log.lower():
-                print(f"[整体矛盾] {target.name} 不一致，无法推理：词汇或真实文件的描述自相矛盾（这是写法问题，不是条款的冲突）。解释用：")
+                print(f"[整体矛盾] {target.name} 不一致，无法推理：词汇或文件的描述自相矛盾（写法问题，不是条款的冲突）。解释用：")
                 print(f"{ROBOT} explain --reasoner hermit --input {target} -M inconsistency --explanation <输出.md>")
-                return 1
+                return 2
             listed = {f"<{iri}>" for iri in UNSAT.findall(log)}
             counted = UNSAT_COUNT.search(log)
             if (reasoned.returncode and not counted) or (counted and int(counted.group(1)) != len(listed)):
                 print(f"推理失败（{target.name}）：\n" + said(reasoned))
                 return 2
             unsat |= listed
-    explain = f"{ROBOT} explain --reasoner hermit --input {targets[0]} -M entailment --axiom '<类 IRI> SubClassOf owl:Nothing' --explanation <输出.md>"
     possible = {meaning for probe, meaning in probes.items() if probe not in unsat}
 
-    def where(combo_set: set[tuple]) -> str:
-        if not ids:
-            return ""
-        return "所有组合" if len(combo_set) == len(combos) else show(compress(combo_set, letters), ids, letters)
+    def outcome(index: int, subject: str) -> str:
+        return verdict({test: (test, index, subject) not in possible for test in TESTS}, ("subject", index, subject) in possible)
 
-    # Vocabulary that can never apply is a writing error: the clause's own conflicts show up as "both verdicts" instead.
+    # Vocabulary that can never apply is a writing error: the clause's own conflicts show up as "both verdicts".
     readings = {reading for group in points.values() for reading in group.values()}
-    vocabulary = classes - dependent - readings - set(points) - {pass_when, fail_when} - set(outside) - set(cases) - {*examples.values(), *gaps.values(), *conflicts.values()}
-    empty = sorted(iri for iri in vocabulary if iri in unsat)
-    if judged in unsat or any(names[combo][judged] in unsat for combo in combos):
-        empty.append(judged)
-    for iri in empty:
-        findings += 1
+    vocabulary = classes - readings - set(points) - {pass_when, fail_when} - set(cases) - {*examples.values(), *gaps.values(), *conflicts.values()}
+    explain = f"{ROBOT} explain --reasoner hermit --input {targets[0]} -M entailment --axiom '<类 IRI> SubClassOf owl:Nothing' --explanation <输出.md>"
+    for iri in sorted(vocabulary & unsat):
+        found.incomplete.append(f"{local(iri)} 写得自相矛盾")
         print(f"[写法错误] {local(iri)} 不可能有成员：词汇写得自相矛盾。用 {explain} 查清后改写")
-    if empty:
-        found.incomplete.append(f"有 {len(empty)} 处分析写得自相矛盾，还没改好")
 
-    for members in unquoted:
-        findings += 1
-        print(
-            f"[完备性] {'、'.join(local(m) for m in members)} 是自己分的类，原文没有列举：写成 DisjointUnion 并加一类“其他”，"
-            "没结论的情况会作为缺口报出；原文自己列举了这些取值，就在 DisjointClasses 上用 :quote 引用那段列举"
-        )
-    if unquoted:
-        found.incomplete.append(f"有 {len(unquoted)} 组取值是自己分的，还没写成穷尽")
-
-    for probe, (parent, members) in outside.items():
-        group = "、".join(local(member) for member in members)
-        if probe not in unsat:
-            findings += 1
-            labels = "、".join(f"“{plain['label'].get(member, MISSING)}”" for member in members)
-            whole = plain["label"].get(parent, MISSING)
-            found.groups.append((f"{whole}有哪几种", f"{whole}除了{labels}，还可能是别的样子吗？是的话怎么判？"))
-            texts += [(local(member), "rdfs:label", "phrase", plain["label"].get(member)) for member in [parent, *members]]
-            print(f"[完备性] {local(parent)} 中可能有不属于 {group} 任何一类的情况：原文是否穷尽？穷尽就写成 DisjointUnion，否则记成原文没定义的情况")
-        else:
-            print(f"[完备性] {group} 穷尽 {local(parent)}")
-
-    for number, (prop, _) in enumerate(universals):
-        hit = {combo for combo in combos if ("empty", combo, number) in possible}
-        if hit:
-            findings += 1
-            found.incomplete.append("通过条件里有“每个……都……”，一个都没有时也会判通过，还没确认原文是不是这个意思")
-            scope = f"（{where(hit)}）" if ids else ""
-            print(
-                f"[一个都没有也通过] 通过条件对 {local(prop)} 用了“每个……都……”，一个都没有时也判通过{scope}。"
-                f"原文没这样说，就在通过条件里写明至少要有一个（ObjectSomeValuesFrom）；原文确实这样说，"
-                f'就写 AnnotationAssertion(:passesWhenNone :{local(prop)} "<原文依据，逐字>")'
-            )
-
-    # Gaps and conflicts: found by the script in every combination, then described by the writer.
-    for kind, described, verdict, title in (("gap", gaps, "NONE", "原文没有给出结论"), ("conflict", conflicts, "BOTH", "原文同时给出通过和不通过")):
-        present = {combo for combo in combos if ("region", combo, verdict) in possible}
-        if present:
-            print(f"[{title}] 存在" + (f"（{where(present)}）" if ids else ""))
-        uncovered = {combo for combo in present if not described or ("uncovered", combo, kind) in possible}
-        if uncovered:
-            findings += 1
-            found.incomplete.append(f"还有{title}的情况没有写出来")
-            scope = f"（{where(uncovered)}）" if ids else ""
-            print(f"[{title}] 还有情况没写出来{scope}：补写 {'Gap' if kind == 'gap' else 'Conflict'}__<k>，直到覆盖全部")
-        for number, iri in sorted(described.items()):
-            holds = {combo for combo in combos if ("possible", combo, kind, number) in possible and ("misdescribed", combo, kind, number) not in possible}
-            label = f"{'Gap' if kind == 'gap' else 'Conflict'}__{number}"
-            if not holds:
-                findings += 1
-                found.incomplete.append(f"有一处写出的“{title}”的情况与条款对不上")
-                print(f"[情况写错] {label}「{plain['says'].get(iri, '')}」在任何组合下都不是{title}的情况")
-                continue
-            findings += 1
-            (found.gaps if kind == "gap" else found.conflicts).append((plain["says"].get(iri, MISSING), holds))
-            print(f"[{title}] {label}：成立" + (f"（{where(holds)}）" if ids else ""))
-
-    def verdicts_of(subject: str) -> dict[tuple, str]:
-        result = {}
-        for combo in combos:
-            if ("subject", combo, subject) not in possible:
-                result[combo] = "IMPOSSIBLE"
-                continue
-            holds = {test: ("entail", combo, subject, test) not in possible for test in ("pass", "fail", "nopass", "nofail")}
-            if holds["pass"] and holds["fail"]:
-                result[combo] = "BOTH"
-            elif holds["pass"] and holds["nofail"]:
-                result[combo] = "PASS"
-            elif holds["fail"] and holds["nopass"]:
-                result[combo] = "NG"
-            elif holds["nopass"] and holds["nofail"]:
-                result[combo] = "NONE"
-            else:
-                result[combo] = "OPEN"
-        return result
-
+    if ids:
+        print("[歧义] " + "；".join(f"{i}：{'、'.join(ls)}" + ("（已答复）" if p in found.chosen else "") for p, (i, ls) in enumerate(zip(ids, letters))))
     for position, i in enumerate(ids):
-        kinds: dict[tuple, set] = {}
-        for meaning in possible:
-            if meaning[0] == "diverge" and meaning[1] == position:
-                _, _, left, right, first, second = meaning
-                kinds.setdefault((left[position], right[position], first, second), set()).add(left)
-                kinds.setdefault((right[position], left[position], second, first), set()).add(right)
-        found.divergences[position] = kinds
-        if position in found.answered:
+        if position in found.chosen:
             continue
-        if kinds:
-            findings += 1
-            print(f"[歧义 {i}] 几种读法会让同一份文件结论不同：" + "；".join(f"{a}{first}/{b}{second}（{where(c)}）" for (a, b, first, second), c in sorted(kinds.items()) if a < b))
-        else:
-            findings += 1
-            found.incomplete.append(f"第 {position + 1} 处歧义的几种理解对任何文件结论都相同，不是会改变结论的歧义")
-            print(f"[歧义 {i}] 几种读法对任何文件结论都相同：不是会改变结论的歧义，改成原文没定义的情况或删掉")
         if i not in examples:
-            findings += 1
-            found.incomplete.append(f"第 {position + 1} 处歧义还没有例子")
-            print(f"[例子缺项] 歧义 {i}：缺 Example__{i}，写一个让几种理解结论不同的具体文件")
+            found.incomplete.append(f"第 {position + 1} 处还没有例子")
+            print(f"[例子缺项] 歧义 {i}：写 Example__{i}，一个在几种理解下结论不同的具体文件")
             continue
-        example = verdicts_of(examples[i])
-        if any(value in ("OPEN", "IMPOSSIBLE") for value in example.values()):
-            findings += 1
-            found.incomplete.append(f"第 {position + 1} 处歧义的例子事实没写全")
-            print(f"[事实没写全] Example__{i}：有的组合下推不出结论或例子不可能存在，把例子的事实写封闭")
-            continue
-        found.example_verdicts[position] = example
-        flips = any(example[combo] != example[combo[:position] + (other,) + combo[position + 1 :]] for combo in combos for other in letters[position])
-        if not flips:
-            findings += 1
-            found.incomplete.append(f"第 {position + 1} 处歧义的例子在几种理解下结论相同")
-            print(f"[例子不分歧] Example__{i} 在各读法下结论相同：换一个例子，或查读法是否接到了通过、不通过的条件上")
+        by_letter = {letter: outcome(on_example[(position, letter)], examples[i]) for letter in letters[position]}
+        shown = "、".join(f"{letter} {v}" for letter, v in by_letter.items())
+        if any(v in ("OPEN", "IMPOSSIBLE") for v in by_letter.values()):
+            found.incomplete.append(f"第 {position + 1} 处的例子推不出结论")
+            print(f"[例子没写全] Example__{i}（{shown}）：把事实写封闭；结论还取决于别的歧义时，换一个只受这一处影响的例子，或用 :under 写明假定的理解")
+        elif len(set(by_letter.values())) == 1:
+            found.incomplete.append(f"第 {position + 1} 处的例子在几种理解下结论相同")
+            print(f"[例子不分歧] Example__{i}（{shown}）：换一个例子；换不出就不是会改变结论的歧义，改成 :open 问题或删掉")
+        else:
+            found.example_verdicts[position] = by_letter
+            print(f"[歧义 {i}] 例子确认：{shown}")
+
+    for kind, described, want, title in (("Gap", gaps, "NONE", "原文没有给出结论"), ("Conflict", conflicts, "BOTH", "原文同时给出通过和不通过")):
+        for number, iri in sorted(described.items(), key=lambda item: int(item[0])):
+            got = outcome(situated[iri], iri)
+            if got != want:
+                found.incomplete.append(f"写出的“{title}”的例子 {kind}__{number} 不成立")
+                print(f"[情况写错] {kind}__{number}：按条款是 {got}，不是{title}。OPEN 表示事实没写全或还取决于别的歧义（用 :under 写明）")
+                continue
+            (found.gaps if kind == "Gap" else found.conflicts).append((plain["says"].get(iri, MISSING), sorted(under.get(iri, {}).items())))
+            print(f"[{title}] {kind}__{number} 确认")
+        if ("region", want) in possible and not described:
+            print(f"[提示] 各处都不定时，可能有{title}的文件：想一想是哪种文件；确有就写成 {kind}__<k>，没有就不用管")
 
     for subject, name in cases.items():
-        by_combo = verdicts_of(subject)
-        if any(value in ("OPEN", "IMPOSSIBLE") for value in by_combo.values()):
-            findings += 1
-            found.incomplete.append(f"`{name}` 的事实没写全")
-            print(f"[事实没写全] {name}：有的组合下推不出结论或描述不可能成立，把文件的事实写封闭")
-        found.files[name] = by_combo
-        print(f"[文件] {name}：" + "；".join(f"{verdict} {where({c for c, v in by_combo.items() if v == verdict})}".strip() for verdict in sorted(set(by_combo.values()))))
+        whole = outcome(0, subject)
+        per = {position: {letter: outcome(own[(position, letter)], subject) for letter in letters[position]} for position in range(len(ids)) if position not in found.chosen}
+        found.files[name] = (whole, per)
+        if whole == "IMPOSSIBLE":
+            found.incomplete.append(f"`{name}` 的描述自相矛盾")
+        print(f"[文件] {name}：{whole}" + "".join(f"；歧义 {ids[p]}：" + "、".join(f"{letter} {v}" for letter, v in vs.items()) for p, vs in per.items() if whole == "OPEN"))
 
-    # One issue is written once: either as an ambiguity with readings, or as an undefined situation (:open).
-    ambiguity_quotes = {re.sub(r"\s+", "", text) for subject, text in annotation_values(base, "quote") if subject in points or subject in readings}
-    for quote, _ in found.undefined:
-        if re.sub(r"\s+", "", quote) in ambiguity_quotes:
-            findings += 1
-            print(f"[重复] 「{quote}」既写成了歧义，又写了原文没说的情况；同一处问题只写一次")
-    asked: dict[str, str] = {}
+    # The plain texts the report is made of.
+    texts: list[tuple[str, str, str, str | None]] = []  # (where, annotation, kind, text)
+    for position, i in enumerate(ids):
+        where = f"歧义 {i}（{'、'.join(local(p) for p in points if ambiguity_of[p] == i)}）"
+        texts += [(where, ":issue", "title", found.issue.get(position)), (where, ":question", "question", found.question.get(position))]
+        if position not in found.chosen:
+            texts.append((f"Example__{i}", ":says", "sentence", found.example.get(position)))
+        for letter in letters[position]:
+            texts += [(f"{where} 读法 {letter}", "rdfs:label", "label", found.label.get((position, letter))), (f"{where} 读法 {letter}", ":says", "sentence", found.says.get((position, letter)))]
+    for kind, described in (("Gap", gaps), ("Conflict", conflicts)):
+        texts += [(f"{kind}__{k}", ":says", "phrase", plain["says"].get(iri)) for k, iri in described.items()]
+    texts += [(f"「{quote}」", ":open", "question", question) for quote, pairs in found.undefined for question, _ in pairs]
+    texts += [("条款", ":rewrite", "rewrite", text) for text in found.rewrites]
+
+    asked: set[str] = set()
     for question in [found.question.get(position) for position in range(len(ids))] + [q for _, pairs in found.undefined for q, _ in pairs]:
         key = re.sub(r"[\s，。？?、“”「」]", "", question or "")
         if key and key in asked:
-            findings += 1
+            found.incomplete.append(f"问题「{question}」问了两次")
             print(f"[重复] 问题「{question}」问了两次")
-        asked.setdefault(key, question or "")
+        asked.add(key)
 
     allowed = {word.casefold() for clause in found.clauses for word in ASCII_WORD.findall(clause.text)}
-    allowed |= {word.casefold() for name in found.files for word in ASCII_WORD.findall(name)}
+    allowed |= {word.casefold() for name in cases.values() for word in ASCII_WORD.findall(name)}
     wording = 0
     for place, annotation, kind, value in texts:
         if value is None:
@@ -671,17 +452,16 @@ def main(argv: list[str] | None = None) -> int:
         for problem in lint(value, kind, allowed):
             wording += 1
             print(f"[白话质量] {place} {annotation}「{value}」：{problem}")
-    if found.answered and any(answer == MISSING for answer in found.answered.values()):
+    if any(answer == MISSING for answer in found.answered.values()):
         wording += 1
         print("[白话缺项] 有 :chosen 的歧义没写 :answered（用户的原话）")
     if wording:
         found.incomplete.append(f"有 {wording} 处白话说明缺项或不合格")
 
-    text = render(found)
-    report_path.write_text(text, encoding="utf-8")
-    print(f"报告：{report_path}" + ("（检查未完成，报告顶部已标出）" if found.incomplete or found.unaligned else ""))
-    print(f"完整推理文件：{out}")
-    return 1 if found.incomplete or found.unaligned else 0
+    report_path.write_text(render(found), encoding="utf-8")
+    print(f"报告：{report_path}" + ("（有发现还没确认，报告顶部已标出）" if found.incomplete else ""))
+    print(f"推理文件：{out}")
+    return 1 if found.incomplete else 0
 
 
 if __name__ == "__main__":
