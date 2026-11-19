@@ -2,10 +2,8 @@ import type {TemplateLibrary, TemplateLibraryAdapter} from '../src/audit/templat
 
 // The same names, types and type codes as the product manifest (`product.template_library`).
 const tpl = (id: string, name: string, document_type: string, type_code: string | null, extension = '.xlsx') => ({id, name, document_type, extension, filename: name + extension, byte_size: 24_576, type_code})
-const standard = Array.from({length: 17}, (_, index) => `T${String(index + 1).padStart(2, '0')}`)
-const uaesTypes = ['E01', 'E02', 'E03', 'E04', 'E05', 'E06', 'E07', 'E08', 'E09', 'E10', 'E11', 'T04', 'T07', 'T08', 'T09', 'T10', 'T11', 'T12', 'T17']
 const library: TemplateLibrary = {customers: [
-  {id: 'li', name: '理想汽车', standard_type_codes: standard, templates: [
+  {id: 'li', full_name: '理想汽车', short_name: '理想', coverage: {version: 'preview', effective_from: '2026-11-18', total: 17, covered: 16}, templates: [
     tpl('li-design-verification-plan', '零部件设计验证计划', '零部件设计验证计划和报告', 'T02'),
     tpl('li-material-supplier-list', '材料、产品及分供方清单', '材料产品及分供清单', 'T04'),
     tpl('li-gauge-acceptance', '检具认可报告', '检具验收报告', 'T05'),
@@ -23,13 +21,13 @@ const library: TemplateLibrary = {customers: [
     tpl('li-annual-test', '零部件年度试验要求', '零部件年度试验要求', 'T16'),
     tpl('li-psw', '零件提交保证书（PSW签署）', '零件提交保证书', 'T17'),
     tpl('li-dimension-report', '尺寸检验报告', '尺寸检验报告', 'T01')]},
-  {id: 'nio', name: '蔚来汽车', standard_type_codes: standard, templates: [
+  {id: 'nio', full_name: '蔚来汽车', short_name: '蔚来', coverage: {version: 'preview', effective_from: '2026-11-18', total: 5, covered: 5}, templates: [
     tpl('nio-measurement-report', '尺寸测量报告', '测量报告', 'T01', '.xlsm'),
     tpl('nio-process-flow', '过程流程图', '过程流程图', 'T09'),
     tpl('nio-pfmea', '潜在过程失效模式及后果分析', '潜在过程失效模式及后果分析（PFMEA）', 'T10'),
     tpl('nio-control-plan', '控制计划', '控制计划', 'T11'),
     tpl('nio-special-characteristics', '特殊特性清单', '特殊特性清单', 'T12')]},
-  {id: 'uaes', name: '联合汽车电子（UAES）', standard_type_codes: uaesTypes, templates: [
+  {id: 'uaes', full_name: '联合汽车电子有限公司', short_name: 'UAES', coverage: {version: 'preview', effective_from: '2026-11-18', total: 19, covered: 6}, templates: [
     tpl('uaes-psw', '零件提交保证书（F-PU-206）', '零件提交保证书（PSW）', 'T17', '.xls'),
     tpl('uaes-pgqp', '采购件质量计划 PGQP1（F-PU-127）', '采购件质量计划', 'E12'),
     tpl('uaes-measure-comparison', '测量比较报告（F-PU-166）', '测量比较报告', 'E02', '.xls'),

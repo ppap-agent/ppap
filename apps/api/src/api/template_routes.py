@@ -74,7 +74,7 @@ def register_template_routes(app, store, session_of, http, settings):
         return StreamingResponse(
             library.zip_chunks(root, customer),
             media_type="application/zip",
-            headers={**READ_HEADERS, "Content-Disposition": attachment_content_disposition(customer.name + "模板.zip")},
+            headers={**READ_HEADERS, "Content-Disposition": attachment_content_disposition(library.registered(customer).full_name + "模板.zip")},
         )
 
     @app.post("/template-library/{customer_id}/feishu", response_model=wc.TemplateSaveResponse, openapi_extra=wc.openapi_body(wc.TemplateSaveRequest))

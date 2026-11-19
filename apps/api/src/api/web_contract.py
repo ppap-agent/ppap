@@ -1438,9 +1438,18 @@ class AuditArchivePart(TypedDict):
 
 
 class AuditArchiveCustomer(TypedDict):
-    """One customer's documents as the same vehicle/part tree; filter by `customer` plus a category id."""
+    """One customer's documents as the same vehicle/part tree; filter by `customer` = `id` plus a category id.
 
-    label: str
+    A registered customer is one node whichever registered name its documents recorded (`id` is its customer id).
+    A recorded value matching no registered customer is its own node, `registered` false, shown as recorded.
+    `values` are the recorded customer values in this node.
+    """
+
+    id: str
+    registered: bool
+    full_name: str
+    short_name: str
+    values: list[str]
     count: int
     categories: list[AuditArchiveCategory]
 
@@ -1595,9 +1604,31 @@ class AuditUsageUnattributed(TypedDict):
     reason: str | None
 
 
+class CustomerTypeEntry(TypedDict):
+    """One document type of a customer's type set M: its PPAP code and the type name rules use."""
+
+    code: str
+    rule_type: str
+
+
+class CustomerCoverage(TypedDict):
+    """M and its two independent numerators: types with a controlled template, and types with a current rule (each type once)."""
+
+    version: str
+    effective_from: str
+    types: list[CustomerTypeEntry]
+    template_types: list[str]
+    rule_types: list[str]
+
+
 class AuditCustomer(TypedDict):
+    """A registered customer. `name` is the name rules and the customer preference use; null coverage means M is not configured."""
+
     customer_id: str
     name: str
+    full_name: str
+    short_name: str
+    coverage: CustomerCoverage | None
 
 
 class AuditCustomerDefault(TypedDict):
@@ -1612,9 +1643,10 @@ class AuditCustomerDefaultRequest(TypedDict):
 
 
 class AuditCustomerCatalog(TypedDict):
-    """Customers with current published rules in the requesting tenant."""
+    """Registered customers, and customer names on current rules that match no registered customer, exactly as recorded."""
 
     customers: list[AuditCustomer]
+    unregistered: list[str]
 
 
 class AuditSupportInfo(TypedDict):
@@ -1640,12 +1672,22 @@ class LibraryTemplate(TypedDict):
     type_code: str | None
 
 
+class TemplateCoverage(TypedDict):
+    """Template coverage N_t/M against the customer's versioned type set M."""
+
+    version: str
+    effective_from: str
+    total: int
+    covered: int
+
+
 class LibraryCustomer(TypedDict):
     id: str
-    name: str
+    full_name: str
+    short_name: str
     templates: list[LibraryTemplate]
-    # The document types this customer's built-in rules cover; its template coverage counts against these.
-    standard_type_codes: list[str]
+    # Null when the customer's type set M is not configured; no ratio is shown then.
+    coverage: TemplateCoverage | None
 
 
 class TemplateLibrary(TypedDict):

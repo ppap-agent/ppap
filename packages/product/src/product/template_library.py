@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypedDict
 
+from product import customers
 from product.feishu_personal_upload import PersonalDriveClient, UploadRejected, UploadUnknown
 from product.settings import Settings
 
@@ -41,15 +42,14 @@ class Template:
 
 @dataclass(frozen=True)
 class Customer:
+    # A registered customer id; its names and type set come from the customer register.
     id: str
-    name: str
     templates: tuple[Template, ...]
 
 
 CUSTOMERS: tuple[Customer, ...] = (
     Customer(
         "li",
-        "理想汽车",
         (
             Template("li-design-verification-plan", "APQP-零部件设计验证计划.xlsx", "零部件设计验证计划", "零部件设计验证计划和报告", "T02"),
             Template("li-material-supplier-list", "APQP-材料、产品及分供方清单.xlsx", "材料、产品及分供方清单", "材料产品及分供清单", "T04"),
@@ -72,7 +72,6 @@ CUSTOMERS: tuple[Customer, ...] = (
     ),
     Customer(
         "nio",
-        "蔚来汽车",
         (
             Template("nio-measurement-report", "1-2 尺寸测量报告.xlsm", "尺寸测量报告", "测量报告", "T01"),
             Template("nio-process-flow", "8 过程流程图.xlsx", "过程流程图", "过程流程图", "T09"),
@@ -83,7 +82,6 @@ CUSTOMERS: tuple[Customer, ...] = (
     ),
     Customer(
         "uaes",
-        "联合汽车电子（UAES）",
         (
             Template("uaes-psw", "新-F-PU-206_零件提交保证书_PartSubmissionWarrant_V03 (1).xls", "零件提交保证书（F-PU-206）", "零件提交保证书（PSW）", "T17"),
             Template("uaes-pgqp", "F-PU-127_采购件质量计划_Purchased Goods Quality Plan PGQP1_V06 (1).xlsx", "采购件质量计划 PGQP1（F-PU-127）", "采购件质量计划", "E12"),
@@ -95,14 +93,6 @@ CUSTOMERS: tuple[Customer, ...] = (
         ),
     ),
 )
-
-
-def customer_type_codes(customer: Customer) -> list[str]:
-    """The document types this customer's built-in rules cover (UAES adds its own E types); coverage counts against these."""
-    from audit.presets import customer_presets
-    from audit.standard_suites import customer_name
-
-    return sorted({preset.source_type for preset in customer_presets() if preset.customer == customer_name(customer.id)})
 
 
 CONTENT_TYPES = {
@@ -138,12 +128,29 @@ def available(root: Path, customer: Customer) -> list[tuple[Template, int]]:
     return rows
 
 
+def registered(customer: Customer) -> customers.RegisteredCustomer:
+    found = customers.find(customer.id)
+    if found is None:
+        raise ValueError("unregistered_template_customer")
+    return found
+
+
+def template_coverage(root: Path, customer: Customer) -> dict | None:
+    """Template coverage N_t/M: types of M with an available controlled template, each counted once."""
+    found = registered(customer)
+    value = customers.coverage(found, (template.type_code for template, _size in available(root, customer)), ())
+    if value is None:
+        return None
+    return {"version": value["version"], "effective_from": value["effective_from"], "total": len(value["types"]), "covered": len(value["template_types"])}
+
+
 def catalog(root: Path) -> dict:
     return {
         "customers": [
             {
                 "id": customer.id,
-                "name": customer.name,
+                "full_name": registered(customer).full_name,
+                "short_name": registered(customer).short_name,
                 "templates": [
                     {
                         "id": template.id,
@@ -156,7 +163,7 @@ def catalog(root: Path) -> dict:
                     }
                     for template, size in available(root, customer)
                 ],
-                "standard_type_codes": customer_type_codes(customer),
+                "coverage": template_coverage(root, customer),
             }
             for customer in CUSTOMERS
         ],

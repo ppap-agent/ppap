@@ -52,13 +52,36 @@ def test_customer_groups_nest_the_vehicle_tree_and_search_reads_part_numbers():
         row["metadata"] = {"customer": customer, "model": model, "part": part, "part_number": number}
         row["latest_activity"] = {"initiator": "Alice", "audited_at": row["updated_at"]}
     page = archive_page(documents, QUERY)
-    groups = {group["label"]: group for group in page["customer_groups"]}
+    groups = {group["id"]: group for group in page["customer_groups"]}
     # A document without a customer stays in the whole tree only.
-    assert [(group["label"], group["count"]) for group in page["customer_groups"]] == [("理想汽车", 2), ("蔚来汽车", 1)]
-    assert [(row["label"], row["count"], [(part["label"], part["count"]) for part in row["parts"]]) for row in groups["理想汽车"]["categories"]] == [("L7", 2, [("其他", 1), ("尾门", 1)])]
+    assert [(group["id"], group["full_name"], group["count"]) for group in page["customer_groups"]] == [("li", "理想汽车", 2), ("nio", "蔚来汽车", 1)]
+    assert [(row["label"], row["count"], [(part["label"], part["count"]) for part in row["parts"]]) for row in groups["li"]["categories"]] == [("L7", 2, [("其他", 1), ("尾门", 1)])]
     assert page["categories"][1]["count"] == 3
     # A customer plus one of its vehicle ids narrows to that customer's documents.
-    l7 = groups["理想汽车"]["categories"][0]["id"]
-    assert [row["document_id"] for row in archive_page(documents, {**QUERY, "customer": "理想汽车", "category_id": l7})["documents"]] == ["d1", "d0"]
+    l7 = groups["li"]["categories"][0]["id"]
+    assert [row["document_id"] for row in archive_page(documents, {**QUERY, "customer": "li", "category_id": l7})["documents"]] == ["d1", "d0"]
     assert [row["document_id"] for row in archive_page(documents, {**QUERY, "search": "p02"})["documents"]] == ["d2"]
     assert [row["document_id"] for row in archive_page(documents, {**QUERY, "search": "尾门"})["documents"]] == ["d3", "d0"]
+
+
+def test_customer_tree_has_one_node_per_registered_customer_and_keeps_unregistered_values_apart():
+    names = ["UAES", "联合汽车电子有限公司", " UAES ", "UAES（联电）", "联合汽车电子", "理想", "理想汽车", "长城汽车"]
+    documents = [document(f"d{index}", None, None) for index in range(len(names))]
+    for row, name in zip(documents, names, strict=True):
+        row["metadata"] = {"customer": name, "model": None, "part": None}
+        row["latest_activity"] = {"initiator": "Alice", "audited_at": row["updated_at"]}
+    page = archive_page(documents, QUERY)
+    shown = [(group["id"], group["registered"], group["full_name"], group["short_name"], group["count"]) for group in page["customer_groups"]]
+    # Only registered names join a customer; look-alike values are not merged and keep their recorded wording.
+    assert shown == [
+        ("uaes", True, "联合汽车电子有限公司", "UAES", 3),
+        ("li", True, "理想汽车", "理想", 2),
+        ("recorded:UAES（联电）", False, "UAES（联电）", "UAES（联电）", 1),
+        ("recorded:联合汽车电子", False, "联合汽车电子", "联合汽车电子", 1),
+        ("recorded:长城汽车", False, "长城汽车", "长城汽车", 1),
+    ]
+    assert page["customer_groups"][0]["values"] == ["UAES", "联合汽车电子有限公司"]
+    # Recorded metadata is not rewritten.
+    assert [row["metadata"]["customer"] for row in documents] == names
+    assert {row["document_id"] for row in archive_page(documents, {**QUERY, "customer": "uaes"})["documents"]} == {"d0", "d1", "d2"}
+    assert [row["document_id"] for row in archive_page(documents, {**QUERY, "customer": "recorded:UAES（联电）"})["documents"]] == ["d3"]

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, cast
 
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
 from product.files import ObjectMissing
+from product.logs import emit
 from product.rules import document_types, latest_rule_versions, normalize_document_type
 from worker.intake.rule_sources import rule_sources, validate_registration_sources
 
@@ -12,20 +14,28 @@ from api import web_contract as wc
 
 
 def customer_catalog(store, tenant_id: str) -> wc.AuditCustomerCatalog:
-    customers: dict[str, wc.AuditCustomer] = {}
-    for rule in latest_rule_versions(store.list_rules(tenant_id)):
-        if rule.get("kind") != "engine" or not isinstance(rule.get("customers"), list):
-            continue
+    """Every registered customer with M and both coverage numerators; rule customer names that match no register entry are listed as recorded."""
+    from product import customers as register
+    from product import template_library
+
+    rules = [rule for rule in latest_rule_versions(store.list_rules(tenant_id)) if rule.get("kind") == "engine" and isinstance(rule.get("customers"), list)]
+    root = template_library.template_root(store.settings)
+    rows: list[wc.AuditCustomer] = []
+    for customer in register.CUSTOMERS:
+        templates = template_library.find_customer(customer.id)
+        template_codes = [template.type_code for template, _size in template_library.available(root, templates)] if templates else []
+        coverage = cast(wc.CustomerCoverage | None, register.coverage(customer, template_codes, register.rule_type_codes(customer, rules)))
+        if coverage is None:
+            emit("customer_type_set_missing", level=logging.WARNING, customer_id=customer.id)
+        rows.append({"customer_id": customer.id, "name": customer.short_name, "full_name": customer.full_name, "short_name": customer.short_name, "coverage": coverage})
+    unregistered: set[str] = set()
+    for rule in rules:
         try:
             normalize_document_type(rule.get("type"))
         except ValueError:
             continue
-        for value in rule.get("customers") or []:
-            if not isinstance(value, str) or not value.strip():
-                continue
-            name, key = value.strip(), value.strip().casefold()
-            customers.setdefault(key, {"customer_id": key, "name": name})
-    return {"customers": sorted(customers.values(), key=lambda item: item["customer_id"])}
+        unregistered.update(value.strip() for value in rule["customers"] if isinstance(value, str) and value.strip() and register.resolve(value) is None)
+    return {"customers": rows, "unregistered": sorted(unregistered)}
 
 
 def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):

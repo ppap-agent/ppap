@@ -212,7 +212,7 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
             picker.click()
             page.get_by_role("option", name="理想" if customer != "理想" else "蔚来", exact=True).click()
             picker.click()
-            page.get_by_role("option", name="UAES（联电）" if customer == "UAES" else customer, exact=True).click()
+            page.get_by_role("option", name=customer, exact=True).click()
             default = page.request.get(web + "/api/audit-customers/default")
             assert default.status == 200 and default.json()["customer_preference"] is None
             if customer == "UAES":
@@ -226,12 +226,12 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
                 saved_default = page.request.get(web + "/api/audit-customers/default").json()
                 assert saved_default == {"customer_preference": "UAES", "revision": 1}
                 page.goto(web + "/tasks/new")
-                expect(picker).to_contain_text("UAES（联电）")
+                expect(picker).to_contain_text("UAES")
                 picker.click()
                 page.get_by_role("option", name="理想", exact=True).click()
                 assert page.request.get(web + "/api/audit-customers/default").json() == saved_default
                 picker.click()
-                page.get_by_role("option", name="UAES（联电）", exact=True).click()
+                page.get_by_role("option", name="UAES", exact=True).click()
             source_bytes = original(customer)
             with page.expect_file_chooser() as choose:
                 page.get_by_role("button", name="选择本地文件", exact=True).click()
@@ -250,14 +250,15 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
             expect(result_file).to_have_accessible_description(re.compile("^" + issue), timeout=30000)
             result_file.click()
             page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True).click()
-            page.get_by_role("button", name=re.compile("^查看依据 ")).first.click()
-            expect(page.get_by_role("article", name="条款判定依据", exact=True)).to_be_visible()
+            # The basis is read in the row; a location opens the frozen original there.
+            row = page.get_by_role("region", name="审核项", exact=True).get_by_role("row").nth(1)
+            expect(row.get_by_role("cell").nth(3)).not_to_be_empty()
             # The 蔚来 reader reports this finding without a cell locator; its original opens directly.
             if customer == "蔚来":
-                page.get_by_role("dialog").get_by_role("button", name="打开原件", exact=True).click()
+                page.get_by_role("button", name="查看原件", exact=True).click()
             else:
-                page.get_by_role("button", name="核对 特殊特性清单.xlsx", exact=True).first.click()
-            preview = page.get_by_role("region", name="原件预览", exact=True)
+                row.get_by_role("list", name="证据位置", exact=True).get_by_role("button").first.click()
+            preview = page.get_by_role("dialog", name="原件对照", exact=True).get_by_role("region", name="原件预览", exact=True)
             expect(preview).to_be_visible()
             download_link = preview.get_by_role("link", name="下载原件", exact=True)
             expect(download_link).to_be_visible()
@@ -265,13 +266,7 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
             assert original_response.status == 200
             assert original_response.body() == source_bytes
             page.keyboard.press("Escape")
-            # A sheet closing on Escape still shows the basis until its exit
-            # animation ends; decide only after no dialog is closing.
-            expect(page.locator('[role="dialog"][data-state="closed"]')).to_have_count(0)
-            basis = page.get_by_role("article", name="条款判定依据", exact=True)
-            if basis.is_visible():
-                page.keyboard.press("Escape")
-                expect(basis).not_to_be_visible()
+            expect(page.get_by_role("dialog", name="原件对照", exact=True)).to_have_count(0)
             page.get_by_role("button", name="审核报告", exact=True).click()
             report_download = page.get_by_role("button", name="下载当前报告", exact=True)
             expect(report_download).to_be_enabled(timeout=30000)
@@ -290,7 +285,7 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
                 fresh = context.new_page()
                 asset_diagnostics.append(observe_browser_assets(fresh, web))
                 fresh.goto(web + "/tasks/new")
-                expect(fresh.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text("UAES（联电）")
+                expect(fresh.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text("UAES")
                 fresh.get_by_role("combobox", name="审核客户", exact=True).click()
                 fresh.get_by_role("option", name="理想", exact=True).click()
                 fresh.get_by_role("button", name="设为企业默认", exact=True).click()

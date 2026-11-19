@@ -17,7 +17,7 @@ def test_customer_catalog_and_rule_library_require_login_and_are_not_cached():
         assert response.headers["cache-control"] == "private, no-store"
 
 
-def test_customer_catalog_keeps_latest_rule_versions_tenant_scope_and_unique_names():
+def test_customer_catalog_lists_registered_customers_and_unregistered_names_as_recorded(tmp_path):
     def rule(identifier, customers, *, predecessor=None, kind="engine", document_type="控制计划", created="2026-10-20"):
         return {"id": identifier, "title": "规则", "customers": customers, "predecessor_id": predecessor, "kind": kind, "type": document_type, "created_at": created}
 
@@ -30,14 +30,30 @@ def test_customer_catalog_keeps_latest_rule_versions_tenant_scope_and_unique_nam
             rule("invalid-customers", "非列表"),
             rule("unknown-type", ["不应出现"], document_type="unknown"),
             rule("other-kind", ["不应出现"], kind="other"),
-            rule("dfmea", ["DFMEA only"], document_type="设计失效模式及后果分析"),
+            rule("look-alike", ["UAES（联电）"]),
+            rule("li-plan", ["理想汽车"]),
+            rule("li-plan-again", ["理想"]),
+            rule("li-flow", ["理想"], document_type="过程流程图"),
         ],
         "second": [rule("separate", ["其他企业客户"])],
     }
-    store = SimpleNamespace(list_rules=lambda tenant_id: rules[tenant_id])
 
-    assert customer_catalog(store, "first") == {"customers": [{"customer_id": "customer a", "name": "customer a"}, {"customer_id": "dfmea only", "name": "DFMEA only"}]}
-    assert customer_catalog(store, "second") == {"customers": [{"customer_id": "其他企业客户", "name": "其他企业客户"}]}
+    def store(tenant):
+        return SimpleNamespace(list_rules=lambda tenant_id: rules[tenant_id], settings=Settings(template_root=str(tmp_path)))
+
+    first = customer_catalog(store("first"), "first")
+    # Names are kept as recorded: no case folding, no merging of look-alikes into a registered customer.
+    assert first["unregistered"] == ["Customer A", "UAES（联电）", "customer a"]
+    assert [(row["customer_id"], row["name"], row["full_name"], row["short_name"]) for row in first["customers"]] == [
+        ("uaes", "UAES", "联合汽车电子有限公司", "UAES"),
+        ("li", "理想", "理想汽车", "理想"),
+        ("nio", "蔚来", "蔚来汽车", "蔚来"),
+    ]
+    li = first["customers"][1]["coverage"]
+    # Both registered names count for 理想; one type with two rules counts once; no template files here.
+    assert (li["version"], len(li["types"]), li["rule_types"], li["template_types"]) == ("V3.33", 17, ["T09", "T11"], [])
+    assert {"code": "T11", "rule_type": "控制计划"} in li["types"]
+    assert customer_catalog(store("second"), "second")["unregistered"] == ["其他企业客户"]
 
 
 def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(auth_store_factory):
@@ -51,11 +67,13 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
     first, second = clients
 
     def custom_choices(result):
-        return [row for row in result["customers"] if row["customer_id"] not in {"uaes", "理想", "蔚来"}]
+        return result["unregistered"]
 
     try:
         empty = first.get("/audit-customers").json()
-        assert {row["customer_id"] for row in empty["customers"]} == {"uaes", "理想", "蔚来"}
+        assert [row["customer_id"] for row in empty["customers"]] == ["uaes", "li", "nio"]
+        # Installed presets give every registered customer its full rule coverage.
+        assert {row["customer_id"]: (len(row["coverage"]["rule_types"]), len(row["coverage"]["types"])) for row in empty["customers"]} == {"uaes": (19, 19), "li": (17, 17), "nio": (5, 5)}
         assert custom_choices(empty) == []
 
         def publish(client, customers, kind, predecessor=None):
@@ -71,7 +89,7 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
 
         publish(second, ["其他企业客户"], "控制计划")
         old = publish(first, ["旧客户"], "控制计划")
-        assert custom_choices(first.get("/audit-customers").json()) == [{"customer_id": "旧客户", "name": "旧客户"}]
+        assert custom_choices(first.get("/audit-customers").json()) == ["旧客户"]
         publish(first, ["Customer A"], "控制计划", old)
         publish(first, [" customer a ", "Customer A"], "Control plan")
         publish(first, ["Customer A"], "过程流程图")
@@ -79,13 +97,9 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         publish(first, ["DFMEA only"], "设计失效模式及后果分析")
         result = first.get("/audit-customers")
         assert result.headers["cache-control"] == "private, no-store"
-        customers = custom_choices(result.json())
-        assert len(customers) == 2
-        assert customers[0]["customer_id"] == "customer a"
-        assert customers[0]["name"].casefold() == "customer a"
-        assert set(customers[0]) == {"customer_id", "name"}
-        assert customers[1] == {"customer_id": "dfmea only", "name": "DFMEA only"}
-        assert custom_choices(second.get("/audit-customers").json()) == [{"customer_id": "其他企业客户", "name": "其他企业客户"}]
+        # Recorded names stay apart; nothing is folded into one id.
+        assert custom_choices(result.json()) == ["Customer A", "DFMEA only", "customer a"]
+        assert custom_choices(second.get("/audit-customers").json()) == ["其他企业客户"]
         library = first.get("/rule-library")
         assert library.headers["cache-control"] == "private, no-store"
         versions = library.json()["versions"]

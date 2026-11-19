@@ -13,7 +13,8 @@ export type CustomerDefaultAdapter = {
   read: () => Promise<CustomerDefault>
   save: (customer: CustomerDefault['customer_preference'], revision: number) => Promise<CustomerDefault>
 }
-const presetCustomers = [{value: 'UAES', label: 'UAES（联电）'}, {value: '理想', label: '理想'}, {value: '蔚来', label: '蔚来'}]
+/** The registered short names; the picker is a narrow area, so it shows them as registered. */
+const presetCustomers = [{value: 'UAES', label: 'UAES'}, {value: '理想', label: '理想'}, {value: '蔚来', label: '蔚来'}]
 
 /** Sample photos are only checked by the UAES U13 preset; every other customer receives documents only. */
 const documentTypes = {accept: '.xlsx,.xls,.xlsm,.doc,.docx,.pdf', hint: '可多选 Excel / PDF / Word；每个文件 ≤200 MB'}
@@ -21,13 +22,13 @@ const photoTypes = {accept: `${documentTypes.accept},.png,.jpg,.jpeg,.webp`, hin
 export const acceptedUploads = (customer: string) => customer === 'UAES' ? photoTypes : documentTypes
 
 /** One customer in the picker: avatar and name (its accessible name, shown in the trigger), plus how many standard file types its rules cover as its description. */
-export function CustomerItem({value, label, coverage}: {value: string; label: string; coverage?: Coverage | null}) {
-  const description = value === 'auto' ? '按文件内容匹配客户规则' : coverage ? `已支持 ${coverage.supported} / ${coverage.total} 类 PPAP 文件` : undefined
+export function CustomerItem({value, label, coverage, typeSetMissing = false}: {value: string; label: string; coverage?: Coverage | null; typeSetMissing?: boolean}) {
+  const description = value === 'auto' ? '按文件内容匹配客户规则' : typeSetMissing ? '文件类型范围未配置' : coverage ? `已支持 ${coverage.supported} / ${coverage.total} 类 PPAP 文件` : undefined
   return <SelectItem value={value} description={description && <span className="-mt-1 block pl-10 tabular-nums">{description}</span>}><span className="flex min-w-0 items-center gap-3"><CustomerAvatar name={label} className="size-7 text-xs"/><span className="truncate">{label}</span></span></SelectItem>
 }
 export const CustomerListNote = ({count}: {count: number}) => <p className="px-2 pt-1.5 pb-1 text-xs text-muted-foreground">已开通 {count} 家客户的模板与规则</p>
 
-export function CustomerMode({value, ready, options, adapter, onChange, onInitialDefault, onRefresh, coverage}: {value: string; ready: boolean; options: {value: string; label: string}[]; adapter: CustomerDefaultAdapter; onChange: (value: string) => void; onInitialDefault: (value: string) => void; onRefresh?: () => void; coverage?: (customer: string) => Coverage | null}) {
+export function CustomerMode({value, ready, options, adapter, onChange, onInitialDefault, onRefresh, coverage, typeSetMissing}: {value: string; ready: boolean; options: {value: string; label: string}[]; adapter: CustomerDefaultAdapter; onChange: (value: string) => void; onInitialDefault: (value: string) => void; onRefresh?: () => void; coverage?: (customer: string) => Coverage | null; typeSetMissing?: (customer: string) => boolean}) {
   const [current, setCurrent] = useState<CustomerDefault | null>(null)
   const [confirming, setConfirming] = useState(false), [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(''), [readRevision, setReadRevision] = useState(0)
@@ -59,7 +60,7 @@ export function CustomerMode({value, ready, options, adapter, onChange, onInitia
   return <div className="grid gap-2">
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><Label htmlFor="audit-customer">审核客户</Label></div>
     <div className="flex flex-wrap items-center gap-2">
-      <Select value={ready ? value : ''} onValueChange={onChange} onOpenChange={open => {if (open) onRefresh?.()}}><SelectTrigger id="audit-customer" className="h-10 w-80 max-w-full"><SelectValue placeholder="请选择本次审核客户"/></SelectTrigger><SelectContent><CustomerListNote count={choices.length}/><CustomerItem value="auto" label="自动识别"/>{choices.map(option => <CustomerItem key={option.value} value={option.value} label={option.label} coverage={coverage?.(option.value)}/>)}</SelectContent></Select>
+      <Select value={ready ? value : ''} onValueChange={onChange} onOpenChange={open => {if (open) onRefresh?.()}}><SelectTrigger id="audit-customer" className="h-10 w-80 max-w-full"><SelectValue placeholder="请选择本次审核客户"/></SelectTrigger><SelectContent><CustomerListNote count={choices.length}/><CustomerItem value="auto" label="自动识别"/>{choices.map(option => <CustomerItem key={option.value} value={option.value} label={option.label} coverage={coverage?.(option.value)} typeSetMissing={typeSetMissing?.(option.value)}/>)}</SelectContent></Select>
       <Button variant="ghost" size="sm" disabled={!current || saving || !canSave} onClick={() => setConfirming(true)}>设为企业默认</Button>
       {/* The saved default is a second fact only when this task is using something else. */}
       {current && (current.customer_preference || 'auto') !== value ? <span className="text-sm text-muted-foreground">企业默认：{presetCustomers.find(option => option.value === current.customer_preference)?.label || '自动识别'}</span> : !current && !message && <ReadSkeleton label="正在读取企业默认…" kind="inline"/>}

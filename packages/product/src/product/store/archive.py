@@ -2,9 +2,19 @@
 
 import json
 
+from product import customers as register
+
 
 def category_key(model, part=None):
     return json.dumps([model or "其他"] + ([part or "其他"] if part is not None else []), ensure_ascii=False)
+
+
+def customer_key(value) -> str | None:
+    """The archive node a recorded customer value belongs to: the registered customer id, else the recorded value itself."""
+    customer = register.resolve(value)
+    if customer:
+        return customer.id
+    return "recorded:" + value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def archive_result_states(document: dict) -> set[str]:
@@ -26,7 +36,7 @@ def archive_matches(document: dict, query: dict) -> bool:
         any(query["search"].casefold() in value.casefold() for value in searched)
         and (not query["category_id"] or query["category_id"] in {category_key(metadata.get("model")), category_key(metadata.get("model"), metadata.get("part") or "其他")})
         and (not query["document_type"] or query["document_type"] == document["document_type"])
-        and (not query["customer"] or query["customer"] == metadata.get("customer"))
+        and (not query["customer"] or query["customer"] == customer_key(metadata.get("customer")))
         and (not query["initiator"] or query["initiator"] == entry["initiator"])
         and (not query["from_date"] or day >= query["from_date"])
         and (not query["through_date"] or day <= query["through_date"])
@@ -47,11 +57,31 @@ def archive_page(documents: list[dict], query: dict, results: dict[str, set[str]
             child["count"] += 1
         return [{**category, "parts": sorted(category["parts"].values(), key=lambda row: row["label"])} for _, category in sorted(categories.items())]
 
-    # The same vehicle/part tree, once per customer; a document without a customer is only in the whole tree.
+    # The same vehicle/part tree, once per customer node; a document without a customer is only in the whole tree.
+    # Registered names group by customer id; any other recorded value stays its own node and is not rewritten.
     by_customer: dict[str, list[dict]] = {}
     for document in documents:
-        if document["metadata"].get("customer"):
-            by_customer.setdefault(document["metadata"]["customer"], []).append(document)
+        key = customer_key(document["metadata"].get("customer"))
+        if key:
+            by_customer.setdefault(key, []).append(document)
+
+    def customer_group(key: str, rows: list[dict]) -> dict:
+        customer = register.find(key)
+        values = sorted({row["metadata"]["customer"].strip() for row in rows})
+        label = customer.full_name if customer else values[0]
+        return {
+            "id": key,
+            "registered": customer is not None,
+            "full_name": label,
+            "short_name": customer.short_name if customer else label,
+            "values": values,
+            "count": len(rows),
+            "categories": group(rows),
+        }
+
+    # Registered customers first in register order, then recorded values.
+    order = {customer.id: index for index, customer in enumerate(register.CUSTOMERS)}
+    customer_groups = [customer_group(key, rows) for key, rows in sorted(by_customer.items(), key=lambda item: (order.get(item[0], len(order)), item[0]))]
 
     def matches(document):
         return archive_matches(document, query) and (not query.get("result") or query["result"] in (results or {}).get(document["document_id"], set()))
@@ -64,7 +94,7 @@ def archive_page(documents: list[dict], query: dict, results: dict[str, set[str]
         "total": len(filtered),
         "document_count": len(documents),
         "categories": group(documents),
-        "customer_groups": [{"label": customer, "count": len(rows), "categories": group(rows)} for customer, rows in sorted(by_customer.items())],
+        "customer_groups": customer_groups,
         "document_types": sorted({row["document_type"] for row in documents if row["document_type"]}),
         "customers": sorted({row["metadata"]["customer"] for row in documents if row["metadata"].get("customer")}),
         "initiators": sorted({row["latest_activity"]["initiator"] for row in documents}),

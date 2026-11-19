@@ -146,18 +146,21 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
     return () => window.clearTimeout(timer)
   }, [search, query.search])
   const current = page && sameSnapshot(page.query, query) ? page : null
+  // A customer node by its id, or (`recorded`) the node holding a recorded value; the narrow table column shows its short name.
+  const customerGroup = (key: string, recorded = false) => page?.customer_groups.find(group => recorded ? group.values.includes(key.trim()) : group.id === key)
   // Customers lead the tree; the vehicle and part levels open under the chosen customer and vehicle.
   // A count shows only once the read has said it; no placeholder stands in for it.
-  const node = (label: string, count: number | undefined, current: boolean, update: Partial<ArchiveQuery>, depth = 0) => <div className={cn(depth === 1 && 'pl-3', depth === 2 && 'pl-6')}><Button variant={current ? 'soft' : 'ghost'} size="sm" className="w-full justify-between" aria-current={current || undefined} onClick={() => filter(update)}><span className="truncate">{label}</span>{count !== undefined && <span className="text-xs tabular-nums opacity-70">{count}</span>}</Button></div>
+  const node = (label: string, count: number | undefined, current: boolean, update: Partial<ArchiveQuery>, depth = 0) => <div className={cn(depth === 1 && 'pl-3', depth === 2 && 'pl-6')}><Button variant={current ? 'soft' : 'ghost'} size="sm" className="w-full justify-between" aria-current={current || undefined} onClick={() => filter(update)}><span className="truncate" title={label}>{label}</span>{count !== undefined && <span className="text-xs tabular-nums opacity-70">{count}</span>}</Button></div>
   const tree = <nav className="grid gap-0.5" aria-label="客户与车型">
     {node('全部文件', page?.document_count, !query.customer && !query.category_id, {customer: null, category_id: null})}
-    {(page?.customer_groups || []).map(group => <div key={group.label} className="grid gap-0.5">
-      {node(group.label, group.count, query.customer === group.label && !query.category_id, {customer: group.label, category_id: null})}
-      {query.customer === group.label && group.categories.map(category => {
+    {/* One node per registered customer, named in full; a value matching no registered customer is its own node, as recorded. */}
+    {(page?.customer_groups || []).map(group => <div key={group.id} className="grid gap-0.5">
+      {node(group.full_name, group.count, query.customer === group.id && !query.category_id, {customer: group.id, category_id: null})}
+      {query.customer === group.id && group.categories.map(category => {
         const open = query.category_id === category.id || category.parts.some(part => part.id === query.category_id)
         return <div key={category.id} className="grid gap-0.5">
-          {node(otherLabel(category.label, '车型'), category.count, query.category_id === category.id, {customer: group.label, category_id: category.id}, 1)}
-          {open && category.parts.map(part => <div key={part.id}>{node(otherLabel(part.label, '零件'), part.count, query.category_id === part.id, {customer: group.label, category_id: part.id}, 2)}</div>)}
+          {node(otherLabel(category.label, '车型'), category.count, query.category_id === category.id, {customer: group.id, category_id: category.id}, 1)}
+          {open && category.parts.map(part => <div key={part.id}>{node(otherLabel(part.label, '零件'), part.count, query.category_id === part.id, {customer: group.id, category_id: part.id}, 2)}</div>)}
         </div>
       })}
     </div>)}
@@ -165,7 +168,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
   const choices = (label: string, value: string | null, options: string[], key: 'document_type' | 'customer' | 'initiator') => <Select value={value || 'all'} onValueChange={value => filter({[key]: value === 'all' ? null : value})}><SelectTrigger aria-label={label} className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">{label}</SelectItem>{options.map(option => <SelectItem key={option} value={option}>{key === 'document_type' ? documentTypeLabel(option) : option}</SelectItem>)}</SelectContent></Select>
   const range = rangeOf(query)
   const categoryLabel = page?.categories.flatMap(category => [{id: category.id, label: otherLabel(category.label, '车型')}, ...category.parts.map(part => ({id: part.id, label: `${otherLabel(category.label, '车型')} / ${otherLabel(part.label, '零件')}`}))]).find(category => category.id === query.category_id)?.label
-  const applied = ([['search', '搜索', query.search], ['category_id', '分类', query.category_id ? categoryLabel || '已选分类' : null], ['document_type', '文件类型', query.document_type && documentTypeLabel(query.document_type)], ['customer', '客户', query.customer], ['result', '审核结果', resultName(query.result)], ['initiator', '发起人', query.initiator]] as const).filter(([, , value]) => Boolean(value))
+  const applied = ([['search', '搜索', query.search], ['category_id', '分类', query.category_id ? categoryLabel || '已选分类' : null], ['document_type', '文件类型', query.document_type && documentTypeLabel(query.document_type)], ['customer', '客户', query.customer && (customerGroup(query.customer)?.full_name || '已选客户')], ['result', '审核结果', resultName(query.result)], ['initiator', '发起人', query.initiator]] as const).filter(([, , value]) => Boolean(value))
   const clearFilters = () => {setSearch(''); setQuery(initialQuery)}
   const status = (document: ArchiveDocument) => <div className="space-y-1">{document.latest_completed ? <Badge variant={resultTone(document.latest_completed.conclusion)}>{document.latest_completed.conclusion ? conclusionLabel[document.latest_completed.conclusion] ?? '结果未知' : '结果未知'}</Badge> : <span className="text-xs text-muted-foreground">尚无完成审核</span>}{document.latest_completed && <p className="text-xs text-muted-foreground">第 {document.latest_completed.sequence} 次审核</p>}{document.latest_activity && ['queued', 'running'].includes(document.latest_activity.execution) && <p className="text-xs text-muted-foreground">第 {document.latest_activity.sequence} 次审核{document.latest_activity.execution === 'queued' ? '排队中' : '中'}</p>}</div>
   const selection = chosen.length > 0 && <section aria-label="已选固定报告" className="space-y-3"><div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-sm font-medium">已选择 {chosen.length} 份报告</span>{chosen.length > 1 ? <Button variant="outline" size="sm" disabled={!packaging.canCreatePackage(chosenReferences)} onClick={() => void packaging.createPackage(chosenReferences)}>打包所选 {chosen.length} 份历史报告</Button> : <Button variant="outline" size="sm" disabled={!reportAdapter || downloading} onClick={() => void download()}>下载所选 1 份历史报告</Button>}<Button variant="ghost" size="sm" onClick={() => setChecked({})}>清空选择</Button></div><div className="flex flex-wrap gap-2">{chosen.map(item => <Badge variant="outline" className="max-w-full whitespace-normal text-left" key={resultKey(item.entry.reference)}>{item.title} · 第 {item.entry.sequence} 次审核</Badge>)}</div></section>
@@ -204,7 +207,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
         <TableCell>{document.document_type ? documentTypeLabel(document.document_type) : unset}</TableCell>
         <TableCell>{initiator || unset}</TableCell>
         <TableCell>{at ? <time className="text-muted-foreground tabular-nums" dateTime={at}>{displayTime(at)}</time> : unset}</TableCell>
-        <TableCell>{document.metadata.customer || unset}</TableCell>
+        <TableCell>{document.metadata.customer ? <span title={customerGroup(document.metadata.customer, true)?.full_name ?? document.metadata.customer}>{customerGroup(document.metadata.customer, true)?.short_name ?? document.metadata.customer}</span> : unset}</TableCell>
         <TableCell>{document.metadata.model || unset}</TableCell>
         <TableCell>{document.metadata.part_number ? <span className="tabular-nums">{document.metadata.part_number}</span> : unset}</TableCell>
         <TableCell>{document.metadata.part || unset}</TableCell>

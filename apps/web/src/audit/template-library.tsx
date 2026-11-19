@@ -36,12 +36,6 @@ const saveStates: Record<TemplateSaveResult['state'], string> = {saved: '已保�
 const submissionAccept = '.zip,.rar,.7z,.xlsx,.xls,.xlsm,.doc,.docx,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff'
 const submissionExtensions = new Set(submissionAccept.split(','))
 const acceptedSubmission = (name: string) => submissionExtensions.has(name.match(/\.[^.]+$/)?.[0]?.toLowerCase() || '')
-/** Standard PPAP types (T01–T17) the customer's templates cover, and types only this customer has (E codes). An undecided type counts for neither. */
-/** Coverage against the customer's own rule types, as the template library service reports them. */
-function templateCoverage(customer: LibraryCustomer) {
-  const codes = new Set(customer.templates.map(template => template.type_code).filter((code): code is string => Boolean(code)))
-  return {covered: customer.standard_type_codes.filter(code => codes.has(code)).length, total: customer.standard_type_codes.length}
-}
 const customerParam = 'templateCustomer'
 
 function saveBlob(blob: Blob, name: string) {
@@ -75,7 +69,7 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
   }, [adapter, reload])
   const customers = library?.customers ?? []
   const customer = customers.find(row => row.id === selected) ?? customers[0]
-  const needle = customerSearch.trim().toLocaleLowerCase(), shownCustomers = customers.filter(row => !needle || row.name.toLocaleLowerCase().includes(needle))
+  const needle = customerSearch.trim().toLocaleLowerCase(), shownCustomers = customers.filter(row => !needle || [row.full_name, row.short_name].some(name => name.toLocaleLowerCase().includes(needle)))
   // The chosen customer stays in the address, so a refresh or a shared link opens the same list.
   function choose(id: string) {
     setSelected(id); setActionError(''); setPage(1)
@@ -84,7 +78,7 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
   async function share() {
     if (!customer) return
     const url = new URL(location.href); url.searchParams.set(customerParam, customer.id); url.searchParams.delete('templateRequest')
-    try {await navigator.clipboard.writeText(url.href); showToast(`已复制${customer.name}模板库链接，同事登录后可查看和下载`)}
+    try {await navigator.clipboard.writeText(url.href); showToast(`已复制${customer.full_name}模板库链接，同事登录后可查看和下载`)}
     catch {setActionError('浏览器未允许复制链接，请复制地址栏中的链接分享。')}
   }
   async function run(key: string, action: () => Promise<void>, failure: string) {
@@ -111,9 +105,10 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
     <aside aria-label="模板库客户" className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden rounded-lg border bg-card p-3">
       <div className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search aria-hidden="true" className="size-3.5"/></span><Input type="search" aria-label="搜索客户" placeholder="搜索客户" iconStart value={customerSearch} onChange={event => setCustomerSearch(event.target.value)}/></div>
       <nav aria-label="客户" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
-        {shownCustomers.map(row => {const value = templateCoverage(row), current = row.id === customer?.id; return <Button key={row.id} type="button" variant={current ? 'soft' : 'ghost'} aria-pressed={current} onClick={() => choose(row.id)} className="h-auto w-full justify-start whitespace-normal text-left"><span className="flex min-w-0 flex-1 items-center gap-3 py-2">
-          <CustomerAvatar name={row.name}/>
-          <span className="min-w-0 flex-1 font-normal"><span className="block truncate text-sm" title={row.name}>{row.name}</span><span className="block text-xs text-muted-foreground tabular-nums">{value.covered} / {value.total} 类</span></span>
+        {/* Template coverage N_t/M as the backend counted it; without a configured M no ratio is shown. */}
+        {shownCustomers.map(row => {const value = row.coverage, current = row.id === customer?.id, described = `template-customer-${row.id}`; return <Button key={row.id} type="button" variant={current ? 'soft' : 'ghost'} aria-pressed={current} aria-describedby={described} onClick={() => choose(row.id)} className="h-auto w-full justify-start whitespace-normal text-left"><span className="flex min-w-0 flex-1 items-center gap-3 py-2">
+          <CustomerAvatar name={row.short_name}/>
+          <span className="min-w-0 flex-1 font-normal"><span className="block truncate text-sm" title={row.full_name}>{row.short_name}</span><span id={described} className="block text-xs text-muted-foreground tabular-nums">{value ? `${value.covered} / ${value.total} 类` : '文件类型范围未配置'}</span></span>
         </span></Button>})}
         {!shownCustomers.length && <p className="py-12 text-center text-sm text-muted-foreground">没有匹配的客户。</p>}
       </nav>
@@ -122,17 +117,17 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
     <div className="flex min-h-0 min-w-0 flex-col gap-4">
     {customer ? <>
       <header className="flex items-center justify-between gap-3 rounded-lg border bg-card p-4">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1"><CustomerAvatar name={customer.name}/><h2 className="truncate text-lg font-semibold" title={customer.name}>{customer.name}</h2></div>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1"><CustomerAvatar name={customer.short_name}/><h2 className="truncate text-lg font-semibold" title={customer.full_name}>{customer.full_name}</h2></div>
         <div className="flex shrink-0 gap-2">
           <Button onClick={() => void share()}><Share2 aria-hidden="true"/>分享</Button>
-          <Button variant="outline" disabled={Boolean(busy) || !customer.templates.length} onClick={() => void run('zip', async () => saveBlob(await adapter.downloadAll(customer.id), `${customer.name}模板.zip`), '模板 ZIP 暂时无法下载，请重试。')}><Download aria-hidden="true"/>{busy === 'zip' ? '正在打包…' : '下载模板（ZIP）'}</Button>
+          <Button variant="outline" disabled={Boolean(busy) || !customer.templates.length} onClick={() => void run('zip', async () => saveBlob(await adapter.downloadAll(customer.id), `${customer.full_name}模板.zip`), '模板 ZIP 暂时无法下载，请重试。')}><Download aria-hidden="true"/>{busy === 'zip' ? '正在打包…' : '下载模板（ZIP）'}</Button>
           {adapter.feishu && <Button variant="outline" disabled={Boolean(busy) || saving || !customer.templates.length} onClick={() => setPicking(true)}>保存到我的飞书</Button>}
         </div>
       </header>
       {actionError && <Alert variant="destructive"><AlertTitle>操作未完成</AlertTitle><AlertDescription><p>{actionError}</p></AlertDescription></Alert>}
       {shownSave && <Alert variant={open ? 'destructive' : 'default'}><AlertTitle>{open ? `已保存 ${shownSave.results.filter(row => row.state === 'saved').length} 份，${open} 份未完成` : '模板已在所选飞书目录中'}</AlertTitle><AlertDescription><p>保存位置：{shownSave.folder}</p>{unsettled.length > 0 && <ul className="space-y-1">{unsettled.map(row => <li key={row.template_id}>{row.filename}：{saveStates[row.state]}{row.state !== 'exists' && row.reason ? `。${row.reason}` : ''}</li>)}</ul>}</AlertDescription></Alert>}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
-        {customer.templates.length ? <Table aria-label={`${customer.name}模板`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto">
+        {customer.templates.length ? <Table aria-label={`${customer.full_name}模板`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto">
           <TableHeader variant="muted" sticky><TableRow><TableHead>模板名称</TableHead><TableHead>文件类型</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
           <TableBody>{customer.templates.slice((shownPage - 1) * 10, shownPage * 10).map(template => <TableRow key={template.id}>
             <TableCell className="whitespace-normal"><span className="flex min-w-0 items-center gap-2"><FileTypeBadge name={template.filename}/><span className="[overflow-wrap:anywhere]">{template.filename}</span></span></TableCell>
