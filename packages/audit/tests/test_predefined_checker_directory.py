@@ -276,7 +276,7 @@ def test_wheel_and_container_context_keep_the_same_leaf_bytes(tmp_path):
 
 def test_u13_accepts_image_formats_only(tmp_path):
     # U13:1 "提交文件为图片格式": a PDF is not an image format, so no implementation reads it.
-    import importlib.util
+    import ast
     import io
 
     from audit.checker_lib.agents import AgentAudit
@@ -284,10 +284,11 @@ def test_u13_accepts_image_formats_only(tmp_path):
     from audit.presets import preset_rule_body
     from PIL import Image
 
-    spec = importlib.util.spec_from_file_location("u13_resources", _CHECKERS_ROOT / "uaes" / "U13" / "resources.py")
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # The leaf's resources are a literal, read the way the preset bindings read them.
+    source = (_CHECKERS_ROOT / "uaes" / "U13" / "resources.py").read_text(encoding="utf-8")
+    (resource,) = [
+        ast.literal_eval(node.value) for node in ast.parse(source).body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RESOURCE" for target in node.targets)
+    ]
     body = preset_rule_body("UAES", "U13")
     rule = RuleInput(rule_id="u13", **{key: value for key, value in body.items() if key != "kind"})
     stream = io.BytesIO()
@@ -296,5 +297,5 @@ def test_u13_accepts_image_formats_only(tmp_path):
     for suffix in (".png", ".pdf"):
         path = tmp_path / f"photo{suffix}"
         path.write_bytes(stream.getvalue())
-        statuses[suffix] = AgentAudit(AuditInput(audit_id=suffix, file_url=str(path)), rule, None, resource=module.RESOURCE).evaluate("U13:1").status
+        statuses[suffix] = AgentAudit(AuditInput(audit_id=suffix, file_url=str(path)), rule, None, resource=resource).evaluate("U13:1").status
     assert statuses == {".png": "PASS", ".pdf": "UNABLE"}
