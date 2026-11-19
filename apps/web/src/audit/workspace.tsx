@@ -78,7 +78,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
     setSelected(id)
     const url = new URL(location.href)
     if (id) url.searchParams.set('file', id); else url.searchParams.delete('file')
-    url.searchParams.delete('clause'); url.searchParams.delete('focus'); url.searchParams.delete('basis')
+    url.searchParams.delete('clause'); url.searchParams.delete('focus')
     writeAuditAddress(url, 'push')
   }
   function showReport(id: string | null) {
@@ -107,7 +107,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   function openIssue(fileId: string, clauseId: string) {
     setSelected(fileId)
     const url = new URL(location.href)
-    url.searchParams.set('file', fileId); url.searchParams.set('clause', clauseId); url.searchParams.delete('focus'); url.searchParams.set('checkFilter', 'attention'); url.searchParams.set('basis', '1')
+    url.searchParams.set('file', fileId); url.searchParams.set('clause', clauseId); url.searchParams.delete('focus'); url.searchParams.set('checkFilter', 'attention')
     writeAuditAddress(url, 'push')
   }
   const running = task.state !== 'completed' && !progressIssue && itemsTotal > 0

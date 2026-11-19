@@ -25,14 +25,14 @@ test('natural task address retains file, clause and report context', () => {
 
 test('archive and rules aliases retain exact detail and historical version', () => {
   assert.equal(canonicalAddress(new URL('https://ppap.test/audit?task=t&view=archive&archiveDoc=d&auditRef=frozen')), '/files?task=t&archiveDoc=d&auditRef=frozen')
-  assert.equal(canonicalAddress(new URL('https://ppap.test/?view=requirements&requirement=r&reqVersion=draft')), '/requirements?requirement=r&reqVersion=draft')
+  assert.equal(canonicalAddress(new URL('https://ppap.test/?view=requirements&systemRule=r')), '/requirements?systemRule=r')
 })
 
 test('Round links keep their target; shares stay as they are', () => {
   assert.equal(canonicalAddress(new URL('https://ppap.test/?share=s&report=p')), '/?share=s&report=p')
   assert.equal(canonicalAddress(new URL('https://ppap.test/?round=r')), '/tasks/new?round=r')
   // A Round link keeps the exact file and clause; the page opens that Round's task.
-  assert.equal(canonicalAddress(new URL('https://ppap.test/audit?round=r&file=f&clause=c&basis=1')), '/tasks/new?round=r&file=f&clause=c&basis=1')
+  assert.equal(canonicalAddress(new URL('https://ppap.test/audit?round=r&file=f&clause=c&review=1')), '/tasks/new?round=r&file=f&clause=c&review=1')
 })
 
 test('home opens PPAP Audit; navigation does not carry unrelated detail', () => {

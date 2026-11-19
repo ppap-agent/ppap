@@ -188,7 +188,7 @@ class AuditArchivePreviewTests(unittest.TestCase):
             expect(page.get_by_role("row", name=re.compile("P0418901")).get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
             browser.close()
 
-    def test_history_uses_one_filename_and_opens_clause_basis(self):
+    def test_history_uses_one_filename_and_reads_the_basis_in_the_row(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             width = 1440
@@ -209,11 +209,13 @@ class AuditArchivePreviewTests(unittest.TestCase):
             expect(details.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
             expect(details.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="符合", exact=True)).to_be_visible()
             expect(details.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="符合", exact=True)).to_have_accessible_description("2")
-            action = details.get_by_role("button", name="查看依据 2.1", exact=True)
-            action.click()
-            expect(page.get_by_role("dialog", name="第 1 条 · 频次一致性", exact=True)).to_be_visible()
-            page.keyboard.press("Escape")
-            expect(action).to_be_focused()
+            # P10 reads the same four columns as P5, with the basis in the row and no second panel.
+            items = details.get_by_role("region", name="审核项", exact=True)
+            expect(items.get_by_role("columnheader")).to_have_text(["序号", "审核项", "审核结果", "判定依据"])
+            row = items.get_by_role("row").filter(has=page.locator('[title="来源编号 2.1"]'))
+            expect(row.get_by_role("cell").nth(2)).to_have_text("符合")
+            expect(row.get_by_role("cell").nth(3)).not_to_be_empty()
+            expect(details.get_by_role("button", name=re.compile("^查看依据"))).to_have_count(0)
             page.close()
             browser.close()
 

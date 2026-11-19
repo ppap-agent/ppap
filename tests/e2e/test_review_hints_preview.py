@@ -28,10 +28,10 @@ class ReviewHintsPreviewTests(unittest.TestCase):
             details = page.get_by_role("region", name="审核详情", exact=True)
             expect(details.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="建议复核", exact=True)).to_have_accessible_description("1")
             details.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="建议复核", exact=True).click()
-            details.get_by_role("table").get_by_role("button", name=re.compile("^查看依据")).first.click()
+            details.get_by_role("button", name="逐条复核", exact=True).click()
             comparison = page.get_by_role("region", name="建议复核对比", exact=True)
             expect(comparison).to_contain_text("同一份文件、同一检查版本和条款")
-            expect(comparison.get_by_role("link", name="打开对比审核与依据")).to_have_attribute("href", re.compile(r"round=previous-round.*clause=1.1.*basis=1"))
+            expect(comparison.get_by_role("link", name="打开对比审核与依据")).to_have_attribute("href", re.compile(r"round=previous-round.*clause=1\.1$"))
             comparison.get_by_role("button", name="忽略此提示", exact=True).click()
             expect(comparison).to_have_count(0)
             assert recorded[0]["action"] == "ignored"
