@@ -1,6 +1,7 @@
-"""UAES 评测集（V3.33 产品资料包金标）的只读载入。
+"""UAES 评测集（V3.33 产品资料包）：只读载入，并逐行分析样本运行已产出的结果与评测集的差异。
 
-工作簿是此批交付指定的金标，与 ``uaes-oracle.csv`` 是两套评价来源，互不覆盖。
+工作簿是另一位评审给的参考判断，不是真值：真值以 ``uaes-oracle.csv`` 为准，二者冲突的裁决记在
+``评测集订正.md``。评测集不提交批次、不调用模型、不录回放，也不作为必须通过的测试。
 标准答案列原样返回，不做归一化。存储地址按本资产包版本声明的前缀映射到
 ``assets/uaes/samples`` 下已有的同内容原件，不把工作簿路径当作磁盘位置。
 """
@@ -14,11 +15,11 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, cast
+from typing import Any
 
 from openpyxl import load_workbook
 
-from corpus_contracts.oracle import CORPUS, REPO_ROOT, customer_rules, suite_sources
+from corpus_contracts.oracle import CORPUS, REPO_ROOT
 
 WORKBOOK = CORPUS / "UAES 评测集.xlsx"
 # 固定可信版本：V3.33 产品资料包（2026-11-18）卷二 03_评测集。
@@ -154,37 +155,9 @@ class Comparison:
         return f"{self.sheet} 第{self.excel_row}行 {self.key} [{self.column}] 预期={self.expected!r} 实际={self.actual!r} {self.outcome}" + (f"（{self.reason}）" if self.reason else "")
 
 
-@dataclass(frozen=True)
-class Batch:
-    """一个零件目录（含缺陷样本）作为一批提交，与资料包按零件出总成报告一致。"""
-
-    part: str
-    files: tuple[EvaluationRow, ...]
-
-    @property
-    def id(self) -> str:
-        return f"uaes-evaluation/{self.part}"
-
-    @property
-    def has_pdf(self) -> bool:
-        return any(submitted_name(row).lower().endswith(".pdf") for row in self.files)
-
-
 def submitted_name(row: EvaluationRow) -> str:
     """提交文件名就是资料包里的文件名（改名原件按资料包名提交）。"""
     return PurePosixPath(row.keys["存储地址"]).name
-
-
-def file_id(row: EvaluationRow) -> str:
-    return f"f{row.keys['序号']:02d}"
-
-
-def batches() -> tuple[Batch, ...]:
-    precheck, _ = load_evaluation()
-    parts: dict[str, list[EvaluationRow]] = {}
-    for row in precheck:
-        parts.setdefault(PurePosixPath(row.keys["存储地址"].removeprefix(SOURCE_PREFIX)).parts[0], []).append(row)
-    return tuple(Batch(part, tuple(rows)) for part, rows in parts.items())
 
 
 def _empty(value: Any) -> bool:
@@ -241,166 +214,6 @@ def compare_audit(row: EvaluationRow, actual: dict[str, Any] | None) -> list[Com
     return out
 
 
-def precheck_actual(precheck: dict[str, Any], metadata: dict[str, Any], file_version_id: str) -> dict[str, Any]:
-    """产品预检结果里一个文件的 F～O 对应值（整改动作为自由文字，不取）。"""
-    blocks = [item for item in precheck["blocks"] if item["file_version_id"] == file_version_id]
-    warnings = [item for item in precheck["warnings"] if item["file_version_id"] == file_version_id]
-    level = next(row["level"] for row in precheck["files"] if row["file_version_id"] == file_version_id)
-    verdict = "不通过" if level == "block" else "通过" if level in {"ok", "warn"} else f"未预检（{level}）"
-    return {
-        "预检结果": verdict,
-        "阻断数": len(blocks),
-        "警告数": len(warnings),
-        "问题": sorted(item["code"] for item in [*blocks, *warnings]),
-        **{column: metadata.get(field) for column, field in COVER.items()},
-    }
-
-
-@dataclass(frozen=True)
-class BatchResult:
-    precheck: dict[str, Any]
-    metadata: dict[str, dict[str, Any]]
-    suites: dict[str, str]
-    clauses: dict[tuple[str, str], dict[str, Any]]
-    audit_error: str = ""
-
-
-def run_batch(batch: Batch) -> BatchResult:
-    """按产品路径提交一批：文件检查 → 上传识别 → 预检（含内容级）→ 已匹配文件全部审核，参考件按识别类型参与。"""
-    from agent.execution.audit_runtime import run_audit
-    from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-    from audit.standard_suites import library_revision
-    from product.precheck import precheck_task
-    from product.precheck_content import entry_key, precheck_content
-    from worker.intake.file_analysis import analyze_file
-    from worker.intake.file_validation import validate_file
-
-    rules = customer_rules("UAES")
-    rows: list[dict[str, Any]] = []
-    blobs: dict[str, bytes] = {}
-    for item in batch.files:
-        identity, name, data = file_id(item), submitted_name(item), item.source.read_bytes()
-        blobs[identity] = data
-        validation = validate_file(name, data)
-        match: dict[str, Any] | None = None
-        if validation["state"] == "valid":
-            result = analyze_file(name, data, rules, customer_preference="UAES", scoped=True)
-            state = result.get("matching_status")
-            state = state if state in {"matched", "reference", "unmatched", "failed"} else "failed"
-            match = {
-                "state": state,
-                "metadata": result.get("metadata") or {},
-                "document_type": result.get("document_type"),
-                "gaps": result.get("notices") or (["rule_matching_failed"] if state == "failed" else []),
-                "matched_rule_id": result.get("matched_rule_id"),
-            }
-        rows.append(
-            {"file": {"id": identity, "file_id": identity, "original_filename": name, "sha256": hashlib.sha256(data).hexdigest()}, "selection": "selected", "validation": validation, "match": match}
-        )
-    task: dict[str, Any] = {"customer_preference": "UAES", "files": rows}
-    content: dict[str, list[dict]] = {}
-    for row in rows:
-        match = row["match"] or {}
-        if match.get("state") != "matched":
-            continue
-        customer = (match.get("metadata") or {}).get("customer") or "UAES"
-        key = entry_key(customer, match.get("document_type"))
-        if key is None:
-            continue
-        try:
-            content[row["file"]["id"]] = precheck_content(blobs[row["file"]["id"]], row["file"]["original_filename"], key, customer=customer)
-        except Exception:  # noqa: BLE001 - as the product: an unreadable file stays at the file-level result
-            continue
-    precheck = precheck_task(task, content, read=lambda row: blobs[row["file"]["id"]])
-    metadata = {row["file"]["id"]: dict((row["match"] or {}).get("metadata") or {}) for row in rows}
-
-    sources = suite_sources()
-    suites: dict[str, str] = {}
-    inputs: list[FrozenInput] = []
-    targets: list[FrozenTarget] = []
-    for row in rows:
-        match = row["match"] or {}
-        identity, meta = row["file"]["id"], metadata[row["file"]["id"]]
-        suite = sources.get(f"uaes/{match.get('matched_rule_id')}") if match.get("state") == "matched" else None
-        if match.get("state") == "matched" and suite is not None:
-            suites[identity] = suite.source_path
-            role, document_type = "target", suite.document_type
-            targets.append(
-                FrozenTarget(
-                    identity,
-                    "sha256:" + suite.revision_digest,
-                    suite.suite_key,
-                    suite.revision_digest,
-                    json.loads(suite.files["rules.json"]),
-                    RuleBinding(suite.suite_key, checker_digest(suite.program_files), suite.entrypoints),
-                )
-            )
-        elif match.get("state") == "reference":
-            role, document_type = "reference", match.get("document_type") or ""
-        else:
-            # 未匹配的文件不进入审核。
-            continue
-        inputs.append(
-            FrozenInput(
-                identity,
-                row["file"]["sha256"],
-                cast(Literal["target", "reference"], role),
-                row["file"]["original_filename"],
-                document_type=document_type,
-                customer=meta.get("customer"),
-                model=meta.get("model"),
-                part=meta.get("part"),
-            )
-        )
-    clauses: dict[tuple[str, str], dict[str, Any]] = {}
-    if not targets:
-        return BatchResult(precheck, metadata, suites, clauses)
-    snapshot = ExecutionSnapshot("corpus", "uaes-evaluation-runner", tuple(inputs), tuple(targets), "corpus-source", library_revision(), {}, round_id=batch.id)
-    by_digest = {"sha256:" + suite.revision_digest: suite for suite in sources.values()}
-    programs = {target.binding.checker_digest: by_digest[target.suite_revision_id].program_files for target in targets}
-    try:
-        result = run_audit(snapshot, {item.file_version_id: blobs[item.file_version_id] for item in inputs}, programs)
-    except Exception as exc:  # noqa: BLE001 - recorded as the reason every audit row of this batch has no result
-        return BatchResult(precheck, metadata, suites, clauses, f"审核未完成：{type(exc).__name__}")
-    severity = {(target.file_version_id, str(rule["id"])): rule.get("severity") for target in targets for rule in target.rules["rules"]}
-    for finding in result["findings"]:
-        clause = (finding["file_version_id"], str(finding["clause_id"]))
-        if clause in clauses:
-            clauses[clause] = {"status": None, "reason": "同一条款有多个结果"}
-            continue
-        clauses[clause] = {"status": finding.get("status"), "severity": severity.get(clause), "reason": str(finding.get("suggestions") or "")[:200]}
-    return BatchResult(precheck, metadata, suites, clauses)
-
-
-def compare_batch(batch: Batch, result: BatchResult) -> list[Comparison]:
-    """一批的全部比对：预检逐文件、审核逐条款。"""
-    out: list[Comparison] = []
-    addresses = {row.keys["存储地址"]: file_id(row) for row in batch.files}
-    for row in batch.files:
-        out += compare_precheck(row, precheck_actual(result.precheck, result.metadata[file_id(row)], file_id(row)))
-    _, audit = load_evaluation()
-    mapping = rule_clauses()
-    for row in audit:
-        identity = addresses.get(row.keys["存储地址"])
-        if identity is None:
-            continue
-        clause = mapping[row.keys["规则编号"]]
-        actual = result.clauses.get((identity, clause))
-        if actual is None:
-            suite = result.suites.get(identity)
-            if result.audit_error:
-                reason = result.audit_error
-            elif suite is None:
-                reason = "产品未审核此文件（上传识别未匹配到 UAES 规则）"
-            elif suite != clause_leaf(clause):
-                reason = f"产品按 {suite.split('/')[-1]} 审核，未执行 {clause}"
-            else:
-                reason = f"缺少 {clause} 的结果"
-            actual = {"status": None, "reason": reason}
-        out += compare_audit(row, actual)
-    return out
-
-
 def defect_pairs() -> list[tuple[EvaluationRow, EvaluationRow]]:
     """每份缺陷样本与同零件原件目录里的正常件：去掉文件名里「-test-…」后同名（MSA 缺陷样本本就同名）。"""
     precheck, _ = load_evaluation()
@@ -426,32 +239,67 @@ def defect_findings(defect: EvaluationRow, normal: EvaluationRow, comparisons: l
     return missed, false
 
 
-__all__ = [
-    "AUDIT",
-    "DIFFERENT",
-    "MATCH",
-    "PRECHECK",
-    "RENAMED",
-    "RULE_CLAUSES",
-    "SAMPLES",
-    "SOURCE_PREFIX",
-    "UNCOMPARABLE",
-    "WORKBOOK",
-    "Batch",
-    "BatchResult",
-    "Comparison",
-    "EvaluationRow",
-    "batches",
-    "clause_leaf",
-    "compare_audit",
-    "compare_batch",
-    "compare_precheck",
-    "defect_findings",
-    "defect_pairs",
-    "load_evaluation",
-    "precheck_actual",
-    "resolve_source",
-    "rule_clauses",
-    "run_batch",
-    "submitted_name",
-]
+def sample_results(directory: Path) -> tuple[dict[tuple[Path, str], dict[str, Any]], dict[Path, dict[str, Any]]]:
+    """样本运行写进报告目录的结果：(审核 {(原件, 条款): 结果}, 预检 {原件: 结果})。原件为仓库内绝对路径。"""
+    audit: dict[tuple[Path, str], dict[str, Any]] = {}
+    precheck: dict[Path, dict[str, Any]] = {}
+    for path in sorted(directory.glob("*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            row = json.loads(line)
+            if row.get("kind") == "finding":
+                key = ((REPO_ROOT / row["source"]).resolve(), row["clause"])
+                # 同一原件在多个组合里审核时，结论不同就不能代表这份文件。
+                if key in audit and audit[key]["status"] != row["status"]:
+                    audit[key] = {"status": None, "reason": "同一原件在不同组合中的结论不同"}
+                else:
+                    audit.setdefault(key, {"status": row["status"], "severity": row.get("severity"), "reason": row.get("reason", "")})
+            elif row.get("kind") == "precheck":
+                precheck[(REPO_ROOT / row["source"]).resolve()] = row["actual"]
+    return audit, precheck
+
+
+def bench(directory: Path) -> list[Comparison]:
+    """逐行列出样本运行已产出的结果与评测集的差异；不运行任何东西。评测集是另一份人工判断，不一致不等于程序错，
+    已核实的订正见 ``评测集订正.md``。"""
+    audit_results, precheck_results = sample_results(directory)
+    precheck, audit = load_evaluation()
+    out: list[Comparison] = []
+    for row in precheck:
+        actual = precheck_results.get(row.source.resolve())
+        if actual is None:
+            key = f"{row.keys['序号']} {row.keys['文件名称']}"
+            out.append(Comparison(row.sheet, row.excel_row, key, "预检结果", row.answers["预检结果"], None, UNCOMPARABLE, "样本运行没有产出这份文件的预检结果"))
+        else:
+            out += compare_precheck(row, actual)
+    mapping = rule_clauses()
+    for row in audit:
+        actual = audit_results.get((row.source.resolve(), mapping[row.keys["规则编号"]]))
+        if actual is None:
+            key = f"{row.keys['序号']} {row.keys['文件名称']} {row.keys['规则编号']}"
+            out.append(Comparison(row.sheet, row.excel_row, key, "审核结果", row.answers["审核结果"], None, UNCOMPARABLE, "样本运行没有产出这份文件这一条款的结果"))
+        else:
+            out += compare_audit(row, actual)
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``python -m corpus_contracts.uaes_evaluation <报告目录>``：打印逐行比对与汇总。"""
+    import sys
+
+    args = sys.argv[1:] if argv is None else argv
+    if len(args) != 1:
+        print("用法：python -m corpus_contracts.uaes_evaluation <样本运行的报告目录>", file=sys.stderr)
+        return 2
+    comparisons = bench(Path(args[0]))
+    for sheet, column in (("预检统计表", "预检结果"), ("审核明细", "审核结果")):
+        scored = [item for item in comparisons if item.sheet == sheet and item.column == column]
+        counts = {outcome: sum(item.outcome == outcome for item in scored) for outcome in (MATCH, DIFFERENT, UNCOMPARABLE)}
+        print(f"{sheet} {column}：" + "，".join(f"{name} {count}" for name, count in counts.items()))
+    for item in comparisons:
+        if item.outcome == DIFFERENT:
+            print(item.line())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

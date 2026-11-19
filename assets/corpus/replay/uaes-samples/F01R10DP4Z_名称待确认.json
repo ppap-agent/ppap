@@ -1,0 +1,15 @@
+[
+ {
+  "kind": "text",
+  "model": "grok-4.7",
+  "request": {
+   "task": "document_metadata_extraction",
+   "instructions": "你是一个专业的文档分析师，擅长从技术文档中提取关键信息。",
+   "prompt": "从下面这份 PPAP 文件的内容中摘录业务信息。只返回 JSON：\n{\"project\": 项目, \"customer\": 客户, \"model\": 车型, \"part_number\": 零件号, \"part\": 零件名称, \"blank\": [标签存在但值为空或占位的字段名]}\n\n- 零件号、零件名称：取表头区或标签处写明的值。标签写法如「零件号 / 零件编号 / 件号 / 产品件号 / 零件代号 / 物料编号 / 测量对象 / Part No. / Part Number」「零件名称 / 产品名称 / 零件名 / Part Name」。值可能在标签右侧，也可能在标签正下方的格子里（标签在上、值在下）。\n- 写在名称栏里、但内容是件号编码的值归 part_number，不归 part；一格内件号与名称连写（如 F01RD0YA41毛坯壳体）时，件号归 part_number、名称归 part。\n- 项目、客户、车型：只取写明了「项目 / Project」「客户 / Customer / 顾客 / 接受方 / 买方 / 采购方」「车型 / Vehicle」这类标签的值；不从文件名、文件编号（如 QJ-FMEA-GEELY-776）、表单号、公司名或没有标签的格子推断。\n- 照录原文，不改写、不翻译、不统一写法。同一格或同一栏内并列写了多个值时全部照录：分行或分列写的返回字符串列表，一格内用「/」并列的原样返回。一列里（如「产品名称/零件号」列）出现多个不同的值时，按出现顺序全部列出；相同的值只列一次。同一标签在每页页眉重复出现时只取第一处。\n- 标签存在但值为空或只是占位（如 /、-、N/A、TBD、待定、待确认、XXXX、CPJ-XXXXXX 这类模板占位）时，该字段返回 null，并把字段名放进 blank。\n- 文件里没有该字段时返回 null。\n\n文件内容（工作表只列出有值的格子，形如 地址=值）：\n[工作表 P0]\nA2=过程流程图\nProcess flow chart\nB3=样件Sample | E3=试生产Trial run | H3=批产Production | J3=文件编号File No.：\nA4=零件名称Part Name： | G4=零件号Part No.： | H4=F01R10DP4Z | J4=编制人Made by：\nA5=客户Customer： | G5=内部编号Internal No.： | J5=编制日期Made date： | K5=2026.8.27\nA6=步骤\nStep | B6=制造Manufacture | C6=移动Moved | D6=储存Stock | E6=检验Inspection | F6=过程描述\nProcess description | I6=控制文件/方法\nControl files/methods | K6=标识Identification | L6=特殊特性                   Special characteristics\nA7=1.0 | E7=◇ | F7=原材料检验 | I7=《原材料检验作业指导书》 | L7=AW5052\nT=1.2±0.05\nA8=2.0 | D8=△ | F8=存储材料 | I8=《材料规范》\nA9=3.0 | B9=□ | F9=冲压 | I9=《冲压作业指导书》\nA10=4.0 | B10=□ | F10=清洗 | I10=《清洗作业指导书》\nA11=5.0 | B11=□ | F11=打码 | I11=《打码作业指导书》\nA12=6.0 | B12=□ | F12=气密 | I12=《气密作业指导书》\nA13=7.0 | E13=◇ | F13=外观检验 | I13=《外观检验指导书》\nA14=8.0 | B14=□ | F14=包装 | I14=《包装作业指导书》\nA15=9.0 | D15=△ | F15=产品存储 | I15=《搬运、储存、防护作业细则》\nA16=10.0 | E16=◇ | F16=出货检验 | I16=《检验作业指导书》\nA17=11.0 | C17=○ | F17=产品出货 | I17=《产品交付控制程序》\nA20=注释Notes： | E20=加工Process  □ | G20=移动Move  ○ | I20=存储Store  △ | K20=检验Inspection  ◇\nK22=/\nA25=序号No. | B25=日期Date | C25=修改内容Details | F25=改版理由Revision reason | I25=版本号Rev. | J25=批准Approve | K25=审核Audit | L25=作成Made by",
+   "schema": null,
+   "max_tokens": 4000
+  },
+  "request_sha256": "23dbb33f8ae55776b78af5b1d93f2285cb46b08a1a7bc1f2e300a7bc5276306d",
+  "answer": "{\"project\": null, \"customer\": null, \"model\": null, \"part_number\": \"F01R10DP4Z\", \"part\": null, \"blank\": [\"part\", \"customer\"]}"
+ }
+]

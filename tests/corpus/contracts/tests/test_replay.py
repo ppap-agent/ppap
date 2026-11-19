@@ -246,3 +246,17 @@ def test_explicit_offline_flag_does_not_change_replay_or_live_mode(monkeypatch):
     monkeypatch.setenv("PPAP_CORPUS_OFFLINE", "unknown")
     with pytest.raises(ValueError, match="PPAP_CORPUS_OFFLINE"):
         offline()
+
+
+def test_offline_scope_takes_the_answer_another_scope_recorded_for_the_same_request(tmp_path, monkeypatch):
+    calls = _answering_model(monkeypatch, AssertionError("must not run"))
+    entry = recording("ocr", ocr_request([b"synthetic-image"], "shown", SCHEMA, 4096), '{"seal": true}', "recorded")
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "case.json").write_text(json.dumps([entry]), encoding="utf-8")
+    recorder = Recorder("sample", tmp_path, tmp_path, offline=True)
+    install(monkeypatch, recorder)
+    assert _read() == {"seal": True}
+    assert recorder.misses == [] and calls == []
+    # A different request is still a miss: only the identical request is shared.
+    other = Recorder("sample", tmp_path, tmp_path, offline=True)
+    assert other.lookup("ocr", ocr_request([b"another-image"], "shown", SCHEMA, 4096)) is None

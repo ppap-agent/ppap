@@ -1,4 +1,4 @@
-"""V3.33 UAES 评测集载入：表头、行数、原件定位与标准答案原样。"""
+"""V3.33 UAES 评测集：载入（表头、行数、原件定位、标准答案原样）与样本运行结果的差异分析。"""
 
 import json
 
@@ -91,16 +91,6 @@ def test_rule_ids_map_to_existing_leaf_clauses():
     assert all(len(found) == 1 for found in leaves_by_file.values())
 
 
-def test_batches_are_the_part_directories_with_their_defect_samples():
-    from corpus_contracts.uaes_evaluation import batches, file_id
-
-    found = batches()
-    assert len(found) == 10 and sum(len(batch.files) for batch in found) == 58
-    a40 = next(batch for batch in found if batch.part == "F01RD0YA40_机加工壳体")
-    assert len(a40.files) == 29 and sum(row.is_defect for row in a40.files) == 10
-    assert len({file_id(row) for batch in found for row in batch.files}) == 58
-
-
 def test_each_defect_sample_pairs_with_its_normal_file():
     from corpus_contracts.uaes_evaluation import defect_pairs, submitted_name
 
@@ -128,3 +118,19 @@ def test_comparison_keeps_answers_and_states_what_cannot_be_scored():
     assert scored == {"审核结果": MATCH, "问题等级": MATCH, "审核依据": UNCOMPARABLE, "整改建议": UNCOMPARABLE}
     assert {item.column: item.outcome for item in compare_audit(fatal, {"status": "UNABLE"})}["审核结果"] == DIFFERENT
     assert compare_audit(fatal, None)[0].outcome == DIFFERENT
+
+
+def test_differences_cover_only_what_the_sample_runs_produced(tmp_path):
+    from corpus_contracts.oracle import REPO_ROOT
+    from corpus_contracts.uaes_evaluation import DIFFERENT, MATCH, UNCOMPARABLE, bench
+
+    _, audit = load_evaluation()
+    fatal = next(item for item in audit if item.excel_row == 5)  # 过程流程图.xls 受控章：不通过 致命
+    source = str(fatal.source.relative_to(REPO_ROOT))
+    report = tmp_path / "rules-1.jsonl"
+    report.write_text(json.dumps({"kind": "finding", "source": source, "clause": "U16:3", "status": "NG", "severity": "A", "reason": "没有受控章"}, ensure_ascii=False) + "\n", encoding="utf-8")
+    scored = {(item.excel_row, item.column): item.outcome for item in bench(tmp_path) if item.sheet == "审核明细"}
+    assert scored[(5, "审核结果")] == MATCH and scored[(5, "问题等级")] == MATCH
+    # 样本运行没有产出的行无法比较，不算不一致。
+    assert scored[(3, "审核结果")] == UNCOMPARABLE
+    assert DIFFERENT not in set(scored.values())

@@ -544,5 +544,209 @@
   },
   "request_sha256": "bf53cc9fd3e29b916820e2110c37b6ab0b14e2b227df6c7a70671f8270ac439f",
   "answer": "{\"controlled_stamp\": null}"
+ },
+ {
+  "kind": "ocr",
+  "model": "deepseek/deepseek-v4.1-flash-1017",
+  "request": {
+   "input": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "input_text",
+       "text": "这是从控制计划PDF原件页面上裁出的一张嵌入图片。请只描述图片本身，不判断是否合格。\nseal：图片中有盖上的印章印迹（受控章、公章、专用章等，或其图像）为 true；图片中只有公司标志、表头logo、手写签名、印刷文字或表格，没有任何印章为 false；看不清为 null。"
+      },
+      {
+       "type": "input_image",
+       "image_url": "<png 599x92>",
+       "detail": "high"
+      }
+     ]
+    }
+   ],
+   "text": {
+    "format": {
+     "type": "json_schema",
+     "name": "transcription",
+     "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "seal"
+      ],
+      "properties": {
+       "seal": {
+        "type": [
+         "boolean",
+         "null"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "max_output_tokens": 4096,
+   "extra_body": {
+    "reasoning": {
+     "effort": "none"
+    }
+   }
+  },
+  "request_sha256": "e499fff36715d4300bef648849e0494e0b6d235635a7c4e89934c5721b5dbaa2",
+  "answer": "{\"seal\": false}"
+ },
+ {
+  "kind": "ocr",
+  "model": "deepseek/deepseek-v4.1-flash-1017",
+  "request": {
+   "input": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "input_text",
+       "text": "这是从控制计划PDF原件页面上裁出的一张嵌入图片。请只描述图片本身，不判断是否合格。\nseal：图片中有盖上的印章印迹（受控章、公章、专用章等，或其图像）为 true；图片中只有公司标志、表头logo、手写签名、印刷文字或表格，没有任何印章为 false；看不清为 null。"
+      },
+      {
+       "type": "input_image",
+       "image_url": "<png 417x239>",
+       "detail": "high"
+      }
+     ]
+    }
+   ],
+   "text": {
+    "format": {
+     "type": "json_schema",
+     "name": "transcription",
+     "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "seal"
+      ],
+      "properties": {
+       "seal": {
+        "type": [
+         "boolean",
+         "null"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "max_output_tokens": 4096,
+   "extra_body": {
+    "reasoning": {
+     "effort": "none"
+    }
+   }
+  },
+  "request_sha256": "de54cad5287fac6fdf4b00612b10455df8ce9c260d3417b562076009cd1acf95",
+  "answer": "{\"seal\": false}"
+ },
+ {
+  "kind": "ocr",
+  "model": "deepseek/deepseek-v4.1-flash-1017",
+  "request": {
+   "input": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "input_text",
+       "text": "这是从控制计划PDF原件页面上裁出的一张嵌入图片。请只描述图片本身，不判断是否合格。\nseal：图片中有盖上的印章印迹（受控章、公章、专用章等，或其图像）为 true；图片中只有公司标志、表头logo、手写签名、印刷文字或表格，没有任何印章为 false；看不清为 null。"
+      },
+      {
+       "type": "input_image",
+       "image_url": "<png 458x319>",
+       "detail": "high"
+      }
+     ]
+    }
+   ],
+   "text": {
+    "format": {
+     "type": "json_schema",
+     "name": "transcription",
+     "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "seal"
+      ],
+      "properties": {
+       "seal": {
+        "type": [
+         "boolean",
+         "null"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "max_output_tokens": 4096,
+   "extra_body": {
+    "reasoning": {
+     "effort": "none"
+    }
+   }
+  },
+  "request_sha256": "e98ac4235d75077024342109938f9258faa392a3b6a6655192f3c02e7732c682",
+  "answer": "{\"seal\": false}"
+ },
+ {
+  "kind": "ocr",
+  "model": "deepseek/deepseek-v4.1-flash-1017",
+  "request": {
+   "input": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "input_text",
+       "text": "这是从控制计划PDF原件页面上裁出的一张嵌入图片。请只描述图片本身，不判断是否合格。\nseal：图片中有盖上的印章印迹（受控章、公章、专用章等，或其图像）为 true；图片中只有公司标志、表头logo、手写签名、印刷文字或表格，没有任何印章为 false；看不清为 null。"
+      },
+      {
+       "type": "input_image",
+       "image_url": "<png 522x220>",
+       "detail": "high"
+      }
+     ]
+    }
+   ],
+   "text": {
+    "format": {
+     "type": "json_schema",
+     "name": "transcription",
+     "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "seal"
+      ],
+      "properties": {
+       "seal": {
+        "type": [
+         "boolean",
+         "null"
+        ]
+       }
+      }
+     }
+    }
+   },
+   "max_output_tokens": 4096,
+   "extra_body": {
+    "reasoning": {
+     "effort": "none"
+    }
+   }
+  },
+  "request_sha256": "db859fb3d18b36c7126cb6666d83892d25da806a6bcb65c5554208a07daca3ef",
+  "answer": "{\"seal\": false}"
  }
 ]

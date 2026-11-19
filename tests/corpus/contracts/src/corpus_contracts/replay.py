@@ -1,6 +1,8 @@
 """Answer model requests from readable recordings; a new request is asked once and recorded when its case passes.
 
-Each test scope has one JSON file listing what the model was shown and what it answered.
+Each test scope has one JSON file listing what the model was shown and what it answered. A request no recording of
+its own scope answers takes the answer another scope recorded for the identical request, so a sample read by several
+tests is asked once.
 """
 
 from __future__ import annotations
@@ -99,6 +101,27 @@ def recording(kind: str, request: Any, answer: Any, model: Any = None) -> dict[s
     return {"kind": kind, "model": model, "request": shown, "request_sha256": _request_sha256(request), "answer": answer}
 
 
+_SHARED: dict[Path, dict[tuple[str, str], dict[str, Any]]] = {}
+_SHARED_LOCK = threading.Lock()
+
+
+def _shared(recordings: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    """Every recording under ``recordings`` by (kind, request digest); the first file in path order wins."""
+    with _SHARED_LOCK:
+        if recordings not in _SHARED:
+            index: dict[tuple[str, str], dict[str, Any]] = {}
+            for path in sorted(recordings.rglob("*.json")):
+                try:
+                    entries = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                for entry in entries if isinstance(entries, list) else ():
+                    if isinstance(entry, dict) and entry.get("request_sha256"):
+                        index.setdefault((str(entry.get("kind")), str(entry["request_sha256"])), entry)
+            _SHARED[recordings] = index
+        return _SHARED[recordings]
+
+
 class Recorder:
     """New answers wait for the case verdict, so a failed case asks again next run."""
 
@@ -108,6 +131,7 @@ class Recorder:
         relative = f"{scope}.json"
         self.path = recordings / relative
         self.output = (output or Path(os.environ.get("PPAP_CORPUS_REPLAY_OUT") or recordings)) / relative
+        self.recordings = recordings
         self.entries: list[dict[str, Any]] = []
         for path in (self.path, self.output):
             if path.is_file():
@@ -124,7 +148,8 @@ class Recorder:
         digest = _request_sha256(request)
         with self.lock:
             # Only the complete request identity matches; a readable summary never does.
-            return next((entry for entry in (*self.entries, *self.pending) if entry["kind"] == kind and entry.get("request_sha256") == digest), None)
+            own = next((entry for entry in (*self.entries, *self.pending) if entry["kind"] == kind and entry.get("request_sha256") == digest), None)
+        return own if own is not None else _shared(self.recordings).get((kind, digest))
 
     def add(self, kind: str, request: Any, answer: Any, model: Any = None) -> None:
         entry = recording(kind, request, answer, model)
@@ -137,6 +162,10 @@ class Recorder:
         if not keep or not pending:
             return
         self.entries.extend(pending)
+        shared = _shared(self.recordings)
+        with _SHARED_LOCK:
+            for entry in pending:
+                shared.setdefault((entry["kind"], entry["request_sha256"]), entry)
         self.output.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.output.with_suffix(f".{os.getpid()}.tmp")
         temporary.write_text(json.dumps(self.entries, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

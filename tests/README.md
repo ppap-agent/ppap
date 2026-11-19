@@ -105,13 +105,18 @@ uv run --no-sync pytest tests/integration/product
 
 规则原文和人工结果是开发 Checker 的依据。实现修改可保留人工判定上下文，但完整 Suite／程序／输入摘要仍改变。规则、附录或绑定改变时，旧人工真值不能直接沿用；须独立重审并在带 `Oracle-Basis:` 依据的单独提交中更新 `<客户>-reviewed-rules.json` 及必要的人工答案，不能与实现或原件内容改动混在一起。`<客户>-cases.csv` 里的原件／文件身份、角色和 Suite／Binding 关联修改也遵循同一独立复核流程，不能把旧答案直接改绑到另一个已存在的来源。行序与 Binding 条款顺序不改变关联。完整规则正文比较是有意保守的，正文里的描述或来源元数据变化也需要显式复核。运行时按显式 Binding 调用实现，不按规则文字猜测方法。
 
-`UAES 评测集.xlsx` 是 V3.33 产品资料包随附的 UAES 金标（预检 58 行、审核 186 行，双层表头），与 `uaes-oracle.csv` 是两套评价来源，互不覆盖。[`uaes_evaluation`](corpus/contracts/src/corpus_contracts/uaes_evaluation.py) 只读载入：工作簿按摘要固定版本，标准答案原样返回；存储地址的旧前缀 `../02_受审文件/` 按声明映射到 `uaes/samples/<零件>/测试文件/…`，缺陷样本在 `uaes/samples/<零件>/缺陷样本(-test-)/…`，不复制受审文件。
+`UAES 评测集.xlsx` 是 V3.33 产品资料包随附的 UAES 评测集（预检 58 行、审核 186 行，双层表头）。它是另一位评审给的参考判断，不是真值：真值以 `uaes-oracle.csv` 为准，二者冲突的裁决与订正理由记在 [`评测集订正.md`](../assets/corpus/评测集订正.md)。[`uaes_evaluation`](corpus/contracts/src/corpus_contracts/uaes_evaluation.py) 只读载入：工作簿按摘要固定版本，标准答案原样返回；存储地址的旧前缀 `../02_受审文件/` 按声明映射到 `uaes/samples/<零件>/测试文件/…`，缺陷样本在 `uaes/samples/<零件>/缺陷样本(-test-)/…`，不复制受审文件。
 
-审核明细的规则编号是资料包规则执行包的 rule_id，[`uaes-evaluation-rules.csv`](corpus/uaes-evaluation-rules.csv) 记录它与叶子条款号的对应（按文件类型与条款序，U08 没有第 5 条），只含编号不含规则原文。[`test_uaes_evaluation.py`](corpus/test_uaes_evaluation.py) 把每个零件目录（含缺陷样本）按产品路径整批提交一次：文件检查、上传识别、预检（含内容级），已匹配文件全部审核。AC-31 逐行逐列比对标准答案，不一致即失败；`待裁决`、整改动作／审核依据／整改建议等自由文字列为无法比较并附原因；问题等级按 致命=A、主要=B、次要=C 比对条款默认严重程度。AC-32 把 10 份缺陷样本与同零件原件目录中去掉 `-test-…` 后同名的正常件配对，列出漏检和误判。评测的模型回答在一批完整执行、无回放缺失时即保存，不因比对不一致丢弃重问。CI 的 corpus 组不运行它，需要时单独执行：
+评测集用来分析样本运行结果与另一份人工判断的差异，自己不提交批次、不调用模型、不录回放，也不是必须通过的测试。审核明细的规则编号是资料包规则执行包的 rule_id，[`uaes-evaluation-rules.csv`](corpus/uaes-evaluation-rules.csv) 记录它与叶子条款号的对应（按文件类型与条款序，U08 没有第 5 条），只含编号不含规则原文。
+
+样本运行 [`test_samples.py`](corpus/test_samples.py)（[`uaes_samples`](corpus/contracts/src/corpus_contracts/uaes_samples.py)）把每个零件目录 `uaes/samples/<零件>/测试文件` 按产品路径整批提交一次：文件检查、上传识别、预检（含内容级）、已匹配文件全部审核，`比对文件/` 一并提交为比对件。每份缺陷样本单独成批，沿用正常批次并换掉它对应的正常件（缺陷样本是文件夹时换掉同类目的全部正常件）。它只确认整批跑通，设置 `PPAP_CORPUS_REPORT_DIR` 时把每份文件的预检结果和全部条款结论写进报告。差异分析逐行比对，样本运行没有产出的行记为无法比较，`待裁决` 与自由文字列同样不判分，问题等级按 致命=A、主要=B、次要=C 比对条款默认严重程度：
 
 ```sh
-PPAP_CORPUS_OFFLINE=1 uv run --no-sync pytest tests/corpus/test_uaes_evaluation.py
+PPAP_CORPUS_REPORT_DIR=.log/samples-report uv run --no-sync pytest tests/corpus/test_samples.py
+uv run --no-sync python -m corpus_contracts.uaes_evaluation .log/samples-report
 ```
+
+回放按完整请求摘要在本测试的记录里查找，没有时再用其他测试为同一请求录下的回答，所以同一份样本被多个测试读取时只问一次模型。
 
 `replay/<客户>/<组合>.json` 是录制的模型回答，记录模型看到的文字、图片尺寸和回答，可以直接阅读。
 
