@@ -191,7 +191,8 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
           {excerpt && excerpt !== observation && <span className="mt-0.5 line-clamp-3 whitespace-pre-wrap text-muted-foreground" title={excerpt}>{excerpt}</span>}
         </li>
       })}</ul>}
-      {row.execution === 'completed' && row.coverage === 'executed' && !row.evidence.length && <p className="text-xs text-muted-foreground">未提供来源证据，请核对原件。</p>}
+      {/* A checker finding without a place is one about something absent: it leaves the line blank. Other findings ask to be checked. */}
+      {row.execution === 'completed' && row.coverage === 'executed' && !row.evidence.length && row.verification_scope !== 'checker_execution' && <p className="text-xs text-muted-foreground">未提供来源证据，请核对原件。</p>}
     </div>
   }
   const basis = check && <article key={check.rule_item.id} aria-label="条款判定依据" className="flex flex-col gap-6 animate-in fade-in-0 duration-200 motion-reduce:animate-none">
