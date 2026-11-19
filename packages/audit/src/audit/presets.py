@@ -71,8 +71,20 @@ def preset_document_type(preset: CustomerPreset) -> str:
     return legacy.get_type_name() if legacy else preset.source_type
 
 
+def preset_severities(preset: CustomerPreset) -> dict[str, str]:
+    """Clause → default severity (A/B/C) the preset's checker leaf rules.json carries (rule package v1.5, PRD §2.11 五).
+
+    The leaf is the one source; a clause without a level stays ungraded.
+    """
+    from audit.standard_suites import _CHECKERS_ROOT, customer_directory
+
+    rules = json.loads((_CHECKERS_ROOT / customer_directory(preset.customer) / preset.entry_id / "rules.json").read_text(encoding="utf-8"))
+    return {row["id"]: row["severity"] for row in rules.get("rules", []) if row.get("severity") in {"A", "B", "C"}}
+
+
 def preset_rule_body(customer: str, entry_id: str) -> dict:
     preset = preset_rule(customer, entry_id)
+    severities = preset_severities(preset)
     return {
         "kind": "engine",
         "rule_profile": "v4",
@@ -81,7 +93,17 @@ def preset_rule_body(customer: str, entry_id: str) -> dict:
         "customers": [preset.customer],
         "models": [],
         "parts": [],
-        "rules": [{"id": clause.id, "category": clause.category, "priority": "P0", "rule_to_check": clause.text, "type_of_rule": "text"} for clause in preset.clauses],
+        "rules": [
+            {
+                "id": clause.id,
+                "category": clause.category,
+                "priority": "P0",
+                "rule_to_check": clause.text,
+                "type_of_rule": "text",
+                **({"severity": severities[clause.id]} if clause.id in severities else {}),
+            }
+            for clause in preset.clauses
+        ],
     }
 
 
