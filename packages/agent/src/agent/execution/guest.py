@@ -15,7 +15,7 @@ from agent.execution.secure_files import read_json
 
 def run_entrypoint(inputs: Path, work: Path, credentials: Path) -> None:
     manifest = read_json(inputs, ("manifest.json",), 1024 * 1024)
-    if manifest.get("operation") != "execute-audit":
+    if manifest.get("operation") not in {"execute-audit", "review-target"}:
         raise ValueError("Unsupported guest operation")
     from agent.core_program import run_audit_manifest
 

@@ -11,8 +11,9 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from agent.core_program import CoreRuntime, run_audit_manifest
+from agent.core_program import CoreRuntime
 from agent.deep_review import CORRECTED_PREFIX, CitedEvidence, DeepReview, OriginalReader, check_evidence
+from agent.execution.guest import run_entrypoint
 from agent.protocol import ExecuteRequest, FrozenFile
 from agent.run import Controller
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
@@ -92,7 +93,8 @@ class Guest:
         grant = self.root / f"grant-{uuid.uuid4().hex}"
         grant.mkdir()
         (grant / "model.json").write_text(json.dumps({"base_url": "http://127.0.0.1:1/v1", "token": "local-short-lived-capability-1234567890", "model": "test-model", "wall_seconds": 100}))
-        run_audit_manifest(inputs, work, grant)
+        # The guest's own entrypoint, so every task operation must pass it.
+        run_entrypoint(inputs, work, grant)
 
 
 def controlled_pi(monkeypatch, write):
