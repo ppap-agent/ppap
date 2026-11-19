@@ -201,10 +201,12 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const latestSummaries = useRef(summaries); latestSummaries.current = summaries
   const latestTasks = useRef(tasks); latestTasks.current = tasks
   const [query, setQuery] = useState(''), [filter, setFilter] = useState('all')
-  // The task list beside PPAP Audit. A new audit starts folded. Below 1440px it also folds while one file or a report is open. The person may fold or open it.
+  // The task list beside PPAP Audit (pageFrames decides per page). The person may fold or open it.
   const listEvents = adapter.events?.tasks
   const [railChoice, setRailChoice] = useState<'auto' | 'open' | 'folded'>('auto')
-  const [fileOpen, setFileOpen] = useState(false), wideRail = useMinWidth(1440)
+  // While a file or report is read its table keeps about 1000px: the task list stays open only if the rail, the list (280px),
+  // the file list (320px) and the table all fit.
+  const [fileOpen, setFileOpen] = useState(false), wideRail = useMinWidth(1664)
   // The sheet closes as support opens, so its own button is gone by the time focus returns.
   const [reportView, setReportView] = useState(() => new URL(location.href).searchParams.has('report'))
   const [error, setError] = useState(''), [dragging, setDragging] = useState(false)
@@ -970,7 +972,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }
   // Which frame regions each page uses (design.md「布局」). Single-action pages (upload, precheck and rule matching) fold the task list and
   // keep what is decided at the top and the action at the bottom; result pages keep the list open and carry their own heading.
-  // Below 1440px a result page still folds the list while a file or report is open, until its preview folds instead.
   const pageKind: PageKind = surface !== 'audit' ? 'library' : recovery || workbench || task?.state === 'completed' ? 'results' : step
   const frame = pageFrames[pageKind]
   const railCollapsed = railChoice === 'folded' || railChoice === 'auto' && (frame.taskList === 'folded' || !wideRail && (reportView || fileOpen))

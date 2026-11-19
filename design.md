@@ -205,6 +205,7 @@ Layout follows what the person is doing on the page; visual form follows this do
 
 - **Single-action pages** (upload; precheck and rule matching) fold the task list, keep what the decision rests on at the top (title, the one-line verdict, the step line) and the action at the bottom (estimate, deep mode, start). Only the material between them scrolls (`PageLayout` in `apps/web/src/components/page-layout.tsx`), so neither leaves the screen at 1280 × 800.
 - **Result pages** keep the task list open for moving between tasks and put their own heading (status, progress, estimate) in the top bar, once.
+- **While one file's findings are read**, its table keeps about 1000px. Side columns give way in order of relevance: the task list folds first (it stays open only on windows of about 1664px and wider), then the file list narrows to a strip of file icons with result dots (below about 1432px, or when the task has one file). Each keeps its control to open it again; a choice the person makes wins.
 - **Library pages** (files, templates, rules, usage) have no task list.
 - The page kinds and their frame regions live in one table, `pageFrames` in `apps/web/src/audit/intake.tsx`; change the table, not scattered conditions.
 - Each fact appears once: a count belongs to its section heading; the top verdict says only what the start depends on (files sent, blocked, needing a hand, unmatched).

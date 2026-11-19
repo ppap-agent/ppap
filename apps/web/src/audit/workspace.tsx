@@ -1,7 +1,7 @@
 // Stitch: projects/13261964020862199279/screens/fae9ff65452e4d899ded37b452347e17
 import {useContext, useEffect, useId, useRef, useState} from 'react'
 import {createPortal} from 'react-dom'
-import {faArrowsRotate, faFileLines} from '@fortawesome/free-solid-svg-icons'
+import {faAnglesLeft, faAnglesRight, faArrowsRotate, faFileLines, faTableList} from '@fortawesome/free-solid-svg-icons'
 import {Icon} from '../components/ui/icon'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
@@ -13,10 +13,11 @@ import {Progress} from '../components/ui/progress'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {CompletionNotification, type AuditNotificationAdapter} from './completion-notification'
 import {Item, ItemContent, ItemDescription, ItemGroup} from '../components/ui/item'
-import {FileName} from '../journey/file-name'
+import {FileIcon, FileName} from '../journey/file-name'
+import {Tooltip, TooltipContent, TooltipTrigger} from '../components/ui/tooltip'
 import {clauseLabel, pendingCount, pendingNote, reportReady, resultConsistencyError, taskProgressError, taskResultCounts} from './result-projection'
 import {AuditReports} from './reports'
-import {AuditReviewContent, useRegisteredCustomers, type OriginalRenderer} from './review-content'
+import {AuditReviewContent, useMinWidth, useRegisteredCustomers, type OriginalRenderer} from './review-content'
 import {customerFullName} from './customer-register'
 import type {AuditReportAdapter} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
@@ -172,15 +173,31 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   // P5 shows the registered full name throughout (PRD §1.4 ①③).
   const subject = subjectLabel(taskSubject(task), value => customerFullName(customers, value))
   const fileGroups = [{title: '审核文件', rows: targets}, {title: '比对资料', rows: references}].filter(group => group.rows.length)
-  const fileQueue = <div className="space-y-3 p-3"><div className="flex items-center justify-between gap-2 px-1"><h2 className="text-base font-semibold">文件列表</h2><Button variant={selected ? 'outline' : 'soft'} size="sm" aria-pressed={!selected} onClick={() => chooseFile('')}>全部文件概览</Button></div><nav aria-label="文件队列">{fileGroups.map(group => <section key={group.title} className="min-w-0 space-y-2">{fileGroups.length > 1 && <h2 className="px-1 text-xs font-medium text-muted-foreground">{group.title}</h2>}<div className="grid gap-2">{group.rows.map(row => {
+  const rowView = (row: typeof queue[number]) => {
     const invalid = resultConsistencyError(task, row)
     const state = row.match?.state === 'reference' ? '比对资料' : invalid ? '结果待确认' : row.audit ? row.audit.execution === 'completed' ? fileConclusion(row.audit) ? conclusionLabel[fileConclusion(row.audit)!] ?? '结果未知' : '结果未知' : executionLabel[row.audit.execution] : '等待读取结果'
     const place = running && !invalid ? row.run_state : undefined
     const badge = place ? runLabel[place] : queueStatusLabel(state)
     const tone = place ? runTone[place] : stateTone(row, invalid)
     const note = place ? null : queueNote(row, invalid)
-    const statusId = `${queueId}-${row.file.id}`
-    const current = file?.file.id === row.file.id
+    return {invalid, state, place, badge, tone, note, statusId: `${queueId}-${row.file.id}`, current: file?.file.id === row.file.id}
+  }
+  // While a file is read, its findings table keeps about 1000px: the file list narrows to a strip of file icons when the window
+  // cannot also hold it (or there is only one file), and the person may widen or narrow it again.
+  const roomForList = useMinWidth(1432)
+  const [listChoice, setListChoice] = useState<'auto' | 'open' | 'folded'>('auto')
+  const listNarrow = Boolean(file) && (listChoice === 'folded' || listChoice === 'auto' && (!roomForList || queue.length === 1))
+  const fileStrip = <nav aria-label="文件队列" className="flex flex-col items-center gap-1.5 py-3">
+    <Tooltip><TooltipTrigger asChild><Button variant={selected ? 'ghost' : 'soft'} size="icon-sm" aria-label="全部文件概览" aria-pressed={!selected} onClick={() => chooseFile('')}><Icon icon={faTableList}/></Button></TooltipTrigger><TooltipContent side="right">全部文件概览</TooltipContent></Tooltip>
+    <span aria-hidden="true" className="h-px w-6 bg-border"/>
+    {queue.map(row => {
+      const {state, badge, tone, statusId, current} = rowView(row)
+      return <Tooltip key={row.file.id}><TooltipTrigger asChild><Button variant={current ? 'soft' : 'ghost'} size="icon-sm" className="relative" aria-label={row.file.original_filename} aria-pressed={current} aria-describedby={statusId} onClick={() => chooseFile(row.file.id)}><FileIcon name={row.file.original_filename}/><span aria-hidden="true" className={`absolute top-0.5 right-0.5 size-1.5 rounded-full ${toneRail[tone]}`}/><span id={statusId} hidden>{badge === state ? state : `${badge} · ${state}`}</span></Button></TooltipTrigger><TooltipContent side="right">{row.file.original_filename} · {badge}</TooltipContent></Tooltip>
+    })}
+    <Tooltip><TooltipTrigger asChild><Button variant="quiet" size="icon-sm" className="mt-1" aria-label="展开文件列表" onClick={() => setListChoice('open')}><Icon icon={faAnglesRight}/></Button></TooltipTrigger><TooltipContent side="right">展开文件列表</TooltipContent></Tooltip>
+  </nav>
+  const fileQueue = <div className="space-y-3 p-3"><div className="flex items-center justify-between gap-2 px-1"><h2 className="text-base font-semibold">文件列表</h2><div className="flex items-center gap-1"><Button variant={selected ? 'outline' : 'soft'} size="sm" aria-pressed={!selected} onClick={() => chooseFile('')}>全部文件概览</Button>{file && <Button variant="quiet" size="icon-sm" aria-label="收起文件列表" title="收起文件列表" onClick={() => setListChoice('folded')}><Icon icon={faAnglesLeft}/></Button>}</div></div><nav aria-label="文件队列">{fileGroups.map(group => <section key={group.title} className="min-w-0 space-y-2">{fileGroups.length > 1 && <h2 className="px-1 text-xs font-medium text-muted-foreground">{group.title}</h2>}<div className="grid gap-2">{group.rows.map(row => {
+    const {invalid, state, place, badge, tone, note, statusId, current} = rowView(row)
     return <div key={row.file.id} className={`relative overflow-hidden rounded-md border transition-colors ${current ? 'border-primary bg-primary-soft' : 'bg-card hover:border-primary-line'}`}><span aria-hidden="true" className={`absolute inset-y-0 left-0 w-0.5 ${toneRail[tone]}`}/><span id={statusId} hidden>{place ? badge : <>{state}{row.audit && !invalid ? ` ${row.audit.progress.completed}/${row.audit.progress.total} 项 · ${reportLabel[row.audit.report.state]}` : ''}</>}</span><Button size="row" aria-pressed={current} aria-label={row.file.original_filename} aria-describedby={statusId} variant="ghost" className="min-w-0" onClick={() => chooseFile(row.file.id)}><span className="grid min-w-0 flex-1 gap-1 pl-1"><span className="flex min-w-0 items-center justify-between gap-2"><FileName colored truncate className="min-w-0 text-primary" name={row.file.original_filename}/><Badge shape="square" variant={tone} title={place || badge === state ? undefined : state}>{badge}</Badge></span>{note && <span className={note.className}>{note.text}</span>}</span></Button></div>
   })}</div></section>)}</nav><AuditExcludedFiles files={task.files}/></div>
   const actions = <div hidden={report !== null}><div className="flex shrink-0 items-center gap-2">{onReaudit && task.state === "completed" && <Button variant="outline" onClick={onReaudit}>发起重审</Button>}<Button variant="outline" aria-label="审核报告" onClick={() => showReport(file?.match?.state === 'reference' ? '' : file?.file.id || '')}><Icon icon={faFileLines}/><span>审核报告</span>{readyReports > 0 && <span>({readyReports})</span>}</Button><Button variant="outline" size="icon" aria-label="读取审核结果" title="刷新审核结果" disabled={busy} onClick={onRead}><Icon icon={faArrowsRotate} className={busy ? 'animate-spin motion-reduce:animate-none' : ''}/></Button>{task.notification_enabled !== undefined && notificationAdapter && task.creator.mine && <CompletionNotification compact task={task} adapter={notificationAdapter} onChange={preference => onChange({...task, notification_enabled: preference.enabled, notification_revision: preference.revision})}/>}</div></div>
@@ -195,7 +212,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
       {progressIssue && <Alert variant="destructive"><AlertTitle>任务进度需要核对</AlertTitle><AlertDescription>{progressIssue} 各文件的有效依据仍保留，请重新读取审核结果。</AlertDescription></Alert>}
       {task.usage_notice && <Alert><AlertTitle>用量提示</AlertTitle><AlertDescription><p>{task.usage_notice}</p>{openSupport && <Button variant="outline" size="sm" onClick={() => openSupport({scenario: '审核用量提示', facts: [{label: '任务标识', value: task.id}, {label: '任务编号', value: task.number}, ...(task.round_id ? [{label: '审核轮次', value: task.round_id}] : []), {label: '服务提示', value: task.usage_notice!}]})}>联系支持</Button>}</AlertDescription></Alert>}{readError && <Alert variant="destructive"><AlertTitle>结果暂时无法读取</AlertTitle><AlertDescription><p>{readError} 原有结果与选择仍保留。</p><Button variant="outline" size="sm" onClick={onReadSupport}>联系支持</Button></AlertDescription></Alert>}
       </div>
-      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[20rem_minmax(0,1fr)]"><aside className="min-w-0 overflow-y-auto border-r bg-card">{fileQueue}</aside><div className="min-w-0 overflow-y-auto">{file && task.round_id ? file.match?.state === 'reference' ? <section className="min-w-0 space-y-4 p-6" aria-label="比对资料原件"><h2 className="font-semibold"><FileName name={file.file.original_filename}/></h2>{renderOriginal?.(file.file, null, task.round_id)}</section> : <AuditReviewContent editable={task.creator.mine} previous={previousFile?.audit ? {label: '上次审核', checks: previousFile.audit.checks} : null} key={`${task.round_id}:${file.file.id}`} file={file} roundId={task.round_id} taskId={task.id} frozenFileVersionIds={queue.map(row => row.file.id)} originals={queue.map(row => ({file_version_id: row.file.id, file: row.file, access: {state: 'allowed', reason: null}}))} renderOriginal={renderOriginal} onEditDisplay={onEditDisplay && task.creator.mine ? () => onEditDisplay(file) : undefined} facts={[{label: '创建时间', value: displayTime(task.created_at)}]}/> : overview}</div></div>
+      <div className={`grid min-h-0 min-w-0 flex-1 ${listNarrow ? 'grid-cols-[3.5rem_minmax(0,1fr)]' : 'grid-cols-[20rem_minmax(0,1fr)]'}`}><aside className="min-w-0 overflow-y-auto border-r bg-card">{listNarrow ? fileStrip : fileQueue}</aside><div className="min-w-0 overflow-y-auto">{file && task.round_id ? file.match?.state === 'reference' ? <section className="min-w-0 space-y-4 p-6" aria-label="比对资料原件"><h2 className="font-semibold"><FileName name={file.file.original_filename}/></h2>{renderOriginal?.(file.file, null, task.round_id)}</section> : <AuditReviewContent editable={task.creator.mine} previous={previousFile?.audit ? {label: '上次审核', checks: previousFile.audit.checks} : null} key={`${task.round_id}:${file.file.id}`} file={file} roundId={task.round_id} taskId={task.id} frozenFileVersionIds={queue.map(row => row.file.id)} originals={queue.map(row => ({file_version_id: row.file.id, file: row.file, access: {state: 'allowed', reason: null}}))} renderOriginal={renderOriginal} onEditDisplay={onEditDisplay && task.creator.mine ? () => onEditDisplay(file) : undefined} facts={[{label: '创建时间', value: displayTime(task.created_at)}]}/> : overview}</div></div>
     </div>
   </section>
 }
