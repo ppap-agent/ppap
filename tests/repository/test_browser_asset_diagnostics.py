@@ -24,12 +24,12 @@ class _Page:
 
 def test_asset_paths_exclude_queries_cross_origin_and_business_requests(observe_browser_assets):
     page = _Page()
-    snapshot = observe_browser_assets(page, "http://127.0.0.1:4185")
+    snapshot = observe_browser_assets(page, "http://127.0.0.1:4173")
     for url in (
-        "http://127.0.0.1:4185/src/main.tsx?input=private#fragment",
+        "http://127.0.0.1:4173/src/main.tsx?input=private#fragment",
         "https://other.example/src/main.tsx?secret=hidden",
-        "http://127.0.0.1:4185/api/rules?token=hidden",
-        "http://127.0.0.1:4185/files/private",
+        "http://127.0.0.1:4173/api/rules?token=hidden",
+        "http://127.0.0.1:4173/files/private",
     ):
         event = _Request(url)
         page.emit("request", event)

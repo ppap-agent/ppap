@@ -124,17 +124,9 @@ pnpm api-types
 
 That command serializes the real FastAPI `app.openapi()` schema and pipes it to `openapi-typescript --alphabetize`. CI runs the same generation and rejects any diff in `apps/web/src/generated/openapi.ts`. The generated artifact owns wire types only; retry/readback policy, localized error copy, labels, caches, and UI view-model state remain handwritten.
 
-UI-first contracts without a runtime operation are explicit OpenAPI components marked `x-contract-stage: ui-draft`. They share the same generation path, but do not document fake endpoints or imply persistence, matching, billing, or authorization has been implemented. Preview adapters stay outside the production build entries.
+UI-first contracts without a runtime operation are explicit OpenAPI components marked `x-contract-stage: ui-draft`. They share the same generation path, but do not document fake endpoints or imply persistence, matching, billing, or authorization has been implemented.
 
 具体路由与请求/响应形状以 OpenAPI 为准，行为（请求 ID 幂等、未知回执只读回不重发、对象授权、冻结引用）由 `apps/api/tests`、`tests/integration/product` 与 `tests/e2e` 守护；产品不变量见 [DATA_MODEL](DATA_MODEL.md)。
-
-## UI-first 交互预览
-
-在 `apps/web` 运行 `pnpm preview:workbench`，打开 `http://127.0.0.1:4185/__preview`。预览使用固定 fixture adapter，不代理业务 API，生产构建不包含它；场景只证明界面交互，不证明真实上传、OAuth、解析、匹配、审核、收费或持久化。预览测试在仓库根目录运行（需 `e2e` dependency group）：
-
-```sh
-PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e -k preview -q
-```
 
 ## 深度审核评估
 

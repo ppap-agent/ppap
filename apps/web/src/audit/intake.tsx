@@ -45,7 +45,7 @@ import {reconcileTaskDisplay, type DisplayInfo, type DisplayReference} from './d
 import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
 import {ReviewEditorContext} from './review-editor'
 import {reconcileTaskSummary, subjectLabel, summarizeTask, taskIsBehindSummary, type TaskSummary} from './task-summary'
-import {auditAddressChanged, isPreview, readAuditRoute, ruleAddressChanged, rulesAddressKeys, surfaceAddress, taskAddress as taskHref, writeAuditAddress} from './routes'
+import {auditAddressChanged, readAuditRoute, ruleAddressChanged, rulesAddressKeys, surfaceAddress, taskAddress as taskHref, writeAuditAddress} from './routes'
 import {templateName} from './rule-templates'
 import type {ReadRound} from './workspace'
 import {TaskRecovery, type TaskRecoveryState} from './task-recovery'
@@ -479,7 +479,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     const url = new URL(location.href)
     if (id) url.searchParams.set('task', id); else url.searchParams.delete('task')
     if (!keepSurface) {
-      if (!isPreview(url)) {url.pathname = taskHref(id); url.searchParams.delete('task')}
+      url.pathname = taskHref(id); url.searchParams.delete('task')
       url.searchParams.delete('report'); url.searchParams.delete('view'); url.searchParams.delete('packageRequest')
       url.searchParams.delete('uploadDraft')
       for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'fromRound', 'file', 'clause', 'focus', 'recognitionRequest', 'acceptRequest', 'checkFilter', 'round']) url.searchParams.delete(key)
@@ -558,7 +558,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       const id = round.id === roundId ? round.source_draft_id : null
       if (!id) throw new Error('round_without_task')
       const url = new URL(location.href); url.searchParams.delete('round')
-      if (isPreview(url)) url.searchParams.set('task', id); else url.pathname = taskHref(id)
+      url.pathname = taskHref(id)
       writeAuditAddress(url)
       void recover(id)
     } catch {if (epoch === restoreEpoch.current) setRecovery({id: roundId, state: 'not_found', message: '未找到这次审核对应的任务，请核对链接。'})}
@@ -845,14 +845,10 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (value === 'templates') setTemplatesOpened(true)
     const url = new URL(location.href)
     for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'packageRequest', 'round']) url.searchParams.delete(key)
-    if (value !== 'audit') url.searchParams.set('view', value); else url.searchParams.delete('view')
-    if (value === 'audit' && activeTaskId.current) url.searchParams.set('task', activeTaskId.current)
-    if (!isPreview(url)) {
-      url.pathname = value === 'audit' ? taskHref(activeTaskId.current) : surfaceAddress(value)
-      url.searchParams.delete('view'); url.searchParams.delete('task'); url.searchParams.delete('report')
-      // One page's own address state (rule tabs, chosen rule or checker) must not follow the person to another page.
-      if (value !== 'requirements') for (const key of rulesAddressKeys) url.searchParams.delete(key)
-    }
+    url.pathname = value === 'audit' ? taskHref(activeTaskId.current) : surfaceAddress(value)
+    url.searchParams.delete('view'); url.searchParams.delete('task'); url.searchParams.delete('report')
+    // One page's own address state (rule tabs, chosen rule or checker) must not follow the person to another page.
+    if (value !== 'requirements') for (const key of rulesAddressKeys) url.searchParams.delete(key)
     history.pushState(history.state, '', url)
     if (value === 'audit') {restoreAddress(); return}
     surfaceRef.current = value
@@ -1053,7 +1049,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         {surface === 'audit' && reportView ? <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <li className="flex min-w-0 items-center gap-1">{task && !recovery ? <a href={taskResultsAddress().href} aria-label="返回审核结果" className="font-medium hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showTaskResults()}}}>{task.number}</a> : <span className="text-muted-foreground">审核任务</span>}</li>
           <li aria-hidden="true" className="text-muted-foreground">/</li><li aria-current="page" className="font-medium">审核报告</li>
-        </ol></nav> : <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1"><li aria-current="page" className="flex min-w-0 items-center gap-1 font-medium">{surface === 'requirements' && ruleDetailOpen ? <a href="/requirements" className="min-w-0 truncate hover:underline" onClick={event => {if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); const url = new URL(location.href); for (const key of rulesAddressKeys) url.searchParams.delete(key); if (!isPreview(url)) {url.pathname = surfaceAddress('requirements'); url.searchParams.delete('view')}; writeAuditAddress(url)}}>{pageContext}</a> : (surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) || surface === 'audit' && !task && !recovery && step === 'upload') ? <h1 className={`min-w-0 truncate ${surface === 'audit' && step === 'upload' ? 'text-base font-semibold' : 'text-sm font-medium'}`}>{pageContext}</h1> : <span className="min-w-0 truncate">{pageContext}</span>}</li></ol></nav>}
+        </ol></nav> : <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1"><li aria-current="page" className="flex min-w-0 items-center gap-1 font-medium">{surface === 'requirements' && ruleDetailOpen ? <a href="/requirements" className="min-w-0 truncate hover:underline" onClick={event => {if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); const url = new URL(location.href); for (const key of rulesAddressKeys) url.searchParams.delete(key); url.pathname = surfaceAddress('requirements'); url.searchParams.delete('view'); writeAuditAddress(url)}}>{pageContext}</a> : (surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) || surface === 'audit' && !task && !recovery && step === 'upload') ? <h1 className={`min-w-0 truncate ${surface === 'audit' && step === 'upload' ? 'text-base font-semibold' : 'text-sm font-medium'}`}>{pageContext}</h1> : <span className="min-w-0 truncate">{pageContext}</span>}</li></ol></nav>}
       </div><div className="flex shrink-0 items-center gap-4"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && <AccountMenu compact/>}</div></header>
       {/* PPAP Audit keeps its task list on the left, on the new-audit page and on every task. */}
       <main id="audit-main" tabIndex={-1} className="flex min-h-0 w-full flex-1 overflow-hidden">

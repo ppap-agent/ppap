@@ -53,66 +53,6 @@ jobs:
           pnpm test
           pnpm lint
           pnpm build
-      - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
-        with:
-          working-directory: ${{ github.workspace }}
-          version: "0.9.26"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - name: Install preview browser dependencies
-        working-directory: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          uv sync --locked --group e2e
-          uv run --no-sync python -m playwright install chromium
-      - name: Preview browser contracts
-        working-directory: ${{ github.workspace }}/apps/web
-        env:
-          PPAP_PREVIEW: "1"
-        run: |
-          pnpm exec node --input-type=module <<'JS'
-          import {spawn} from 'node:child_process'
-          import {once} from 'node:events'
-          import {readdirSync} from 'node:fs'
-          import {resolve} from 'node:path'
-          import {createServer} from 'vite'
-
-          const root = resolve('../..'), directory = resolve(root, 'tests/e2e')
-          const tests = readdirSync(directory).filter(name => /^test_.*_preview\.py$/.test(name)).sort().map(name => resolve(directory, name))
-          if (!tests.length) throw new Error('No preview browser contracts found')
-          const server = await createServer({server: {host: '127.0.0.1', strictPort: false}})
-          try {
-            await server.listen()
-            const address = server.httpServer?.address()
-            if (!address || typeof address === 'string' || address.address !== '127.0.0.1') throw new Error('Preview did not bind to loopback')
-            const preview = `http://127.0.0.1:${address.port}`
-            console.log(`UI-only preview: ${preview}`)
-            const pytestArgs = ['run', '--no-sync', 'pytest', '-n', '4', '--dist=load', '--durations=25', ...tests]
-            console.log(`Preview test files: ${tests.length}`)
-            const child = spawn('uv', pytestArgs, {cwd: root, stdio: 'inherit', env: {...process.env, PPAP_PREVIEW_URL: preview}})
-            // Browser tests can be silent for minutes. Keep CI runner
-            // heartbeat activity without changing test exit semantics.
-            const heartbeat = setInterval(() => console.log(`Preview heartbeat: child pid=${child.pid}`), 30000)
-            try {
-              const [code] = await once(child, 'exit')
-              process.exitCode = code ?? 1
-            } finally {
-              clearInterval(heartbeat)
-            }
-          } finally {
-            await server.close()
-          }
-          JS
-
-      - name: Upload failed synthetic recognition trace
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: preview-recognition-late
-          path: ${{ github.workspace }}/ci-report/preview-recognition-late/*.zip
-          if-no-files-found: ignore
-          retention-days: 7
 
   design:
     name: Design enforcement

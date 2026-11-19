@@ -11,7 +11,7 @@
 - `corpus`: assembled engine regression and regression fixtures
 - `integration/product`: cross-owner production-store contracts
 - `integration/runtime`: production runtime and backup/restore
-- `e2e`: Python Playwright browser paths — preview contracts (`test_*_preview.py`, stubbed API) and real-stack journeys (everything else)
+- `e2e`: Python Playwright journeys on the real stack
 
 CI consumes these physical owners. It does not maintain a second test manifest.
 
@@ -227,22 +227,14 @@ bash scripts/run-compose-tests.sh tests/integration/runtime -f deploy/compose.ya
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
 ```
 
-Browser E2E has two kinds of tests in `tests/e2e`, both needing `uv sync --locked --group e2e` and `uv run --no-sync python -m playwright install chromium`:
+Browser E2E (`tests/e2e`) needs `uv sync --locked --group e2e` and `uv run --no-sync python -m playwright install chromium`. The journeys drive the baked API/Worker/Web/Controller images in isolated-dev through public HTTP; CI runs them in Product integration:
 
-- Preview contracts (`test_*_preview.py`) run against the UI-only Vite preview with a stubbed fixture API; they prove interaction only, not persistence or authorization. CI runs them in the Web job. Locally, start `pnpm preview:workbench` in `apps/web`, then:
-
-  ```sh
-  PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e -k preview -q
-  ```
-
-- Real-stack journeys (the other files) drive the baked API/Worker/Web/Controller images in isolated-dev through public HTTP. CI runs them in Product integration; preview contracts skip without `PPAP_PREVIEW_URL`:
-
-  ```sh
-  export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
-  docker buildx bake release
-  bash scripts/run-compose-tests.sh tests/e2e -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml
-  docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml down -v --remove-orphans
-  ```
+```sh
+export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
+docker buildx bake release
+bash scripts/run-compose-tests.sh tests/e2e -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml
+docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml down -v --remove-orphans
+```
 
 Fact-answer and checker-workspace journeys under `tests/integration/product/` document their own scope and local-only overrides in their module docstrings; they run with the Product integration prerequisites above.
 

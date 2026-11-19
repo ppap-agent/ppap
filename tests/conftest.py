@@ -1,18 +1,15 @@
-"""Bounded failure diagnostics for existing live OCR and UI preview gates."""
+"""Bounded failure diagnostics for live OCR and real-stack browser gates."""
 
 import inspect
 import itertools
-import json
 import logging
 import os
 import re
 import shutil
 import socket
 import subprocess
-import sys
 import tempfile
 from collections import deque
-from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic
 from urllib.parse import urlsplit
@@ -176,12 +173,12 @@ def ocr_transport_diagnostics(monkeypatch, caplog):
     monkeypatch.setattr(httpx2.Response, "aread", read)
 
 
-def _preview_asset_path(url, origin):
+def _asset_path(url, origin):
     parsed = urlsplit(url)
-    return parsed.path if (parsed.scheme, parsed.netloc) == (origin.scheme, origin.netloc) and parsed.path.startswith(("/preview/", "/src/", "/node_modules/", "/@")) else None
+    return parsed.path if (parsed.scheme, parsed.netloc) == (origin.scheme, origin.netloc) and parsed.path.startswith(("/src/", "/node_modules/", "/@")) else None
 
 
-class _PreviewAssetTimings:
+class _AssetTimings:
     """Bounded same-origin asset progress; never capture request data or queries."""
 
     def __init__(self):
@@ -227,10 +224,10 @@ def _observe_page(page, origin):
     Only same-origin asset paths, status codes, Chromium error codes and
     JavaScript error class names are kept; URLs, queries and messages are not.
     """
-    events, first_failure, timings = deque(maxlen=12), {}, _PreviewAssetTimings()
+    events, first_failure, timings = deque(maxlen=12), {}, _AssetTimings()
 
     def asset_path(url):
-        return _preview_asset_path(url, origin)
+        return _asset_path(url, origin)
 
     def record(entry):
         if not first_failure:
@@ -265,56 +262,3 @@ def _observe_page(page, origin):
 @pytest.fixture
 def observe_browser_assets():
     return lambda page, web: _observe_page(page, urlsplit(web))
-
-
-@pytest.fixture(autouse=True)
-def preview_failure_diagnostics(request, monkeypatch):
-    preview = os.environ.get("PPAP_PREVIEW_URL", "")
-    original = getattr(request.module, "sync_playwright", None)
-    if not preview or not str(request.path).endswith("_preview.py") or not original:
-        return
-    from playwright.sync_api import Browser, BrowserContext
-
-    origin = urlsplit(preview)
-    pages = deque(maxlen=3)
-
-    def observe(create):
-        def new_page(*args, **kwargs):
-            page = create(*args, **kwargs)
-            pages.append((page, _observe_page(page, origin)))
-            return page
-
-        return new_page
-
-    @contextmanager
-    def observed_playwright():
-        with original() as playwright:
-            try:
-                yield playwright
-            except BaseException:
-                for page, snapshot in pages:
-                    result = {**snapshot(), "closed": page.is_closed()}
-                    if not page.is_closed():
-                        try:
-                            result["document"] = page.locator("body").evaluate(
-                                """() => ({
-                                    readyState: document.readyState,
-                                    visibility: document.visibilityState,
-                                    appChildren: document.getElementById('app')?.childElementCount,
-                                    bodyTextLength: document.body?.innerText.length,
-                                    headings: document.querySelectorAll('h1,h2').length,
-                                    alerts: document.querySelectorAll('[role=alert]').length,
-                                    bodyAriaHidden: document.body?.getAttribute('aria-hidden')
-                                })""",
-                                timeout=1000,
-                            )
-                            result["url"] = page.url
-                            result["aria"] = page.locator("body").aria_snapshot(timeout=1000)[:4000]
-                        except Exception as error:
-                            result["snapshot_error_type"] = type(error).__name__
-                    print("Preview failure diagnostics: " + json.dumps(result, ensure_ascii=False), file=sys.stderr)
-                raise
-
-    monkeypatch.setattr(Browser, "new_page", observe(Browser.new_page))
-    monkeypatch.setattr(BrowserContext, "new_page", observe(BrowserContext.new_page))
-    monkeypatch.setattr(request.module, "sync_playwright", observed_playwright)

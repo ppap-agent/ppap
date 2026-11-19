@@ -103,7 +103,7 @@ def running_product(auth_store_factory, v4_objects, core_system, tmp_path, reque
     vite = subprocess.Popen(
         ["pnpm", "exec", "vite", "--host", "127.0.0.1", "--port", str(web_port), "--strictPort"],
         cwd=root / "apps/web",
-        env={**os.environ, "PPAP_PREVIEW": "0", "PPAP_PUBLIC_API_URL": api_url},
+        env={**os.environ, "PPAP_PUBLIC_API_URL": api_url},
         stdout=log,
         stderr=log,
         start_new_session=True,

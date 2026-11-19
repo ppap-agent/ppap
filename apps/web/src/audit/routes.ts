@@ -9,8 +9,6 @@ export const surfaceAddress = (surface: ProductSurface) => paths[surface]
 export const auditAddressChanged = 'ppap-audit-address-changed'
 /** The rules page moved between its list and a rule's page; only the page header follows it. */
 export const ruleAddressChanged = 'ppap-rule-address-changed'
-/** The local preview serves fixture pages under /preview/; their addresses keep the task in the query. */
-export const isPreview = (url: {pathname: string} = location) => url.pathname.startsWith('/preview/')
 /** The rules page's own address keys; they never follow the person to another page. */
 export const rulesAddressKeys = ['template', 'systemRule']
 
@@ -24,8 +22,7 @@ export function writeAuditAddress(url: URL | string, mode: 'push' | 'replace' = 
 /** A refresh must read the original command receipt, never create another command. */
 export function requestAddress(url: URL, taskId: string, kind: 'recognitionRequest' | 'acceptRequest', requestId: string): string {
   const next = new URL(url)
-  if (isPreview(next)) next.searchParams.set('task', taskId)
-  else {next.pathname = taskAddress(taskId); next.searchParams.delete('task')}
+  next.pathname = taskAddress(taskId); next.searchParams.delete('task')
   next.searchParams.delete('view'); next.searchParams.set(kind, requestId)
   return next.pathname + next.search + next.hash
 }
