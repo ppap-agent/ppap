@@ -115,6 +115,19 @@ def rule_type_codes(customer: RegisteredCustomer, rules: Iterable[dict]) -> set[
     return codes
 
 
+def in_type_set(rule: dict) -> bool:
+    """Whether new tasks may use this rule: a rule naming registered customers is offered only for a type in their M.
+
+    Rules of other types stay stored and keep their history (for example 蔚来 N06–N17 outside its five types); an
+    unregistered customer or an unrecognised type is not judged here.
+    """
+    named = [customer for value in rule.get("customers") or [] if (customer := resolve(value))]
+    code = type_code(rule.get("type"))
+    if not named or code is None:
+        return True
+    return any(customer.type_set and code in customer.type_set.types for customer in named)
+
+
 def coverage(customer: RegisteredCustomer, template_codes: Iterable[str | None], rule_codes: Iterable[str | None]) -> dict | None:
     """M and the two independent numerators, or None when M is not configured."""
     if not customer.type_set or not customer.type_set.types:

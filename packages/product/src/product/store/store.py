@@ -1384,11 +1384,13 @@ class AuthStore:
             if row["selection"] != "removed" and validation.get("scope") and (customer != "UAES" or validation["scope"] != {"customer_preference": "UAES", "preset_key": "U13"}):
                 raise ValueError("validation_scope_mismatch")
         all_rules = self.list_rules(principal.tenant_id)
+        from product.customers import in_type_set
         from product.store.suites import programless_suite_keys
 
         # An uploaded rule without a generated program is not offered for audit.
         programless = programless_suite_keys(conn, principal.tenant_id, [rule["suite_key"] for rule in all_rules if str(rule.get("suite_key") or "").startswith("custom:")])
-        candidates = [rule for rule in latest_rule_versions(all_rules) if rule.get("suite_key") not in programless]
+        # A registered customer's rule outside its type set M is not offered to new tasks; history keeps it.
+        candidates = [rule for rule in latest_rule_versions(all_rules) if rule.get("suite_key") not in programless and in_type_set(rule)]
         draft = self._task_draft(conn, principal, task_id, modify=True)
         predecessor = self._reaudit_source(conn, principal, str(draft["predecessor_id"])) if draft["predecessor_id"] else None
         replacements = [row["replacement_of_file_version_id"] for row in files if row["selection"] == "selected" and row.get("replacement_of_file_version_id")]

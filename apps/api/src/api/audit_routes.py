@@ -5,6 +5,7 @@ from typing import Any, Literal, cast
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from product.customers import in_type_set
 from product.files import ObjectMissing, attachment_content_disposition, original_filename, safe_content_type
 from product.identity import can_modify, can_read
 from product.store import AuthStore
@@ -84,7 +85,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         principal, denied = require_principal(request)
         if denied:
             return denied
-        return JSONResponse({"rules": store.list_rules(principal.tenant_id, catalog=True)})
+        # The rules new tasks may use: a registered customer's rule outside its type set M is not listed.
+        return JSONResponse({"rules": [rule for rule in store.list_rules(principal.tenant_id, catalog=True) if in_type_set(rule)]})
 
     @app.get("/audit-archive", response_model=wc.AuditArchivePage)
     def audit_archive_list(

@@ -50,3 +50,16 @@ def test_missing_type_set_yields_no_coverage():
     nio = replace(customers.find("nio"), type_set=None)
     assert customers.coverage(nio, ["T01"], ["T01"]) is None
     assert customers.coverage(replace(nio, type_set=customers.TypeSet("x", "2026-11-18", ())), ["T01"], ["T01"]) is None
+
+
+def test_a_registered_customer_rule_outside_its_type_set_is_not_offered_to_new_tasks():
+    from product.customers import in_type_set
+
+    # 蔚来 M is its five types: its N06–N17 presets (for example 零部件设计验证计划和报告, T02) stay stored but are not offered.
+    assert not in_type_set({"customers": ["蔚来"], "type": "零部件设计验证计划和报告"})
+    assert in_type_set({"customers": ["蔚来"], "type": "控制计划"})
+    assert in_type_set({"customers": ["理想"], "type": "零部件设计验证计划和报告"})
+    # Not judged here: an unregistered customer, a rule without customers, an unrecognised type.
+    assert in_type_set({"customers": ["示例客户"], "type": "零部件设计验证计划和报告"})
+    assert in_type_set({"customers": [], "type": "零部件设计验证计划和报告"})
+    assert in_type_set({"customers": ["蔚来"], "type": "8D报告"})

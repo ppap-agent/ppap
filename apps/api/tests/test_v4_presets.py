@@ -18,7 +18,11 @@ def test_new_enterprise_receives_all_preset_rules_without_upload(auth_store_fact
     presets = [rule for rule in rules if rule["rule_profile"] == "v4"]
     assert presets
     assert {row["name"] for row in client.get("/audit-customers").json()["customers"]} == {"UAES", "理想", "蔚来"}
-    first_ids = {row["id"] for row in presets}
+    installed = [row for row in store.list_rules(principal.tenant_id) if row["rule_profile"] == "v4"]
+    first_ids = {row["id"] for row in installed}
+    # Every preset is installed and kept; new tasks are offered only 蔚来's five types, not its N06–N17.
+    withheld = [row for row in installed if row["id"] not in {preset["id"] for preset in presets}]
+    assert len(withheld) == 12 and all(row["customers"] == ["蔚来"] for row in withheld)
     store.upsert_feishu_identity(tenant, "first")
     peer = store.upsert_feishu_identity(tenant, "second")
     assert {row["id"] for row in store.list_rules(peer.tenant_id) if row["rule_profile"] == "v4"} == first_ids
