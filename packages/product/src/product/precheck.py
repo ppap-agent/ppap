@@ -219,7 +219,7 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
     codes = {row["file"]["id"]: type_code((row.get("match") or {}).get("document_type")) for row in files}
     for row in files:
         name, validation, match = row["file"]["original_filename"], row.get("validation") or {}, row.get("match") or {}
-        customer = (match.get("metadata") or {}).get("customer") or task.get("customer")
+        customer = (match.get("metadata") or {}).get("customer") or task.get("customer_preference")
         scope, code = customer_types(customer), codes[row["file"]["id"]]
         outside = scope is not None and code is not None and code not in scope
         reasons = "；".join(str(reason) for reason in validation.get("reasons") or [])
@@ -257,7 +257,7 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
                 action = "如为扫描件，请提供可编辑的原始文件（Excel / Word）或文字版 PDF。"
                 findings.append(_finding("W05", "warn", row, problem, READ_GAPS[gap], action, "解析侧"))
         metadata = match.get("metadata") or {}
-        entries[row["file"]["id"]] = entry = entry_key(metadata.get("customer") or task.get("customer"), match.get("document_type"))
+        entries[row["file"]["id"]] = entry = entry_key(metadata.get("customer") or task.get("customer_preference"), match.get("document_type"))
         if customer and code:
             targets.append((row, customer, code))
         if entry is None:

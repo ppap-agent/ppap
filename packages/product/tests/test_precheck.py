@@ -134,3 +134,10 @@ def test_the_counterpart_graph_is_the_one_ppap_00_a_registers():
     for (customer, target), peers in PEERS.items():
         row = next(line for line in section.splitlines() if line.startswith(f"| {customer} |") and f"`{target}`" in line.split("|")[2])
         assert set(peers) == set(re.findall(r"`([TE]\d{2})`", row.split("|")[3])), (customer, target)
+
+
+def test_a_file_without_a_recognized_customer_routes_by_the_task_customer():
+    row = file("cp", "控制计划-776.xlsx")
+    row["match"]["metadata"]["customer"] = None
+    assert "S02" not in [item["code"] for item in precheck_task({"customer_preference": "UAES", "files": [row]})["statuses"]]
+    assert [item["code"] for item in precheck_task({"customer_preference": None, "files": [row]})["statuses"]] == ["S02"]

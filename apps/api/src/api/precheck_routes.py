@@ -137,7 +137,7 @@ def _cover_recognition(task: dict) -> dict[str, str | None]:
     cover: dict[str, str | None] = {}
     for field in COVER_FIELDS:
         # The customer falls back to the task's customer, as the precheck routes it.
-        found = [((row.get("match") or {}).get("metadata") or {}).get(field) or (task.get("customer") if field == "customer" else None) for row in rows]
+        found = [((row.get("match") or {}).get("metadata") or {}).get(field) or (task.get("customer_preference") if field == "customer" else None) for row in rows]
         values = [full_name(value) if field == "customer" else value.strip() for value in found if isinstance(value, str) and value.strip()]
         cover[field] = "、".join(dict.fromkeys(values)) or None
     return cover
@@ -161,7 +161,7 @@ def register_precheck_routes(app: FastAPI, store: AuthStore, principal_of) -> No
             match = row.get("match") or {}
             if row.get("selection") != "selected" or match.get("state") != "matched" or row.get("reference_only"):
                 continue
-            customer = (match.get("metadata") or {}).get("customer") or task.get("customer")
+            customer = (match.get("metadata") or {}).get("customer") or task.get("customer_preference")
             key = entry_key(customer, match.get("document_type"))
             if key is None:
                 continue
