@@ -120,7 +120,7 @@ test("primitives use tokens too, but motion, runtime transform and composition a
   const colour = await lint('export function Sample() { return <div className="hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]" /> }\n');
   assert.ok((colour?.errorCount ?? 0) > 0);
   const allowed = await lint(
-    'export function Sample({ x }: { x: number }) { return <div className="transition-[color,box-shadow] bg-secondary hover:bg-secondary-hover text-dense rounded-md ring-3" style={{ transform: `translateX(${x}%)` }} /> }\n',
+    'export function Sample({ x }: { x: number }) { return <div className="transition-[color,box-shadow] bg-secondary hover:bg-secondary-hover text-sm rounded-md ring-3" style={{ transform: `translateX(${x}%)` }} /> }\n',
   );
   assert.equal(allowed?.errorCount, 0, allowed?.messages.map((message) => message.message).join("\n"));
 });

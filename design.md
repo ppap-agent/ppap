@@ -32,8 +32,51 @@ colors:
   dark-error: "#dc2626"
   dark-info: "#60a5fa"
 typography:
-  body:
+  label-sm:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
+    fontSize: 11px
+    fontWeight: 600
+    lineHeight: 14px
+  body-sm:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
+    fontSize: 12px
+    fontWeight: 400
+    lineHeight: 16px
+  label-md:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
+    fontSize: 12px
+    fontWeight: 500
+    lineHeight: 16px
+  body-md:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
+    fontSize: 13px
+    fontWeight: 400
+    lineHeight: 18px
+  body-lg:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
+    fontSize: 15px
+    fontWeight: 400
+    lineHeight: 20px
+  headline-sm:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
+    fontSize: 15px
+    fontWeight: 600
+    lineHeight: 20px
+  headline-md:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
+    fontSize: 18px
+    fontWeight: 600
+    lineHeight: 24px
+  headline-lg:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
+    fontSize: 22px
+    fontWeight: 600
+    lineHeight: 28px
+  headline-xl:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
+    fontSize: 28px
+    fontWeight: 600
+    lineHeight: 36px
 rounded:
   control: 0.5rem
 components:

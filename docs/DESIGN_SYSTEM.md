@@ -17,7 +17,7 @@ runtime theme → src/index.css (Tailwind @theme) → src/components/ui → page
 ```
 
 `apps/web/tokens/web.resolver.json` selects the inputs: `shared.tokens.json` (font family,
-control radius), `light.tokens.json` (colours) and the `dark` theme context
+type scale, control radius), `light.tokens.json` (colours) and the `dark` theme context
 (`dark.tokens.json`). One implementation, `apps/web/scripts/design-tokens.ts`, produces both
 the runtime theme and the design.md frontmatter, so they cannot disagree.
 
@@ -41,7 +41,8 @@ consistency is checked on its own, not repaired as a side effect of building.
 ## Token boundary
 
 Tokenize reusable design decisions: semantic colours (light and dark resolve the same roles),
-the font family, the dense font size and the control radius. Add a token only when a real decision needs one; do
+the font family, the type scale (size and line height of each Tailwind `text-*` step, from
+11px `2xs` to 28px `2xl`, with 13px `sm` as body text) and the control radius. Add a token only when a real decision needs one; do
 not pre-build layers or brands.
 
 Keep content-driven breakpoints, grid tracks, chart coordinates, percentages and measured
@@ -64,7 +65,7 @@ Primitives are linted for tokens as well, because that is where most visual deci
 hard-coded value there would survive a token change. Their rules differ from the page rules:
 
 - No arbitrary colour, typography, spacing, shape or effects values; use a token or the
-  Tailwind scale. A decision that has no token yet (a hover colour, a dense font size) gets one.
+  Tailwind scale. A decision that has no token yet (a hover colour) gets one.
 - Layout and motion values are allowed (a transition property list is not a visual decision).
 - One primitive composing another is not a page restyling it, so `no-restyle` does not apply.
 - Inline styles may carry runtime geometry only (`transform`).

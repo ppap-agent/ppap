@@ -10,7 +10,6 @@ function variableName(token: TokenNormalized): string {
   if (token.id.startsWith("color.")) return token.id.slice("color.".length);
   if (token.id === "rounded.control") return "radius";
   if (token.id === "font.sans") return "font-family-sans";
-  if (token.id === "font.size-dense") return "font-size-dense";
   return token.id.replaceAll(".", "-");
 }
 
@@ -130,6 +129,26 @@ function components(prefix: string, suffix: string, tokens: TokenNormalizedSet):
     textColor: ${c("info")}`;
 }
 
+// The design.md roles of each step of the type scale (Tailwind text-<step> at runtime).
+const typeRoles: readonly (readonly [string, string, number])[] = [
+  ["label-sm", "2xs", 600],
+  ["body-sm", "xs", 400],
+  ["label-md", "xs", 500],
+  ["body-md", "sm", 400],
+  ["body-lg", "base", 400],
+  ["headline-sm", "base", 600],
+  ["headline-md", "lg", 600],
+  ["headline-lg", "xl", 600],
+  ["headline-xl", "2xl", 600],
+];
+
+function typography(tokens: TokenNormalizedSet): string {
+  const family = fontFamily(tokens, "font.sans");
+  return typeRoles
+    .map(([role, step, weight]) => `  ${role}:\n    fontFamily: '${family}'\n    fontSize: ${dimension(tokens, `font.size.${step}`)}\n    fontWeight: ${weight}\n    lineHeight: ${dimension(tokens, `font.leading.${step}`)}`)
+    .join("\n");
+}
+
 function frontmatter(light: TokenNormalizedSet, dark: TokenNormalizedSet): string {
   const lines = (tokens: TokenNormalizedSet, prefix: string) =>
     projected.filter(([, id]) => opaque(tokens, `color.${id}`)).map(([name, id]) => `  ${prefix}${name}: "${hex(tokens, `color.${id}`)}"`);
@@ -140,8 +159,7 @@ description: "Precision Slate: slate neutrals, one blue for commitments, crisp 1
 colors:
 ${[...lines(light, ""), ...lines(dark, "dark-")].join("\n")}
 typography:
-  body:
-    fontFamily: '${fontFamily(light, "font.sans")}'
+${typography(light)}
 rounded:
   control: ${dimension(light, "rounded.control")}
 components:

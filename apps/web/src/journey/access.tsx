@@ -87,7 +87,7 @@ export function ProductAccess({children}: {children: ReactNode}) {
     <header className="flex items-center gap-2 p-6 text-base font-semibold"><span className="flex size-6.5 shrink-0 items-center justify-center rounded-md bg-linear-135 from-brand-light to-primary text-primary-foreground"><Icon icon={faWandMagicSparkles} aria-hidden="true" className="size-3.5"/></span>PPAP Audit</header>
     <main className={"m-auto flex w-full max-w-md flex-col gap-5 px-6 pb-16"}>
       {/* A signed-in user should not see a sign-in screen while the session is still being read. */}
-      {!ready ? <ReadSkeleton label="正在确认登录状态…" kind="inline"/> : <div className="space-y-2"><h1 className={"text-2xl font-semibold tracking-tight"}>登录 PPAP Audit</h1><p className="text-sm text-muted-foreground">按客户规则逐项审核 PPAP 文件，结果保留原件证据与报告。登录后回到当前页面。</p></div>}
+      {!ready ? <ReadSkeleton label="正在确认登录状态…" kind="inline"/> : <div className="space-y-2"><h1 className={"text-xl font-semibold tracking-tight"}>登录 PPAP Audit</h1><p className="text-sm text-muted-foreground">按客户规则逐项审核 PPAP 文件，结果保留原件证据与报告。登录后回到当前页面。</p></div>}
       {!ready ? null : error ? <>
         <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
         {/* After a cancelled or failed sign-in, signing in again is the way forward; reading the service again is secondary. */}
