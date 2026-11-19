@@ -267,6 +267,10 @@ def _counterparts(targets: list[tuple[dict, str, str]], files: list[dict], codes
             candidates = [other for other in others if codes[other["file"]["id"]] == peer]
             if mine and any(_part(other) == mine for other in candidates):
                 continue
+            # This file's own part number is unreadable: a counterpart of its type is in the batch, so whether
+            # it is the same part stays undecided (neither S04 nor S07). Only a type absent from the batch is missing.
+            if not mine and candidates:
+                continue
             # A counterpart of another submitted part pairs with that part's files, not with this one.
             associated = [other for other in candidates if _part(other) is None or _part(other) not in submitted - {mine}]
             if not associated and not undetermined:

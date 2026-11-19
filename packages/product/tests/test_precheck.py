@@ -176,6 +176,18 @@ def test_a_counterpart_of_another_submitted_part_is_not_associated_and_an_unread
     assert unreadable["statuses"] == [] and unreadable["warnings"] == []
     no_part = precheck_task({"files": [file("a", "过程能力.xlsx", doc_type="过程能力研究", part_number=""), pgqp("P2")]})
     assert not _status(no_part, "S04") and not _status(no_part, "S07")
+    # The counterpart is itself a submitted file with a readable part number (ppap-test, 2026-11-19): a control
+    # plan whose own part number is unreadable is not told its flow chart is missing.
+    plan_unread = precheck_task(
+        {
+            "files": [
+                file("cp", "控制计划.xlsx", doc_type="控制计划", part_number=""),
+                file("pfd", "过程流程图.xls", doc_type="过程流程图", part_number="F01R10DP4Z"),
+            ]
+        }
+    )
+    assert not [item for item in plan_unread["statuses"] if item["file_version_id"] == "cp" and item.get("missing", {}).get("document") == "过程流程图"]
+    assert not [item for item in plan_unread["warnings"] if item["file_version_id"] == "cp" and "过程流程图" in item.get("message", "")]
     # An untyped file could be the counterpart: the missing counterpart is not established.
     untyped = precheck_task({"files": [file("a", "过程能力.xlsx", doc_type="过程能力研究"), file("x", "附件.pdf", state="failed", gaps=["document_classification_failed"], doc_type=None)]})
     assert not _status(untyped, "S04")
