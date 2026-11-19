@@ -219,6 +219,13 @@ def table_html(table: Table, rows: Sequence[tuple[str, ...]], continued: bool) -
     return f"{caption}<table><tr>{head}</tr>{body}</table>"
 
 
+def row_html(table: Table, row: tuple[str, ...], continued: bool) -> str:
+    """One row as labelled paragraphs, for a row taller than a page: paragraphs break over pages, a table row cannot."""
+    caption = f"<p class='caption'>{escape(table.caption)}{'（续表）' if continued else ''}</p>" if table.caption else ""
+    fields = "".join(f"<p><b>{escape(head)}</b>：{value}</p>" for head, value in zip(table.head, row, strict=False))
+    return caption + fields
+
+
 class _Pages:
     def __init__(self, writer: pymupdf.DocumentWriter, archive: pymupdf.Archive, css: str):
         self.writer, self.archive, self.css = writer, archive, css
@@ -287,8 +294,8 @@ class _Pages:
                 if self.y > BODY.y0:
                     self.new_page()
                     continue
-                # One row taller than a page: it runs on over pages; nothing is cut.
-                self.flow(table_html(table, rest[:1], continued))
+                # One row taller than a page runs on over pages as labelled paragraphs; nothing is cut.
+                self.flow(row_html(table, rest[0], continued))
                 index += 1
             else:
                 story = self._story(table_html(table, rest[:low], continued))

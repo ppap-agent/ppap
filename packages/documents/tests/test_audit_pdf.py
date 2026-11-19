@@ -534,3 +534,16 @@ def test_precheck_warnings_are_c_class_problems_with_concrete_remediation():
     assert "请核实" not in remediation and "同上" not in remediation
     # Warnings are not audit items: the four result values count only the clauses.
     assert "PASS1NG0待审核0不适用0" in summary
+
+
+def test_a_row_taller_than_a_page_runs_on_over_pages_without_losing_evidence():
+    source = report_source()
+    check = source["audit"]["checks"][0]
+    # A deep-review correction can cite many places; one such row is taller than a page.
+    check["evidence"] = [{**check["evidence"][0], "excerpt": f"证据片段{number}：" + "很长的原文摘录" * 12} for number in range(1, 41)] if check.get("evidence") else []
+    check["finding"] = {**(check.get("finding") or {}), "status": "NG", "suggestions": "逐条核对的说明。" * 80}
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        text = "".join(_pages(document))
+    assert "逐条核对的说明。" in text
+    if check["evidence"]:
+        assert all(f"证据片段{number}" in text for number in (1, 40))
