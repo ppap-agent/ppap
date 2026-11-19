@@ -218,4 +218,9 @@ def export_answers(store, principal, round_id):
     with store._conn() as conn, conn.transaction():
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         _authorize(store, conn, principal, round_id)
-        return {"schema": "original-fact-confirmations-v1", "training_eligible": False, "machine_findings": _machine(conn, round_id), **_view(conn, round_id)}
+        view = _view(conn, round_id)
+        # The report names files and answering members as the user knows them, never by identifier.
+        names = conn.execute("SELECT i.file_version_id, f.original_filename FROM product.round_inputs i JOIN product.file_versions f ON f.id = i.file_version_id WHERE i.round_id=%s", (round_id,))
+        originals = {str(row[0]): row[1] for row in names.fetchall()}
+        answerers = {user: store._display_name(conn, principal.tenant_id, user) for user in {answer["answered_by"] for answer in view["answers"]}}
+        return {"schema": "original-fact-confirmations-v1", "training_eligible": False, "machine_findings": _machine(conn, round_id), "originals": originals, "answerers": answerers, **view}

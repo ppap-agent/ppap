@@ -113,6 +113,17 @@ def test_original_answer_persists_without_new_round_or_model_call(auth_store_fac
     exported = reopened.export_fact_answers(alice, rid)
     assert [item["status"] for item in exported["machine_findings"]] == ["UNABLE", "PASS"]
     assert exported["training_eligible"] is False
+    assert set(exported["answerers"]) == {alice.user_id}
+    # The user-facing PDF names files and members; no round, file-version or user identifier (#331 AC-16).
+    import re
+
+    import pymupdf
+    from documents.fact_confirmation_pdf import render_fact_confirmation_pdf
+
+    with pymupdf.open(stream=render_fact_confirmation_pdf(exported), filetype="pdf") as document:
+        shown = "".join(page.get_text() for page in document) + repr(document.get_toc()) + repr(document.metadata) + document.get_xml_metadata()
+    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", shown, re.I)
+    assert all(name in shown for name in exported["originals"].values() if name)
     assert observed == ["model observation"]
     with store._conn() as conn:
         # Startup reapplies numbered migrations; a repeat must retain answers.
