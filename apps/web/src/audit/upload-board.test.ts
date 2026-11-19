@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {listedTypes, matchStatus, recognitionHold, uploadFileStatus} from './upload-board.ts'
+import {listedTypes, matchStatus, recognitionHold, sourceMismatches, uploadFileStatus} from './upload-board.ts'
 
 type File = components['schemas']['AuditTaskFile']
 type Match = NonNullable<File['match']>
@@ -50,4 +50,18 @@ test('the customer types toggle names how many more types there are, not the tot
   assert.equal(closed.toggle, '还有 13 类')
   assert.deepEqual(listedTypes(many, true), {shown: many, toggle: '收起'})
   assert.deepEqual(listedTypes(many.slice(0, 6), false), {shown: many.slice(0, 6), toggle: ''})
+})
+
+test('only an S07 status of the file shows the source-mismatch prompt; a missing counterpart (S04) never does', () => {
+  const fact = {document: '控制计划', document_type: 'E12', identity: '零件号', value: 'P-204', found_value: 'P-999', found_file_version_id: 'peer', found_filename: '控制计划.xlsx'}
+  const statuses = [
+    {code: 'S07', scope: 'content', file_version_id: 'target', filename: 'PFMEA.xlsx', note: '', source_mismatch: fact},
+    {code: 'S04', scope: 'content', file_version_id: 'target', filename: 'PFMEA.xlsx', note: '', missing: {document: '控制计划', document_type: 'E12'}},
+    {code: 'S07', scope: 'content', file_version_id: 'other', filename: '其他.xlsx', note: '', source_mismatch: {...fact, found_file_version_id: 'peer-2'}},
+  ]
+  assert.deepEqual(sourceMismatches(statuses, 'target'), [fact])
+  assert.deepEqual(sourceMismatches(statuses.filter(row => row.code === 'S04'), 'target'), [])
+  // An S07 without its fact cannot name either side, so it shows no prompt rather than a guessed one.
+  assert.deepEqual(sourceMismatches([{code: 'S07', file_version_id: 'target', filename: 'PFMEA.xlsx', note: ''}], 'target'), [])
+  assert.deepEqual(sourceMismatches(undefined, 'target'), [])
 })

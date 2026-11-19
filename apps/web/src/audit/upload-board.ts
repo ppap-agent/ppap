@@ -43,3 +43,13 @@ export function recognitionHold(input: {recognizing: boolean; saving: boolean; p
   if (!input.selected) return '至少选择一份可审核文件。'
   return ''
 }
+
+type PrecheckStatus = components['schemas']['PrecheckStatus']
+/** S07 fact of the precheck: the associated counterpart names another part, drawing or project than the audited file. */
+export type SourceMismatch = NonNullable<PrecheckStatus['source_mismatch']>
+export function sourceMismatches(statuses: PrecheckStatus[] | undefined, fileVersionId: string): SourceMismatch[] {
+  return (statuses ?? []).flatMap(status => {
+    const fact = status.source_mismatch
+    return status.code === 'S07' && status.file_version_id === fileVersionId && fact ? [fact] : []
+  })
+}

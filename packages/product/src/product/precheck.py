@@ -3,14 +3,17 @@
 It is independent of checker suites: it never runs or reads a checker and never
 changes what is accepted for audit. It only states what the task already knows
 for certain about each file (readable, attributable, one valid version, rule
-coverage, identity fields), coded as in the PPAP-00 general outline (B/W/S codes).
-Content-level results (``product.precheck_content``) are merged in when the caller read them.
+coverage, identity fields, same-batch counterparts), coded as in the PPAP-00
+general outline (B/W/S codes). Content-level results (``product.precheck_content``)
+are merged in when the caller read them.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter, defaultdict
+from functools import lru_cache
 from typing import Any, Mapping
 
 from product.precheck_content import entry_key
@@ -30,7 +33,6 @@ CODES = {
     "W04": "非主键不一致",
     "W05": "局部不可解析",
     "W06": "文件内部不自洽",
-    "S02": "无规则覆盖",
 }
 CONTENT_ACTIONS = {
     "B": "按客户规则补齐缺失的列、字段或区块后重新上传。",
@@ -57,6 +59,23 @@ READ_GAPS = {
     "document_text_unavailable": "无法读取文件文字",
     "metadata_extraction_failed": "业务信息识别失败",
 }
+# PPAP-00-A §4.1 同批关联图: (customer, target type) -> counterpart types (all `SUB`) whose part number pairs them.
+# Only counterparts that recognition can type are listed; drawings, bubble charts, kappa records, deviation
+# summaries and delivery checklists have no recognized type yet and are not inferred from a filename.
+PEERS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("UAES", "T11"): ("T09", "T10", "E12"),
+    ("UAES", "T10"): ("T12", "E12"),
+    ("UAES", "T07"): ("E12", "T11"),
+    ("UAES", "T08"): ("E12",),
+    ("理想", "T10"): ("T09",),
+    ("蔚来", "T11"): ("T09", "T12", "T10"),
+    ("蔚来", "T10"): ("T09",),
+    ("蔚来", "T09"): ("T12",),
+}
+PEER_NAMES = {"T09": "过程流程图", "T10": "PFMEA", "T11": "控制计划", "T12": "特殊特性清单", "E12": "采购件质量计划（PGQP1）"}
+# A placeholder or a label is not a part number that can pair two files.
+_NO_IDENTITY = {"", "/", "\\", "-", "--", "—", "——", "n/a", "na", "none", "null", "tbd", "xx", "xxx", "xxxx", "?", "无", "待填", "待定", "待确认", "未填写"}
+_NO_IDENTITY |= {"零件号", "零件编号", "partnumber", "partno", "partno."}
 # Version tokens that differ between drafts of one document: V1.2, v3, 20261108, 23.12.18, (1), 副本, 最新.
 _VERSION = re.compile(r"(?i)(?:[-_\s]*(?:v|rev|版本)\s*\d+(?:\.\d+)*)|(?:[-_\s]*\d{8})|(?:[-_\s]*\d{2}\.\d{1,2}\.\d{1,2})|(?:\s*\(\d+\))|(?:[-_\s]*(?:副本|最新|终版|final))")
 
@@ -84,20 +103,125 @@ def _finding(code: str, level: str, file: dict, problem: str, evidence: str, act
     }
 
 
+@lru_cache(maxsize=1)
+def _presets() -> dict[Any, str]:
+    """Document kind -> T code, as the product presets name each standard type."""
+    from audit.kinds import PpapDocumentType
+    from audit.presets import customer_presets, preset_document_type
+
+    kinds = {}
+    for preset in customer_presets():
+        kind = PpapDocumentType.from_string(preset_document_type(preset))
+        if kind != PpapDocumentType.UNKNOWN:
+            kinds[kind] = preset.source_type
+    return kinds
+
+
+def customer_types(customer: str | None) -> frozenset[str] | None:
+    """M: the registered customer's type set; None when the customer is not registered or has no M configured."""
+    from product.customers import resolve
+
+    registered = resolve(customer)
+    return frozenset(registered.type_set.types) if registered and registered.type_set and registered.type_set.types else None
+
+
+def type_code(document_type: str | None) -> str | None:
+    """The 00-A dictionary code (T01…T17, E01…) of a recognized type; None when it has none."""
+    text = (document_type or "").strip()
+    if re.fullmatch(r"[TE]\d{2}", text):
+        return text
+    if not text:
+        return None
+    from audit.kinds import PpapDocumentType
+
+    return _presets().get(PpapDocumentType.from_string(text))
+
+
+def _part(row: dict) -> str | None:
+    """The recognized part number, compared literally after width and space folding; None when unreadable."""
+    value = ((row.get("match") or {}).get("metadata") or {}).get("part_number")
+    text = "".join(unicodedata.normalize("NFKC", str(value or "")).split()).casefold().rstrip(":：")
+    return None if text in _NO_IDENTITY else text
+
+
+def _counterparts(targets: list[tuple[dict, str, str]], files: list[dict], codes: dict[str, str | None]) -> tuple[list[dict], list[dict]]:
+    """S04 (+ its W01) for a counterpart absent from the batch; S07 for the one associated counterpart of another part.
+
+    A counterpart that belongs to another submitted part is not associated with this file. An unreadable part
+    number, an untyped file that could be the counterpart, or several candidates leave the comparison
+    undecided: neither S04 nor S07.
+    """
+    statuses: list[dict] = []
+    findings: list[dict] = []
+    submitted = {part for row, _customer, _code in targets if (part := _part(row))}
+    for row, customer, code in targets:
+        name, mine = row["file"]["original_filename"], _part(row)
+        others = [other for other in files if other["file"]["id"] != row["file"]["id"]]
+        undetermined = any(codes[other["file"]["id"]] is None for other in others)
+        for peer in PEERS.get((customer, code), ()):
+            document = PEER_NAMES[peer]
+            candidates = [other for other in others if codes[other["file"]["id"]] == peer]
+            if mine and any(_part(other) == mine for other in candidates):
+                continue
+            # A counterpart of another submitted part pairs with that part's files, not with this one.
+            associated = [other for other in candidates if _part(other) is None or _part(other) not in submitted - {mine}]
+            if not associated and not undetermined:
+                shown = row["match"]["metadata"].get("part_number") if mine else None
+                part = f"（零件号 {shown}）" if shown else ""
+                note = f"本批没有同零件的《{document}》{part}，与它的比对未完成。"
+                missing = {"document": document, "document_type": peer, **({"part_number": shown} if shown else {})}
+                statuses.append({"code": "S04", "scope": "content", "file_version_id": row["file"]["id"], "filename": name, "note": note, "missing": missing})
+                findings.append(_finding("W01", "warn", row, f"缺少同零件的《{document}》{part}，跨文件比对未完成。", f"本批未见《{document}》", f"补交《{document}》{part}后重新预检。", "提交方"))
+                continue
+            if not mine or len(associated) != 1 or len(candidates) != 1 or _part(associated[0]) is None:
+                continue
+            peer_row = associated[0]
+            found, value = peer_row["match"]["metadata"]["part_number"], row["match"]["metadata"]["part_number"]
+            statuses.append(
+                {
+                    "code": "S07",
+                    "scope": "content",
+                    "file_version_id": row["file"]["id"],
+                    "filename": name,
+                    "note": f"比对源《{document}》零件号 {found} 与被审文件零件号 {value} 不一致，该项无法比对。",
+                    "source_mismatch": {
+                        "document": document,
+                        "document_type": peer,
+                        "identity": "零件号",
+                        "value": value,
+                        "found_value": found,
+                        "found_file_version_id": peer_row["file"]["id"],
+                        "found_filename": peer_row["file"]["original_filename"],
+                    },
+                }
+            )
+    return statuses, findings
+
+
 def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None = None) -> dict[str, Any]:
     """Return the precheck of a task: findings, statuses, per-file level and batch conclusion.
 
     ``content`` maps a file version id to its ``precheck_content`` results; their 不满足 items become findings
     and the full list is attached to the file row. Files whose (customer, type) has no 00-A entry get a
     content-level S02 status that does not change the file level.
+
+    Routing: a type outside the customer's type set M is S01 (out of scope), also when a counterpart-only
+    type is submitted on its own; only a type inside M without an adapted effective rule is S02. A missing
+    same-batch counterpart is S04 with its W01; an associated counterpart of another part is S07, which
+    carries the facts in ``source_mismatch`` and never blocks the file.
     """
     files = [row for row in task.get("files", []) if row.get("selection") == "selected"]
     findings: list[dict] = []
     statuses: list[dict] = []
     pending: list[str] = []
     entries: dict[str, str | None] = {}
+    targets: list[tuple[dict, str, str]] = []
+    codes = {row["file"]["id"]: type_code((row.get("match") or {}).get("document_type")) for row in files}
     for row in files:
         name, validation, match = row["file"]["original_filename"], row.get("validation") or {}, row.get("match") or {}
+        customer = (match.get("metadata") or {}).get("customer") or task.get("customer")
+        scope, code = customer_types(customer), codes[row["file"]["id"]]
+        outside = scope is not None and code is not None and code not in scope
         reasons = "；".join(str(reason) for reason in validation.get("reasons") or [])
         if validation.get("state") == "invalid":
             findings.append(_finding("B01", "block", row, "文件无法读取或格式不受支持，不能进入审核。", reasons, "解除密码或修复文件后重新上传；只接受 Excel / PDF / Word / 图片格式。", "材料侧"))
@@ -106,7 +230,12 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
             pending.append(row["file"]["id"])
             statuses.append({"code": "未执行", "file_version_id": row["file"]["id"], "filename": name, "note": "文件检查或识别尚未完成，本次未预检。"})
             continue
-        if row.get("reference_only") or match.get("state") == "reference":
+        if row.get("reference_only"):
+            continue
+        if match.get("state") == "reference":
+            # A counterpart-only type submitted on its own (such as PGQP1) is outside the audit scope.
+            if outside:
+                statuses.append({"code": "S01", "file_version_id": row["file"]["id"], "filename": name, "note": "该文件类型不在本客户的审核范围内，仅可作为其他文件的比对文件；不单独审核，不计费。"})
             continue
         gaps = list(match.get("gaps") or [])
         identity = next((gap for gap in gaps if gap in IDENTITY_GAPS), None)
@@ -116,6 +245,9 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
             continue
         coverage = next((gap for gap in gaps if gap in COVERAGE_GAPS), None)
         if match.get("state") in {"unmatched", "failed"} or coverage:
+            if outside:
+                statuses.append({"code": "S01", "file_version_id": row["file"]["id"], "filename": name, "note": "该文件类型不在本客户的审核范围内；该文件不进入本次审核，不计费。"})
+                continue
             note = (COVERAGE_GAPS[coverage] if coverage else "未匹配到生效规则") + "；该文件不进入本次审核，不计费。"
             statuses.append({"code": "S02", "file_version_id": row["file"]["id"], "filename": name, "note": note})
             continue
@@ -126,6 +258,8 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
                 findings.append(_finding("W05", "warn", row, problem, READ_GAPS[gap], action, "解析侧"))
         metadata = match.get("metadata") or {}
         entries[row["file"]["id"]] = entry = entry_key(metadata.get("customer") or task.get("customer"), match.get("document_type"))
+        if customer and code:
+            targets.append((row, customer, code))
         if entry is None:
             note = "预检规则未覆盖该客户与文件类型（PPAP-00-A 路由表无此条目），内容级不预检；不影响正式审核。"
             statuses.append({"code": "S02", "scope": "content", "file_version_id": row["file"]["id"], "filename": name, "note": note})
@@ -137,6 +271,10 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
         for field, label in (("part_number", "零件号"), ("part", "零件名称")):
             if not (metadata.get(field) or "").strip():
                 findings.append(_finding("W02", "warn", row, f"文件中未识别到{label}。", "(空)", f"在文件表头填写{label}，与图纸和其他 PPAP 文件保持一致。", "材料侧"))
+    if not pending:
+        peer_statuses, peer_findings = _counterparts(targets, files, codes)
+        statuses.extend(peer_statuses)
+        findings.extend(peer_findings)
     # Several drafts of one document in one batch leave no single valid version.
     groups: dict[tuple, list[dict]] = defaultdict(list)
     replaced = {row.get("replacement_of_file_version_id") for row in files} - {None}
@@ -153,10 +291,11 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
     for item in findings:
         current = by_file.get(item["file_version_id"])
         by_file[item["file_version_id"]] = "block" if "block" in {current, item["level"]} else "warn"
+    references = {row["file"]["id"] for row in files if (row.get("match") or {}).get("state") == "reference"}
     for status in statuses:
-        if status.get("scope") == "content":
+        if status.get("scope") == "content" or status["file_version_id"] in references:
             continue
-        by_file.setdefault(status["file_version_id"], "unmatched" if status["code"] == "S02" else "pending")
+        by_file.setdefault(status["file_version_id"], "unmatched" if status["code"] in {"S01", "S02"} else "pending")
     blocks = [item for item in findings if item["level"] == "block"]
     warnings = [item for item in findings if item["level"] == "warn"]
     for index, item in enumerate(blocks, 1):

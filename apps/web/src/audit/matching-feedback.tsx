@@ -1,4 +1,7 @@
+import {useId, useState} from 'react'
 import {ExternalLink} from 'lucide-react'
+import type {SourceMismatch} from './upload-board'
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 import {TEMPLATE_GUIDE_URL, TEMPLATE_CONTACT_URL} from './template-links'
 import {analysisNotice} from '../helpers'
 import {Button} from '../components/ui/button'
@@ -38,3 +41,29 @@ export function MatchingFeedback({gaps, candidates, onCheck, onRules, onRemove, 
 }
 
 export const isMatchingReason = (gap: string) => Object.hasOwn(titles, gap)
+
+/** S07 inside the audited file's row: the comparison item cannot run; change the counterpart, its attribution, or drop the reference. */
+export function SourceMismatchNotice({fact, choices, onReplace, onReassign, onRemove, removeHeld, disabled}: {
+  fact: SourceMismatch
+  /** Other files of this batch recognized as the same counterpart type. */
+  choices: {id: string; name: string}[]
+  onReplace: (id: string) => void; onReassign: () => void; onRemove: () => void
+  /** Why the counterpart cannot be removed here, e.g. it is itself an audited file. */
+  removeHeld: string
+  disabled: boolean
+}) {
+  const [choosing, setChoosing] = useState(false)
+  const replaceNote = useId(), removeNote = useId()
+  return <div className="space-y-1.5 text-xs">
+    <p className="text-warning">比对源《{fact.document}》{fact.identity} {fact.found_value} 与被审文件 {fact.value} 不一致，该项无法比对</p>
+    <p className="text-muted-foreground">比对文件：<span className="[overflow-wrap:anywhere]">{fact.found_filename}</span></p>
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="outline" size="sm" disabled={disabled || !choices.length || Boolean(removeHeld)} aria-describedby={choices.length ? undefined : replaceNote} onClick={() => setChoosing(open => !open)}>更换比对文件</Button>
+      <Button variant="outline" size="sm" disabled={disabled} onClick={onReassign}>更改归属</Button>
+      <Button variant="ghost" size="sm" disabled={disabled || Boolean(removeHeld)} aria-describedby={removeHeld ? removeNote : undefined} onClick={onRemove}>移除</Button>
+    </div>
+    {!choices.length && <p id={replaceNote} className="text-muted-foreground">本批没有其他《{fact.document}》可选，可在上传页添加后重新识别。</p>}
+    {removeHeld && <p id={removeNote} className="text-muted-foreground">{removeHeld}</p>}
+    {choosing && choices.length > 0 && <Select onValueChange={id => {setChoosing(false); onReplace(id)}}><SelectTrigger size="sm" aria-label={`《${fact.document}》的比对文件`}><SelectValue placeholder="选择本批的比对文件"/></SelectTrigger><SelectContent>{choices.map(choice => <SelectItem key={choice.id} value={choice.id}>{choice.name}</SelectItem>)}</SelectContent></Select>}
+  </div>
+}

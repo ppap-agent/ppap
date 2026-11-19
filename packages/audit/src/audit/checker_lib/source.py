@@ -43,11 +43,12 @@ class MissingFact(Exception):
         self.need = need
 
 
-class SourceMismatch(UnknownFact):
+class SourceMismatch(Exception):
     """The related original is present but names another identity its clause requires to match.
 
-    It cannot be compared, so the clause stays unknown; the result names the
-    file to replace instead of reporting a content defect or a missing file.
+    The clause fails as a source mismatch (源错配) without a content comparison;
+    its need names the file to replace. It is neither a content defect nor a
+    missing file, and an unreadable identity stays unknown instead.
     """
 
     def __init__(self, message, *, need):
@@ -563,7 +564,11 @@ class SourceAudit:
         except UnknownFact as exc:
             status, message = "UNABLE", str(exc)
             questions, evaluation = exc.questions, exc.evaluation
-            supply = getattr(exc, "need", None)
+        except SourceMismatch as exc:
+            # Both identities were read and differ: NG of nature 源错配 (supply kind), never compared.
+            status, message = "NG", str(exc)
+            completed = 1
+            supply = exc.need
         except MissingFact as exc:
             status, message = "NG", str(exc)
             completed = 1
@@ -683,7 +688,16 @@ class SourceAudit:
                 continue
             candidates[item.audit_id] = item
         if not candidates and not undetermined:
-            raise MissingFact("当前批次缺少所需关联原件（" + terms[0] + "），请补充后复审。", need={"kind": "missing", "document": terms[0]})
+            need = {"kind": "missing", "document": terms[0]}
+            if "part" in same:
+                # The supply list names the part the missing file is for, when this file states it.
+                try:
+                    part = str(self.native().field(_IDENTITY["part"][1])).strip()
+                except UnknownFact:
+                    part = ""
+                if pair_identity(key(part)) and key(part) not in _IDENTITY_LABELS:
+                    need["part_number"] = part[:200]
+            raise MissingFact("当前批次缺少所需关联原件（" + terms[0] + "），请补充后复审。", need=need)
         if len(candidates) != 1 or undetermined:
             raise UnknownFact("当前批次缺少唯一关联原件，需补充或确认候选，不能任取一份。")
         item = next(iter(candidates.values()))
@@ -694,7 +708,7 @@ class SourceAudit:
             # must be replaced. This is neither a content defect nor a missing file.
             parts = {"part_number": mine[:200], "found_part_number": theirs[:200]} if label == _IDENTITY["part"][0] else {}
             need = {"kind": "source_mismatch", "document": terms[0], **parts, "found_file_version_id": item.audit_id}
-            return SourceMismatch(f"比对源《{terms[0]}》{label} {theirs} 与被审文件{label} {mine} 不一致，该项无法比对，请换交与被审文件一致的{terms[0]}。", need=need)
+            return SourceMismatch(f"比对源《{terms[0]}》{label} {theirs} 与被审文件{label} {mine} 不一致，未做内容比对，请换交与被审文件一致的{terms[0]}。", need=need)
 
         # Only the identities the clause names (同零件号、同项目、同名称) pair the two originals.
         for name in same:
@@ -710,7 +724,7 @@ class SourceAudit:
         return other
 
     def related_all(self, *term_sets, same):
-        """A missing source fails the clause, whatever is still unknown about the other sources."""
+        """A missing or mismatched source fails the clause, whatever is still unknown about the other sources."""
         sources, unknown = [], None
         for terms in term_sets:
             try:
