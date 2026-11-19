@@ -239,6 +239,7 @@ class UaesApprovalAgent(UaesExcelAgent):
         part, name = self.identity(ctx, sheet)
         lists = self.deviation_lists(ctx, part, name)
         if not lists:
+            self.need("偏差认可汇总清单", part=part)
             return "NG", f"文件及同批次没有零件号“{part}”、零件名称“{name}”的偏差认可汇总清单。"
         if len(lists) > 1:
             raise unable(f"文件及同批次有{len(lists)}份同零件的偏差认可汇总清单，尚不能确定按哪一份核对，需人工复核。")

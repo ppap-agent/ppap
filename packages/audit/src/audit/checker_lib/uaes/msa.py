@@ -211,6 +211,7 @@ class UaesMsaAgent(UaesExcelAgent):
     def rule_3(self, ctx: RuleContext):
         plan = self.only(_PGQP1, "采购件质量计划")
         if plan is None:
+            self.need("采购件质量计划（PGQP1）")
             return "NG", "同批次没有包含PGQP1的采购件质量计划。"
         gauges, parts = [], set()
         with self.reading(ctx, plan, pgqp1):
@@ -224,6 +225,7 @@ class UaesMsaAgent(UaesExcelAgent):
         if not gauges:
             return "PASS", "PGQP1重要特性中没有通止规、塞规、塞尺类计数型量具。"
         if not (kappas := self.kappas(ctx)):
+            self.need("Kappa报告")
             return "NG", "PGQP1重要特性使用计数型量具，但同批次没有Kappa报告，请复审或提交kappa文件一起审核。"
         # "同零件号": exactly the part number the PGQP1 states; an unreadable one is "无法辨识则不通过".
         if len(parts) != 1:
@@ -233,6 +235,7 @@ class UaesMsaAgent(UaesExcelAgent):
         if not same:
             if unknown:
                 return "NG", f"同批次Kappa报告{'、'.join(report.where for report in unknown)}未写零件号，无法辨识是否与PGQP1零件号{part}相同，判不通过，请人工复核。"
+            self.need("Kappa报告", part=part)
             return "NG", f"同批次没有零件号为{part}的Kappa报告，请复审或提交kappa文件一起审核。"
         # PGQP1 names the gauge type only: without a gauge number no same-number Kappa study can be paired,
         # and the clause fails what cannot be established ("无法辨识则不通过").
@@ -243,6 +246,7 @@ class UaesMsaAgent(UaesExcelAgent):
     def rule_4(self, ctx: RuleContext):
         plans = self.batch_files(_CP)
         if not plans:
+            self.need("控制计划")
             return "NG", "同批次没有控制计划。"
         if len(plans) == 1:
             return self.kappa_for_human_checks(ctx, plans[0])
@@ -291,6 +295,7 @@ class UaesMsaAgent(UaesExcelAgent):
         if not kappas:
             if all(between for *_rest, between in manual):
                 raise unable(f"控制计划{manual[0][2]}“{manual[0][0]}”采用{manual[0][1]}，同批次没有Kappa报告{open_}。")
+            self.need("Kappa报告")
             return "NG", "控制计划出货检验/GP12有人为检测，但同批次没有Kappa报告。"
         # "同零件号": exactly the control plan's part number; an unreadable one is "无法辨识则不通过".
         if (part := self.plan_part(ctx, plan)) is None:
@@ -309,5 +314,6 @@ class UaesMsaAgent(UaesExcelAgent):
                 # A Kappa report read without any gauge name cannot be the same-name one: "无法辨识则不通过".
                 kappa = f"同批次零件号为{part}的Kappa文件{'、'.join(unnamed)}没有量具名称"
                 return "NG", f"控制计划{where}“{operation}”采用“{method}”检验；{kappa}，无法确认与控制计划的“{method}”检验是同一量具（量具名称相同或为综合检具），判不通过，请人工复核。"
+            self.need("Kappa报告", part=part)
             return "NG", f"控制计划{where}“{operation}”采用{method}，同批次没有零件号为{part}、量具名称相同或为综合检具的Kappa报告，请复审或提交kappa文件一起审核。"
         return "PASS", "控制计划出货检验/GP12的人为检测均有量具名称相同或为综合检具的Kappa报告。"

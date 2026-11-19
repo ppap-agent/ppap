@@ -129,3 +129,19 @@ def test_a_number_ending_one_cell_does_not_hide_the_name_in_the_next(tmp_path):
     text = _agent(tmp_path, []).characteristics(None, rows)
     assert _written("102#螺栓孔直径", text)
     assert not _written("2#螺栓孔直径", text)
+
+
+def test_a_clause_failing_only_on_a_missing_original_names_the_original_to_supply(tmp_path):
+    # Alone in its round: the PGQP1 plan and the drawing are not submitted.
+    agent = _agent(tmp_path, _traced())
+    names = [name for name, _ in agent.declared_rules()]
+    plan = agent.check(names.index("rule_9"))
+    assert plan.status == "NG" and plan.supply is not None
+    assert (plan.supply.kind, plan.supply.document) == ("missing", "采购件质量计划（PGQP1）")
+    sources = agent.check(names.index("rule_7"))
+    assert sources.supply is not None and sources.supply.document == "过程流程图》《PFMEA》《采购件质量计划（PGQP1）"
+    drawing = agent.check(names.index("rule_12"))
+    assert drawing.supply is not None and drawing.supply.document == "图纸"
+    # A clause that also fails on the plan's own content is not reduced to supplying a file.
+    header = agent.check(names.index("rule_6"))
+    assert header.status == "NG" and header.supply is None

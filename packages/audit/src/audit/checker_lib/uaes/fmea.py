@@ -270,6 +270,8 @@ class UaesPfmeaAgent(UaesExcelAgent):
         converted = str(self.audit_file.file_url).lower().endswith(".pdf")
         gaps: list[str] = []
         for item in items:
+            # Each failure item whose scores are judged is a check made; without it a PASS counts as zero checks.
+            ctx.record_execution()
             scores = []
             for name, letter in _SCORES.items():
                 raw = item.values[name]
@@ -394,6 +396,7 @@ class UaesPfmeaAgent(UaesExcelAgent):
         if not any(self.batch_files(kind) for kind in _LISTS):
             if unknown:
                 raise unable(f"同批次没有已识别的特殊特性清单，另有{len(unknown)}份原件类型未识别，尚不能确认是否缺少特殊特性清单，需人工复核。")
+            self.need("特殊特性清单")
             return "NG", "同批次没有特殊特性清单，请提交同项目、同物料编号的特殊特性清单后一起复审。"
         part, unread = self.part_number(ctx)
         if part is None:
@@ -441,6 +444,7 @@ class UaesPfmeaAgent(UaesExcelAgent):
         if not plans:
             if unknown := self.untyped():
                 raise unable(f"同批次没有已识别的采购件质量计划，另有{len(unknown)}份原件类型未识别，尚不能确认是否缺少PGQP1，需人工复核。")
+            self.need("采购件质量计划（PGQP1）")
             return "NG", "同批次没有采购件质量计划（含PGQP1表），存在缺项文件，请补充后复审。"
         part, unread = self.part_number(ctx)
         if part is None:

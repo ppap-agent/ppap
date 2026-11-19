@@ -322,8 +322,9 @@ class UaesControlPlanAgent(UaesExcelAgent):
         """The same-part original of `kind`: (item, "") or (None, why it is missing); unknown identity is UNABLE."""
         files = self.batch_files(kind)
         if not files:
+            self.need(label)
             return None, f"同批次没有{label}"
-        same, other, unknown = [], [], []
+        same, other, unknown, found = [], [], [], []
         for item in files:
             parts = self.parts_of(ctx, item, document)
             name = original_name(item)
@@ -331,6 +332,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
                 same.append(item)
             elif parts:
                 other.append(f"{name}（零件号{'、'.join(sorted(parts))}）")
+                found += sorted(parts)
             else:
                 unknown.append(name)
         if len(same) > 1:
@@ -339,6 +341,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
             return same[0], ""
         if unknown:
             raise unable(f"同批次{label}{'、'.join(unknown)}未能读出零件号，尚不能确认是否与本控制计划（{mine}）同零件号，需人工复核。")
+        self.need(label, part=mine, found=found[0])
         return None, f"源错配：同批次{label}{'、'.join(other)}与本控制计划零件号{mine}不同，没有同零件号的{label}"
 
     def parts_of(self, ctx: RuleContext, item: Any, document: Any) -> set[str]:
@@ -372,12 +375,14 @@ class UaesControlPlanAgent(UaesExcelAgent):
         """The same-part drawing among the untyped originals of this round (no document type names drawings)."""
         context = self.group_context
         if context is None:
+            self.need("图纸")
             return None, "同批次没有其他文件"
         if any(not kind or compact(kind) in {"unknown", "未知"} for kind in context.unavailable_files.values()):
             raise unable("同批次有无法读取且类别未知的原件，尚不能排除其中有同物料编号的图纸，需人工复核。")
         typed = {item.audit_id for kind, items in context.by_doc_type.items() if kind and compact(kind) not in {"unknown", "未知"} for item in items}
         untyped = [item for item in context.by_audit_id.values() if item.audit_id != self.audit_file.audit_id and item.audit_id not in typed]
         if not untyped:
+            self.need("图纸")
             return None, "同批次没有图纸独立文件（其余文件均为已识别的其他类型），请提交图纸一起审核"
         mine = self.part_number(ctx)
         same, other, unknown = [], [], []
@@ -404,6 +409,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
         if unknown:
             raise unable(f"同批次文件{'、'.join(unknown)}的文字层中没有可读的零件号/图号，尚不能确认是否为同物料编号{mine}的图纸，需人工复核。")
         others = f"（同批次{'、'.join(other)}，不是本零件）" if other else ""
+        self.need("图纸", part=mine)
         return None, f"同批次没有同项目、同物料编号（{mine}）的图纸独立文件{others}，请提交图纸一起审核"
 
     # ---- clauses -------------------------------------------------------------------------
@@ -656,6 +662,9 @@ class UaesControlPlanAgent(UaesExcelAgent):
                 raise
             unknown.append(stop.message.removesuffix("，需人工复核。"))
         if failures:
+            if len(failures) > 1:
+                # Header fields to fix as well: the remediation is not only supplying the drawing.
+                self.__dict__.pop("_need", None)
             note = f"；另{'；'.join(unknown)}，需人工复核" if unknown else ""
             return "NG", "控制计划" + "；".join(failures) + note + "。"
         # The drawing date is compared only once a same-part drawing is read; until then the clause is open.
@@ -669,6 +678,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
         wanted = [(_PFD, "过程流程图", flowchart_counterpart), (_PFMEA, "PFMEA", pfmea_counterpart), (_PGQP1, "采购件质量计划（PGQP1）", pgqp1)]
         absent = [label for kind, label, _document in wanted if not self.batch_files(kind)]
         if absent:
+            self.need("》《".join(absent))
             return {}, [f"同批次没有{'、'.join(absent)}独立文件"]
         mine = self.part_number(ctx)
         found, missing, unknown = {}, [], []
@@ -688,6 +698,12 @@ class UaesControlPlanAgent(UaesExcelAgent):
             with self.reading(ctx, found[_PGQP1], pgqp1):
                 if not Table(ctx).find_sheets("PGQP1", on_missing=Decision.IGNORE):
                     missing.append("同批次采购件质量计划中没有PGQP1表")
+                    self.need("采购件质量计划（PGQP1）", part=mine)
+        if len(missing) > 1:
+            # Several counterparts are lacking: the remediation names them all, not only the first.
+            lacking = [label for kind, label, _document in wanted if kind not in found or kind == _PGQP1 and "同批次采购件质量计划中没有PGQP1表" in missing]
+            self.__dict__.pop("_need", None)
+            self.need("》《".join(lacking), part=mine)
         if unknown and not missing:
             raise unknown[0]
         return found, missing
@@ -786,12 +802,14 @@ class UaesControlPlanAgent(UaesExcelAgent):
     def plan_only(self, ctx: RuleContext) -> tuple[Any | None, str]:
         files = self.batch_files(_PGQP1)
         if not files:
+            self.need("采购件质量计划（PGQP1）")
             return None, "同批次没有采购件质量计划（PGQP1）独立文件"
         item, why = self.counterpart(ctx, _PGQP1, "采购件质量计划", pgqp1, self.part_number(ctx))
         if item is None:
             return None, why
         with self.reading(ctx, item, pgqp1):
             if not Table(ctx).find_sheets("PGQP1", on_missing=Decision.IGNORE):
+                self.need("采购件质量计划（PGQP1）", part=self.part_number(ctx))
                 return None, "同批次采购件质量计划中没有PGQP1表"
         return item, ""
 

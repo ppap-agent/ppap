@@ -392,6 +392,9 @@ class UaesCapabilityAgent(UaesExcelAgent):
         if not plans:
             missing.append("同批次没有采购件质量计划（PGQP1）独立文件，缺项文件")
         if missing:
+            if not plans and len(missing) == 1:
+                # Only the plan is missing: the remediation is supplying it.
+                self.need("采购件质量计划（PGQP1）")
             return "NG", "；".join(missing) + "。"
         if unknown:
             raise unable("；".join(unknown) + "，需人工复核。")
@@ -419,6 +422,7 @@ class UaesCapabilityAgent(UaesExcelAgent):
                 if len(sheets) != 1:
                     raise unable("同零件号的采购件质量计划有多个PGQP1表，尚不能确定按哪一个核对，需人工复核。")
                 return self.covered(sheets[0], directory, names, process_rows, process_only=process_only)
+        self.need("采购件质量计划（PGQP1）", part=part)
         return "NG", f"同批次没有零件号为{part}且包含PGQP1表的采购件质量计划（同批次采购件质量计划：{'、'.join(others)}），缺项文件。"
 
     def directory_rows(self, directory: Sheet) -> tuple[set[str], list[int] | None]:

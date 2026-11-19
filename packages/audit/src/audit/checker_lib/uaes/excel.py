@@ -26,6 +26,19 @@ class UaesExcelAgent(ExcelAgent):
     # Formats the engine reads as tables; a DOCX carrier stays on its own reader.
     SUPPORTED_EXTENSIONS = frozenset({".xlsx", ".xls", ".xlsm", ".pdf"})
 
+    def check(self, ith: int):
+        # A need recorded by a clause that stopped early must not reach the next clause.
+        self.__dict__.pop("_need", None)
+        return super().check(ith)
+
+    def need(self, document: str, *, part: str | None = None, found: str | None = None) -> None:
+        """Record the related original this clause lacks (``found``: the other part number it was given instead).
+        It is attached to this clause's NG so the report says what to supply; the first need of a clause wins."""
+        from audit.contracts import SupplyNeed
+
+        if "_need" not in self.__dict__:
+            self.__dict__["_need"] = SupplyNeed(kind="source_mismatch" if found else "missing", document=document, part_number=part or None, found_part_number=found or None)
+
     def _resolve_resource_doc_type(self):
         # The resources registered for li/nio document types are not UAES's templates.
         return None
@@ -178,6 +191,9 @@ class UaesExcelAgent(ExcelAgent):
 
     def _finalize_audit_result(self, result: Any, *, rule_no: int, phase: Any, ctx: RuleContext | None = None) -> Any:
         result = super()._finalize_audit_result(result, rule_no=rule_no, phase=phase, ctx=ctx)
+        need = self.__dict__.pop("_need", None)
+        if need is not None and result.status == "NG" and result.supply is None:
+            result = result.model_copy(update={"supply": need})
         legacy = self.__dict__.get("_legacy")
         if legacy is None or not legacy._evidence_sources:
             return result

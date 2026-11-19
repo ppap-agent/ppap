@@ -319,6 +319,7 @@ class UaesInspectionAgent(UaesExcelAgent):
         part, name = self.identity(ctx)
         found = related_by_content(self, ("气泡图", "bubble"))
         if found.missing:
+            self.need("气泡图")
             return "NG", "同批次没有气泡图独立文件，请复审或提交气泡图文件一起审核。"
         raise unable(f"同批次有{len(found.items)}份可能的气泡图（{'、'.join(found.names)}），检查程序尚未声明气泡图的读取方式，未能核对物料编号“{part}”与物料名称“{name}”，需人工复核。")
 

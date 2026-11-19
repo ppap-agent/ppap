@@ -249,6 +249,7 @@ class UaesMaterialsAgent(UaesExcelAgent):
         project = self.field_value(ctx, sheet, "UAES项目编号", resources.PROJECT)
         drawings = related_by_content(self, _DRAWING)
         if drawings.missing:
+            self.need("图纸")
             return "NG", "同批次没有图纸独立文件，请复审或提交图纸文件一起审核。"
         if _placeholder(_identity(part)):
             raise unable(f"清单零件号为“{part}”，不能用于配对同物料编号的图纸，需人工复核。")

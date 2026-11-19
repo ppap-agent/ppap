@@ -68,6 +68,8 @@ def test_pfmea_scores_pass_on_the_clause_s_checkable_items(tmp_path):
     book.save(path)
     passed = _check(UaesPfmeaAgent, "U07", path, "rule_2")
     assert passed.status == "PASS", passed.suggestions
+    # Each scored item is a check made: a PASS with zero checks is turned into a technical error downstream.
+    assert passed.checks_performed and passed.checks_performed >= 2
     # The same mode and effect scored with another severity fails.
     sheet.append([None, "泄漏", 5, "排气不良", 3, "模具评审", "气密", 3])
     book.save(path)
