@@ -154,6 +154,17 @@ def lint(text: str, kind: str, allowed: set[str]) -> list[str]:
     return problems
 
 
+def with_none(item, found: list | None = None, rebuild=lambda node: node) -> list[tuple[str, Node]]:
+    """(property, expression) for every ObjectAllValuesFrom in `item`, with that one replaced by "there are none"."""
+    found = [] if found is None else found
+    if isinstance(item, Node):
+        if item.head == "ObjectAllValuesFrom":
+            found.append((item.args[0], rebuild(Node("ObjectAllValuesFrom", [item.args[0], NOTHING]))))
+        for index, arg in enumerate(item.args):
+            with_none(arg, found, lambda new, node=item, index=index, outer=rebuild: outer(Node(node.head, [*node.args[:index], new, *node.args[index + 1 :]])))
+    return found
+
+
 def mentions(axiom: Node, iris: set[str]) -> bool:
     return any(isinstance(item, str) and item in iris for item in walk(axiom))
 
@@ -432,6 +443,16 @@ def main(argv: list[str] | None = None) -> int:
             ask(group, ("subject", combo, subject), thing)
             for test, expression in (("pass", Node("ObjectComplementOf", [passes])), ("fail", Node("ObjectComplementOf", [fails])), ("nopass", passes), ("nofail", fails)):
                 ask(group, ("entail", combo, subject, test), Node("ObjectIntersectionOf", [thing, expression]))
+    # "Every X is ..." holds when there is no X at all. Ask whether the clause would then pass, for each such
+    # condition in the pass condition, unless the writer quoted the clause saying so (:passesWhenNone).
+    pass_definition = next((node.args[-1] for node in base if node.head == "EquivalentClasses" and node.args[-2] == pass_when and not isinstance(node.args[-1], str)), None)
+    clause_text = re.sub(r"\s+", "", found.clauses[0].text) if found.clauses else ""
+    allowed_empty = {subject for subject, text in annotation_values(base, "passesWhenNone") if re.sub(r"\s+", "", text) and re.sub(r"\s+", "", text) in clause_text}
+    universals = [(prop, expression) for prop, expression in (with_none(pass_definition) if pass_definition is not None else []) if prop not in allowed_empty]
+    for combo in combos:
+        mapping = names[combo]
+        for number, (prop, expression) in enumerate(universals):
+            ask(home[combo], ("empty", combo, number), Node("ObjectIntersectionOf", [mapping[judged], rename(expression, mapping), Node("ObjectComplementOf", [mapping[fail_when]])]))
     for group in [group for group in groups if len(group) == 2]:
         position = next(i for i in range(len(ids)) if group[0][i] != group[1][i])
         left, right = group
@@ -510,6 +531,18 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"[完备性] {group} 穷尽 {local(parent)}")
 
+    for number, (prop, _) in enumerate(universals):
+        hit = {combo for combo in combos if ("empty", combo, number) in possible}
+        if hit:
+            findings += 1
+            found.incomplete.append("通过条件里有“每个……都……”，一个都没有时也会判通过，还没确认原文是不是这个意思")
+            scope = f"（{where(hit)}）" if ids else ""
+            print(
+                f"[一个都没有也通过] 通过条件对 {local(prop)} 用了“每个……都……”，一个都没有时也判通过{scope}。"
+                f"原文没这样说，就在通过条件里写明至少要有一个（ObjectSomeValuesFrom）；原文确实这样说，"
+                f'就写 AnnotationAssertion(:passesWhenNone :{local(prop)} "<原文依据，逐字>")'
+            )
+
     # Gaps and conflicts: found by the script in every combination, then described by the writer.
     for kind, described, verdict, title in (("gap", gaps, "NONE", "原文没有给出结论"), ("conflict", conflicts, "BOTH", "原文同时给出通过和不通过")):
         present = {combo for combo in combos if ("region", combo, verdict) in possible}
@@ -580,6 +613,7 @@ def main(argv: list[str] | None = None) -> int:
             found.incomplete.append(f"第 {position + 1} 处歧义的例子事实没写全")
             print(f"[事实没写全] Example__{i}：有的组合下推不出结论或例子不可能存在，把例子的事实写封闭")
             continue
+        found.example_verdicts[position] = example
         flips = any(example[combo] != example[combo[:position] + (other,) + combo[position + 1 :]] for combo in combos for other in letters[position])
         if not flips:
             findings += 1

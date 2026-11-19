@@ -38,6 +38,7 @@ class Found:
     issue: dict[int, str] = field(default_factory=dict)
     question: dict[int, str] = field(default_factory=dict)
     example: dict[int, str] = field(default_factory=dict)
+    example_verdicts: dict[int, dict] = field(default_factory=dict)  # position -> {combo: verdict}
     answered: dict[int, str] = field(default_factory=dict)  # the user's own words
     # (position, letter) -> short label / full sentence
     label: dict[tuple, str] = field(default_factory=dict)
@@ -120,6 +121,23 @@ def differences(found: Found, position: int, verdicts: dict) -> list[str]:
     return changes
 
 
+def example_outcome(found: Found, position: int) -> str:
+    """The example's verdict under each reading of its ambiguity, with the other readings it depends on."""
+    verdicts = found.example_verdicts[position]
+    parts = []
+    for letter in found.letters[position]:
+        by_verdict: dict[str, set] = {}
+        for combo, verdict in verdicts.items():
+            if combo[position] == letter:
+                by_verdict.setdefault(verdict, set()).add(combo)
+        name = ordinal(found, position, letter)
+        if len(by_verdict) == 1:
+            parts.append(f"按{name}{VERDICT_WORDS.get(next(iter(by_verdict)), '推不出结论')}")
+        else:
+            parts += [f"按{name}、且{condition(found, combos, skip=position)}时{VERDICT_WORDS.get(verdict, '推不出结论')}" for verdict, combos in sorted(by_verdict.items())]
+    return "：" + "；".join(parts)
+
+
 def check_answers(found: Found) -> list[str]:
     """Whether the answers written back close the clause: what is still open, and what the verdicts become."""
     lines = ["## 答复核对\n"]
@@ -153,14 +171,15 @@ def render(found: Found) -> str:
     for clause in found.clauses:
         lines.append(f"- **规则文件**：{clause.title}：{clause.category}（{clause.rule_id}）")
         lines.append(f"- **规则原文**：{' '.join(clause.text.split())}")
-    unclear = len(found.ids) + sum(len(questions) for _, questions in found.undefined) + len(found.groups)
+    unclear = len(found.ids) + len(found.undefined) + len(found.groups)
+    asked = len(found.ids) + sum(len(questions) for _, questions in found.undefined) + len(found.groups)
     answers = len(found.answered) + sum(1 for _, questions in found.undefined for _, answer in questions if answer)
     confirmed = sum(1 for position in range(len(found.ids)) if position not in found.answered and found.divergences.get(position))
     parts = []
     if unclear:
-        part = f"有 {unclear} 处原文没有说清楚"
+        part = f"有 {unclear} 处原文没有说清楚" + (f"（共 {asked} 个问题）" if asked != unclear else "")
         if answers:
-            part += f"，已答复 {answers} 处、还有 {unclear - answers} 处待答复"
+            part += f"，已答复 {answers} 个问题、还有 {asked - answers} 个待答复"
         if confirmed:
             part += f"，{'待答复的歧义中' if answers else '其中'}有 {confirmed} 处会让同一份文件得出不同结论"
         parts.append(part)
@@ -192,11 +211,13 @@ def render(found: Found) -> str:
                     sentence = f"按{ordinal(found, position, a)}{VERDICT_WORDS[first]}、按{ordinal(found, position, b)}{VERDICT_WORDS[second]}"
                     by_condition.setdefault(condition(found, contexts, skip=position), []).append(sentence)
             for text, sentences in by_condition.items():
-                lines.append(when(text, "同一份文件可能" + "，或".join(sentences)))
+                lines.append(when(text, "总有文件会" + "，或".join(sentences)))
         if not kinds:
             lines.append("这几种理解对任何文件都给出相同的结论。")
         if position in found.example:
             lines.append(f"\n例如：{found.example[position]}")
+            if position in found.example_verdicts:
+                lines.append(f"这个例子{example_outcome(found, position)}。")
         affected = [f"`{name}`（{'；'.join(changes)}）" for name, verdicts in found.files.items() if (changes := differences(found, position, verdicts))]
         lines.append(f"\n受影响的现有文件：{'、'.join(affected)}。\n" if affected else "\n现有文件不受这一处影响。\n")
 

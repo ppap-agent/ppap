@@ -337,7 +337,10 @@ def judge(case: dict, report: str, out_of_scope: list[str]) -> dict:
 
 def plain_problems(report: str, case: dict) -> tuple[list[str], int]:
     """(technical words or identifiers, number of missing plain descriptions) in a report."""
-    sources = [clause_text(case), *(Path(path).name for path in case["files"]), case["id"]]
+    document = json.loads((ROOT / case["rules"]).read_text(encoding="utf-8"))
+    rule = next(rule for rule in document["rules"] if rule["id"] == case["id"])
+    # The report's heading quotes the rule file's title and the rule's name; their words are the clause's own.
+    sources = [rule["rule_to_check"], rule.get("category", ""), document.get("title", ""), *(Path(path).name for path in case["files"]), case["id"]]
     allowed = {word.casefold() for text in sources for word in re.findall(r"[A-Za-z][A-Za-z0-9_]*", text)}
     words = [word for word in TECH_WORDS if word in report]
     words += [word for word in re.findall(r"[A-Za-z][A-Za-z0-9_]*", report) if word.casefold() not in allowed and word not in ("PASS", "NG")]
