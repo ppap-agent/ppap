@@ -107,6 +107,12 @@ uv run --no-sync pytest tests/integration/product
 
 `UAES 评测集.xlsx` 是 V3.33 产品资料包随附的 UAES 金标（预检 58 行、审核 186 行，双层表头），与 `uaes-oracle.csv` 是两套评价来源，互不覆盖。[`uaes_evaluation`](corpus/contracts/src/corpus_contracts/uaes_evaluation.py) 只读载入：工作簿按摘要固定版本，标准答案原样返回；存储地址的旧前缀 `../02_受审文件/` 按声明映射到 `uaes/samples/<零件>/测试文件/…`，缺陷样本在 `uaes/samples/<零件>/缺陷样本(-test-)/…`，不复制受审文件。
 
+审核明细的规则编号是资料包规则执行包的 rule_id，[`uaes-evaluation-rules.csv`](corpus/uaes-evaluation-rules.csv) 记录它与叶子条款号的对应（按文件类型与条款序，U08 没有第 5 条），只含编号不含规则原文。[`test_uaes_evaluation.py`](corpus/test_uaes_evaluation.py) 把每个零件目录（含缺陷样本）按产品路径整批提交一次：文件检查、上传识别、预检（含内容级），已匹配文件全部审核。AC-31 逐行逐列比对标准答案，不一致即失败；`待裁决`、整改动作／审核依据／整改建议等自由文字列为无法比较并附原因；问题等级按 致命=A、主要=B、次要=C 比对条款默认严重程度。AC-32 把 10 份缺陷样本与同零件原件目录中去掉 `-test-…` 后同名的正常件配对，列出漏检和误判。评测的模型回答在一批完整执行、无回放缺失时即保存，不因比对不一致丢弃重问。CI 的 corpus 组不运行它，需要时单独执行：
+
+```sh
+PPAP_CORPUS_OFFLINE=1 uv run --no-sync pytest tests/corpus/test_uaes_evaluation.py
+```
+
 `replay/<客户>/<组合>.json` 是录制的模型回答，记录模型看到的文字、图片尺寸和回答，可以直接阅读。
 
 这些 CSV 是带 BOM 的 UTF-8，可用 Excel 打开，改动在 PR 中逐行可审。CI 的 `check_oracle_changes` 守护全部九个文件，按三家合起来的真值、文件绑定和复核语义判断：只在文件之间搬动的行不算改动，任何答案、绑定或复核语义的变化都须单独提交并写明 `Oracle-Basis:`。缺原件、重复行、公式、未知取值都在执行前报错。

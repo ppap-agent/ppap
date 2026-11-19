@@ -1,5 +1,7 @@
 """V3.33 UAES 评测集载入：表头、行数、原件定位与标准答案原样。"""
 
+import json
+
 import pytest
 from corpus_contracts.uaes_evaluation import RENAMED, SAMPLES, SOURCE_PREFIX, WORKBOOK, load_evaluation, resolve_source
 from openpyxl import load_workbook
@@ -68,3 +70,61 @@ def test_standard_answers_are_kept_verbatim():
 def test_addresses_outside_the_declared_layout_are_rejected(address):
     with pytest.raises(ValueError):
         resolve_source(address)
+
+
+def test_rule_ids_map_to_existing_leaf_clauses():
+    from corpus_contracts.oracle import suite_sources
+    from corpus_contracts.uaes_evaluation import clause_leaf, rule_clauses
+
+    mapping = rule_clauses()
+    _, audit = load_evaluation()
+    assert {row.keys["规则编号"] for row in audit} <= set(mapping)
+    # 规则执行包 UAES 52 条与 19 个叶子的条款一一对应（U08 没有第 5 条）。
+    leaves = {path: suite for path, suite in suite_sources().items() if path.startswith("uaes/")}
+    declared = {str(rule["id"]) for suite in leaves.values() for rule in json.loads(suite.files["rules.json"])["rules"]}
+    assert sorted(mapping.values()) == sorted(declared) and len(mapping) == 52
+    assert all(clause_leaf(clause) in leaves for clause in mapping.values())
+    # 同一份文件的审核行只落在一个叶子上。
+    leaves_by_file: dict[str, set] = {}
+    for row in audit:
+        leaves_by_file.setdefault(row.keys["存储地址"], set()).add(clause_leaf(mapping[row.keys["规则编号"]]))
+    assert all(len(found) == 1 for found in leaves_by_file.values())
+
+
+def test_batches_are_the_part_directories_with_their_defect_samples():
+    from corpus_contracts.uaes_evaluation import batches, file_id
+
+    found = batches()
+    assert len(found) == 10 and sum(len(batch.files) for batch in found) == 58
+    a40 = next(batch for batch in found if batch.part == "F01RD0YA40_机加工壳体")
+    assert len(a40.files) == 29 and sum(row.is_defect for row in a40.files) == 10
+    assert len({file_id(row) for batch in found for row in batch.files}) == 58
+
+
+def test_each_defect_sample_pairs_with_its_normal_file():
+    from corpus_contracts.uaes_evaluation import defect_pairs, submitted_name
+
+    pairs = [(submitted_name(defect), submitted_name(normal)) for defect, normal in defect_pairs()]
+    assert len(pairs) == 10
+    assert all(not normal.is_defect and defect.is_defect for defect, normal in defect_pairs())
+    assert ("A40 CPK-机加工 - test-缺32号关键尺寸、2号尺寸出错、16号尺寸NG.xlsx", "A40 CPK-机加工.xlsx") in pairs
+    assert ("控制计划-A40 -test-缺少清洗工序、125号关键尺寸无SPC管控、关键尺寸14.9遗漏 .xlsx", "控制计划-A40.xlsx") in pairs
+    assert sum(defect == normal for defect, normal in pairs) == 7
+
+
+def test_comparison_keeps_answers_and_states_what_cannot_be_scored():
+    from corpus_contracts.uaes_evaluation import DIFFERENT, MATCH, UNCOMPARABLE, compare_audit, compare_precheck
+
+    precheck, audit = load_evaluation()
+    row = next(item for item in precheck if item.excel_row == 31)  # A40-气动量仪-Cgk：不通过 1 0 B02
+    actual = {"预检结果": "不通过", "阻断数": 1, "警告数": 0, "问题": ["B02"], "项目": None, "客户": None, "车型": None, "零件号": "F01RD0YA40", "零件名称": "节气门"}
+    outcomes = {item.column: item.outcome for item in compare_precheck(row, actual)}
+    assert outcomes == {**dict.fromkeys(("预检结果", "阻断数", "警告数", "问题", "项目", "客户", "车型", "零件号", "零件名称"), MATCH), "整改动作": UNCOMPARABLE}
+    assert {item.column: item.outcome for item in compare_precheck(row, {**actual, "问题": ["W02"], "零件号": "F01RD0YA4001"})}["零件号"] == DIFFERENT
+    pending = next(item for item in audit if item.answers["审核结果"] == "待裁决")
+    assert {item.outcome for item in compare_audit(pending, {"status": "PASS"})} == {UNCOMPARABLE}
+    fatal = next(item for item in audit if item.excel_row == 5)  # 过程流程图.xls 受控章：不通过 致命
+    scored = {item.column: item.outcome for item in compare_audit(fatal, {"status": "NG", "severity": "A"})}
+    assert scored == {"审核结果": MATCH, "问题等级": MATCH, "审核依据": UNCOMPARABLE, "整改建议": UNCOMPARABLE}
+    assert {item.column: item.outcome for item in compare_audit(fatal, {"status": "UNABLE"})}["审核结果"] == DIFFERENT
+    assert compare_audit(fatal, None)[0].outcome == DIFFERENT
