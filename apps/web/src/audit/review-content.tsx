@@ -177,7 +177,8 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
     return <div className="space-y-1.5">
       <p className="whitespace-pre-wrap break-words"><HighlightText text={observation} query={query}/></p>
       {row.scope && (row.scope.unknown > 0 || row.scope.checked < row.scope.total) && <p className="text-xs text-muted-foreground">检查范围：已查 {row.scope.checked}/{row.scope.total}，未知 {row.scope.unknown}。</p>}
-      {row.finding && row.evidence.length > 0 && !row.evidence_verified && <p className="text-xs text-warning">证据未经核实，请对照原件确认。</p>}
+      {/* Places the checker program read from the original are its own reading; only other evidence asks to be checked. */}
+      {row.finding && row.evidence.length > 0 && !row.evidence_verified && row.verification_scope !== 'checker_execution' && <p className="text-xs text-warning">证据未经核实，请对照原件确认。</p>}
       {row.evidence.length > 0 && <ul aria-label="证据位置" className="space-y-1 text-xs">{row.evidence.map((item, index) => {
         const target = authorizedOriginal(item.file_version_id)
         const name = item.file_version_id !== file.file.id ? target?.file?.original_filename || '本轮证据原件' : ''
