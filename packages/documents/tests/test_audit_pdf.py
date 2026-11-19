@@ -359,8 +359,8 @@ def test_every_check_is_listed_and_remediation_holds_only_failed_items_merged_by
             assert f"R{number}·" in appendix
         remediation = _chapter(text, "七、整改建议汇总")
         # Two problems at one location merge into one point; the action names the location and the clause it must meet.
-        assert "①改值：使「尺寸检验报告.xlsx·检验!A2」满足「必须填写零件号」（现状：第3项缺值）" in remediation
-        assert "②改值：使「尺寸检验报告.xlsx·检验!A2」满足「必须填写零件号」（现状：第7项缺值）" in remediation
+        assert "①改值：使「尺寸检验报告.xlsx·检验!A2」满足审核项「类别3」（现状：第3项缺值）" in remediation
+        assert "②改值：使「尺寸检验报告.xlsx·检验!A2」满足审核项「类别7」（现状：第7项缺值）" in remediation
         assert "已核实" not in remediation
         assert "增补零件号P1的《图纸》" in remediation and "增补零件号P1的《材料证明》，删除本批零件号不一致的《材料证明》" in remediation
         assert "建议截止日" in remediation and "整改益处" in remediation and "修订后自查要点" in remediation

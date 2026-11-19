@@ -328,7 +328,8 @@ def _ng_action(source: dict, check: dict) -> str:
         return f"增补与被审文件零件号一致的《{document}》，删除本批零件号不一致的《{document}》"
     rule = check["rule_item"]
     current = _plain((check.get("finding") or {}).get("suggestions") or "")
-    return f"改值：使「{_first_location(source, check)}」满足「{rule['rule_to_check']}」" + (f"（现状：{current.rstrip('。')}）" if current else "")
+    # One executable sentence (PRD §2.11 六): the 审核项 names the requirement; its full clause text stays in 依据 and chapter 九.
+    return f"改值：使「{_first_location(source, check)}」满足审核项「{rule.get('category') or rule['id']}」" + (f"（现状：{current.rstrip('。')}）" if current else "")
 
 
 def _warning_action(warning: dict) -> str:
