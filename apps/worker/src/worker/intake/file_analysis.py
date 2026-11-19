@@ -12,6 +12,55 @@ from product.rules import document_types, latest_rule_versions
 
 # Both answers are short JSON, but some providers count hidden reasoning in the cap.
 _ANSWER_TOKENS = 4000
+_METADATA_FIELDS = ("customer", "model", "project", "part", "part_number")
+# The metadata model reads the head of every sheet (its first rows that hold values), not one sheet's empty cells.
+_SHEET_HEAD_ROWS = 40
+_METADATA_EXCERPT = 12000
+_METADATA_PROMPT = "\n".join(
+    (
+        "从下面这份 PPAP 文件的内容中摘录业务信息。只返回 JSON：",
+        '{"project": 项目, "customer": 客户, "model": 车型, "part_number": 零件号, "part": 零件名称, "blank": [标签存在但值为空或占位的字段名]}',
+        "",
+        "- 零件号、零件名称：取表头区或标签处写明的值。"
+        "标签写法如「零件号 / 零件编号 / 件号 / 产品件号 / 零件代号 / 物料编号 / 测量对象 / Part No. / Part Number」"
+        "「零件名称 / 产品名称 / 零件名 / Part Name」。值可能在标签右侧，也可能在标签正下方的格子里（标签在上、值在下）。",
+        "- 写在名称栏里、但内容是件号编码的值归 part_number，不归 part；一格内件号与名称连写（如 F01RD0YA41毛坯壳体）时，件号归 part_number、名称归 part。",
+        "- 项目、客户、车型：只取写明了「项目 / Project」「客户 / Customer / 顾客 / 接受方 / 买方 / 采购方」「车型 / Vehicle」这类标签的值；"
+        "不从文件名、文件编号（如 QJ-FMEA-GEELY-776）、表单号、公司名或没有标签的格子推断。",
+        "- 照录原文，不改写、不翻译、不统一写法。同一格或同一栏内并列写了多个值时全部照录：分行或分列写的返回字符串列表，一格内用「/」并列的原样返回。"
+        "一列里（如「产品名称/零件号」列）出现多个不同的值时，按出现顺序全部列出；相同的值只列一次。同一标签在每页页眉重复出现时只取第一处。",
+        "- 标签存在但值为空或只是占位（如 /、-、N/A、TBD、待定、待确认、XXXX、CPJ-XXXXXX 这类模板占位）时，该字段返回 null，并把字段名放进 blank。",
+        "- 文件里没有该字段时返回 null。",
+        "",
+        "文件内容（工作表只列出有值的格子，形如 地址=值）：",
+        "",
+    )
+)
+
+
+def _compact(text: str) -> str:
+    """Spreadsheet text as the head of each sheet: one line per row, only cells that hold a value."""
+    if "<SHEET" not in text:
+        return text
+    sheets = []
+    for sheet in re.finditer(r'<SHEET name="([^"]*)"[^>]*>(.*?)</SHEET>', text, re.DOTALL):
+        lines = []
+        for row in re.finditer(r"<ROW[^>]*>(.*?)</ROW>", sheet.group(2), re.DOTALL):
+            found = re.finditer(r'<CELL[^>]*address="([A-Z]+\d+)"[^>]*>(.*?)</CELL>', row.group(1), re.DOTALL)
+            cells = [f"{cell.group(1)}={value}" for cell in found if (value := html.unescape(cell.group(2)).strip())]
+            if cells:
+                lines.append(" | ".join(cells))
+            if len(lines) == _SHEET_HEAD_ROWS:
+                break
+        if lines:
+            sheets.append(f"[工作表 {html.unescape(sheet.group(1))}]\n" + "\n".join(lines))
+    return "\n".join(sheets)
+
+
+def _placeholder(value: str) -> bool:
+    from product.precheck_content import blank
+
+    return blank(value) or bool(re.search(r"x{4,}", value, re.IGNORECASE))
 
 
 def analyze_file(
@@ -69,22 +118,28 @@ def analyze_file(
     if len(text) > 20000:
         notices.append("metadata_uses_excerpt")
     excerpt = text[:20000]
-    metadata: dict[str, str | None] = {"customer": None, "model": None, "project": None, "part": None, "part_number": None}
+    metadata: dict[str, str | None] = dict.fromkeys(_METADATA_FIELDS)
     if excerpt.strip():
         try:
+            # The file name is no source of these fields (裁定 R-06, R-13): the model reads the content only.
             parsed = ai(
                 "document_metadata_extraction",
                 instructions=PromptManager.get_system_prompt("document_analyst"),
-                prompt=PromptManager.get_document_metadata_prompt(excerpt, filename) + "\n同时返回 part_number（零件号）与 project（项目名称或项目号）；part 仅表示零件名称，无法确定时返回 null。",
+                prompt=_METADATA_PROMPT + _compact(text)[:_METADATA_EXCERPT],
                 max_tokens=_ANSWER_TOKENS,
-                timeout=120,
+                timeout=240,  # every sheet head of a long table takes the model longer than classification
             ).output
+            blank_fields = {field for field in parsed.get("blank") or [] if isinstance(field, str) and field in metadata} if isinstance(parsed.get("blank"), list) else set()
             for field in metadata:
                 value = parsed.get(field)
                 if isinstance(value, list):
-                    value = "、".join(item for item in value if isinstance(item, str))
-                if isinstance(value, str):
+                    # 裁定 R-09: several values written side by side are all kept, never narrowed to one.
+                    value = "\n".join(dict.fromkeys(item.strip() for item in value if isinstance(item, str) and item.strip()))
+                if isinstance(value, str) and _placeholder(value):
+                    blank_fields.add(field)
+                elif isinstance(value, str):
                     metadata[field] = value.strip()[:500] or None
+            notices.extend(f"metadata_blank_{field}" for field in _METADATA_FIELDS if field in blank_fields)
         except Exception:
             notices.append("metadata_extraction_failed")
 

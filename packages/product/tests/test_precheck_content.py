@@ -190,7 +190,7 @@ def test_task_merges_content_findings_and_registers_uncovered_types():
             "file": {"id": id_, "original_filename": f"{id_}.xlsx"},
             "selection": "selected",
             "validation": {"state": "valid"},
-            "match": {"state": "matched", "document_type": doc_type, "metadata": {"customer": customer, "part_number": "P1", "part": "壳体"}},
+            "match": {"state": "matched", "document_type": doc_type, "rule": {"id": id_, "body": {"customers": [customer]}}, "metadata": {"customer": customer, "part_number": "P1", "part": "壳体"}},
         }
 
     content = {"cp": [{"criterion_id": "M-04", "criterion": "必列齐备", "result": "不满足", "code": "B05", "location": "Sheet1 第 1 行", "evidence": "已有列：工序号", "reason": "缺必列：反应计划"}]}
@@ -242,3 +242,52 @@ def test_a_criterion_that_needs_image_recognition_is_marked_unreadable_not_left_
     results = precheck_content(buffer.getvalue(), "流程图.xlsx", "U16", customer="UAES")
     image_bound = [item for item in results if item["result"] == "未执行" and NEEDS_IMAGE in item["reason"]]
     assert image_bound and all(item["unread"] for item in image_bound)
+
+
+def test_bilingual_labels_and_captions_under_their_line_are_fields():
+    """PSW layout: 「图纸号 Shown on Drawing Number：」 is a label; 「(公司名称/供应商代码)」 captions the line above it."""
+    psw = xlsx(
+        ["零件名称 Part Name :", "加工壳体", "客户零件号 Customer Part Number：", "F01R10YA40"],
+        ["图纸号 Shown on Drawing Number：", "F01R10YA40", "供应商零件号 Org. Part Number：", "F01R10YA40"],
+        ["工程更改级别 Engineering Change Level：", "A", "日期 Dated：", "2026.09.20"],
+        ["其他工程更改 Additional Engineering Changes：", "无", "日期 Dated：", "2026.09.20"],
+        [],
+        ["宁波市法莱欣科技有限公司 0097330933", *[""] * 10, "联合汽车电子有限公司（西安工厂）"],
+        ["Organization Name & Supplier/Vendor Code & D-U-N-S®Number (公司名称/供应商代码/邓白氏编码®)", *[""] * 10, "Customer Name/Division 采购方及部门"],
+        [],
+        [*[""] * 11, "PCP2"],
+        [*[""] * 11, "Buyer/Buyer Code 采购方代码"],
+        [],
+        [*[""] * 11, "BU-AM"],
+        [*[""] * 11, "Application 应用:"],
+    )
+    found = results(psw, "PSW.xls", "U17")
+    assert [(cid, found[cid]["result"]) for cid in ("U17:S1", "U17:S4", "U17:S5")] == [("U17:S1", "满足"), ("U17:S4", "满足"), ("U17:S5", "满足")]
+    assert "公司名称=宁波市法莱欣科技有限公司" in found["U17:S4"]["evidence"]
+
+
+SAMPLES = Path(__file__).resolve().parents[3] / "assets" / "uaes" / "samples"
+
+
+def test_control_plan_header_reads_bilingual_labels_and_a_pdf_that_hides_them_is_w05():
+    header = xlsx(
+        ["Control Plan Number控制计划编号", "", "版本号", "Key Contact联系人", "Date (Orig.)创建日期：", "2026.07.28"],
+        ["QJ-CP-1", "", "A", "陆建平"],
+        ["Part Number零件号", "Prepared by 编制", "陆建平"],
+        ["F01RD0Y776"],
+        ["Part Name/Description零件名称/描述"],
+        ["节气门壳体"],
+        ["Supplier/Plant供应商/工厂", "Supplier Code供应商代码"],
+        ["宁波法莱欣科技有限公司", "0097330933"],
+    )
+    assert results(header, "CP.xlsx", "U08")["M-01"]["result"] == "满足"
+    # 总纲: a two-column PDF whose labels and values cannot be paired is unread (W05), never B05.
+    pdf = SAMPLES / "F01R20V040_磁性罩/测试文件/10 控制计划/控制计划-模板3 WY (1).pdf"
+    m01 = next(item for item in precheck_content(pdf.read_bytes(), pdf.name, "U08", customer="UAES") if item["criterion_id"] == "M-01")
+    assert (m01["result"], m01["code"], m01["unread"]) == ("不满足", "W05", True)
+
+
+def test_a_pdf_rating_merged_over_the_causes_of_one_failure_is_not_empty():
+    pdf = SAMPLES / "F01R20V040_磁性罩/测试文件/09 潜在过程失效模式及后果分析/6、P  FMEA（磁性罩）.pdf"
+    r12 = next(item for item in precheck_content(pdf.read_bytes(), pdf.name, "U07", customer="UAES") if item["criterion_id"] == "R12")
+    assert r12["result"] == "满足", r12

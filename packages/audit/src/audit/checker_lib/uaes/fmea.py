@@ -5,13 +5,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
 from typing import Any
 
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 
-from .excel import UaesExcelAgent, compact, unable
+from .excel import UaesExcelAgent, compact, original_name, unable
 from .identity import pair_identity
 from .resources import combine, pgqp1, special_list
 from .resources import pfmea as resources
@@ -23,11 +22,6 @@ _PROJECT_LABELS = ("项目", "项目名称", "项目号", "UAES项目编号", "�
 _LESSONS = ("经验教训", "lessons learned", "历史问题", "客户抱怨", "过往失效案例", "类似产品问题")
 _TEMPLATE_WORDS = ("例如", "示例", "请填写", "填写指南")
 _SCORES = {"严重度": "S", "频度": "O", "探测度": "D"}
-_REJECTED = (
-    "S/O/D范围、安全/法规后果S≥9、仅轻微外观S为2~4、无探测措施D=10、相同条件评分一致均已核对无误；"
-    "但条款中“O与失效起因和预防控制匹配”“D与探测方法和时机匹配”“后果与S明显不符”没有给出可程序化的判定标准"
-    "（何为有效预防、各类探测方法对应的D值、何为明显不符均未定义），本部分已拒绝自动判定，请人工复核。"
-)
 
 
 def meaningful(value: Any) -> str:
@@ -156,7 +150,10 @@ class UaesPfmeaAgent(UaesExcelAgent):
         found = {compact(value.split()[0]).upper() for sheet in self.sheets(ctx) for value in self.labelled(sheet, _PART_LABELS) if compact(value)}
         if len(found) == 1 and pair_identity(next(iter(found))):
             return next(iter(found)), ""
-        return None, "PFMEA零件号有多个取值：" + "、".join(sorted(found)) if found else "PFMEA表头未标注零件号"
+        if found:
+            return None, "PFMEA零件号有多个取值：" + "、".join(sorted(found))
+        # A value written in the header without its label (776/A40 C7) is not taken as the part number.
+        return None, "PFMEA表头没有写明“零件号/物料编号”标签的栏目（表头中未加标签的编号不能当作零件号）"
 
     def project(self, sheets: list[Sheet]) -> str | None:
         """The one project the sheets state; unstated, placeholder or several projects leave it unknown."""
@@ -311,9 +308,10 @@ class UaesPfmeaAgent(UaesExcelAgent):
                 return "NG", f"{first.where()}与{item.where()}失效模式“{item.values['失效模式']}”及失效后果“{effect}”相同（空白格沿用上一行），严重度S却分别为{severity}与{s}。"
             by_effect.setdefault(consequence, (item, s))
         if gaps:
-            raise unable("、".join(gaps[:3]) + "，这些行的评分尚未读取，需人工复核；其余行" + _REJECTED)
-        # Rejected with the user: the clause gives no checkable standard for these parts.
-        raise unable(_REJECTED)
+            raise unable("、".join(gaps[:3]) + "，这些行的评分尚未读取，需人工复核。")
+        # Decided on what the clause states checkably (product owner): "O与预防控制矛盾" and the D of each
+        # detection method are not defined beyond "无探测措施但D<10", so nothing more is inferred.
+        return "PASS", (f"已核对{len(items)}个失效项：S/O/D均为1~10的整数且无空白；涉及安全/法规的后果S不低于9，仅轻微外观的后果S在2~4；无探测措施的D为10；相同失效模式、相同控制条件下的S/O/D一致。")
 
     def batch_lists(self, ctx: RuleContext, part: str, project: str | None) -> tuple[list[tuple[str, int, str, str, str]], list[str], list[str]]:
         """(characteristics of the paired lists, lists whose project cannot be compared, of those the lists that state no project)."""
@@ -322,7 +320,7 @@ class UaesPfmeaAgent(UaesExcelAgent):
         lists = {item.audit_id: item for kind in _LISTS for item in self.batch_files(kind)}
         for item in lists.values():
             with self.reading(ctx, item, special_list):
-                label = f"特殊特性清单“{Path(str(item.file_url)).name}”"
+                label = f"特殊特性清单“{original_name(item)}”"
                 sheets = Table(ctx).find_sheets("特殊特性清单", on_missing=Decision.IGNORE)
                 rows = []
                 for sheet in sheets:

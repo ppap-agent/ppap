@@ -12,7 +12,7 @@ from typing import Any
 from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 
-from .excel import UaesExcelAgent, compact, unable
+from .excel import UaesExcelAgent, compact, original_name, unable
 from .resources import combine, flowchart_counterpart, pfmea_counterpart, pgqp1, pgqp1_counterpart
 from .resources import control_plan as resources
 
@@ -109,10 +109,6 @@ def _parts(values: list[str]) -> set[str]:
         tokens = _PART.findall(unicodedata.normalize("NFKC", value).upper())
         found |= set(tokens) if tokens else ({compact(value).upper()} if compact(value) not in _PLACEHOLDERS else set())
     return found
-
-
-def _name(item: Any) -> str:
-    return str((getattr(item, "file_metadata", None) or {}).get("original_filename") or Path(str(item.file_url)).name)
 
 
 def _written(value: Any, text: str) -> bool:
@@ -330,7 +326,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
         same, other, unknown = [], [], []
         for item in files:
             parts = self.parts_of(ctx, item, document)
-            name = _name(item)
+            name = original_name(item)
             if mine in parts:
                 same.append(item)
             elif parts:
@@ -386,7 +382,7 @@ class UaesControlPlanAgent(UaesExcelAgent):
         mine = self.part_number(ctx)
         same, other, unknown = [], [], []
         for item in untyped:
-            name = _name(item)
+            name = original_name(item)
             try:
                 parts = self.parts_of(ctx, item, resources) if not name.lower().endswith(".pdf") else set(_PART.findall(unicodedata.normalize("NFKC", self.pdf_text(item)).upper()))
             except OSError:
@@ -518,17 +514,60 @@ class UaesControlPlanAgent(UaesExcelAgent):
     @rule("量产SOP类型及真实受控章")
     def rule_3(self, ctx: RuleContext):
         checked, unseen, where = self.plan_type(ctx)
+        # A PDF is read through converted tables, whose sheet and cell names are not the user's.
+        at = "" if str(self.audit_file.file_url).lower().endswith(".pdf") else f"（{where}）"
         if not where:
             raise unable("控制计划未能读出类型选项（样件/试生产/量产）的勾选，尚不能确认是否为量产/SOP控制计划，需人工复核。")
         if len(checked) != 1:
             written = "、".join(" ".join(text.split()) for text in checked) or "无"
-            raise unable(f"控制计划类型选项（{where}）没有唯一的勾选（勾选：{written}），尚不能确认类型，需人工复核。")
+            raise unable(f"控制计划类型选项{at}没有唯一的勾选（勾选：{written}），尚不能确认类型，需人工复核。")
         if _stage(checked[0]) != "production":
-            return "NG", f"控制计划类型勾选为“{' '.join(checked[0].split())}”（{where}），不是量产/SOP。"
-        status, reason = self.stamp()
+            return "NG", f"控制计划类型勾选为“{' '.join(checked[0].split())}”{at}，不是量产/SOP。"
+        absent = self.pdf_without_stamp()
+        status, reason = ("NG", absent) if absent else self.stamp()
         if status == "PASS" and unseen:
-            raise unable(f"控制计划类型勾选“{checked[0]}”，但选项“{unseen[0]}”的勾选框在原件中不可读（{where}），尚不能确认唯一为量产；{reason}")
-        return status, f"控制计划类型勾选“{' '.join(checked[0].split()).split('(')[0]}”（{where}）；{reason}"
+            raise unable(f"控制计划类型勾选“{checked[0]}”，但选项“{unseen[0]}”的勾选框在原件中不可读{at}，尚不能确认唯一为量产；{reason}")
+        return status, f"控制计划类型勾选“{' '.join(checked[0].split()).split('(')[0]}”{at}；{reason}"
+
+    def pdf_without_stamp(self) -> str | None:
+        """For a PDF original, why no page carries a stamp; None when some page could.
+
+        A page could carry one where its text layer says 受控, where it draws or writes in any colour
+        other than black and grey, or where one of its pictures is not confirmed to hold no seal.
+        Each distinct picture is cut out and described alone: a whole page leaves a small seal unclear.
+        """
+        path = str(self.audit_file.file_url)
+        # A scanned page is not read (scanned PDFs are left to a person).
+        if not path.lower().endswith(".pdf") or self.unread_pages():
+            return None
+        import fitz
+
+        def grey(color: Any) -> bool:
+            return color is None or len(set(round(part, 2) for part in color)) <= 1
+
+        seen: dict[Any, Any] = {}
+        with fitz.open(path) as document:
+            for page in document:
+                if "受控" in compact(page.get_text()):
+                    return None
+                if not all(grey(drawing.get(key)) for drawing in page.get_drawings() for key in ("color", "fill")):
+                    return None
+                spans = (span for block in page.get_text("dict")["blocks"] for line in block.get("lines", []) for span in line["spans"])
+                if not all(grey((span["color"] >> 16 & 255, span["color"] >> 8 & 255, span["color"] & 255)) for span in spans):
+                    return None
+                for image in page.get_image_info(hashes=True):
+                    digest = image.get("digest")
+                    if digest not in seen:
+                        area = fitz.Rect(image["bbox"]) + (-2, -2, 2, 2)
+                        picture = page.get_pixmap(dpi=min(600, max(144, int(600 * 72 / max(area.width, 1)))), clip=area).tobytes("png")
+                        seen[digest] = self.transcribe(picture, resources.PICTURE_PROMPT, resources.PICTURE_SCHEMA, f"第{page.number + 1}页上的图片").get("seal")
+                        locator = {"kind": "pdf_region", "page": page.number + 1, "bbox": [area.x0, area.y0, area.x1, area.y1], "engine": "ocr_llm", "fact": "controlled_stamp"}
+                        self.legacy().witness(locator, "有印章" if seen[digest] else "没有印章" if seen[digest] is False else "看不清", visual=True)
+                    if seen[digest] is not False:
+                        return None
+            count = len(document)
+        pictures = f"{len(seen)}种嵌入图片经逐一核对均没有印章" if seen else "没有图片"
+        return f"原件共{count}页，各页均没有受控章：页面只有黑白文字和表格线，{pictures}。"
 
     @rule("特性类型列实际特性标记")
     def rule_4(self, ctx: RuleContext):

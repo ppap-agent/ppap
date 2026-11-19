@@ -262,8 +262,8 @@ class UaesInspectionAgent(UaesExcelAgent):
         applicable = [report for report in reports if self.requirement_rows(report)]
         if not applicable:
             raise unable("四份报告的要求列下都没有内容，尚不能确定需签字的报告，需人工复核。")
-        # A signature is a picture or handwriting on the original: each report's sign-off area is looked at.
-        observed = {f"signed_{index}": self.signature_area(report) for index, report in enumerate(applicable)}
+        # A signature is a picture or handwriting on the original: a spreadsheet places it as a picture.
+        observed = {f"signed_{index}": self.signature_picture(report) for index, report in enumerate(applicable)}
         fields = {
             f"signed_{index}": f"工作表“{report.sheet.title}”表格下方“供应商负责人/Supplier responsible signature”处有实际签名（手写或签名图片）；只有标签或空白时为false。"
             for index, report in enumerate(applicable)
@@ -279,38 +279,40 @@ class UaesInspectionAgent(UaesExcelAgent):
             raise unable("“" + "”、“".join(unknown) + "”供应商负责人签字尚未从原件图像核实，需人工复核。")
         return "PASS", "有要求项的报告（" + "、".join(report.sheet.title for report in applicable) + "）供应商负责人处均有实际签字。"
 
-    def signature_area(self, report: Report) -> bool | None:
-        """Whether the image of a worksheet's sign-off rows shows a signature beside 供应商负责人; None when not seen."""
+    def signature_picture(self, report: Report) -> bool | None:
+        """Whether a picture is placed in a worksheet's 供应商负责人 area; None when the area or its drawings cannot be read.
+
+        The area runs over the supplier sign-off label rows, from the label to the next written cell on
+        those rows (the customer's sign-off). A drawing there other than a picture is left to the image reader.
+        """
         path = str(self.audit_file.file_url)
         if path.lower().endswith(".pdf") or report.sheet.ws.parent is not self._workbook_cache:
             return None
-        from documents.excel.visual import ExcelRegionRenderError
         from openpyxl.utils.cell import get_column_letter
 
-        from audit.checker_lib.excel import load_workbook
-        from audit.checker_lib.visual import observe_excel_region
+        from .flowchart import placed_drawings
 
         rows, columns = self.extent(report.sheet)
-        labels = [
-            cell for cell in report.sheet.scan_non_empty(row_min=1, row_max=rows, col_min=1, col_max=columns) if any(compact(marker) in compact(cell.value()) for marker in resources.SIGNATURE_MARKERS)
-        ]
+        markers = [compact(marker) for marker in resources.SIGNATURE_MARKERS]
+        labels = [cell for cell in report.sheet.scan_non_empty(row_min=1, row_max=rows, col_min=1, col_max=columns) if any(marker in compact(cell.value()) for marker in markers)]
         if not labels:
             return None
         first, last = min(cell.row_index for cell in labels), max(cell.row_index for cell in labels)
-        cell_range = f"A{max(1, first - 2)}:{get_column_letter(columns)}{min(rows, last + 2)}"
-        cache = self.__dict__.setdefault("_signature_regions", {})
-        if "workbook" not in cache:
-            cache["workbook"] = load_workbook(path)
-        keywords = tuple(dict.fromkeys(str(cell.value()).strip()[:80] for cell in labels))[:8]
-        field = {"signed": "图中“供应商负责人 / Supplier responsible signature”处（标签右侧或下方）有实际签名（手写笔迹或签名图片）；只有标签文字或空白时为false。"}
+        left = min(cell.col_index for cell in labels)
+        written = report.sheet.scan_non_empty(row_min=first, row_max=last, col_min=left + 1, col_max=columns)
+        right = min((cell.col_index for cell in written if not any(marker in compact(cell.value()) for marker in markers)), default=columns + 1)
         try:
-            observed = observe_excel_region(
-                self.audit_file, cache["workbook"][report.sheet.title], cell_range, field, keywords, cache=cache.setdefault("regions", {}), witness=self.legacy().witness, whole_field=True
-            )
-        except (ExcelRegionRenderError, ValueError, KeyError):
+            drawings = placed_drawings(path, report.sheet.title)
+        except Exception:
             return None
-        value = observed.get("signed")
-        return value if isinstance(value, bool) else None
+        inside = [drawing for drawing in drawings if not drawing.connector and drawing.place is not None and first <= drawing.place[0] <= last and left <= drawing.place[1] < right]
+        for drawing in inside:
+            if drawing.picture and drawing.place is not None:
+                top, left_column, bottom, right_column = drawing.place
+                locator = {"kind": "xlsx_range", "sheet": report.sheet.title, "start": f"{get_column_letter(left_column)}{top}", "end": f"{get_column_letter(right_column)}{bottom}"}
+                self.legacy().witness(locator, "供应商负责人处的签名图片")
+                return True
+        return None if inside else False
 
     @rule("同物料号及名称的独立气泡图")
     def rule_4(self, ctx: RuleContext):

@@ -11,7 +11,7 @@ from audit.checker_lib.nio.excel_agent import rule
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 
 from .control_plan import UaesControlPlanAgent, operation_owners
-from .excel import UaesExcelAgent, compact, unable
+from .excel import UaesExcelAgent, compact, original_name, unable
 from .resources import capability, combine, control_plan, pgqp1
 from .resources import msa as resources
 
@@ -79,10 +79,25 @@ class UaesMsaAgent(UaesExcelAgent):
                 report = Report(kind, f"“{sheet.title}”")
                 report.names = _written(self.labelled(sheet, resources.GAUGE_NAME))
                 report.numbers = {_identity(value) for value in self.labelled(sheet, resources.GAUGE_NUMBER)} - _PLACEHOLDERS
-                report.parts = _written(self.labelled(sheet, resources.PART_NUMBER))
+                report.parts = _written([*self.labelled(sheet, resources.PART_NUMBER), *self.below(sheet, resources.PART_NUMBER_ABOVE)])
                 report.conclusions = self.labelled(sheet, resources.GRR_VERDICT) if kind == "GRR" else self.kappa_conclusions(sheet)
                 found.append(report)
         return found
+
+    @staticmethod
+    def below(sheet: Sheet, aliases: tuple[str, ...]) -> list[str]:
+        """Values written in the cell under each label cell (a header row over its value row)."""
+        wanted = {compact(alias) for alias in aliases}
+        rows, columns = UaesExcelAgent.extent(sheet)
+        values = []
+        for cell in sheet.scan_non_empty(row_min=1, row_max=rows, col_min=1, col_max=columns):
+            if compact(cell.value()) not in wanted:
+                continue
+            merged = sheet.ctx.ops.get_detailed_merge_info(sheet.ws, cell.row_index, cell.col_index)
+            value = sheet.cell((merged.max_row if merged else cell.row_index) + 1, cell.col_index).value()
+            if str(value or "").strip():
+                values.append(str(value).strip())
+        return values
 
     @staticmethod
     def kappa_conclusions(sheet: Sheet) -> list[str]:
@@ -226,9 +241,30 @@ class UaesMsaAgent(UaesExcelAgent):
 
     @rule("CP出货或GP12人工检测同名或综合检具Kappa")
     def rule_4(self, ctx: RuleContext):
-        plan = self.only(_CP, "控制计划")
-        if plan is None:
+        plans = self.batch_files(_CP)
+        if not plans:
             return "NG", "同批次没有控制计划。"
+        if len(plans) == 1:
+            return self.kappa_for_human_checks(ctx, plans[0])
+        # Each same-round control plan is checked; a plan whose check fails fails the clause.
+        passed, open_ = [], []
+        for plan in plans:
+            named = f"控制计划《{original_name(plan)}》"
+            try:
+                status, reason = self.kappa_for_human_checks(ctx, plan)
+            except GuardStop as stop:
+                if stop.decision != Decision.UNABLE:
+                    raise
+                open_.append(f"{named}：{stop.message}")
+                continue
+            if status == "NG":
+                return "NG", named + reason.removeprefix("控制计划")
+            passed.append(named + reason.removeprefix("控制计划"))
+        if open_:
+            raise unable("；".join(open_))
+        return "PASS", "；".join(passed)
+
+    def kappa_for_human_checks(self, ctx: RuleContext, plan) -> tuple[str, str]:
         # (operation, method, place, whether the drawing leaves the row between that operation and a neighbour)
         manual, read = [], 0
         with self.reading(ctx, plan, control_plan):
@@ -244,7 +280,7 @@ class UaesMsaAgent(UaesExcelAgent):
                     outgoing = [name for name in names if any(term in name for term in ("出货检验", "GP12"))]
                     if outgoing and any(term in method for term in _HUMAN):
                         # AIAG control plans name the gauge in the evaluation/measurement technique column.
-                        manual.append((outgoing[0], method.strip(), f"“{sheet.title}”第{row.row_index}行", len(names) > 1))
+                        manual.append((outgoing[0], " ".join(method.split()), f"“{sheet.title}”第{row.row_index}行", len(names) > 1))
         if not read:
             # An empty scope proves no absence of manual checks.
             raise unable("控制计划中未读到评价测量技术行，尚不能确认出货检验/GP12工序是否有人工检测，需人工复核。")
@@ -269,8 +305,9 @@ class UaesMsaAgent(UaesExcelAgent):
             if unknown:
                 unread = "、".join(report.where for report in unknown)
                 return "NG", f"控制计划{where}“{operation}”采用{method}，同批次Kappa报告{unread}未写零件号，无法辨识是否与控制计划零件号{part}相同，判不通过，请人工复核。"
-            if any(not report.names for report in same):
+            if unnamed := [report.where for report in same if not report.names]:
                 # A Kappa report read without any gauge name cannot be the same-name one: "无法辨识则不通过".
-                return "NG", f"控制计划{where}“{operation}”采用{method}，同批次零件号为{part}的Kappa报告未写量具名称，无法确认量具名称相同或为综合检具；请人工复核Kappa与该检测的对应关系。"
+                kappa = f"同批次零件号为{part}的Kappa文件{'、'.join(unnamed)}没有量具名称"
+                return "NG", f"控制计划{where}“{operation}”采用“{method}”检验；{kappa}，无法确认与控制计划的“{method}”检验是同一量具（量具名称相同或为综合检具），判不通过，请人工复核。"
             return "NG", f"控制计划{where}“{operation}”采用{method}，同批次没有零件号为{part}、量具名称相同或为综合检具的Kappa报告，请复审或提交kappa文件一起审核。"
         return "PASS", "控制计划出货检验/GP12的人为检测均有量具名称相同或为综合检具的Kappa报告。"

@@ -8,7 +8,13 @@ def file(id_, name, *, validation="valid", reasons=(), state="matched", gaps=(),
         "file": {"id": id_, "original_filename": name},
         "selection": selection,
         "validation": {"state": validation, "reasons": list(reasons)},
-        "match": {"state": state, "gaps": list(gaps), "document_type": doc_type, "metadata": {"customer": "UAES", "part_number": part_number, "part": part}},
+        "match": {
+            "state": state,
+            "gaps": list(gaps),
+            "document_type": doc_type,
+            "metadata": {"customer": "UAES", "part_number": part_number, "part": part},
+            "rule": {"id": "r", "title": "规则", "body": {"customers": ["UAES"]}},
+        },
         **extra,
     }
 
@@ -20,7 +26,7 @@ def test_each_file_gets_one_level_and_blocks_fail_the_batch():
             file("locked", "加密.xlsx", validation="invalid", reasons=["文件加密或异常，无法识别"], state=None),
             file("who", "未知.pdf", state="unmatched", gaps=["matching_customer_required"]),
             file("norule", "8D.pdf", state="unmatched", gaps=["matching_document_type_rules_missing"]),
-            file("scan", "流程图.pdf", doc_type="过程流程图", gaps=["empty_document_text"], part_number=""),
+            file("scan", "流程图.pdf", doc_type="过程流程图", gaps=["empty_document_text", "metadata_blank_part_number"], part_number=""),
             file("ref", "图纸.pdf", state="reference", reference_only=True),
             file("off", "旧.xlsx", selection="removed"),
         ]
@@ -115,7 +121,7 @@ def test_the_inspection_report_type_is_t01_for_li_and_t01a_for_nio_so_neither_is
     rows = []
     for customer in ("理想", "蔚来", "UAES"):
         row = file(customer, f"{customer}-尺寸报告.xlsx", state="unmatched", gaps=["matching_document_type_rules_missing"], doc_type="全功能检验报告")
-        row["match"]["metadata"]["customer"] = customer
+        row["match"]["rule"]["body"]["customers"] = [customer]
         rows.append(row)
     result = precheck_task({"files": rows})
     assert [item["file_version_id"] for item in _status(result, "S01") if "scope" not in item] == ["UAES"]
@@ -187,11 +193,50 @@ def test_the_counterpart_graph_is_the_one_ppap_00_a_registers():
         assert set(peers) == set(re.findall(r"`([TE]\d{2})`", row.split("|")[3])), (customer, target)
 
 
-def test_a_file_without_a_recognized_customer_routes_by_the_task_customer():
-    row = file("cp", "控制计划-776.xlsx")
-    row["match"]["metadata"]["customer"] = None
-    assert "S02" not in [item["code"] for item in precheck_task({"customer_preference": "UAES", "files": [row]})["statuses"]]
-    assert [item["code"] for item in precheck_task({"customer_preference": None, "files": [row]})["statuses"]] == ["S02"]
+def test_rules_are_found_by_the_task_customer_and_the_customer_a_file_writes_is_only_shown():
+    """裁定 R-12: GEELY / 吉利 / UEAS written in a file never route rules; the task's (else the rule's) customer does."""
+    rows = [file("cp", "控制计划-776.xlsx"), file("pfd", "流程图776.xlsx", doc_type="过程流程图")]
+    for row, written in zip(rows, ("GEELY", None)):
+        row["match"]["metadata"]["customer"] = written
+        row["match"]["rule"]["body"] = {}
+    result = precheck_task({"customer_preference": "UAES", "files": rows}, {"cp": [], "pfd": []})
+    assert "S02" not in [item["code"] for item in result["statuses"]]
+    assert {row["file_version_id"]: (row["entry_key"], row["customer"]) for row in result["files"]} == {"cp": ("U08", "GEELY"), "pfd": ("U16", None)}
+    # Without a task customer the matched rule's customer routes; with neither, nothing does.
+    assert precheck_task({"customer_preference": None, "files": [file("cp", "控制计划.xlsx")]})["files"][0]["entry_key"] == "U08"
+    assert [item["code"] for item in precheck_task({"customer_preference": None, "files": rows[:1]})["statuses"]] == ["S02"]
+
+
+def test_an_identity_field_is_w02_only_when_written_empty_or_a_placeholder():
+    """裁定 R-15: recognition that found no such field is no W02; a field written empty or as a placeholder is."""
+    absent = file("cp", "控制计划.xlsx", part_number="", part="")
+    written = file("cp", "控制计划.xlsx", part_number="", gaps=["metadata_blank_part_number", "metadata_blank_project"])
+    w02 = lambda row: [item for item in precheck_task({"customer_preference": "UAES", "files": [row]})["warnings"] if item["code"] == "W02"]  # noqa: E731
+    assert w02(absent) == []
+    assert [(item["code"], item["problem"]) for item in w02(written)] == [("W02", "文件中「项目」一栏为空或只填了占位符。"), ("W02", "文件中「零件号」一栏为空或只填了占位符。")]
+
+
+def test_scanned_pages_of_a_pdf_with_text_are_w05_and_a_pdf_without_text_is_not():
+    """附则 §B01: pages without a text layer are W05 and the rest is judged; never B01."""
+    import pymupdf
+
+    def pdf(*texts):
+        document = pymupdf.open()
+        for text in texts:
+            page = document.new_page()
+            if text:
+                page.insert_text((72, 72), text)
+            else:
+                pixmap = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 8, 8), False)
+                page.insert_image(page.rect, pixmap=pixmap)
+        return document.tobytes()
+
+    originals = {"msa": pdf("", "", "Part 527", "R&R"), "scan": pdf("", "")}
+    rows = [file("msa", "574-527-MSA.pdf", doc_type="测量系统分析评价"), file("scan", "扫描.pdf", doc_type="测量系统分析评价", part_number="P2")]
+    result = precheck_task({"customer_preference": "UAES", "files": rows}, read=lambda row: originals[row["file"]["id"]])
+    scanned = [item for item in result["warnings"] if item["code"] == "W05"]
+    assert [(item["file_version_id"], item["problem"]) for item in scanned] == [("msa", "第 1~2 页没有文字层（扫描页），这些页的内容预检未读取；其余页照常判定。")]
+    assert not result["blocks"]
 
 
 def _criterion(id_, result, reason=""):

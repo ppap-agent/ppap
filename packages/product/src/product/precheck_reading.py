@@ -46,6 +46,7 @@ class Doc:
     lines: list[tuple[str, str]] = field(default_factory=list)  # (location, text)
     images_known: bool = False  # True only when embedded pictures were enumerated (xlsx)
     error: str = ""
+    blank_pages: list[int] = field(default_factory=list)  # 1-based PDF pages with a picture but no text layer (scanned pages)
 
     @property
     def has_text(self) -> bool:
@@ -129,9 +130,10 @@ def _pdf(content: bytes) -> Doc:
     doc = Doc("pdf")
     with pymupdf.open(stream=content, filetype="pdf") as pdf:
         for number, page in enumerate(pdf, 1):
-            for line in page.get_text("text").splitlines():
-                if line.strip():
-                    doc.lines.append((f"第 {number} 页", line))
+            lines = [line for line in page.get_text("text").splitlines() if line.strip()]
+            doc.lines.extend((f"第 {number} 页", line) for line in lines)
+            if not lines and page.get_images():
+                doc.blank_pages.append(number)
             try:
                 tables = page.find_tables().tables
             except Exception:  # table detection is best effort; page text above stays available

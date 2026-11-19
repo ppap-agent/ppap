@@ -15,7 +15,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from product.customers import full_name
-from product.precheck import named_by_user, precheck_task
+from product.precheck import named_by_user, precheck_task, rule_customer
 from product.precheck_content import entry_key, precheck_content
 
 # Content results depend only on the bytes and the rule entry, so one read serves every later view.
@@ -70,7 +70,7 @@ def _content(store, principal, task: dict) -> dict[str, list[dict]]:
         match = row.get("match") or {}
         if row.get("selection") != "selected" or match.get("state") != "matched" or row.get("reference_only"):
             continue
-        customer = (match.get("metadata") or {}).get("customer") or task.get("customer_preference")
+        customer = rule_customer(task, row)
         key = entry_key(customer, match.get("document_type"))
         if key is None:
             continue

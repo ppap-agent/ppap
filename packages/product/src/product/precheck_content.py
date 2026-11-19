@@ -141,6 +141,11 @@ def _in(alt: str, n: str) -> bool:
     return n == norm(alt[1:]) if alt.startswith("=") else norm(alt) in n
 
 
+def _label_len(text: str) -> int:
+    """Length of a label without its Latin letters: a bilingual label (``图纸号 Shown on Drawing Number：``) is as short as its Chinese name."""
+    return len(re.sub(r"[a-z_]|[^\w]", "", norm(text)))
+
+
 def _hit(text: str, alts: tuple[str, ...]) -> str | None:
     n = norm(text)
     return next((alt for alt in alts if _in(alt, n)), None)
@@ -163,7 +168,7 @@ class Ctx:
             for g, grid in enumerate(self.doc.grids):
                 for r, row in enumerate(grid.rows):
                     for c, text in enumerate(row):
-                        if text and len(norm(text)) <= 40 and (not c or row[c - 1] != text):
+                        if text and _label_len(text) <= 40 and (not c or row[c - 1] != text):
                             self.cells.setdefault(text, []).append((g, r, c))
         return self.cells
 
@@ -243,6 +248,13 @@ def _after(text: str, alt: str) -> str:
     return rest.lstrip(":/").strip()
 
 
+def _captioned(text: str, alt: str) -> bool:
+    """The label is a bracketed caption (``Organization Name … (公司名称/供应商代码)``): the cell holds no value of its own."""
+    n, a = norm(text), norm(alt)
+    at = n.find(a)
+    return at > 0 and n.rfind("(", 0, at) > n.rfind(")", 0, at) and ")" in n[at + len(a) :]
+
+
 @dataclass
 class Field:
     found: bool
@@ -254,18 +266,22 @@ class Field:
 def find_field(ctx: Ctx, alts: tuple[str, ...]) -> Field:
     """A labelled header/footer field: inline after the label, else the next non-empty cell to the right, else below."""
     hits: list[Field] = []
-    positions = sorted((g, r, c, text) for text, places in ctx.short_cells().items() if (alt := _hit(text, alts)) and len(norm(text)) <= len(norm(alt)) + 16 for g, r, c in places)
+    positions = sorted((g, r, c, text) for text, places in ctx.short_cells().items() if (alt := _hit(text, alts)) and _label_len(text) <= _label_len(alt) + 16 for g, r, c in places)
     for g, r, c, text in positions:
         grid, row, alt = ctx.doc.grids[g], ctx.doc.grids[g].rows[r], _hit(text, alts) or ""
-        value, where = _after(text, alt), grid.ref(r, c)
+        value, where = ("" if _captioned(text, alt) else _after(text, alt)), grid.ref(r, c)
         if value and ctx.is_label(value):
             value = ""
         if not value:
             right = [(cc, row[cc]) for cc in range(c + 1, min(len(row), c + 7)) if row[cc] != text and norm(row[cc])]
+            below, above = grid.cell(r + 1, c), grid.cell(r - 1, c) if r else ""
             if right and not ctx.is_label(right[0][1]):
                 value, where = right[0][1], grid.ref(r, right[0][0])
-            elif not right and grid.cell(r + 1, c) and not ctx.is_label(grid.cell(r + 1, c)) and grid.cell(r + 1, c) != text:
-                value, where = grid.cell(r + 1, c), grid.ref(r + 1, c)
+            elif not right and below and not ctx.is_label(below) and below != text:
+                value, where = below, grid.ref(r + 1, c)
+            elif not right and not norm(below) and above and not ctx.is_label(above) and above != text and r >= 2 and (not norm(grid.cell(r - 2, c)) or ctx.is_label(grid.cell(r - 2, c))):
+                # A caption printed under its line (PSW 「公司名称」「采购方及部门」): the value is the line above it.
+                value, where = above, grid.ref(r - 1, c)
         hits.append(Field(True, value, where, text))
     for index, (where, text) in enumerate(ctx.doc.lines):
         alt = _hit(text, alts)
@@ -377,6 +393,8 @@ class Check:
     group: bool = False
     needs_text: bool = True
     needs_tables: bool = False
+    # Labelled header fields: in a PDF a re-flowed layout splits labels from values, so a missing field is unread.
+    reads_layout: bool = False
 
 
 def _list(items: list[str], limit: int = 5) -> str:
@@ -776,10 +794,11 @@ L2: dict[str, Check] = {
     "U09:S7": present("包装材料清单"),
     "U10:S1": controlled(),
     "U11:S1": present("工程更改一览表"),
-    "U11:S2": columns(("项目",)),
-    "U11:S3": columns(("零件号", "零件编号", "物料编号")),
-    "U11:S4": columns(("变更内容简述", "变更内容", "更改内容")),
-    "U11:S5": columns(("变更原因", "更改原因")),
+    # E06 分则 §5.1 近义通过：分则逐列列明的写法。
+    "U11:S2": columns(("项目", "项目名称", "车型项目", "项目代号", "所属项目")),
+    "U11:S3": columns(("零件号", "零件编号", "产品编号", "物料编号", "件号")),
+    "U11:S4": columns(("变更内容简述", "变更内容", "更改内容", "变更说明", "更改描述", "变更事项")),
+    "U11:S5": columns(("变更原因", "更改原因", "原因", "变更理由", "更改事由")),
     "U11:S6": columns(("时间", "日期")),
     # Aliases from PPAP-T12 §6 field-name table (UAES only).
     "U12:S1": fields(("物料名称", "物料名", "材料名称", "产品名称")),
@@ -1143,6 +1162,10 @@ def _sod() -> Check:
                 cell = table.grid.cell(r, table.cols[i])
                 value = _num(cell)
                 if not norm(cell):
+                    # A PDF table does not repeat a vertically merged rating: with the cell to its left (the failure
+                    # effect, cause or control it rates) also empty, the row continues the rating above.
+                    if table.grid.kind == "pdf" and r > table.header + 1 and table.cols[i] and not norm(table.grid.cell(r, table.cols[i] - 1)):
+                        continue
                     empties.append(f"{table.grid.ref(r, table.cols[i])}=(空)")
                 elif value is None or value != int(value) or not 1 <= value <= 10:
                     wrong.append(f"{table.grid.ref(r, table.cols[i])}={cell}")
@@ -1195,7 +1218,8 @@ CP_HEADER = [
     ("顾客质量批准",),
     ("其它批准", "其他批准"),
 ]
-CP_HEADER_UAES = [("供应商名称",), ("供应商代码",), ("编制人", "编制"), ("版本号", "版本"), ("受控日期", "创建日期", "修订日期"), PART_NAME, PART_NO]
+# 10 分则 M-01 允许同义别名：AIAG 表头「Supplier/Plant 供应商/工厂」即供应商名称栏。
+CP_HEADER_UAES = [("供应商名称", "供应商/工厂"), ("供应商代码",), ("编制人", "编制"), ("版本号", "版本"), ("受控日期", "创建日期", "修订日期"), PART_NAME, PART_NO]
 
 
 def _cp_header(non_empty: bool) -> Check:
@@ -1213,7 +1237,7 @@ def _cp_header(non_empty: bool) -> Check:
             return bad("B05" if len(absent) >= 3 else "W01", "表头区", "缺：" + "、".join(absent) + note, f"表头字段缺 {len(absent)} 项")
         return ok(found[0][1].location, f"{len(specs)} 项表头字段齐备{note}")
 
-    return Check(run, labels=tuple(alt for spec in CP_HEADER + CP_HEADER_UAES for alt in spec))
+    return Check(run, labels=tuple(alt for spec in CP_HEADER + CP_HEADER_UAES for alt in spec), reads_layout=not non_empty)
 
 
 def _cp_columns() -> Check:
@@ -1428,6 +1452,10 @@ def precheck_content(file_bytes: bytes, filename: str, entry_key: str, *, custom
         unread = unread or (result == "未执行" and NEEDS_IMAGE in (reason or ""))
         if result == "不满足" and code == "B05" and check is not None and check.needs_tables and doc.kind == "pdf":
             result, code, reason = "未执行", None, "PDF 表格抽取未见所需列，不能据此判缺列：" + reason
+        elif result == "不满足" and code in {"B05", "W01"} and check is not None and check.reads_layout and doc.kind == "pdf":
+            # 总纲：读不出是 W05，不判 B05。
+            result, code, unread = "不满足", "W05", True
+            reason = "PDF 版面中表头标签与取值未能逐一配对读出，不能据此判缺字段：" + reason
         if result == "不满足" and not code:
             result, reason = "未执行", "规则未给出该情形的原因码，本期未判：" + reason
         results.append(

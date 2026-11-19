@@ -1,8 +1,9 @@
-"""Part submission warrant originals (U17): the content one image transcription returns.
+"""Part submission warrant originals (U17): the content a warrant's fields, boxes and marks are read into.
 
-The UAES corpus warrant (CFG-1001) is a scan. Its page is transcribed once into this schema: what is printed
-or written in each field and which boxes are marked. The model transcribes; the clauses decide in code.
-The transcription also says whether an ink seal is seen.
+A scanned warrant page is transcribed once into SCHEMA by the image model: what is printed or written in
+each field, which boxes are marked, and whether an ink seal is seen. A binary Excel warrant (F-PU-206) is read
+into the same shape from its cells, its form checkboxes and its pictures; only whether a picture is a
+handwritten signature or a seal is asked of the image model. The clauses decide in code.
 """
 
 from . import PER_PAGE, STITCHED
@@ -89,4 +90,40 @@ PROMPT = (
             LEVEL,
         )
     )
+)
+
+
+# The F-PU-206 Excel warrant: each field is found by the words of its printed label (all of them, in one cell).
+# "right": the value is written right of the label on its row, up to the next label; "above": in the cell above.
+XLS_FIELDS = {
+    "part_name": (("零件名称",), "right"),
+    "customer_part_number": (("客户零件号",), "right"),
+    "drawing_number": (("图纸号",), "right"),
+    "organization_part_number": (("供应商零件号",), "right"),
+    "engineering_change_level": (("工程更改级别",), "right"),
+    "additional_engineering_changes": (("其他工程更改",), "right"),
+    "supplier_name": (("公司名称",), "above"),
+    "customer_name_division": (("采购方及部门",), "above"),
+    "buyer_code": (("采购方代码",), "above"),
+    "application": (("Application", "应用"), "above"),
+    "imds_submission": (("以IMDS",), "right"),
+}
+# The date printed on the same row right of a field's label.
+XLS_DATES = {"engineering_change_level_date": "engineering_change_level", "additional_engineering_changes_date": "additional_engineering_changes"}
+XLS_DATE = ("日期",)
+XLS_AREAS = {SUPPLIER_AREA[0]: ("供方制造厂资料",), CUSTOMER_AREA[0]: ("买方资料",)}
+# A choice's checkboxes lie from its label's row up to the row of the next label (its own row when none is named).
+XLS_CHOICES = {
+    SAFETY[0]: (("安全及政府条例",), None),
+    SUBSTANCES[0]: (("受客户关注的材料",), None),
+    REASON[0]: (("提交原因",), ("要求提交的等级",)),
+    LEVEL[0]: (("要求提交的等级",), ("提交结果",)),
+}
+XLS_SIGNATURE = ("供方代表签字",)
+
+PICTURE_SCHEMA = _object(handwritten_signature=_MARK, ink_seal=_MARK)
+PICTURE_PROMPT = (
+    "这是零件提交保证书工作表中嵌入的一张图片。请只描述图片本身，不判断是否合格。\n"
+    "handwritten_signature：图片是手写笔迹的签名为 true；印刷体文字、印章、标志或空白为 false；看不清为 null。\n"
+    "ink_seal：图片是公司印章（公章、专用章等的印迹或其图像）为 true；品牌标志、表头 logo、签名、文字或勾选框为 false；看不清为 null。"
 )

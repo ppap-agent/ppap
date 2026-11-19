@@ -59,6 +59,8 @@ READ_GAPS = {
     "document_text_unavailable": "无法读取文件文字",
     "metadata_extraction_failed": "业务信息识别失败",
 }
+# Identity fields recognition reports as written but empty or a placeholder (``metadata_blank_<field>``).
+BLANK_FIELDS = {"project": "项目", "customer": "客户", "model": "车型", "part_number": "零件号", "part": "零件名称"}
 # PPAP-00-A §4.1 同批关联图: (customer, target type) -> counterpart types (all `SUB`) whose part number pairs them.
 # Only counterparts that recognition can type are listed; drawings, bubble charts, kappa records, deviation
 # summaries and delivery checklists have no recognized type yet and are not inferred from a filename.
@@ -94,6 +96,21 @@ def _finding(code: str, level: str, file: dict, problem: str, evidence: str, act
         # Content-level findings come from the routed rule entry; file-level ones from the task itself.
         "scope": "content" if location else "file",
     }
+
+
+def rule_customer(task: dict[str, Any], row: dict) -> str | None:
+    """The customer whose rules route this file: the task's customer, else the one customer of the rule it matched.
+
+    The customer a file writes (GEELY, UEAS, 联合电子UAES…) is one of its facts, shown as recorded and never used
+    to find rules (裁定 R-12).
+    """
+    if task.get("customer_preference"):
+        return task["customer_preference"]
+    body = (((row.get("match") or {}).get("rule") or {}).get("body")) or {}
+    customers = {value for value in body.get("customers") or [] if isinstance(value, str) and value.strip()}
+    if isinstance(body.get("suite_key"), str) and ":" in body["suite_key"]:
+        customers.add(body["suite_key"].split(":", 1)[0])
+    return next(iter(customers)) if len(customers) == 1 else None
 
 
 def customer_types(customer: str | None) -> frozenset[str] | None:
@@ -160,6 +177,29 @@ def image_files(files: list[dict], content: Mapping[str, list[dict]] | None, rea
         if suffix in IMAGE_SUFFIXES or scanned:
             found.append({"file_version_id": row["file"]["id"], "filename": name})
     return found
+
+
+def _page_ranges(pages: list[int]) -> str:
+    runs: list[list[int]] = []
+    for page in pages:
+        if runs and page == runs[-1][-1] + 1:
+            runs[-1].append(page)
+        else:
+            runs.append([page])
+    return "、".join(f"{run[0]}~{run[-1]}" if len(run) > 1 else str(run[0]) for run in runs)
+
+
+def _scanned_pages(row: dict, read: Callable[[dict], bytes] | None) -> list[int]:
+    """Pages of a PDF that has text without a text layer of their own (附则 §B01: W05, the rest is judged as usual).
+
+    A PDF with no text at all is an image-type file (总纲 §5.2), not this."""
+    if read is None or not row["file"]["original_filename"].lower().endswith(".pdf"):
+        return []
+    try:
+        document = read_document(read(row), row["file"]["original_filename"])
+    except Exception:  # noqa: BLE001 - an unreadable file is the file level's matter, not a scan
+        return []
+    return document.blank_pages if not document.error and document.has_text else []
 
 
 def _grids(content: bytes, filename: str) -> dict[str, list[list[str]]] | None:
@@ -324,13 +364,10 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
     entries: dict[str, str | None] = {}
     targets: list[tuple[dict, str, str]] = []
 
-    def customer_of(row: dict) -> str | None:
-        return ((row.get("match") or {}).get("metadata") or {}).get("customer") or task.get("customer_preference")
-
-    codes = {row["file"]["id"]: type_code((row.get("match") or {}).get("document_type"), customer_of(row)) for row in files}
+    codes = {row["file"]["id"]: type_code((row.get("match") or {}).get("document_type"), rule_customer(task, row)) for row in files}
     for row in files:
         name, validation, match = row["file"]["original_filename"], row.get("validation") or {}, row.get("match") or {}
-        customer = customer_of(row)
+        customer = rule_customer(task, row)
         scope, code = customer_types(customer), codes[row["file"]["id"]]
         outside = scope is not None and code is not None and code not in scope
         reasons = "；".join(str(reason) for reason in validation.get("reasons") or [])
@@ -367,8 +404,12 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
                 problem = READ_GAPS[gap] + "，正式审核可能对相关条款给出“无法判断”。"
                 action = "如为扫描件，请提供可编辑的原始文件（Excel / Word）或文字版 PDF。"
                 findings.append(_finding("W05", "warn", row, problem, READ_GAPS[gap], action, "解析侧"))
-        metadata = match.get("metadata") or {}
-        entries[row["file"]["id"]] = entry = entry_key(metadata.get("customer") or task.get("customer_preference"), match.get("document_type"))
+        if scanned := _scanned_pages(row, read):
+            pages = _page_ranges(scanned)
+            problem = f"第 {pages} 页没有文字层（扫描页），这些页的内容预检未读取；其余页照常判定。"
+            action = "补交这些页的可检索版本，或在封面注明这些页的内容。"
+            findings.append(_finding("W05", "warn", row, problem, f"第 {pages} 页无文字层", action, "材料侧", f"第 {pages} 页"))
+        entries[row["file"]["id"]] = entry = entry_key(customer, match.get("document_type"))
         if customer and code:
             targets.append((row, customer, code))
         if entry is None and outside:
@@ -387,9 +428,10 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
                 statuses.append({"code": "S03", "scope": "content", "file_version_id": row["file"]["id"], "filename": name, "note": note})
         if entry and content is not None:
             statuses.extend(_coverage(row, entry, content.get(row["file"]["id"])))
-        for field, label in (("part_number", "零件号"), ("part", "零件名称")):
-            if not (metadata.get(field) or "").strip():
-                findings.append(_finding("W02", "warn", row, f"文件中未识别到{label}。", "(空)", f"在文件表头填写{label}，与图纸和其他 PPAP 文件保持一致。", "材料侧"))
+        # 裁定 R-15: a field the file does not have is no W02; only a written field left empty or holding a placeholder is.
+        for field, label in BLANK_FIELDS.items():
+            if f"metadata_blank_{field}" in gaps:
+                findings.append(_finding("W02", "warn", row, f"文件中「{label}」一栏为空或只填了占位符。", "空或占位", f"在该栏填写实际的{label}，与图纸和其他 PPAP 文件保持一致。", "材料侧"))
     if not pending:
         peer_statuses, peer_findings = _counterparts(targets, files, codes)
         statuses.extend(peer_statuses)

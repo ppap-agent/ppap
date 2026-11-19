@@ -26,6 +26,8 @@ _STEP_NUMBER = re.compile(r"[\d.\s/、,，-]+")
 _CONNECTORS = {"line", "straightConnector1", *(f"{shape}Connector{number}" for shape in ("bent", "curved") for number in range(2, 6))}
 # OfficeArt shape types of .xls drawings: line, straight, bent and curved connectors.
 _XLS_CONNECTORS = {20, *range(32, 41)}
+# The OfficeArt shape type of a placed picture (msosptPictureFrame).
+_XLS_PICTURE = 75
 _DASHED = {"dashed", "dotted", "dashDot", "dashDotDot", "mediumDashed", "mediumDashDot", "mediumDashDotDot", "slantDashDot", "hair"}
 
 
@@ -48,6 +50,7 @@ class Drawing:
 
     place: tuple[int, int, int, int] | None
     connector: bool
+    picture: bool = False
 
 
 class FlowChart:
@@ -204,7 +207,7 @@ class FlowChart:
     def drawings(self) -> list[Drawing]:
         if self._drawings is None:
             try:
-                self._drawings = _xls_drawings(self.path, self.sheet.title) if self.path.lower().endswith(".xls") else _xlsx_drawings(self.path, self.sheet.title)
+                self._drawings = placed_drawings(self.path, self.sheet.title)
             except Exception:
                 # Unparsed drawings could cover any cell.
                 self._drawings = [Drawing(None, False)]
@@ -324,6 +327,11 @@ def _overlaps(rect, cell) -> bool:
     return not common.is_empty and common.width > 1.5 and common.height > 1.5
 
 
+def placed_drawings(path: str, title: str) -> list[Drawing]:
+    """The drawings placed on one worksheet of a spreadsheet original."""
+    return _xls_drawings(path, title) if path.lower().endswith(".xls") else _xlsx_drawings(path, title)
+
+
 def _xlsx_drawings(path: str, title: str) -> list[Drawing]:
     """Anchors of the sheet's drawing part: pictures, shapes and connectors."""
     namespaces = {
@@ -359,7 +367,7 @@ def _xlsx_drawings(path: str, title: str) -> list[Drawing]:
                 shapes = {element.get("prst") for element in node.iter() if element.tag.endswith("}prstGeom")}
                 connector = any(element.tag.endswith("}cxnSp") for element in node.iter()) or bool(shapes) and shapes <= _CONNECTORS
                 pictures = any(element.tag.endswith(("}pic", "}graphicFrame")) for element in node.iter())
-                found.append(Drawing(place, connector and not pictures))
+                found.append(Drawing(place, connector and not pictures, pictures))
         return found
 
 
@@ -423,7 +431,7 @@ def _xls_drawings(path: str, title: str) -> list[Drawing]:
             if anchor is not None:
                 _flag, left, _dx, top, _dy, right, _dx2, bottom, _dy2 = struct.unpack("<9H", anchor[:18])
                 place = (top + 1, left + 1, bottom + 1, right + 1)
-            found.append(Drawing(place, bool(types) and types <= _XLS_CONNECTORS))
+            found.append(Drawing(place, bool(types) and types <= _XLS_CONNECTORS, types == {_XLS_PICTURE}))
         break
     return found
 

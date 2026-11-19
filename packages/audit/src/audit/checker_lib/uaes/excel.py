@@ -290,5 +290,10 @@ class UaesExcelAgent(ExcelAgent):
         return values
 
 
+def original_name(item: Any) -> str:
+    """The name the user uploaded a same-round original under; never the stored or converted file name."""
+    return str((getattr(item, "file_metadata", None) or {}).get("original_filename") or Path(str(item.file_url)).name)
+
+
 def unable(message: str) -> GuardStop:
     return GuardStop(Decision.UNABLE, message)

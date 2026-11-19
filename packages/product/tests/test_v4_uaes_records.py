@@ -298,10 +298,8 @@ def test_pfmea_blank_failure_mode_reads_its_own_group_not_another(tmp_path):
     body = preset_rule_body("UAES", "U07")
     agent = UaesPfmeaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
     result = agent.check(1)
-    # Same cause and controls under different failure modes may score differently;
-    # only the rejected engineering-reasonableness parts remain, for a reviewer.
-    assert result.status == "UNABLE", result.suggestions
-    assert "已拒绝自动判定" in result.suggestions
+    # Same cause and controls under different failure modes may score differently.
+    assert result.status == "PASS", result.suggestions
 
 
 def agent_for(tmp_path, agent_cls, entry, sheets):

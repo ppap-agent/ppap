@@ -128,6 +128,8 @@ class Report:
     where: str
     values: dict[str, Decimal] = field(default_factory=dict)
     gaps: dict[str, str] = field(default_factory=dict)
+    # Indices the original itself shows as a formula error (#DIV/0!): the original is illegible there.
+    errors: dict[str, str] = field(default_factory=dict)
     # The readings count is an upper bound: every number in the measured-results area.
     bounded: bool = False
 
@@ -142,6 +144,17 @@ def _number(value: Any) -> Decimal | None:
         return Decimal(text)
     except InvalidOperation:
         return None
+
+
+def _capability_finding(failures: list[str], errors: list[str], gaps: list[str], subject: str, passed: str) -> tuple[str, str]:
+    """A clear failure first; then indices the original shows as errors, which the clause fails ("无法辨识则不通过")."""
+    if failures:
+        return "NG", "；".join(failures[:3]) + "。"
+    if errors:
+        return "NG", "工艺能力认证报告" + "；".join(errors[:3]) + "，以上数值在原件中无法辨识，判不通过，请人工复核。"
+    if gaps:
+        raise unable(f"检查程序未能读取全部工艺能力认证报告的{subject}：" + "；".join(gaps[:3]) + "，需人工复核。")
+    return "PASS", passed
 
 
 class UaesCapabilityAgent(UaesExcelAgent):
@@ -185,17 +198,20 @@ class UaesCapabilityAgent(UaesExcelAgent):
             for name, wanted in labels.items():
                 if label not in wanted or name in report.values:
                     continue
-                raw = row.value("统计值")
-                number = _number(raw)
+                observed = row.observation("统计值")
+                raw = observed.value
+                number = None if observed.state == "unresolved" else _number(raw)
                 if number is not None:
                     report.values[name] = number
                     report.gaps.pop(name, None)
+                elif observed.state == "unresolved":
+                    report.errors[name] = f"{name}（第{row.row_index}行）为错误值“{raw}”"
                 elif raw in (None, "") and self.uncomputed(sheet, row.row_index, value_column):
                     report.gaps[name] = f"{name}（第{row.row_index}行）是没有计算结果的公式"
                 else:
                     report.gaps[name] = f"{name}（第{row.row_index}行）为“{raw if raw is not None else ''}”，不是数值"
         for name in labels:
-            if name not in report.values:
+            if name not in report.values and name not in report.errors:
                 report.gaps.setdefault(name, f"未找到{name}的统计行")
         return report
 
@@ -267,36 +283,39 @@ class UaesCapabilityAgent(UaesExcelAgent):
 
     @rule("所有能力认证报告的样本数与严格Cpk阈值")
     def rule_1(self, ctx: RuleContext):
-        gaps = []
+        # Every report is read before deciding: a formula error in one does not hide a failure in another.
+        failures: list[str] = []
+        errors: list[str] = []
+        gaps: list[str] = []
         for report in self.require_reports(ctx):
             readings = report.values.get("读数次数")
             if readings is not None and readings < 125:
                 if report.bounded:
-                    return "NG", f"工艺能力认证报告{report.where}的实测结果区域（No.1–No.25列）最多只有{readings}个数值，读数次数与实测结果区域数量均少于125。"
-                return "NG", f"工艺能力认证报告{report.where}读数次数（Number of readings）为{readings}，少于125。"
+                    failures.append(f"工艺能力认证报告{report.where}的实测结果区域（No.1–No.25列）最多只有{readings}个数值，读数次数与实测结果区域数量均少于125")
+                else:
+                    failures.append(f"工艺能力认证报告{report.where}读数次数（Number of readings）为{readings}，少于125")
             cpk = report.values.get("Cpk")
             if cpk is not None and cpk <= Decimal("1.33"):
-                return "NG", f"工艺能力认证报告{report.where}Process Capability (Cpk)为{cpk}，必须大于1.33。"
-            if readings is None or report.bounded:
+                failures.append(f"工艺能力认证报告{report.where}Process Capability (Cpk)为{cpk}，必须大于1.33")
+            errors.extend(f"{report.where}{report.errors[name]}" for name in ("读数次数", "Cpk") if name in report.errors)
+            if "读数次数" not in report.errors and (readings is None or report.bounded):
                 gaps.append(f"{report.where}：" + report.gaps.get("读数次数", "实测结果区域只能确定数值上限，读数次数不能确认"))
-            if cpk is None:
+            if cpk is None and "Cpk" not in report.errors:
                 gaps.append(f"{report.where}：" + report.gaps.get("Cpk", "未读到Cpk"))
-        if gaps:
-            raise unable("检查程序未能读取全部工艺能力认证报告的读数次数与Cpk：" + "；".join(gaps[:3]) + "，需人工复核。")
-        return "PASS", "全部工艺能力认证报告读数次数不少于125，Cpk均大于1.33。"
+        return _capability_finding(failures, errors, gaps, "读数次数与Cpk", "全部工艺能力认证报告读数次数不少于125，Cpk均大于1.33。")
 
     @rule("所有能力认证报告的严格Ppk阈值")
     def rule_2(self, ctx: RuleContext):
-        gaps = []
+        failures, errors, gaps = [], [], []
         for report in self.require_reports(ctx):
             ppk = report.values.get("Ppk")
-            if ppk is None:
+            if "Ppk" in report.errors:
+                errors.append(f"{report.where}{report.errors['Ppk']}")
+            elif ppk is None:
                 gaps.append(f"{report.where}：" + report.gaps.get("Ppk", "未读到Ppk"))
             elif ppk <= Decimal("1.67"):
-                return "NG", f"工艺能力认证报告{report.where}Performance index (Ppk)为{ppk}，必须大于1.67。"
-        if gaps:
-            raise unable("检查程序未能读取全部工艺能力认证报告的Ppk：" + "；".join(gaps[:3]) + "，需人工复核。")
-        return "PASS", "全部工艺能力认证报告Ppk均大于1.67。"
+                failures.append(f"工艺能力认证报告{report.where}Performance index (Ppk)为{ppk}，必须大于1.67")
+        return _capability_finding(failures, errors, gaps, "Ppk", "全部工艺能力认证报告Ppk均大于1.67。")
 
     # The capability summary list (目录 of 776/A40, the 574 "Ppk能力值汇总" page).
 
@@ -307,7 +326,7 @@ class UaesCapabilityAgent(UaesExcelAgent):
             if self.unreadable_pdf():
                 raise unable("PDF原件有未读出表格或没有文字层的页面，尚不能确认是否有能力值汇总清单，需人工复核。")
             return "NG", "文件中不存在能力值汇总清单（列出CPK/PPK结果值与目标值的表格）。"
-        checked = 0
+        checked, errors = 0, []
         for sheet in sheets:
             section = self.section(sheet, "能力汇总区")
             columns = section.columns(optional=("能力特性", "目标CPK", "结果CPK", "目标PPK", "结果PPK", "反应计划", "汇总备注"))
@@ -321,12 +340,16 @@ class UaesCapabilityAgent(UaesExcelAgent):
                 checked += 1
                 low = []
                 for result, target in pairs:
-                    wanted_raw = row.value(target)
+                    wanted_seen, actual_seen = row.observation(target), row.observation(result)
+                    wanted_raw, actual_raw = wanted_seen.value, actual_seen.value
                     # A characteristic without a stated target ("/") has nothing to compare against.
-                    if compact(wanted_raw) in _NO_TARGET:
+                    if wanted_seen.state != "unresolved" and compact(wanted_raw) in _NO_TARGET:
                         continue
-                    wanted, actual_raw = _number(wanted_raw), row.value(result)
-                    actual = _number(actual_raw)
+                    shown = [f"{name}为错误值“{seen.value}”" for name, seen in ((target, wanted_seen), (result, actual_seen)) if seen.state == "unresolved"]
+                    if shown:
+                        errors.append(f"能力汇总“{sheet.title}”第{row.row_index}行" + "、".join(shown))
+                        continue
+                    wanted, actual = _number(wanted_raw), _number(actual_raw)
                     if wanted is None or actual is None:
                         column = columns[result if actual is None else target].header_col
                         if self.uncomputed(sheet, row.row_index, column):
@@ -338,6 +361,9 @@ class UaesCapabilityAgent(UaesExcelAgent):
                     notes = [row.value(name) for name in ("反应计划", "汇总备注") if name in columns]
                     if not any(compact(note) for note in notes):
                         return "NG", f"能力汇总“{sheet.title}”第{row.row_index}行{'，'.join(low)}，同行没有反应计划或备注。"
+        if errors:
+            # The clause: "如果无法辨识则不通过，并且判定依据需提醒用户进行人工复核".
+            return "NG", "；".join(errors[:3]) + "，原件中的结果值或目标值无法辨识，判不通过，请人工复核。"
         if not checked:
             raise unable("能力汇总没有可确认的特性行，不能按空范围通过，需人工复核。")
         return "PASS", "能力汇总全部特性行达到目标，或低于目标的行已有反应计划/备注。"

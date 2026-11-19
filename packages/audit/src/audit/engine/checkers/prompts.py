@@ -22,26 +22,6 @@ class PromptManager:
     }
 
     @staticmethod
-    def get_document_metadata_prompt(file_content: str, file_name: str) -> str:
-        """构建文档元数据提取提示"""
-        file_name_prompt = f'文件名是: "{file_name}".' if file_name else ""
-        return f"""
-请分析以下文档内容和文件名（如果提供），提取关键信息：
-
-{file_name_prompt}
-
-文档内容：
-{file_content[:4000]}...
-
-请提取以下信息并以JSON格式返回：
-- customer: 客户名称
-- model: 车型
-- part: 零件名称
-
-如果某个信息无法确定，请返回null。
-"""
-
-    @staticmethod
     def get_submitted_document_classification_prompt(content: str, ppap_types_str: str) -> str:
         """Classify a submitted PPAP document, not a rule document."""
         return f"""判断下面这份提交审核的 PPAP 文件本身属于哪一类，从下列候选中选择。每项冒号后是该类文件审核规则的要点，说明这类文件包含什么。

@@ -56,3 +56,10 @@ VERSION = ("版本号", "版本")
 DATES = ("受控日期", "创建日期", "修订日期", "修改日期", "日期(编制)", "日期(修订)", "首次编制日期", "最近修订日期")
 PART_NAME = ("零件名称", "产品名称", "零件名称/描述", "产品名称/描述")
 PART_NUMBER = ("零件号",)
+
+# U08:3 on a PDF original: each picture placed on a page, cut out and described alone.
+PICTURE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["seal"], "properties": {"seal": {"type": ["boolean", "null"]}}}
+PICTURE_PROMPT = (
+    "这是从控制计划PDF原件页面上裁出的一张嵌入图片。请只描述图片本身，不判断是否合格。\n"
+    "seal：图片中有盖上的印章印迹（受控章、公章、专用章等，或其图像）为 true；图片中只有公司标志、表头logo、手写签名、印刷文字或表格，没有任何印章为 false；看不清为 null。"
+)

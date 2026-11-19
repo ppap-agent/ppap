@@ -96,7 +96,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
     async read(id) {
       const files = (taskStore.get(id)?.files ?? []).filter(row => row.selection === 'selected')
       const first = files.find(row => row.match?.state === 'matched')
-      const warnings = first ? [{number: 'W-01', code: 'W02', title: '字段为空或未识别', level: 'warn' as const, file_version_id: first.file.id, filename: first.file.original_filename, location: first.file.original_filename, evidence: '(空)', problem: '文件中未识别到零件号。', action: '在文件表头填写零件号，与图纸和其他 PPAP 文件保持一致。', responsibility: '材料侧', scope: 'file' as const}] : []
+      const warnings = first ? [{number: 'W-01', code: 'W02', title: '字段为空或未识别', level: 'warn' as const, file_version_id: first.file.id, filename: first.file.original_filename, location: first.file.original_filename, evidence: '空或占位', problem: '文件中「零件号」一栏为空或只填了占位符。', action: '在该栏填写实际的零件号，与图纸和其他 PPAP 文件保持一致。', responsibility: '材料侧', scope: 'file' as const}] : []
       const level = (row: AuditTaskFile) => row.match?.state === 'reference' ? 'reference' as const : row.match?.state === 'unmatched' ? 'unmatched' as const : row.file.id === first?.file.id ? 'warn' as const : 'ok' as const
       const rows = files.map(row => ({file_version_id: row.file.id, filename: row.file.original_filename, level: level(row), document_type: row.match?.document_type ?? null, customer: row.match?.metadata.customer ?? null}))
       const count = (value: string) => rows.filter(row => row.level === value).length

@@ -42,7 +42,7 @@ def test_an_unidentifiable_part_number_fails_the_pgqp1_clause_and_asks_for_a_per
     names = [name for name, _ in agent.declared_rules()]
     result = agent.check(names.index("rule_4"))
     assert result.status == "NG"
-    assert "未标注零件号" in result.suggestions and "请人工复核" in result.suggestions
+    assert "未加标签的编号" in result.suggestions and "请人工复核" in result.suggestions
 
 
 @pytest.mark.parametrize(

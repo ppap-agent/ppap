@@ -23,7 +23,12 @@ def row(version_id, *, preferred=None):
         "selection": "selected",
         "validation": {"state": "valid"},
         "preferred_rule_version_id": preferred,
-        "match": {"state": "matched", "document_type": "控制计划", "rule": {"id": "rule-1"}, "metadata": {"customer": "理想", "part_number": "P1", "part": "壳体"}},
+        "match": {
+            "state": "matched",
+            "document_type": "控制计划",
+            "rule": {"id": "rule-1", "body": {"customers": ["理想"]}},
+            "metadata": {"customer": "LI", "part_number": "P1", "part": "壳体"},
+        },
     }
 
 

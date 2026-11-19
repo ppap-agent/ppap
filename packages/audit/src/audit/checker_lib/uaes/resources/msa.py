@@ -84,3 +84,5 @@ KAPPA_CONCLUSION = ("Conclusion", "Conclusion结论")
 # The closing conclusion of a 计数型MSA sheet without appraiser rows.
 ATTRIBUTE_CONCLUSION = ("结论：Conclusion",)
 PART_NUMBER = ("零件号", "Part Number零件号", "Product number", "零件代号")
+# The 776/A40 Kappa header writes the label above its value: A3 "零件号 Part Number", A4 the part number.
+PART_NUMBER_ABOVE = ("零件号 Part Number",)

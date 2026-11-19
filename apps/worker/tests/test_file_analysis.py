@@ -55,6 +55,33 @@ def test_recognized_part_number_is_separate_from_part_name() -> None:
     assert result["metadata"] == {"customer": "甲客户", "model": "M1", "project": "项目A", "part": "外壳", "part_number": "P-204"}
 
 
+def test_metadata_reads_every_sheet_head_keeps_every_value_and_reports_written_blanks() -> None:
+    class Seen(MetadataAI):
+        prompt = ""
+
+        def __call__(self, operation: str, **kwargs) -> AIResult:
+            if operation == "document_metadata_extraction":
+                Seen.prompt = kwargs["prompt"]
+            return super().__call__(operation, **kwargs)
+
+    workbook = Workbook()
+    workbook.active.title = "history"
+    workbook.active.append(("版本", "V03"))
+    kappa = workbook.create_sheet("Kappa")
+    for row in [("Gage R&R",), ("零件号 Part Number",), ("F01RD0Y776",), *[("",)] * 300]:
+        kappa.append(row)
+    content = BytesIO()
+    workbook.save(content)
+    answer = {"customer": None, "model": None, "project": "CPJ-XXXXXX", "part": "/", "part_number": ["F01R20Y574", "F01R10Y527"], "blank": ["model"]}
+    result = analyze_file("776-Kappa.xls.xlsx", content.getvalue(), [], ai=Seen(answer))
+
+    # Every sheet's head reaches the model as address=value lines; the file name is not offered as a source.
+    assert "[工作表 Kappa]\nA1=Gage R&R\nA2=零件号 Part Number\nA3=F01RD0Y776" in Seen.prompt and "776-Kappa" not in Seen.prompt
+    # 裁定 R-09: several part numbers stay all; R-13 / R-15: placeholders are no value and are reported as written blanks.
+    assert result["metadata"] == {"customer": None, "model": None, "project": None, "part": None, "part_number": "F01R20Y574\nF01R10Y527"}
+    assert [notice for notice in result["notices"] if notice.startswith("metadata_blank_")] == ["metadata_blank_model", "metadata_blank_project", "metadata_blank_part"]
+
+
 def rule(rule_id: str, customers: list[str], document_type: str = "控制计划", **fields) -> dict:
     return {"id": rule_id, "title": f"规则-{rule_id}", "kind": "engine", "type": document_type, "customers": customers, **fields}
 

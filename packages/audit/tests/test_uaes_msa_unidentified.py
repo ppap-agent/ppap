@@ -22,6 +22,7 @@ def _agent(tmp_path, monkeypatch, related, kappas, target_book=None):
             yield ctx
 
     monkeypatch.setattr(UaesMsaAgent, "only", lambda self, kind, label: "related")
+    monkeypatch.setattr(UaesMsaAgent, "batch_files", lambda self, kind: ["related"])
     monkeypatch.setattr(UaesMsaAgent, "reading", reading)
     monkeypatch.setattr(UaesMsaAgent, "kappas", lambda self, ctx: kappas)
     body = preset_rule_body("UAES", "U05")
@@ -69,7 +70,7 @@ def test_a_go_no_go_gauge_pairs_only_a_kappa_of_the_same_part(tmp_path, monkeypa
 def test_a_human_check_against_a_kappa_without_any_gauge_name_fails(tmp_path, monkeypatch):
     check = _agent(tmp_path, monkeypatch, _control_plan(), [Report("Kappa", "“Kappa”", parts={"F01R20V040"}, conclusions=["Acceptable"])])
     result = check("rule_4")
-    assert result.status == "NG" and "未写量具名称" in result.suggestions
+    assert result.status == "NG" and "没有量具名称" in result.suggestions
 
 
 def test_a_human_check_needs_a_kappa_of_the_same_part_and_whole_name(tmp_path, monkeypatch):

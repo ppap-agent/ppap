@@ -43,7 +43,7 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
             detail = "规则：" + rule["title"] if included else "不纳入审核；" + excluded_reason
             if row["selection"] == "selected" and not included and match.get("state") != "unmatched" and row["file"]["id"] not in excluded:
                 detail = "匹配尚未确认，请打开页面核对"
-            notices = [gap for gap in match.get("gaps") or [] if gap != "metadata_uses_excerpt"]
+            notices = [gap for gap in match.get("gaps") or [] if gap != "metadata_uses_excerpt" and not gap.startswith("metadata_blank_")]
             blocks.append("**" + _markdown(row["file"]["original_filename"]) + "**<br>" + "<br>".join(_markdown(value) for value in [detail, *notices]))
         blocks.append(f"**预计点数：{task.get('estimated_points') if task.get('estimated_points') is not None else '待核对'}**")
     elif stage == "started":
