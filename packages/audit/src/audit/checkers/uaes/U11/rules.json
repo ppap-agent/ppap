@@ -14,7 +14,8 @@
       "category": "内容基础检查",
       "priority": "P0",
       "rule_to_check": "当文件中存在工程更改一览表，且表中包含项目、零件号、变更内容简述、变更原因、时间等字段或列则通过，否则不通过\n注意：字段或列名意思相近也通过",
-      "type_of_rule": "text"
+      "type_of_rule": "text",
+      "severity": "B"
     }
   ],
   "directory_coverage": "complete",

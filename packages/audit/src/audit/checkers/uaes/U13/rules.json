@@ -14,7 +14,8 @@
       "category": "生产件样品照片识别",
       "priority": "P0",
       "rule_to_check": "当识别到提交文件为图片格式，即审核通过，且提醒用户符合样品照片是否正确",
-      "type_of_rule": "text"
+      "type_of_rule": "text",
+      "severity": "C"
     }
   ],
   "directory_coverage": "complete",

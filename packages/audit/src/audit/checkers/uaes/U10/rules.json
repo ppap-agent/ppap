@@ -14,7 +14,8 @@
       "category": "材料规范版本最新版本及受控判定",
       "priority": "P0",
       "rule_to_check": "当材料规范中包含受控章即通过，否则不通过；",
-      "type_of_rule": "text"
+      "type_of_rule": "text",
+      "severity": "A"
     }
   ],
   "directory_coverage": "complete",

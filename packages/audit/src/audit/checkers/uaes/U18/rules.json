@@ -14,7 +14,8 @@
       "category": "内容确认",
       "priority": "P0",
       "rule_to_check": "识别文件中是否包含“供应商零件追溯”表，且表内“基本信息”、“分供方追溯”、“生产过程追溯”、“交付追溯”、“追溯状态总结”区域都存在内容则通过，否则不通过。",
-      "type_of_rule": "text"
+      "type_of_rule": "text",
+      "severity": "B"
     }
   ],
   "directory_coverage": "complete",

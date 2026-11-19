@@ -41,10 +41,17 @@ def suite_sources() -> dict[str, StandardSuite]:
 
 
 def reviewed_contract(suite: StandardSuite) -> dict:
-    """Meaning of existing human answers, distinct from executable identity."""
+    """Meaning of existing human answers, distinct from executable identity.
+
+    A clause's default severity is left out: it grades an NG and never changes PASS/NG (PRD §2.11 五), so the
+    reviewed human answers keep their meaning when a level is set.
+    """
+    rules = json.loads(suite.files["rules.json"])
+    for item in rules.get("rules", []):
+        item.pop("severity", None)
     return {
         "document_type": suite.document_type,
-        "rules": json.loads(suite.files["rules.json"]),
+        "rules": rules,
         "appendix": json.loads(suite.files.get("appendix.json", b"[]")),
         "entrypoints": dict(suite.entrypoints),
         "related_suite_keys": sorted(suite.related_suite_keys),
