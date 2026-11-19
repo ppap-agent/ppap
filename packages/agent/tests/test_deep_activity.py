@@ -45,7 +45,6 @@ def test_only_the_rules_and_the_users_documents_become_steps():
         tool("bash", command='rg -n "跑道|rule_5" /app/.venv/lib/python3.12/site-packages/audit/checker_lib/uaes/control_plan.py | head -80'),
         tool("bash", command="python -c 'import audit; print(audit.__file__)'"),
         tool("bash", command="cands=[]\nfor row in rows: cands.append(row)"),
-        tool("bash", command="soffice --headless --convert-to png"),
         tool("write", path="/work/out/review.json", content="{secret}"),
         tool("bash", command='python - <<EOF\nwith open("stdout.jsonl") as f: print(f.read())\nEOF'),
         tool("read", path="stdout.jsonl"),
@@ -54,6 +53,33 @@ def test_only_the_rules_and_the_users_documents_become_steps():
         {"type": "tool_execution_end", "toolName": "read", "result": {"content": "file body"}},
     ]
     assert [step(event) for event in hidden] == [None] * len(hidden)
+    # Converting pages to images is viewing images, even before the document is known.
+    assert step(tool("bash", command="soffice --headless --convert-to png")) == Activity(action="view_image")
+
+
+def test_with_the_rounds_documents_steps_name_only_them(tmp_path: Path):
+    events, target = tmp_path / "stdout.jsonl", tmp_path / ACTIVITY_FILE
+    relay = ActivityRelay(events, target, "version-1", live.shown_names(["控制计划.xlsx", "PFMEA.xls"]))
+    lines = [
+        tool("read", path="/work/deep-review/review-0-0/rules.json"),
+        tool("read", path="media/image1.png"),
+        tool("read", path="/work/deep-review/review-0-0/files/00-控制计划.xlsx"),
+        tool("read", path="media/image1.png"),
+        tool("read", path="/tmp/converted/控制计划.pdf"),
+        tool("bash", command="python -c 'load_excel_workbook(\"files/01-PFMEA.xls\")'"),
+    ]
+    events.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+    relay.pump()
+    steps = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
+    # An image taken out of a document is named by the last of the user's documents read, or not at all;
+    # a converted copy is not the user's document and is not shown.
+    assert [(row["action"], row.get("subject")) for row in steps] == [
+        ("load_rules", None),
+        ("view_image", None),
+        ("read_file", "控制计划.xlsx"),
+        ("view_image", "控制计划.xlsx"),
+        ("read_sheet", "PFMEA.xls"),
+    ]
 
 
 def test_relay_follows_a_growing_event_stream_and_skips_huge_lines(tmp_path: Path):

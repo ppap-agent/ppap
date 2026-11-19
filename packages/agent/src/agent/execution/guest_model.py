@@ -154,6 +154,8 @@ class PiRunner(ModelRunner):
     activity: Path | None = None
     # The file being reviewed, so each file shows its own steps.
     activity_target: str | None = None
+    # The round's documents as steps name them; steps name nothing else.
+    activity_originals: frozenset[str] | None = None
 
     """Fixed Pi SDK process with the same artifact and execution-grant contract."""
 
@@ -201,7 +203,7 @@ class PiRunner(ModelRunner):
                 stderr=stderr,
                 start_new_session=separate_session,
             )
-            relay = ActivityRelay(logs / "stdout.jsonl", self.activity, self.activity_target) if self.activity is not None else None
+            relay = ActivityRelay(logs / "stdout.jsonl", self.activity, self.activity_target, self.activity_originals) if self.activity is not None else None
             try:
                 while process.poll() is None:
                     if time.monotonic() >= deadline:

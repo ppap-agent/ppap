@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -78,8 +79,7 @@ def _shell(command: str) -> Activity | None:
     if "stdout.jsonl" in command or "stderr.log" in command:
         return None
     if _CONVERT.search(command):
-        subject = _first_document(command)
-        return Activity(action="view_image", subject=subject) if subject else None
+        return Activity(action="view_image", subject=_first_document(command))
     if _PROGRAM.search(command) and not _SHEET.search(command) or _SEARCH.search(command):
         return None
     if RULES_FILE in command:
@@ -106,12 +106,32 @@ def activity_from_event(event: Any) -> Activity | None:
     return None
 
 
-class ActivityRelay:
-    """Guest side: follows Pi's event stream and appends steps to the run's activity file."""
+def shown_names(filenames: Iterable[str]) -> frozenset[str]:
+    """The round's documents as steps name them."""
+    return frozenset(name for name in map(_document, filenames) if name)
 
-    def __init__(self, events: Path, target: Path, reviewed: str | None = None) -> None:
-        self.events, self.target, self.reviewed = events, target, reviewed
+
+class ActivityRelay:
+    """Guest side: follows Pi's event stream and appends steps to the run's activity file.
+
+    With ``originals`` (the round's documents as steps name them), a step names only the user's own documents:
+    reading anything else is not shown, and an image taken out of a document is named by the last document read.
+    """
+
+    def __init__(self, events: Path, target: Path, reviewed: str | None = None, originals: frozenset[str] | None = None) -> None:
+        self.events, self.target, self.reviewed, self.originals = events, target, reviewed, originals
         self.offset, self.pending, self.steps = 0, b"", 0
+        self.document: str | None = None
+
+    def _attribute(self, step: Activity) -> Activity | None:
+        if self.originals is None or step.action == "load_rules":
+            return step
+        if step.subject in self.originals:
+            self.document = step.subject
+            return step
+        if step.action == "view_image":
+            return step.model_copy(update={"subject": self.document})
+        return None
 
     def pump(self) -> None:
         if self.steps >= MAX_STEPS:
@@ -136,6 +156,7 @@ class ActivityRelay:
                 step = activity_from_event(json.loads(line))
             except ValueError:
                 continue
+            step = self._attribute(step) if step is not None else None
             if step is not None:
                 steps.append(step.model_copy(update={"target": self.reviewed}).model_dump_json(exclude_none=True) + "\n")
         steps = steps[: MAX_STEPS - self.steps]

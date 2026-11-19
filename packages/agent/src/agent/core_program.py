@@ -188,12 +188,13 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     elif job.analysis_mode == "deep":
         assert grant is not None
         from agent.deep_review import review_targets
-        from agent.execution.activity import ACTIVITY_FILE
+        from agent.execution.activity import ACTIVITY_FILE, shown_names
         from agent.execution.guest_model import PiRunner
 
         runner = PiRunner(grant.model_dump(mode="json"))
         # Live steps for viewers; the Controller forwards them and nothing stores them.
         runner.activity = work / ACTIVITY_FILE
+        runner.activity_originals = shown_names(item.filename for item in snapshot.inputs)
         deep = review_targets(snapshot, sources, programs, result["findings"], runner=runner, work=work / "deep-review", unavailable=unavailable, on_task=lambda index: started("review", index))
     _write_progress(work, Progress(phase="validating", completed_count=tasks, total_count=tasks))
     payload = {
