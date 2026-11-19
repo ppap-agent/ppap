@@ -235,7 +235,7 @@ def test_one_guest_shares_the_round_and_gives_every_file_its_own_time(tmp_path, 
     class Reporting(Guest):
         def run(self, job, inputs, work, deadline, cancelled, on_progress=None, on_activity=None):
             super().run(job, inputs, work, deadline, cancelled)
-            reported.append(json.loads((work / "progress.json").read_text()))
+            reported.extend(json.loads(line) for line in (work / "progress.jsonl").read_text().splitlines())
 
     guest = Reporting(tmp_path)
     run(tmp_path, snapshot, sources, spec, suite, guest)
@@ -243,8 +243,14 @@ def test_one_guest_shares_the_round_and_gives_every_file_its_own_time(tmp_path, 
     assert guest.modes == ["deep"]
     # Each review has the whole of its own time, not a share of the round's.
     assert deadlines == [DEEP_TOTAL_SECONDS, DEEP_TOTAL_SECONDS]
-    # Two files checked and two reviewed: four tasks, all reported.
-    assert reported == [{"phase": "validating", "completed_count": 4, "total_count": 4}]
+    # Two files checked and two reviewed: four tasks, each reported as it starts, then the summary.
+    assert [(row.get("stage"), row.get("target"), row["completed_count"]) for row in reported] == [
+        ("check", "file-a", 0),
+        ("check", "file-b", 1),
+        ("review", "file-a", 2),
+        ("review", "file-b", 3),
+        (None, None, 4),
+    ]
 
 
 def test_a_deep_round_whose_guest_fails_fails_and_is_not_run_again(tmp_path, monkeypatch):

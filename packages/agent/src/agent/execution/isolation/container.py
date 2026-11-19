@@ -35,7 +35,7 @@ from agent.execution.gateway import grant_request
 from agent.execution.guest_model import ModelGrant
 from agent.execution.secure_files import read_appended, read_json, read_regular
 
-from .progress import Progress
+from .progress import PROGRESS_FILE, Progress, parse_progress
 from .storage import write_json
 
 logger = logging.getLogger(__name__)
@@ -89,23 +89,6 @@ def _descendants(root_pid: int) -> set[int]:
         found.update(children)
         frontier = children
     return found
-
-
-def read_progress(work: Path) -> Progress | None:
-    """The guest's latest progress, or None when there is none to read this time.
-
-    The guest replaces the file atomically at each task. A read that meets the replacement (the old file
-    unlinked or changed under it) is simply read again at the next poll: progress is a liveness signal, and a
-    guest that never lets it be read only stops receiving more time. Content that is read whole must be valid.
-    """
-    try:
-        raw = read_regular(work, ("progress.json",), 512)
-    except (OSError, ValueError):
-        return None
-    try:
-        return Progress.model_validate_json(raw)
-    except ValueError:
-        raise ControllerFault("OUTPUT_VALIDATION_ERROR") from None
 
 
 def _kill_tree(process: subprocess.Popen[bytes]) -> None:
@@ -299,6 +282,18 @@ class ContainerRuntime:
         self.active[execution_id] = process
         last_progress: Progress | None = None
         last_task = -1
+        progress_offset = 0
+
+        def read_new_progress() -> Progress | None:
+            """The latest record the guest appended since the last read; it never rewrites the file."""
+            nonlocal progress_offset
+            try:
+                progress, used = parse_progress(read_appended(run / "work", PROGRESS_FILE, progress_offset, 64 * 1024))
+            except (OSError, ValueError):
+                raise ControllerFault("OUTPUT_VALIDATION_ERROR") from None
+            progress_offset += used
+            return progress
+
         activity_offset = 0
 
         def forward_activity() -> None:
@@ -326,7 +321,7 @@ class ContainerRuntime:
                 _drain_stderr(process.stderr, stderr_tail)
                 if cancelled.is_set() or time.monotonic() >= deadline:
                     raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
-                progress = read_progress(run / "work")
+                progress = read_new_progress()
                 if progress is not None and progress != last_progress:
                     started = progress.completed_count
                     if started is not None and last_task < started <= tasks:
@@ -365,10 +360,7 @@ class ContainerRuntime:
                 raise ControllerFault("MODEL_PROTOCOL_ERROR")
             raise ControllerFault("ISOLATION_UNAVAILABLE")
         if on_progress is not None:
-            try:
-                progress = Progress.model_validate_json(read_regular(run / "work", ("progress.json",), 512))
-            except (OSError, ValueError):
-                progress = None
+            progress = read_new_progress()
             if progress is not None and progress != last_progress:
                 on_progress(progress)
         return deadline

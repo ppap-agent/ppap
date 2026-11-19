@@ -6,6 +6,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+# The guest appends one record per line and never rewrites the file; the host reads what was added.
+PROGRESS_FILE = "progress.jsonl"
+
 
 class Progress(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -29,3 +32,16 @@ class Progress(BaseModel):
         if (self.stage is None) != (self.target is None) or (self.stage is not None and self.completed_count is None):
             raise ValueError("Invalid task progress")
         return self
+
+
+def parse_progress(data: bytes) -> tuple[Progress | None, int]:
+    """The latest record among the complete lines in `data`, and how many bytes they used.
+
+    A partial last line waits for its end. Every complete line must be a valid record.
+    """
+    end = data.rfind(b"\n") + 1
+    latest = None
+    for line in data[:end].split(b"\n"):
+        if line:
+            latest = Progress.model_validate_json(line)
+    return latest, end

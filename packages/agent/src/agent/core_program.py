@@ -213,11 +213,12 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
 
 
 def _write_progress(work: Path, progress: Any) -> None:
-    """The guest's only liveness signal: the host gives every new task its own time."""
+    """The guest's only liveness signal: the host gives every new task its own time. Appended, never rewritten."""
+    from agent.execution.isolation.progress import PROGRESS_FILE
+
     work.mkdir(parents=True, exist_ok=True)
-    staged = work / "progress.json.tmp"
-    staged.write_text(progress.model_dump_json(exclude_none=True), encoding="utf-8")
-    staged.replace(work / "progress.json")
+    with (work / PROGRESS_FILE).open("a", encoding="utf-8") as stream:
+        stream.write(progress.model_dump_json(exclude_none=True) + "\n")
 
 
 class CoreRuntime:
