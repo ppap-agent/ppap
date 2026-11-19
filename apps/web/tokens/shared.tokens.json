@@ -1,0 +1,27 @@
+{
+  "$schema": "https://www.designtokens.org/schemas/2025.10/format.json",
+  "font": {
+    "sans": {
+      "$type": "fontFamily",
+      "$value": [
+        "-apple-system",
+        "BlinkMacSystemFont",
+        "PingFang SC",
+        "Hiragino Sans GB",
+        "Microsoft YaHei",
+        "Noto Sans SC",
+        "Segoe UI",
+        "sans-serif"
+      ]
+    }
+  },
+  "rounded": {
+    "control": {
+      "$type": "dimension",
+      "$value": {
+        "value": 0.375,
+        "unit": "rem"
+      }
+    }
+  }
+}

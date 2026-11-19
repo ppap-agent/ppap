@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
 import {readFileSync, readdirSync} from 'node:fs'
+import {writeDesignTokens} from './scripts/build-tokens.ts'
 
 const docker = process.env.PPAP_VITE_DOCKER === '1'
 const preview = process.env.PPAP_PREVIEW === '1'
@@ -13,6 +14,8 @@ export default defineConfig({
   // The preview's report fixtures zip with fflate; discovering it mid-run reloads open pages.
   optimizeDeps: {include: ['xlsx', 'xlsx/dist/cpexcel.full.mjs', 'fflate']},
   plugins: [
+    // The runtime theme is generated from tokens/ before any stylesheet is read (docs/DESIGN_SYSTEM.md).
+    {name: 'ppap-design-tokens', enforce: 'pre', async buildStart() { await writeDesignTokens() }},
     react(),
     tailwindcss(),
     {

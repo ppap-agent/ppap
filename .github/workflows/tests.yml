@@ -114,6 +114,36 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  design:
+    name: Design enforcement
+    needs: repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use runner-local Corepack cache
+        working-directory: ${{ github.workspace }}
+        run: echo "COREPACK_HOME=$RUNNER_TEMP/corepack/${GITHUB_RUN_ID}/${GITHUB_JOB}" >> "$GITHUB_ENV"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      # docs/DESIGN_SYSTEM.md: design.md is a current projection of tokens/, and authored styles use tokens.
+      - name: Design projection and token policy
+        working-directory: ${{ github.workspace }}/apps/web
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm design:check
+          pnpm lint:css
+          pnpm lint
+
   repository:
     name: Repository contract
     runs-on: ubuntu-24.04
@@ -636,6 +666,7 @@ jobs:
     if: ${{ !cancelled() }}
     needs:
       - web
+      - design
       - repository
       - python_modules
       - distribution_closure
@@ -649,6 +680,7 @@ jobs:
       - name: Require merge contract jobs to succeed
         env:
           WEB_RESULT: ${{ needs.web.result }}
+          DESIGN_RESULT: ${{ needs.design.result }}
           REPOSITORY_RESULT: ${{ needs.repository.result }}
           PYTHON_MODULES_RESULT: ${{ needs.python_modules.result }}
           DISTRIBUTION_CLOSURE_RESULT: ${{ needs.distribution_closure.result }}
@@ -661,6 +693,7 @@ jobs:
           failed=0
           for result in \
             "$WEB_RESULT" \
+            "$DESIGN_RESULT" \
             "$REPOSITORY_RESULT" \
             "$PYTHON_MODULES_RESULT" \
             "$DISTRIBUTION_CLOSURE_RESULT" \
@@ -674,7 +707,7 @@ jobs:
             fi
           done
           if [ "$failed" -ne 0 ]; then
-            printf 'required results: web=%s repository=%s python_modules=%s distribution_closure=%s schema=%s corpus=%s integration_contracts=%s integration=%s\n' \
-              "$WEB_RESULT" "$REPOSITORY_RESULT" "$PYTHON_MODULES_RESULT" "$DISTRIBUTION_CLOSURE_RESULT" "$SCHEMA_RESULT" "$CORPUS_RESULT" "$INTEGRATION_CONTRACTS_RESULT" "$INTEGRATION_RESULT"
+            printf 'required results: web=%s design=%s repository=%s python_modules=%s distribution_closure=%s schema=%s corpus=%s integration_contracts=%s integration=%s\n' \
+              "$WEB_RESULT" "$DESIGN_RESULT" "$REPOSITORY_RESULT" "$PYTHON_MODULES_RESULT" "$DISTRIBUTION_CLOSURE_RESULT" "$SCHEMA_RESULT" "$CORPUS_RESULT" "$INTEGRATION_CONTRACTS_RESULT" "$INTEGRATION_RESULT"
             exit 1
           fi

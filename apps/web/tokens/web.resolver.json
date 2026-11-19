@@ -1,0 +1,46 @@
+{
+  "$schema": "https://www.designtokens.org/schemas/2025.10/resolver.json",
+  "name": "PPAP Web",
+  "description": "PPAP web palette, font family and control radius.",
+  "version": "2025.10",
+  "resolutionOrder": [
+    {
+      "$ref": "#/sets/shared"
+    },
+    {
+      "$ref": "#/sets/color"
+    },
+    {
+      "$ref": "#/modifiers/theme"
+    }
+  ],
+  "sets": {
+    "shared": {
+      "sources": [
+        {
+          "$ref": "shared.tokens.json"
+        }
+      ]
+    },
+    "color": {
+      "sources": [
+        {
+          "$ref": "light.tokens.json"
+        }
+      ]
+    }
+  },
+  "modifiers": {
+    "theme": {
+      "default": "light",
+      "contexts": {
+        "light": [],
+        "dark": [
+          {
+            "$ref": "dark.tokens.json"
+          }
+        ]
+      }
+    }
+  }
+}

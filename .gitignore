@@ -29,3 +29,6 @@ ci-report/
 
 # bench run outputs
 bench/*/runs/
+
+# Runtime theme generated from apps/web/tokens/ (docs/DESIGN_SYSTEM.md)
+apps/web/src/generated/tokens.css

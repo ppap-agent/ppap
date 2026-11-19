@@ -13,6 +13,7 @@
 | 数据不变量 | [Data model](docs/DATA_MODEL.md) |
 | 开发、配置、运行 | [Development](docs/DEVELOPMENT.md)、[.env.dev](.env.dev)、[.env.production](.env.production)、[.env.example](.env.example) |
 | 测试 | [测试入口](tests/README.md) |
+| 视觉设计（token、design.md、检查） | [Design system](docs/DESIGN_SYSTEM.md)、[design.md](design.md) |
 | 安全边界 | [Security](docs/SECURITY.md) |
 
 当前实现事实以 `main` 上的源码和测试为准；工作状态只在 GitHub Issues，不维护第二份状态台账。具体开发约束见 [AGENTS.md](AGENTS.md)。

@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+/* Palette, font family and radius: generated from tokens/ (docs/DESIGN_SYSTEM.md). */
+@import "./generated/tokens.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -34,8 +36,8 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --font-heading: var(--font-sans);
-  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  --font-heading: var(--font-family-sans);
+  --font-sans: var(--font-family-sans);
   --color-canvas: var(--canvas);
   --color-brand-light: var(--brand-light);
   --color-primary-soft: var(--primary-soft);
@@ -60,92 +62,6 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-:root {
-  --radius: 0.375rem;
-  --canvas: #f5f6f7;
-  --brand-light: #6c9bff;
-  --primary-soft: #eaf1ff;
-  --primary-line: #b9cdff;
-  --primary-strong: #1b47c9;
-  --header: #f7f8fa;
-  --background: #ffffff;
-  --foreground: #1f2329;
-  --card: #ffffff;
-  --card-foreground: #1f2329;
-  --popover: #ffffff;
-  --popover-foreground: #1f2329;
-  --primary: #2255e8;
-  --primary-foreground: #ffffff;
-  --secondary: #f2f3f5;
-  --secondary-foreground: #1f2329;
-  --muted: #f2f3f5;
-  --muted-foreground: #646a73;
-  --accent: #f2f3f5;
-  --accent-foreground: #1f2329;
-  --destructive: #d83931;
-  --success: #24853a;
-  --warning: #b35900;
-  --info: #2255e8;
-  --border: #e5e6eb;
-  --input: #dee0e3;
-  --ring: #2255e8;
-  --chart-1: #2255e8;
-  --chart-2: #24853a;
-  --chart-3: #b35900;
-  --chart-4: #d83931;
-  --chart-5: #646a73;
-  --sidebar: #ffffff;
-  --sidebar-foreground: #1f2329;
-  --sidebar-primary: #2255e8;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eaf1ff;
-  --sidebar-accent-foreground: #2255e8;
-  --sidebar-border: #e5e6eb;
-  --sidebar-ring: #2255e8;
-}
-
-.dark {
-  --canvas: #111214;
-  --brand-light: #6c9bff;
-  --primary-soft: #1d2a47;
-  --primary-line: #34528f;
-  --primary-strong: #3a68e0;
-  --header: #232428;
-  --background: #1a1b1e;
-  --foreground: #ebebeb;
-  --card: #1f2023;
-  --card-foreground: #ebebeb;
-  --popover: #1f2023;
-  --popover-foreground: #ebebeb;
-  --primary: #4c7bf3;
-  --primary-foreground: #ffffff;
-  --secondary: #2a2b2f;
-  --secondary-foreground: #ebebeb;
-  --muted: #2a2b2f;
-  --muted-foreground: #a6a9ae;
-  --accent: #2a2b2f;
-  --accent-foreground: #ebebeb;
-  --destructive: #f76964;
-  --success: #52c26b;
-  --warning: #f2a33a;
-  --info: #7a9cf7;
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: #4c7bf3;
-  --chart-1: #4c7bf3;
-  --chart-2: #52c26b;
-  --chart-3: #f2a33a;
-  --chart-4: #f76964;
-  --chart-5: #a6a9ae;
-  --sidebar: #1f2023;
-  --sidebar-foreground: #ebebeb;
-  --sidebar-primary: #4c7bf3;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #24324f;
-  --sidebar-accent-foreground: #ebebeb;
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: #4c7bf3;
-}
 
 @layer base {
   * {
