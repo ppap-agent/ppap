@@ -14,9 +14,9 @@ from agent.execution.budget import TASK_SECONDS
 from agent.protocol import ActivityEnvelope, ErrorEnvelope, ExecuteRequest, ExecuteResponse, ProgressEnvelope, RequestEnvelope, ResultEnvelope
 
 MAX_FRAME = 32 * 1024 * 1024
-# An execution runs one task per file and reports each one, so a request is only idle while one
-# task runs. A request idle longer than the longest task plus result handling has stalled.
-REQUEST_IDLE_TIMEOUT = TASK_SECONDS + 60.0
+# The Controller reports every task of a round (one per file checked or reviewed), so a request is
+# silent for at most one task. A request silent longer than that plus transport has stalled.
+REQUEST_IDLE_TIMEOUT = TASK_SECONDS + 30.0
 
 
 class DeepError(Exception):

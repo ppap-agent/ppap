@@ -115,6 +115,32 @@ def test_rebinding_runtime_revokes_all_previous_grants():
     assert lease.execution_id == second
 
 
+def test_a_live_grant_gets_one_more_task_of_time_and_a_revoked_one_never_does(monkeypatch):
+    import time
+
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    grants = Grants("test-model", ttl=60)
+    execution = uuid4()
+    token = grants.issue(execution)
+    now[0] += 50
+    grants.renew(execution)
+    now[0] += 50
+    # Past the first task's time, still within the renewed one.
+    lease, _ = grants.authorize(token, {"model": "test-model", "input": "next task"}, 10)
+    grants.record_usage(lease, None)
+    now[0] += 61
+    with pytest.raises(ValueError, match="Invalid execution grant"):
+        grants.renew(execution)
+    with pytest.raises(ValueError, match="Invalid execution grant"):
+        grants.authorize(token, {"model": "test-model", "input": "late"}, 10)
+    revoked = uuid4()
+    grants.issue(revoked)
+    grants.revoke(revoked)
+    with pytest.raises(ValueError, match="Invalid execution grant"):
+        grants.renew(revoked)
+
+
 def test_each_grant_pins_its_own_key_even_when_the_host_switches_it():
     alice, bob = str(uuid4()), str(uuid4())
     active = [alice]

@@ -1,4 +1,4 @@
-"""One file's audit task (or a whole accepted audit in local harnesses), explicit frozen clause entrypoints.
+"""One accepted audit, one guest process, explicit frozen clause entrypoints.
 
 This is process/lifecycle isolation, not a hostile-code security sandbox. Object
 and tenant authorization belong to the host accepting the ExecutionSnapshot.
@@ -152,9 +152,15 @@ def run_audit(
     runtime: CheckerRuntime | None = None,
     clause_timeout: float = 120,
     unavailable_sources: frozenset[str] = frozenset(),
-    target_id: str | None = None,
+    target_seconds: float | None = None,
+    on_task: Callable[[int], None] = lambda _index: None,
 ) -> dict[str, Any]:
-    """Execute in the caller's guest; never spawn per clause. ``target_id`` runs that one file only."""
+    """Execute in the caller's guest; never spawn per target or per clause.
+
+    Every target shares the round's context (parsed originals, model observations). ``target_seconds``
+    bounds each target on its own: a clause it cannot start in time is a technical error, never a verdict.
+    ``on_task(index)`` reports each target as it starts.
+    """
     if not math.isfinite(clause_timeout) or clause_timeout <= 0:
         raise ValueError("invalid_clause_timeout")
     snapshot.validate_sources(sources, unavailable=unavailable_sources)
@@ -219,8 +225,8 @@ def run_audit(
             model_scope = contextlib.nullcontext() if model_access_scoped() else model_access_scope(None)
             with model_scope, bind_runtime(runtime), track_model_usage():
                 for index, target in enumerate(snapshot.targets):
-                    if target_id is not None and target.file_version_id != target_id:
-                        continue
+                    on_task(index)
+                    target_deadline = time.monotonic() + target_seconds if target_seconds is not None else math.inf
                     if target.file_version_id in unavailable_sources:
                         results = [_evidence_references(_error(clause, "ERR", "checker_input_unavailable"), target.file_version_id) for clause in target.binding.entrypoints]
                         validated = validate_results(results, target=target, inputs=snapshot.inputs)
@@ -266,8 +272,12 @@ def run_audit(
                                 cache,
                                 closeables.append,
                             )
+                            remaining = target_deadline - time.monotonic()
+                            if remaining <= 0:
+                                results.append(_evidence_references(_error(clause, "ERR", "checker_target_timeout_external_usage_unknown"), target.file_version_id))
+                                continue
                             try:
-                                with _clause_deadline(clause_timeout):
+                                with _clause_deadline(min(clause_timeout, remaining)):
                                     if selected_entrypoint == "checker:create_audit":
                                         from audit.standard_library import check_factory
 
@@ -326,17 +336,16 @@ def run_audit(
             runtime.close()
 
 
-def _validate_output(snapshot: ExecutionSnapshot, result: dict[str, Any], *, unavailable_sources: frozenset[str] = frozenset(), target_id: str | None = None) -> dict[str, Any]:
+def _validate_output(snapshot: ExecutionSnapshot, result: dict[str, Any], *, unavailable_sources: frozenset[str] = frozenset()) -> dict[str, Any]:
     if result.get("input_digest") != snapshot.input_digest:
         raise AuditRunError("audit_output_identity_mismatch")
     if result.get("unavailable_sources", []) != sorted(unavailable_sources):
         raise AuditRunError("audit_output_availability_mismatch")
-    targets = [target for target in snapshot.targets if target_id is None or target.file_version_id == target_id]
-    known = {target.file_version_id for target in targets}
-    if not targets or any(item.get("file_version_id") not in known for item in result.get("findings", ())):
+    known = {target.file_version_id for target in snapshot.targets}
+    if any(item.get("file_version_id") not in known for item in result.get("findings", ())):
         raise AuditRunError("audit_output_target_mismatch")
     findings, coverage = [], []
-    for target in targets:
+    for target in snapshot.targets:
         checked = validate_results([item for item in result["findings"] if item["file_version_id"] == target.file_version_id], target=target, inputs=snapshot.inputs)
         if target.file_version_id in unavailable_sources and any(row["status"] != "ERR" or row["suggestions"] != "checker_input_unavailable" or row.get("evidence") for row in checked["findings"]):
             raise AuditRunError("audit_output_unavailable_source")

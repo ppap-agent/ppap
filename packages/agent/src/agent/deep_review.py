@@ -13,7 +13,7 @@ import logging
 import re
 import tempfile
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -314,57 +314,72 @@ def _program_view(clause: str, finding: Mapping[str, Any]) -> dict[str, Any]:
     return {"clause_id": clause, **{key: finding[key] for key in keep if finding.get(key) not in (None, "", [], {})}}
 
 
-def review_target(
+def review_targets(
     snapshot: ExecutionSnapshot,
     sources: Mapping[str, bytes],
     programs: Mapping[str, Mapping[str, bytes]],
-    target: FrozenTarget,
     findings: Sequence[Mapping[str, Any]],
     *,
     runner: Any,
     work: Path,
-    deadline: float,
     unavailable: frozenset[str],
-) -> dict[str, Any]:
-    """One deep task: review one file's program results against the originals of the round."""
+    on_task: Callable[[int], None] = lambda _index: None,
+) -> dict[str, dict[str, Any]]:
+    """Review every target in order, each one a task of DEEP_TOTAL_SECONDS; one target's failure never stops the others.
+
+    The originals of the round are read once for all targets. ``on_task(index)`` reports each task as it starts.
+    """
+    from agent.execution.budget import DEEP_TOTAL_SECONDS
     from agent.execution.guest_model import ModelProtocolError
 
-    program = {str(item["clause_id"]): item for item in findings}
-    started = time.monotonic()
-    # Live steps name the file they belong to.
-    runner.activity_target = target.file_version_id
-    feedback: str | None = None
-    state: dict[str, Any] = {"state": "degraded", "reason": "deep_review_failed"}
+    states: dict[str, dict[str, Any]] = {}
     with tempfile.TemporaryDirectory(prefix="ppap-deep-originals-") as scratch:
         reader = OriginalReader(snapshot, sources, Path(scratch))
-        for attempt in range(REVIEW_ATTEMPTS):
-            if time.monotonic() >= deadline:
-                state = {"state": "degraded", "reason": "deep_timeout"}
-                break
-            stage = work / f"review-{attempt}"
-            stage.mkdir(parents=True)
-            prompt = stage_review(stage, snapshot, sources, target, program, programs[target.binding.checker_digest].get("resources.py"), unavailable, feedback)
-            try:
-                review = runner.run(stage, prompt, DeepReview, deadline, reasoning_effort=REVIEW_EFFORT)
-                state = {"state": "completed", "reviews": check_review(review, target=target, program=program, reader=reader, unavailable=unavailable)}
-                break
-            except (ValidationError, ValueError) as exc:
-                # ModelProtocolError is a ValueError; a schema or clause-set problem gets one more try.
-                feedback = str(exc)[:1500]
-                timed_out = time.monotonic() >= deadline
-                state = {
-                    "state": "degraded",
-                    "reason": "deep_timeout" if timed_out else ("deep_review_failed" if isinstance(exc, ModelProtocolError) else "deep_review_invalid"),
-                    "detail": f"{type(exc).__name__}: {exc}"[:300],
-                }
-            except TimeoutError as exc:
-                state = {"state": "degraded", "reason": "deep_timeout", "detail": str(exc)[:300]}
-                break
-            except Exception as exc:
-                state = {"state": "degraded", "reason": "deep_review_failed", "detail": f"{type(exc).__name__}: {exc}"[:300]}
-                break
-    state["usage"] = {"seconds": round(time.monotonic() - started, 1), "input_tokens": runner.input_tokens, "output_tokens": runner.output_tokens}
-    return state
+        for index, target in enumerate(snapshot.targets):
+            on_task(index)
+            program = {str(item["clause_id"]): item for item in findings if item["file_version_id"] == target.file_version_id}
+            if target.file_version_id in unavailable or not program:
+                states[target.file_version_id] = {"state": "degraded", "reason": "deep_input_missing"}
+                continue
+            started, before = time.monotonic(), (runner.input_tokens, runner.output_tokens)
+            # Live steps name the file they belong to.
+            runner.activity_target = target.file_version_id
+            deadline = started + DEEP_TOTAL_SECONDS
+            feedback: str | None = None
+            state: dict[str, Any] = {"state": "degraded", "reason": "deep_review_failed"}
+            for attempt in range(REVIEW_ATTEMPTS):
+                if time.monotonic() >= deadline:
+                    state = {"state": "degraded", "reason": "deep_timeout"}
+                    break
+                stage = work / f"review-{index}-{attempt}"
+                stage.mkdir(parents=True)
+                prompt = stage_review(stage, snapshot, sources, target, program, programs[target.binding.checker_digest].get("resources.py"), unavailable, feedback)
+                try:
+                    review = runner.run(stage, prompt, DeepReview, deadline, reasoning_effort=REVIEW_EFFORT)
+                    state = {"state": "completed", "reviews": check_review(review, target=target, program=program, reader=reader, unavailable=unavailable)}
+                    break
+                except (ValidationError, ValueError) as exc:
+                    # ModelProtocolError is a ValueError; a schema or clause-set problem gets one more try.
+                    feedback = str(exc)[:1500]
+                    timed_out = time.monotonic() >= deadline
+                    state = {
+                        "state": "degraded",
+                        "reason": "deep_timeout" if timed_out else ("deep_review_failed" if isinstance(exc, ModelProtocolError) else "deep_review_invalid"),
+                        "detail": f"{type(exc).__name__}: {exc}"[:300],
+                    }
+                except TimeoutError as exc:
+                    state = {"state": "degraded", "reason": "deep_timeout", "detail": str(exc)[:300]}
+                    break
+                except Exception as exc:
+                    state = {"state": "degraded", "reason": "deep_review_failed", "detail": f"{type(exc).__name__}: {exc}"[:300]}
+                    break
+            state["usage"] = {
+                "seconds": round(time.monotonic() - started, 1),
+                "input_tokens": runner.input_tokens - before[0],
+                "output_tokens": runner.output_tokens - before[1],
+            }
+            states[target.file_version_id] = state
+    return states
 
 
 # ----------------------------------------------------------------- host side

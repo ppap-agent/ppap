@@ -53,7 +53,7 @@ def check(context):
 class ControlledCoreGuest:
     """Run the production manifest without claiming a guest OS boundary."""
 
-    def run(self, job, inputs, work, deadline, cancelled):
+    def run(self, job, inputs, work, deadline, cancelled, on_progress=None, on_activity=None):
         identity = json.loads((inputs / "manifest.json").read_text())["snapshot"]["model_identity"]
         grant = work / "controlled-model-grant"
         grant.mkdir()
@@ -95,7 +95,7 @@ def test_controlled_guests_bind_full_frozen_model_identity(tmp_path, core_system
     )
     inputs, work = tmp_path / "inputs", tmp_path / "work"
     work.mkdir()
-    job = write_audit_manifest(inputs, snapshot, sources, {digest: programs}, "target")
+    job = write_audit_manifest(inputs, snapshot, sources, {digest: programs})
 
     core_system.run(job, inputs, work, monotonic() + 100, Event())
 

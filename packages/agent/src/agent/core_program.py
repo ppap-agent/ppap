@@ -1,4 +1,4 @@
-"""Per-file task manifests for the existing low-privilege ContainerRuntime guest.
+"""Whole-round manifest for the existing low-privilege ContainerRuntime guest; each file is a task within it.
 
 No command, host path, provider credential, or unsigned program comes from RPC.
 The controller resolves the immutable Suite and stages a bounded flat directory.
@@ -13,19 +13,18 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from audit.checker_core import ExecutionSnapshot, checker_digest, validate_results
+from audit.checker_core import ExecutionSnapshot, checker_digest
 from audit.protocol import ControllerFault
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.client import DeepError
-from agent.execution.budget import CHECK_SECONDS, DEEP_TOTAL_SECONDS, MAX_INPUT_FILES, MAX_INPUT_TOTAL
+from agent.execution.budget import CHECK_SECONDS, MAX_INPUT_FILES, MAX_INPUT_TOTAL, TASK_SECONDS
 from agent.execution.secure_files import read_json, read_regular
 from agent.run import ExecutionContext
 
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_BUNDLE = 16 * 1024 * 1024
 AnalysisMode = Literal["standard", "deep"]
-Operation = Literal["execute-audit", "review-target"]
 FAULTS = {
     "INPUT_INTEGRITY_ERROR": "deep_integrity_mismatch",
     "PARSER_LIMIT": "deep_parser_limit",
@@ -41,34 +40,31 @@ FAULTS = {
 
 
 class AuditJobSpec(BaseModel):
-    """One task for one target file: run its Suite programs, or deep-review their results."""
-
     model_config = ConfigDict(extra="forbid")
-    operation: Operation = "execute-audit"
+    operation: Literal["execute-audit"] = "execute-audit"
     execution_id: UUID
     input_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     executor_revision: str = Field(min_length=1)
-    target_id: str = Field(min_length=1)
+    analysis_mode: AnalysisMode = "standard"
     allow_model_calls: bool = True
     unavailable_sources: tuple[str, ...] = ()
+    # Tasks in the round: each file checked, and in deep mode each file reviewed. The host renews time for at most these.
+    tasks: int = Field(default=1, ge=1, le=1024)
 
     @classmethod
-    def for_target(
-        cls, snapshot: ExecutionSnapshot, target_id: str, operation: Operation = "execute-audit", allow_model_calls: bool = True, unavailable_sources: frozenset[str] = frozenset()
-    ) -> AuditJobSpec:
-        if target_id not in {target.file_version_id for target in snapshot.targets}:
-            raise ValueError("audit_target_unknown")
+    def from_snapshot(cls, snapshot: ExecutionSnapshot, allow_model_calls: bool = True, unavailable_sources: frozenset[str] = frozenset(), analysis_mode: AnalysisMode = "standard") -> AuditJobSpec:
         unavailable = tuple(sorted(unavailable_sources))
         # A restored object cannot replay the outcome of an unavailable attempt.
         availability = ":" + json.dumps(unavailable, separators=(",", ":")) if unavailable else ""
+        # The mode is part of the identity; standard ids are unchanged from before deep mode returned.
         return cls(
-            operation=operation,
-            execution_id=uuid5(NAMESPACE_URL, f"ppap-{operation}:{allow_model_calls}:{snapshot.input_digest}:{target_id}{availability}"),
+            execution_id=uuid5(NAMESPACE_URL, "ppap-audit:" + analysis_mode + ":" + str(allow_model_calls) + ":" + snapshot.input_digest + availability),
             input_digest=snapshot.input_digest,
             executor_revision=snapshot.runtime_revision,
-            target_id=target_id,
+            analysis_mode=analysis_mode,
             allow_model_calls=allow_model_calls,
             unavailable_sources=unavailable,
+            tasks=len(snapshot.targets) * (2 if analysis_mode == "deep" else 1),
         )
 
 
@@ -77,18 +73,11 @@ def write_audit_manifest(
     snapshot: ExecutionSnapshot,
     sources: dict[str, bytes],
     programs: dict[str, dict[str, bytes]],
-    target_id: str,
     *,
-    operation: Operation = "execute-audit",
-    findings: list[dict[str, Any]] | None = None,
+    analysis_mode: AnalysisMode = "standard",
     allow_model_calls: bool = True,
     unavailable_sources: frozenset[str] = frozenset(),
 ) -> AuditJobSpec:
-    """Stage one task. A review also carries the validated program findings of its target."""
-    if operation == "review-target" and (not allow_model_calls or findings is None):
-        raise DeepError("deep_requires_model")
-    if operation == "execute-audit" and findings is not None:
-        raise ValueError("audit_manifest_invalid")
     snapshot.validate_sources(sources, unavailable=unavailable_sources)
     expected = {target.binding.checker_digest for target in snapshot.targets}
     if set(programs) != expected or any(checker_digest(files) != digest for digest, files in programs.items()):
@@ -119,11 +108,10 @@ def write_audit_manifest(
             staged = f"program-{index}-{name}"
             stage(staged, body)
             program_paths[digest][name] = staged
-    job = AuditJobSpec.for_target(snapshot, target_id, operation, allow_model_calls, unavailable_sources)
-    manifest: dict[str, Any] = {"operation": operation, "spec": job.model_dump(mode="json"), "snapshot": snapshot.to_dict(), "source_paths": source_paths, "program_paths": program_paths}
-    if findings is not None:
-        manifest["findings"] = findings
-    raw = json.dumps(manifest, ensure_ascii=False).encode()
+    job = AuditJobSpec.from_snapshot(snapshot, allow_model_calls, unavailable_sources, analysis_mode)
+    raw = json.dumps(
+        {"operation": "execute-audit", "spec": job.model_dump(mode="json"), "snapshot": snapshot.to_dict(), "source_paths": source_paths, "program_paths": program_paths}, ensure_ascii=False
+    ).encode()
     if len(raw) > MAX_MANIFEST:
         raise ValueError("audit_manifest_limit")
     stage("manifest.json", raw)
@@ -145,17 +133,13 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     from agent.execution.guest_model import ModelGrant
 
     manifest = read_json(inputs, ("manifest.json",), MAX_MANIFEST)
-    operation = manifest.get("operation")
-    keys = {"operation", "spec", "snapshot", "source_paths", "program_paths"} | ({"findings"} if operation == "review-target" else set())
-    if set(manifest) != keys or operation not in {"execute-audit", "review-target"}:
+    if set(manifest) != {"operation", "spec", "snapshot", "source_paths", "program_paths"} or manifest["operation"] != "execute-audit":
         raise ValueError("audit_manifest_invalid")
     snapshot = ExecutionSnapshot.from_dict(manifest["snapshot"])
     job = AuditJobSpec.model_validate(manifest["spec"])
     unavailable = frozenset(job.unavailable_sources)
-    if job.operation != operation or job != AuditJobSpec.for_target(snapshot, job.target_id, job.operation, job.allow_model_calls, unavailable):
+    if job != AuditJobSpec.from_snapshot(snapshot, job.allow_model_calls, unavailable, job.analysis_mode):
         raise ValueError("audit_manifest_identity_mismatch")
-    if operation == "review-target" and not job.allow_model_calls:
-        raise ValueError("audit_review_requires_model")
     total = 0
 
     def read(name: str) -> bytes:
@@ -176,32 +160,41 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         if endpoint.scheme != "http" or endpoint.hostname not in {"127.0.0.1", "localhost", "::1"} or endpoint.username or endpoint.password or not grant.matches(snapshot.model_identity):
             raise ValueError("audit_model_grant_mismatch")
     snapshot.validate_sources(sources, unavailable=unavailable)
-    payload: dict[str, Any]
-    if operation == "execute-audit":
-        with grant.access_scope() if grant is not None else model_access_scope(None):
-            payload = run_audit(snapshot, sources, programs, runtime=CheckerRuntime(allow_model_tools=job.allow_model_calls), unavailable_sources=unavailable, target_id=job.target_id)
-    else:
+    # Each file is a task, checked and then (in deep mode) reviewed; the round's context is shared by all of them.
+    from agent.execution.isolation.progress import Progress
+
+    files, tasks = len(snapshot.targets), job.tasks
+
+    def started(task: int) -> None:
+        _write_progress(work, Progress(phase="checking", completed_count=task, total_count=tasks))
+
+    with grant.access_scope() if grant is not None else model_access_scope(None):
+        # The validated Suite programs always run first; deep review only reads their results.
+        result = run_audit(snapshot, sources, programs, runtime=CheckerRuntime(allow_model_tools=job.allow_model_calls), unavailable_sources=unavailable, target_seconds=CHECK_SECONDS, on_task=started)
+    deep = None
+    if job.analysis_mode == "deep" and grant is None:
+        # Without a model no file can be reviewed; each keeps its program result.
+        deep = {target.file_version_id: {"state": "degraded", "reason": "deep_review_failed"} for target in snapshot.targets}
+    elif job.analysis_mode == "deep":
         assert grant is not None
-        from agent.deep_review import review_target
+        from agent.deep_review import review_targets
         from agent.execution.activity import ACTIVITY_FILE
         from agent.execution.guest_model import PiRunner
 
-        target = next(target for target in snapshot.targets if target.file_version_id == job.target_id)
-        findings = manifest["findings"]
-        if not isinstance(findings, list) or any(not isinstance(item, dict) or item.get("file_version_id") != job.target_id for item in findings):
-            raise ValueError("audit_manifest_invalid")
         runner = PiRunner(grant.model_dump(mode="json"))
         # Live steps for viewers; the Controller forwards them and nothing stores them.
         runner.activity = work / ACTIVITY_FILE
-        deadline = time.monotonic() + min(runner.wall_seconds, DEEP_TOTAL_SECONDS)
-        payload = {"review": review_target(snapshot, sources, programs, target, findings, runner=runner, work=work / "deep-review", deadline=deadline, unavailable=unavailable)}
-    payload.update(
-        operation=operation,
-        execution_id=str(job.execution_id),
-        executor_revision=snapshot.runtime_revision,
-        accepted_input_digest=snapshot.input_digest,
-        target_id=job.target_id,
-    )
+        deep = review_targets(snapshot, sources, programs, result["findings"], runner=runner, work=work / "deep-review", unavailable=unavailable, on_task=lambda index: started(files + index))
+    _write_progress(work, Progress(phase="validating", completed_count=tasks, total_count=tasks))
+    payload = {
+        **result,
+        "operation": "execute-audit",
+        "execution_id": str(job.execution_id),
+        "executor_revision": snapshot.runtime_revision,
+        "accepted_input_digest": snapshot.input_digest,
+    }
+    if deep is not None:
+        payload["deep_reviews"] = deep
     encoded = json.dumps(payload, ensure_ascii=False).encode()
     if len(encoded) > MAX_BUNDLE:
         raise ValueError("audit_output_limit")
@@ -209,24 +202,16 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     (work / "result" / "bundle.json").write_bytes(encoded)
 
 
-def _combine(parts: list[dict[str, Any]], unavailable: frozenset[str], input_digest: str) -> dict[str, Any]:
-    """One round's result from its per-file results. Usage is known only when every task reported it."""
-    combined: dict[str, Any] = {
-        "input_digest": input_digest,
-        "findings": [row for part in parts for row in part["findings"]],
-        "coverage": [row for part in parts for row in part["coverage"]],
-        "diagnostics": [row for part in parts for row in part.get("diagnostics", [])],
-        "unavailable_sources": sorted(unavailable),
-    }
-    for key in ("input_tokens", "output_tokens", "model_requests"):
-        values = [part.get(key) for part in parts]
-        if all(type(value) is int and value >= 0 for value in values):
-            combined[key] = sum(values)
-    return combined
+def _write_progress(work: Path, progress: Any) -> None:
+    """The guest's only liveness signal: the host gives every new task its own time."""
+    work.mkdir(parents=True, exist_ok=True)
+    staged = work / "progress.json.tmp"
+    staged.write_text(progress.model_dump_json(exclude_none=True), encoding="utf-8")
+    staged.replace(work / "progress.json")
 
 
 class CoreRuntime:
-    """Trusted host adapter: resolve immutable content, then run one guest task per file."""
+    """Trusted host adapter: resolve immutable content, then run one audit guest for the round."""
 
     def __init__(self, runtime: Any, snapshot_for_request, suite_for_revision, *, objects=None) -> None:
         self.runtime, self.snapshot_for_request, self.suite_for_revision = runtime, snapshot_for_request, suite_for_revision
@@ -234,79 +219,6 @@ class CoreRuntime:
 
     def ready(self, operation: str = "audit") -> bool:
         return self.runtime.ready(operation)
-
-    def _task(self, snapshot: ExecutionSnapshot, job: AuditJobSpec, inputs: Path, work: Path, seconds: float, context: ExecutionContext, **live: Any) -> dict[str, Any]:
-        self.runtime.run(job, inputs, work, time.monotonic() + seconds, context.cancelled, **live)
-        result = read_json(work, ("result", "bundle.json"), MAX_BUNDLE)
-        if (
-            result.get("execution_id") != str(job.execution_id)
-            or result.get("executor_revision") != snapshot.runtime_revision
-            or result.get("operation") != job.operation
-            or result.get("target_id") != job.target_id
-            or result.get("accepted_input_digest") != snapshot.input_digest
-        ):
-            raise DeepError("deep_output_identity_mismatch")
-        context.raise_if_cancelled()
-        return result
-
-    def check_target(
-        self, snapshot: ExecutionSnapshot, sources: dict[str, bytes], programs: dict[str, dict[str, bytes]], target_id: str, context: ExecutionContext, *, allow_model_calls: bool = True
-    ) -> dict[str, Any]:
-        """One file's Suite programs in their own guest, within CHECK_SECONDS. Returns its validated result."""
-        from agent.execution.audit_runtime import _error, _evidence_references, _validate_output
-
-        context.raise_if_cancelled()
-        target = next(target for target in snapshot.targets if target.file_version_id == target_id)
-        with tempfile.TemporaryDirectory(prefix="ppap-core-host-") as root_name:
-            root = Path(root_name)
-            work, inputs = root / "work", root / "inputs"
-            work.mkdir()
-            job = write_audit_manifest(inputs, snapshot, sources, programs, target_id, allow_model_calls=allow_model_calls, unavailable_sources=context.unavailable_sources)
-            try:
-                result = self._task(snapshot, job, inputs, work, CHECK_SECONDS, context)
-            except ControllerFault as exc:
-                if exc.code != "MODEL_TIMEOUT":
-                    # A failed paid operation is not automatically repeated: the
-                    # existing runtime journal and attempt marker own reconciliation.
-                    raise DeepError(FAULTS.get(exc.code, "deep_execution_failed")) from exc
-                # This file ran out of time: each of its clauses is a technical error, never a verdict.
-                rows = [_evidence_references(_error(clause, "ERR", "checker_target_timeout_external_usage_unknown"), target_id) for clause in target.binding.entrypoints]
-                checked = validate_results(rows, target=target, inputs=snapshot.inputs)
-                result = {"input_digest": snapshot.input_digest, **checked, "diagnostics": [], "unavailable_sources": sorted(context.unavailable_sources)}
-        return _validate_output(snapshot, result, unavailable_sources=context.unavailable_sources, target_id=target_id)
-
-    def review_target(
-        self,
-        snapshot: ExecutionSnapshot,
-        sources: dict[str, bytes],
-        programs: dict[str, dict[str, bytes]],
-        target_id: str,
-        findings: list[dict[str, Any]],
-        context: ExecutionContext,
-        *,
-        allow_model_calls: bool = True,
-    ) -> dict[str, Any]:
-        """One deep task: review one file in its own guest, within DEEP_TOTAL_SECONDS. Its failure only leaves this file unreviewed."""
-        if target_id in context.unavailable_sources or not findings:
-            return {"state": "degraded", "reason": "deep_input_missing"}
-        if not allow_model_calls:
-            return {"state": "degraded", "reason": "deep_review_failed", "detail": "deep_requires_model"}
-        context.raise_if_cancelled()
-        with tempfile.TemporaryDirectory(prefix="ppap-core-host-") as root_name:
-            root = Path(root_name)
-            work, inputs = root / "work", root / "inputs"
-            work.mkdir()
-            job = write_audit_manifest(inputs, snapshot, sources, programs, target_id, operation="review-target", findings=findings, unavailable_sources=context.unavailable_sources)
-            try:
-                return self._task(snapshot, job, inputs, work, DEEP_TOTAL_SECONDS, context, on_activity=context.activity)["review"]
-            except ControllerFault as exc:
-                if exc.code == "CANCELLED":
-                    raise DeepError("deep_cancelled") from exc
-                return {"state": "degraded", "reason": "deep_timeout" if exc.code == "MODEL_TIMEOUT" else "deep_review_failed", "detail": exc.code}
-            except DeepError as exc:
-                if exc.code == "deep_cancelled":
-                    raise
-                return {"state": "degraded", "reason": "deep_review_invalid", "detail": exc.code}
 
     def execute_snapshot(
         self,
@@ -318,26 +230,46 @@ class CoreRuntime:
         analysis_mode: AnalysisMode = "standard",
         allow_model_calls: bool = True,
     ) -> tuple[dict, dict[str, dict[str, str]] | None, dict[tuple[str, str], dict]]:
-        """Check every file, then in deep mode review every file; one task each, in order.
+        """One guest run. Returns the validated (and, in deep mode, reviewed) result, per-target deep states and clause review records."""
+        from agent.execution.audit_runtime import _validate_output
 
-        Returns the validated (and, in deep mode, reviewed) result, per-target deep states and clause review records.
-        """
-        total = len(snapshot.targets)
-        parts = []
-        for index, target in enumerate(snapshot.targets):
-            context.progress({"phase": "checking", "completed_count": index, "total_count": total})
-            parts.append(self.check_target(snapshot, sources, programs, target.file_version_id, context, allow_model_calls=allow_model_calls))
-        result = _combine(parts, context.unavailable_sources, snapshot.input_digest)
-        if analysis_mode == "standard":
-            return result, None, {}
-        from agent.deep_review import merge_reviews
+        context.raise_if_cancelled()
+        with tempfile.TemporaryDirectory(prefix="ppap-core-host-") as root_name:
+            root = Path(root_name)
+            work, inputs = root / "work", root / "inputs"
+            work.mkdir()
+            job = write_audit_manifest(inputs, snapshot, sources, programs, analysis_mode=analysis_mode, allow_model_calls=allow_model_calls, unavailable_sources=context.unavailable_sources)
+            # Each task the guest reports is forwarded, so the Worker sees the round moving.
+            live: dict[str, Any] = {"on_progress": lambda progress: context.progress(progress.model_dump(include={"phase", "completed_count", "total_count"}, exclude_none=True))}
+            if analysis_mode == "deep":
+                # Only a deep review has live steps to show.
+                live["on_activity"] = context.activity
+            try:
+                # The runtime gives the first task, and each task the guest reports after it, TASK_SECONDS.
+                self.runtime.run(job, inputs, work, time.monotonic() + TASK_SECONDS, context.cancelled, **live)
+                result = read_json(work, ("result", "bundle.json"), MAX_BUNDLE)
+            except ControllerFault as exc:
+                # A failed paid operation is not automatically repeated: the
+                # existing runtime journal and attempt marker own reconciliation.
+                raise DeepError(FAULTS.get(exc.code, "deep_execution_failed")) from exc
+            if result.get("execution_id") != str(job.execution_id) or result.get("executor_revision") != snapshot.runtime_revision or result.get("operation") != "execute-audit":
+                raise DeepError("deep_output_identity_mismatch")
+            context.raise_if_cancelled()
+            if result.get("accepted_input_digest") != snapshot.input_digest:
+                raise DeepError("deep_output_identity_mismatch")
+            raw_deep = result.pop("deep_reviews", None)
+            if (analysis_mode == "standard") != (raw_deep is None):
+                raise DeepError("deep_output_invalid")
+            # The program result is validated exactly as in a standard audit, then checked corrections apply.
+            validated = _validate_output(snapshot, result, unavailable_sources=context.unavailable_sources)
+            if raw_deep is None:
+                return validated, None, {}
+            from agent.deep_review import merge_reviews
 
-        states = {}
-        for index, target in enumerate(snapshot.targets):
-            context.progress({"phase": "checking", "completed_count": index, "total_count": total})
-            findings = [row for row in result["findings"] if row["file_version_id"] == target.file_version_id]
-            states[target.file_version_id] = self.review_target(snapshot, sources, programs, target.file_version_id, findings, context, allow_model_calls=allow_model_calls)
-        return merge_reviews(snapshot, result, states)
+            try:
+                return merge_reviews(snapshot, validated, raw_deep)
+            except ValueError as exc:
+                raise DeepError("deep_output_invalid") from exc
 
     def execute(self, spec, files: dict[str, bytes], *, context: ExecutionContext):
         from agent.core_result import core_response
@@ -362,6 +294,7 @@ class CoreRuntime:
             if checker_digest(code) != target.binding.checker_digest:
                 raise DeepError("deep_integrity_mismatch")
             programs[target.binding.checker_digest] = code
+        context.progress({"phase": "checking"})
         analysis_mode: AnalysisMode = "deep" if spec.analysis_mode == "deep" else "standard"
         result, deep, reviews = self.execute_snapshot(snapshot, files, programs, context, analysis_mode=analysis_mode)
         context.progress({"phase": "validating"})

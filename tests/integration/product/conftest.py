@@ -265,7 +265,7 @@ def core_system(monkeypatch, tmp_path):
         def ready(self, operation="audit"):
             return True
 
-        def run(self, job, inputs, work, deadline, cancelled):
+        def run(self, job, inputs, work, deadline, cancelled, on_progress=None, on_activity=None):
             assert not cancelled.is_set()
             self.calls += 1
             self.audit_jobs.append(job)

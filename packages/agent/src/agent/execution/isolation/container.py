@@ -30,7 +30,7 @@ from pydantic import Field
 
 from agent.core_program import AuditJobSpec
 from agent.execution.activity import ACTIVITY_FILE, Activity, parse_steps
-from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL
+from agent.execution.budget import MAX_INPUT_FILES, MAX_INPUT_TOTAL, TASK_SECONDS
 from agent.execution.gateway import grant_request
 from agent.execution.guest_model import ModelGrant
 from agent.execution.secure_files import read_appended, read_json, read_regular
@@ -225,8 +225,18 @@ class ContainerRuntime:
         target.chmod(0o440)
 
     def _execute(
-        self, run: Path, deadline: float, cancelled: threading.Event, on_progress: Callable[[Progress], None] | None, execution_id: UUID, on_activity: Callable[[Activity], None] | None = None
-    ) -> None:
+        self,
+        run: Path,
+        deadline: float,
+        cancelled: threading.Event,
+        on_progress: Callable[[Progress], None] | None,
+        execution_id: UUID,
+        on_activity: Callable[[Activity], None] | None = None,
+        *,
+        tasks: int = 1,
+        renew: Callable[[], None] | None = None,
+    ) -> float:
+        """Run the guest until it exits. Returns the deadline, renewed once for each task the guest started."""
         env = {
             "PATH": "/usr/local/bin:/usr/bin:/bin",
             "HOME": str(run / "work"),
@@ -271,6 +281,7 @@ class ContainerRuntime:
         )
         self.active[execution_id] = process
         last_progress: Progress | None = None
+        last_task = -1
         activity_offset = 0
 
         def forward_activity() -> None:
@@ -298,17 +309,24 @@ class ContainerRuntime:
                 _drain_stderr(process.stderr, stderr_tail)
                 if cancelled.is_set() or time.monotonic() >= deadline:
                     raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
-                if on_progress is not None:
-                    try:
-                        raw = read_regular(run / "work", ("progress.json",), 512)
-                        progress = Progress.model_validate_json(raw)
-                    except FileNotFoundError:
-                        progress = None
-                    except (OSError, ValueError):
-                        raise ControllerFault("OUTPUT_VALIDATION_ERROR") from None
-                    if progress is not None and progress != last_progress:
+                try:
+                    raw = read_regular(run / "work", ("progress.json",), 512)
+                    progress = Progress.model_validate_json(raw)
+                except FileNotFoundError:
+                    progress = None
+                except (OSError, ValueError):
+                    raise ControllerFault("OUTPUT_VALIDATION_ERROR") from None
+                if progress is not None and progress != last_progress:
+                    started = progress.completed_count
+                    if started is not None and last_task < started <= tasks:
+                        # A new task of the round: it gets its own time, and so does the model grant.
+                        last_task = started
+                        deadline = time.monotonic() + TASK_SECONDS
+                        if renew is not None:
+                            renew()
+                    if on_progress is not None:
                         on_progress(progress)
-                        last_progress = progress
+                    last_progress = progress
                 forward_activity()
                 time.sleep(0.1)
             forward_activity()
@@ -342,6 +360,14 @@ class ContainerRuntime:
                 progress = None
             if progress is not None and progress != last_progress:
                 on_progress(progress)
+        return deadline
+
+    def _renew_grant(self, execution_id: UUID) -> None:
+        try:
+            grant_request(str(self.config.gateway_socket), "renew", execution_id)
+        except (OSError, ValueError):
+            self.degraded = True
+            raise ControllerFault("ISOLATION_UNAVAILABLE") from None
 
     def _seal_usage(self, execution_id: UUID, deadline: float, cancelled: threading.Event, *, drain: bool = True) -> dict[str, Any]:
         try:
@@ -450,7 +476,8 @@ class ContainerRuntime:
                 if model_operation:
                     write_json(attempt, {})
                     self._write_grant(runtime_id, run)
-                self._execute(run, deadline, cancelled, on_progress, runtime_id, on_activity)
+                renew = (lambda: self._renew_grant(runtime_id)) if model_operation else None
+                deadline = self._execute(run, deadline, cancelled, on_progress, runtime_id, on_activity, tasks=spec.tasks, renew=renew)
                 if cancelled.is_set() or time.monotonic() >= deadline:
                     raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
                 if model_operation:

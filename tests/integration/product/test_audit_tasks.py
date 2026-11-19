@@ -2474,7 +2474,7 @@ def test_a_file_whose_deep_review_did_not_complete_keeps_the_standard_result_at_
         events = client.get("/usage").json()["events"]
         assert [(row["consumed_points"], row["charge"]) for row in events] == [(500, "audit")]
         assert [row["points"] for row in client.get("/audit-usage").json()["entries"]] == [500]
-        assert {job.operation for job in core_system.audit_jobs} == {"execute-audit"}
+        assert core_system.audit_jobs[-1].analysis_mode == "deep"
     finally:
         client.close()
         http.close()

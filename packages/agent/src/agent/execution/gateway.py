@@ -215,6 +215,19 @@ class Grants:
                 result["transport_failure"] = dict(lease.transport_failure)
         return result
 
+    def renew(self, execution_id: UUID) -> None:
+        """The host saw the execution start its next task: its live grant gets one more task's time.
+
+        A revoked or expired grant is never renewed.
+        """
+        with self.lock:
+            now = time.monotonic()
+            live = [lease for lease in self.leases.values() if lease.execution_id == execution_id and lease.expires > now]
+            if not live:
+                raise ValueError("Invalid execution grant")
+            for lease in live:
+                lease.expires = now + self.ttl
+
     def usage(self, execution_id: UUID) -> dict[str, Any]:
         with self.lock:
             return self._usage([lease for lease in self.leases.values() if lease.execution_id == execution_id])
@@ -615,6 +628,9 @@ class GrantHandler(socketserver.StreamRequestHandler):
             if request["method"] == "issue":
                 token = grants.issue(execution_id)
                 result: dict[str, Any] = {"base_url": self.server.base_url, "token": token, **grants.identity(token), "wall_seconds": grants.ttl}
+            elif request["method"] == "renew":
+                grants.renew(execution_id)
+                result = {"ok": True}
             elif request["method"] == "usage":
                 result = grants.usage(execution_id)
             elif request["method"] == "revoke":

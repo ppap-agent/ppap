@@ -6,8 +6,8 @@
 `run` builds each case's frozen round as the corpus does, freezes the platform model selection
 as a tenant without its own key does, and executes it the way the Controller does: the bound
 local gateway, ContainerRuntime (the guest runs as uid 10001 under prlimit), then
-CoreRuntime.execute_snapshot in deep mode: each file is checked in its own task, then reviewed in
-its own task; a review that does not finish leaves that file with its program result.
+CoreRuntime.execute_snapshot in deep mode: one guest for the round, each file checked and then
+reviewed with its own time; a review that does not finish leaves that file with its program result.
 """
 
 from __future__ import annotations

@@ -547,17 +547,18 @@ class ContainerBoundaryTests(unittest.TestCase):
                 runtime.degraded = False
                 inputs = root / "inputs"
                 inputs.mkdir()
-                spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision", target_id="file")
+                spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision")
                 run = root / "run"
                 (run / "work").mkdir(parents=True)
                 (run / "grant").mkdir()
 
-                def cached_guest(run, *_args):
+                def cached_guest(run, *_args, **_kwargs):
                     grant = json.loads((run / "grant" / "model.json").read_text())
                     # The grant carries no token or turn budget, only its wall deadline.
                     self.assertFalse({"max_turns", "max_total_turns", "max_total_tokens"} & set(grant))
                     (run / "work" / "result").mkdir()
                     (run / "work" / "result" / "bundle.json").write_text('{"ok":true,"input_tokens":999,"output_tokens":999,"model_requests":999}')
+                    return _args[0]
 
                 with patch("agent.execution.isolation.container.os.chown"), patch.object(runtime, "_new_run_dir", return_value=run), patch.object(runtime, "_execute", side_effect=cached_guest):
                     runtime.run(spec, inputs, root / "host-work", time.monotonic() + 2, threading.Event())
@@ -573,7 +574,7 @@ class ContainerBoundaryTests(unittest.TestCase):
             runtime.journal.mkdir()
             runtime.slot = threading.Lock()
             runtime.degraded = False
-            spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision", target_id="file")
+            spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision")
             original = {"ok": True, "input_tokens": 60, "output_tokens": 9, "model_requests": 1}
             (runtime.journal / (spec.execution_id.hex + ".json")).write_text(json.dumps(original))
             with patch.object(runtime, "_write_grant") as issue, patch.object(runtime, "_execute") as execute:
@@ -822,7 +823,7 @@ class ContainerBoundaryTests(unittest.TestCase):
                 app_revision="0" * 40,
                 sandbox_profile="off",
             )
-            spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision", target_id="file")
+            spec = AuditJobSpec(execution_id=uuid4(), input_digest="0" * 64, executor_revision="revision")
             run = root / "run"
             run.mkdir()
             with (

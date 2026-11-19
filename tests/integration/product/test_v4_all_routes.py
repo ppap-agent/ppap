@@ -103,9 +103,8 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
         assert job.kind == "audit"
         guest_calls = core_system.calls
         process_claimed(worker, job, "routes-audit")
-        # One check task per file.
-        assert core_system.calls == guest_calls + expected_count
-        assert [job.allow_model_calls for job in core_system.audit_jobs] == [False] * expected_count
+        assert core_system.calls == guest_calls + 1
+        assert [job.allow_model_calls for job in core_system.audit_jobs] == [False]
         assert not list(tmp_path.rglob("model.json")), "No model grant is authorized by the routing fixture"
         round_path = "/rounds/" + confirmed.json()["round_id"]
         round = client.get(round_path).json()

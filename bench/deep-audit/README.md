@@ -4,7 +4,7 @@
 
 ## 走的是哪条路径
 
-与线上 Controller 相同：在从 `HEAD` 构建的深度镜像里，以 root 启动本地模型网关和 `ContainerRuntime`，guest 降权为 uid 10001、在 `prlimit` 下运行，由 `CoreRuntime.execute_snapshot` 逐份执行：每份文件先在自己的任务里运行已验证的 Suite 程序（允许模型读取，3 分钟），再在自己的任务里由 Pi 按 `deep_agent/AGENTS.md` 复核（6 分钟），宿主校验并合并订正。某份复核未完成时，这份保留程序结论，记为未复核。
+与线上 Controller 相同：在从 `HEAD` 构建的深度镜像里，以 root 启动本地模型网关和 `ContainerRuntime`，guest 降权为 uid 10001、在 `prlimit` 下运行，由 `CoreRuntime.execute_snapshot` 在一个 guest 中执行整轮、同组共享上下文：逐份运行已验证的 Suite 程序（允许模型读取，每份 3 分钟），再逐份由 Pi 按 `deep_agent/AGENTS.md` 复核（每份 6 分钟），宿主校验并合并订正。某份复核未完成时，这份保留程序结论，记为未复核。
 
 - 模型：平台模型（`.env` 中的 `PPAP_MODEL_TEXT_*` / `VISION_*` / `CODING_*`），按未配置企业 Key 的租户冻结身份；复核强度、请求上限、沙箱配置取自 `.env.production`。
 - 用例：`assets/corpus` 中一家客户的人工 Oracle（`<客户>-cases.csv`、`<客户>-oracle.csv`、`<客户>-reviewed-rules.json`），`--dataset li|nio|uaes` 选择，默认 `uaes`；三家分开评估、分开汇总，不混在一起。语料合同照常检查条款正文与人工复核语义是否一致，不一致即报错，不评测过期真值。

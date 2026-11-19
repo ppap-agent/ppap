@@ -47,7 +47,7 @@ class _ControlledGuest:
         self.calls = 0
         self.manifests = []
 
-    def run(self, job, inputs, work, deadline, cancelled):
+    def run(self, job, inputs, work, deadline, cancelled, on_progress=None, on_activity=None):
         self.calls += 1
         self.manifests.append(json.loads((inputs / "manifest.json").read_text()))
         grant = self.directory / f"grant-{self.calls}"
@@ -248,8 +248,7 @@ def check(context):
         self.assertNotIn(missing, self.guest.manifests[0]["source_paths"])
         self.assertEqual(result["coverage"]["checker_execution"]["input_digest"], self.snapshot.input_digest)
         self.assertEqual(self.completed[0][3], "succeeded")
-        # One check task per file.
-        self.assertEqual(self.guest.calls, len(self.snapshot.targets))
+        self.assertEqual(self.guest.calls, 1)
         self.assertNotIn("private object path", str(result))
 
     def test_rule_and_checker_failures_keep_prior_and_later_results_in_one_worker_commit(self):
@@ -260,8 +259,7 @@ def check(context):
         result = self.execute()
         self.assertEqual({row["locator"]["file_version_id"]: row["status"] for row in result["findings"]}, {first: "PASS", unknown: "ERR", broken: "ERR", last: "PASS"})
         self.assertEqual(self.completed, [("job", "test-worker", result, "succeeded")])
-        # One check task per file.
-        self.assertEqual(self.guest.calls, len(self.snapshot.targets))
+        self.assertEqual(self.guest.calls, 1)
         self.assertNotIn("private checker details", str(result))
 
     def test_runs_each_target_with_its_frozen_suite_and_references_in_context_only(self):
@@ -372,8 +370,7 @@ def check(context):
         result = self.execute()
         self.assertEqual(result["findings"], [])
         self.assertEqual(result["coverage"]["checked"], [])
-        # One check task per file.
-        self.assertEqual(self.guest.calls, len(self.snapshot.targets))
+        self.assertEqual(self.guest.calls, 1)
         self.assertEqual(self.completed[0][3], "failed")
 
     def test_job_without_core_snapshot_cannot_fall_back_to_the_old_engine(self):

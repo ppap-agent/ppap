@@ -1,4 +1,4 @@
-"""Core composition, trusted input binding, and one guest task per file.
+"""Core composition, trusted input binding, and one whole-audit guest protocol.
 
 The runner here is controlled in-process. ContainerRuntime's separate security
 suite owns UID/capability/process testing; this does not claim OS isolation.
@@ -6,7 +6,6 @@ suite owns UID/capability/process testing; this does not claim OS isolation.
 
 import hashlib
 import json
-import time
 import uuid
 from types import SimpleNamespace
 
@@ -57,30 +56,25 @@ class ControlledGuest:
     def __init__(self, tmp_path):
         self.root = tmp_path
         self.calls = 0
-        self.tasks = []
 
     def ready(self, operation="audit"):
         return True
 
-    def run(self, job, inputs, work, deadline, cancelled, on_activity=None):
+    def run(self, job, inputs, work, deadline, cancelled, on_progress=None, on_activity=None):
         self.calls += 1
-        self.tasks.append((job.operation, job.target_id, None if deadline is None else round(deadline - time.monotonic())))
         grant = self.root / f"grant-{self.calls}"
         grant.mkdir()
         (grant / "model.json").write_text(json.dumps({"base_url": "http://127.0.0.1:1/v1", "token": "local-short-lived-capability-1234567890", "model": "test-model", "wall_seconds": 100}))
         run_audit_manifest(inputs, work, grant)
 
 
-def test_standard_audit_checks_each_file_in_its_own_task_without_provider_and_explicit_unsupported(tmp_path):
-    from agent.execution.budget import CHECK_SECONDS
-
+def test_standard_whole_audit_once_without_provider_and_explicit_unsupported(tmp_path):
     snapshot, sources, _, spec, suite = setup(unbound=True)
     runner = ControlledGuest(tmp_path)
     runtime = CoreRuntime(runner, lambda _spec: snapshot, lambda *_: suite)
     controller = Controller(runtime, lambda identity, limit: sources[identity], executor_revision="runtime", protocol_revision="protocol")
     result = controller.handle(spec)
-    # Each file has its own time; nothing bounds the round as a whole.
-    assert runner.tasks == [("execute-audit", "file-a", CHECK_SECONDS), ("execute-audit", "file-b", CHECK_SECONDS)]
+    assert runner.calls == 1
     assert [row.status for row in result.findings] == ["UNABLE", "UNABLE"]
     assert len([row for row in result.coverage.rule_items if row["coverage"] == "unsupported"]) == 2
     assert result.coverage.checker_execution["input_digest"] == snapshot.input_digest
@@ -111,42 +105,22 @@ def test_host_refuses_changed_suite_bytes(tmp_path):
 def test_manifest_rejects_paths_and_hash_changes(tmp_path):
     snapshot, sources, programs, *_ = setup()
     inputs = tmp_path / "inputs"
-    write_audit_manifest(inputs, snapshot, sources, programs, "file-a")
+    write_audit_manifest(inputs, snapshot, sources, programs)
     manifest = json.loads((inputs / "manifest.json").read_text())
     manifest["source_paths"]["file-a"] = "../secret"
     (inputs / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="audit_manifest_path_invalid"):
         run_audit_manifest(inputs, tmp_path / "work", tmp_path / "grant")
     with pytest.raises(ValueError, match="snapshot_source_digest_mismatch"):
-        write_audit_manifest(tmp_path / "other", snapshot, {**sources, "file-a": b"tampered"}, programs, "file-a")
+        write_audit_manifest(tmp_path / "other", snapshot, {**sources, "file-a": b"tampered"}, programs)
 
 
-def test_each_task_has_its_own_attempt_identity():
+def test_execution_id_derivation_is_unchanged_for_existing_executions():
     snapshot, *_ = setup()
-    ids = {AuditJobSpec.for_target(snapshot, target, operation).execution_id for target in ("file-a", "file-b") for operation in ("execute-audit", "review-target")}
-    assert len(ids) == 4
-    assert AuditJobSpec.for_target(snapshot, "file-a").execution_id == uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-execute-audit:True:{snapshot.input_digest}:file-a")
-    assert AuditJobSpec.for_target(snapshot, "file-a", unavailable_sources=frozenset({"file-b"})).execution_id not in ids
-    with pytest.raises(ValueError, match="audit_target_unknown"):
-        AuditJobSpec.for_target(snapshot, "reference")
-
-
-def test_a_file_out_of_check_time_is_a_technical_error_and_the_others_still_run(tmp_path):
-    from audit.protocol import ControllerFault
-
-    snapshot, sources, _, spec, suite = setup()
-
-    class Slow(ControlledGuest):
-        def run(self, job, inputs, work, deadline, cancelled, on_activity=None):
-            if job.target_id == "file-a":
-                self.tasks.append((job.operation, job.target_id, None))
-                raise ControllerFault("MODEL_TIMEOUT")
-            return super().run(job, inputs, work, deadline, cancelled)
-
-    guest = Slow(tmp_path)
-    result = Controller(CoreRuntime(guest, lambda _: snapshot, lambda *_: suite), lambda identity, limit: sources[identity], executor_revision="runtime", protocol_revision="protocol").handle(spec)
-    assert [task[:2] for task in guest.tasks] == [("execute-audit", "file-a"), ("execute-audit", "file-b")]
-    assert [(row.locator["file_version_id"], row.status) for row in result.findings] == [("file-a", "ERR"), ("file-a", "ERR"), ("file-b", "UNABLE"), ("file-b", "UNABLE")]
+    assert AuditJobSpec.from_snapshot(snapshot).execution_id == uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-audit:standard:True:{snapshot.input_digest}")
+    assert AuditJobSpec.from_snapshot(snapshot, analysis_mode="deep").execution_id == uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-audit:deep:True:{snapshot.input_digest}")
+    missing = uuid.uuid5(uuid.NAMESPACE_URL, f'ppap-audit:standard:True:{snapshot.input_digest}:["file-a"]')
+    assert AuditJobSpec.from_snapshot(snapshot, unavailable_sources=frozenset({"file-a"})).execution_id == missing
 
 
 def test_model_job_reads_visual_facts_through_its_grant(tmp_path, monkeypatch):
@@ -169,10 +143,10 @@ def check(context):
     snapshot, sources, *_ = setup()
     digest = checker_digest({"checker.py": code})
     snapshot = replace(snapshot, targets=tuple(replace(target, binding=replace(target.binding, checker_digest=digest)) for target in snapshot.targets))
-    job = write_audit_manifest(tmp_path / "inputs", snapshot, sources, {digest: {"checker.py": code}}, "file-a")
+    job = write_audit_manifest(tmp_path / "inputs", snapshot, sources, {digest: {"checker.py": code}})
     ControlledGuest(tmp_path).run(job, tmp_path / "inputs", tmp_path / "work", None, None)
     result = json.loads((tmp_path / "work" / "result" / "bundle.json").read_text())
-    assert len(result["findings"]) == 2
+    assert len(result["findings"]) == 4
     assert {row["status"] for row in result["findings"]} == {"PASS"}
     assert calls and set(calls) == {"ocr"}
 
@@ -202,7 +176,7 @@ def test_standard_missing_target_never_imports_its_program_and_keeps_other_resul
     controller = Controller(runtime, source, executor_revision="runtime", protocol_revision="protocol", authorize=authorization.append)
     context = ExecutionContext()
     result = controller.handle(spec, context)
-    assert reads == ["file-a", "file-b", "reference"] and guest.calls == 2
+    assert reads == ["file-a", "file-b", "reference"] and guest.calls == 1
     assert [(item.locator["file_version_id"], item.status) for item in result.findings] == [("file-a", "ERR"), ("file-b", "UNABLE")]
     assert len([row for row in result.coverage.rule_items if row["coverage"] == "unsupported"]) == 2
     assert result.coverage.checker_execution["input_digest"] == snapshot.input_digest
@@ -244,7 +218,7 @@ def check(context):
     runtime = CoreRuntime(guest, lambda _: snapshot, lambda *_: suite)
     result = Controller(runtime, source, executor_revision="runtime", protocol_revision="protocol").handle(spec)
     assert [item.status for item in result.findings] == ["UNABLE", "PASS", "UNABLE", "PASS"]
-    assert guest.calls == 2
+    assert guest.calls == 1
     assert result.coverage.checker_execution["unavailable_file_version_ids"] == ["reference"]
 
 
@@ -291,8 +265,8 @@ def test_unavailable_sources_are_explicit_disjoint_and_change_attempt_identity(t
     missing = frozenset({"file-a"})
     reduced = {key: value for key, value in sources.items() if key not in missing}
     snapshot.validate_sources(reduced, unavailable=missing)
-    complete = AuditJobSpec.for_target(snapshot, "file-b")
-    incomplete = write_audit_manifest(tmp_path / "inputs", snapshot, reduced, programs, "file-b", unavailable_sources=missing)
+    complete = AuditJobSpec.from_snapshot(snapshot)
+    incomplete = write_audit_manifest(tmp_path / "inputs", snapshot, reduced, programs, unavailable_sources=missing)
     assert incomplete.input_digest == complete.input_digest == snapshot.input_digest
     assert incomplete.execution_id != complete.execution_id
     for data, unavailable in [(reduced, frozenset()), (sources, missing), (reduced, frozenset({"foreign"}))]:
@@ -300,3 +274,35 @@ def test_unavailable_sources_are_explicit_disjoint_and_change_attempt_identity(t
             snapshot.validate_sources(data, unavailable=unavailable)
     with pytest.raises(ValueError, match="snapshot_source_digest_mismatch"):
         snapshot.validate_sources({**reduced, "file-b": b"changed"}, unavailable=missing)
+
+
+def test_files_share_the_round_context_and_each_has_its_own_check_time():
+    from dataclasses import replace
+
+    from agent.execution.audit_runtime import run_audit
+
+    snapshot, sources, *_ = setup()
+    code = b"""import time
+from audit.contracts import AuditResultItem
+
+def check(context):
+    seen = context.cache.setdefault('files', [])
+    if context.audit_file.audit_id not in seen:
+        seen.append(context.audit_file.audit_id)
+    if context.audit_file.audit_id == 'file-a' and context.clause_id == 'A':
+        time.sleep(2)
+    return AuditResultItem(classification='rule', item=context.clause_id, priority='P0', status='PASS',
+                           suggestions=','.join(seen), clause_id=context.clause_id, checks_performed=1)
+"""
+    digest = checker_digest({"checker.py": code})
+    snapshot = replace(snapshot, targets=tuple(replace(target, binding=replace(target.binding, checker_digest=digest)) for target in snapshot.targets))
+    started = []
+    result = run_audit(snapshot, sources, {digest: {"checker.py": code}}, target_seconds=0.5, on_task=started.append)
+    found = {(row["file_version_id"], row["clause_id"]): row for row in result["findings"]}
+    assert started == [0, 1]
+    # file-a ran out of its own time: technical errors, never a verdict.
+    assert {found[("file-a", clause)]["status"] for clause in "AB"} == {"ERR"}
+    assert found[("file-a", "B")]["suggestions"] == "checker_target_timeout_external_usage_unknown"
+    # file-b still had all of its own time, and saw what file-a left in the round's context.
+    assert [found[("file-b", clause)]["status"] for clause in "AB"] == ["PASS", "PASS"]
+    assert found[("file-b", "A")]["suggestions"] == "file-a,file-b"

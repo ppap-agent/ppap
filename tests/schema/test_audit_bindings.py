@@ -258,7 +258,7 @@ def check(context):
         class ControlledGuest:
             # Real host/guest manifest and Core execution; this test substitutes
             # transport only and does not claim UID/container isolation.
-            def run(_, job, inputs, work, deadline, cancelled):
+            def run(_, job, inputs, work, deadline, cancelled, on_progress=None, on_activity=None):
                 calls.append(job)
                 with TemporaryDirectory() as root:
                     credentials = Path(root)
