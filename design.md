@@ -1,36 +1,36 @@
 ---
 version: alpha
 name: PPAP Web
-description: "Precision Slate: slate neutrals, one blue for commitments, crisp 1px borders and 8px radius for the PPAP web app and Docs Add-on."
+description: "PRD V3.33 palette: grey-blue neutrals, one blue for commitments, a dark navigation rail, crisp 1px borders and 8px radius for the PPAP web app and Docs Add-on."
 colors:
-  primary: "#2563eb"
+  primary: "#2c6be0"
   on-primary: "#ffffff"
-  background: "#f8fafc"
+  background: "#f7f8fa"
   surface: "#ffffff"
-  on-surface: "#0f172a"
-  muted: "#64748b"
-  border: "#e2e8f0"
-  input-border: "#e2e8f0"
-  secondary: "#f1f5f9"
-  accent: "#eff6ff"
-  success: "#16a34a"
-  warning: "#d97706"
+  on-surface: "#1b2430"
+  muted: "#646f82"
+  border: "#e9ecf2"
+  input-border: "#dde2ea"
+  secondary: "#f1f3f7"
+  accent: "#eaf1fe"
+  success: "#15803d"
+  warning: "#b45309"
   error: "#dc2626"
-  info: "#2563eb"
-  dark-primary: "#2563eb"
+  info: "#2c6be0"
+  dark-primary: "#2c6be0"
   dark-on-primary: "#ffffff"
-  dark-background: "#020617"
-  dark-surface: "#0f172a"
-  dark-on-surface: "#f1f5f9"
-  dark-muted: "#94a3b8"
-  dark-border: "#334155"
-  dark-input-border: "#334155"
-  dark-secondary: "#1e293b"
-  dark-accent: "#172554"
+  dark-background: "#0f141b"
+  dark-surface: "#161d27"
+  dark-on-surface: "#e6eaf0"
+  dark-muted: "#98a2b3"
+  dark-border: "#2a3442"
+  dark-input-border: "#333e4e"
+  dark-secondary: "#1f2833"
+  dark-accent: "#172540"
   dark-success: "#22c55e"
-  dark-warning: "#f59e0b"
+  dark-warning: "#e8901a"
   dark-error: "#dc2626"
-  dark-info: "#60a5fa"
+  dark-info: "#6c9bff"
 typography:
   label-sm:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
@@ -158,11 +158,12 @@ components:
     textColor: "{colors.dark-info}"
 ---
 
-# PPAP Web design guidance: Precision Slate
+# PPAP Web design guidance
 
 The token frontmatter above is generated from `apps/web/tokens/` by `pnpm design:update` (see
-[docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)); do not edit it by hand. The guidance below comes from the
-Stitch design system "Precision Slate" and is reviewed by people; where an exact value in it differs from
+[docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)); do not edit it by hand. The layout and component guidance below
+comes from the Stitch design system "Precision Slate"; the colours follow the PRD V3.33 design images. It is
+reviewed by people; where an exact value in it differs from
 the frontmatter, the frontmatter wins.
 
 ## Brand & Style
@@ -173,12 +174,13 @@ The aesthetic blends Modern Enterprise SaaS with the restrained clarity of moder
 
 ## Colors
 
-The palette is anchored by a sterile white canvas (`#FFFFFF`) framed by zinc and slate neutral borders (`#E2E8F0`, `#F1F5F9`) to define structural boundaries without visual fatigue. 
+The palette follows the PRD V3.33 interaction design images (卷一 `_imgbuild`): cool grey-blue neutrals, one blue for commitments and a dark navigation rail. Text colours that the images draw below WCAG AA are darkened to the nearest compliant value of the same hue.
 
-- **Primary (`#2563EB`)**: Used deliberately for primary interactive commitments, active step indicators, and high-priority focus rings.
-- **Subtle Accents (`#EFF6FF`, `#DBEAFE`)**: Used strictly for selection indicators, active navigation tabs, badge surfaces, and low-contrast interactive hover states.
-- **Neutrals (`#0F172A` text, `#64748B` muted, `#F8FAFC` canvas alternate)**: Deliver contrast compliant with WCAG AAA standards for high-density tabular and inspection data.
-- **Semantic Signals**: Success (`#16A34A` / `#DCFCE7`), Warning (`#D97706` / `#FEF3C7`), Destructive/Non-Conformance (`#DC2626` / `#FEE2E2`).
+- **Primary (`#2C6BE0`)**: primary interactive commitments, active step indicators, focus rings and the current navigation item. Hover `#2459C2`.
+- **Subtle Accents (`#EAF1FE`, `#DCE8FD`, line `#CBDCFB`)**: selection, active tabs, info badges and low-contrast hover states.
+- **Neutrals**: text `#1B2430`, secondary text `#3A4657`, muted text `#646F82` (the images' `#8A94A6`, darkened for AA), page `#F7F8FA`, cards `#FFFFFF` with `#E9ECF2` borders, inputs `#DDE2EA`, subtle fills `#F1F3F7`.
+- **Navigation rail**: `#1E2733` with `#AEB6C2` items; the current item is solid primary.
+- **Semantic Signals**: Success (`#15803D` / `#EAF7EF`), Warning (`#B45309` / `#FEF3E2`, solid `#E8901A` for charts), Destructive/Non-Conformance (`#DC2626` / `#FDECEC`).
 
 ## Typography
 
@@ -201,10 +203,10 @@ The layout is built on a condensed 12-column fluid grid tailored for maximum das
 
 This design system avoids heavy blurred drop shadows, utilizing low-contrast ghost outlines and crisp structural borders to construct depth.
 
-- **Borders & Dividers**: Visual separation relies on 1px solid borders (`#E2E8F0` for outer boundaries, `#F1F5F9` for internal cell dividers).
-- **Card & Container Elevation**: Static containers use zero shadow, resting flat on `#FFFFFF` against `#F8FAFC` page backdrops. 
-- **Interactive Depth**: Dropdowns, popovers, and elevated modal panels use a tight, restrained shadow paired with a perimeter line: `0 1px 3px 0 rgba(15, 23, 42, 0.08), 0 1px 2px -1px rgba(15, 23, 42, 0.08)` with a 1px `#E2E8F0` border.
-- **Overlay Layering**: Modal backdrops employ a clean slate scrim: `rgba(15, 23, 42, 0.4)`.
+- **Borders & Dividers**: Visual separation relies on 1px solid borders (`#E9ECF2` for outer boundaries, `#F1F3F7` for internal cell dividers).
+- **Card & Container Elevation**: Static containers use zero shadow, resting flat on `#FFFFFF` against `#F7F8FA` page backdrops. 
+- **Interactive Depth**: Dropdowns, popovers, and elevated modal panels use a tight, restrained shadow paired with a perimeter line: `0 1px 3px 0 rgba(27, 36, 48, 0.08), 0 1px 2px -1px rgba(27, 36, 48, 0.08)` with a 1px `#E9ECF2` border.
+- **Overlay Layering**: Modal backdrops employ a clean slate scrim: `rgba(27, 36, 48, 0.4)`.
 
 ## Shapes
 
@@ -217,28 +219,28 @@ The geometric signature is grounded at a default radius of 8px (`0.5rem`). This 
 ## Components
 
 ### Buttons
-- **Primary**: Solid `#2563EB` fill, `#FFFFFF` text, 8px radius, height 36px (dense: 32px). Hover: `#1D4ED8`. Focus: 2px offset ring in `#2563EB`.
-- **Secondary / Outline**: `#FFFFFF` background, 1px `#E2E8F0` border, `#0F172A` text. Hover: `#F8FAFC` background with `#CBD5E1` border.
-- **Ghost**: Transparent fill, `#64748B` text. Hover: `#F1F5F9`, text `#0F172A`.
+- **Primary**: Solid `#2C6BE0` fill, `#FFFFFF` text, 8px radius, height 36px (dense: 32px). Hover: `#2459C2`. Focus: 2px offset ring in `#2C6BE0`.
+- **Secondary / Outline**: `#FFFFFF` background, 1px `#E9ECF2` border, `#1B2430` text. Hover: `#F7F8FA` background with `#DDE2EA` border.
+- **Ghost**: Transparent fill, `#646F82` text. Hover: `#F1F3F7`, text `#1B2430`.
 
 ### Badges & Tag Pills
 - **Style**: Height 20px, uppercase 11px font (`label-sm`), tracking wide, fully rounded (pill) or 4px subtle rounded tags.
 - **Variants**:
-  - *Compliant / Pass*: Background `#DCFCE7`, text `#15803D`, border 1px solid `#BBF7D0`.
-  - *Review / Warning*: Background `#FEF3C7`, text `#B45309`, border 1px solid `#FDE68A`.
-  - *Non-Conformance / Critical*: Background `#FEE2E2`, text `#B91C1C`, border 1px solid `#FECACA`.
-  - *Neutral / Pending*: Background `#F1F5F9`, text `#475569`, border 1px solid `#E2E8F0`.
+  - *Compliant / Pass*: Background `#EAF7EF`, text `#15803D`, border 1px solid `#BBF7D0`.
+  - *Review / Warning*: Background `#FEF3E2`, text `#B45309`, border 1px solid `#FDE68A`.
+  - *Non-Conformance / Critical*: Background `#FDECEC`, text `#B91C1C`, border 1px solid `#FECACA`.
+  - *Neutral / Pending*: Background `#F1F3F7`, text `#3A4657`, border 1px solid `#E9ECF2`.
 
 ### Form Inputs & Checkboxes
-- **Inputs**: Height 36px, background `#FFFFFF`, border 1px solid `#E2E8F0`, padding 0 12px. Focus: border `#2563EB`, box-shadow `0 0 0 1px #2563EB`.
-- **Checkboxes**: 16px square, 4px radius, border 1px solid `#CBD5E1`. Checked state: `#2563EB` background with white checkmark icon.
+- **Inputs**: Height 36px, background `#FFFFFF`, border 1px solid `#E9ECF2`, padding 0 12px. Focus: border `#2C6BE0`, box-shadow `0 0 0 1px #2C6BE0`.
+- **Checkboxes**: 16px square, 4px radius, border 1px solid `#DDE2EA`. Checked state: `#2C6BE0` background with white checkmark icon.
 
 ### Inspection Cards
 - Structured 3-tier card layout:
-  1. *Header*: 12px top/bottom padding, subtle background `#F8FAFC`, border-bottom 1px `#E2E8F0`, housing part ID, revision code, and status badge.
+  1. *Header*: 12px top/bottom padding, subtle background `#F7F8FA`, border-bottom 1px `#E9ECF2`, housing part ID, revision code, and status badge.
   2. *Body*: White `#FFFFFF`, standard 16px padding, organized into key-value specification pairs with vertical divider lines.
   3. *Action Footer*: 8px padding, right-aligned micro-actions (Audit, Sign-off, Reject).
 
 ### Alert Banners
-- Low-saturation, solid tint backgrounds (`#EFF6FF` for info, `#FEF3C7` for notice) with a 1px border. 
-- Integrated left indicator rule (3px solid `#2563EB` or `#D97706`). Includes inline dismiss action and standard text sizes (13px body).
+- Low-saturation, solid tint backgrounds (`#EAF1FE` for info, `#FEF3E2` for notice) with a 1px border. 
+- Integrated left indicator rule (3px solid `#2C6BE0` or `#B45309`). Includes inline dismiss action and standard text sizes (13px body).

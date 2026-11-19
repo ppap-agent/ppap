@@ -155,7 +155,7 @@ function frontmatter(light: TokenNormalizedSet, dark: TokenNormalizedSet): strin
   return `---
 version: alpha
 name: PPAP Web
-description: "Precision Slate: slate neutrals, one blue for commitments, crisp 1px borders and 8px radius for the PPAP web app and Docs Add-on."
+description: "PRD V3.33 palette: grey-blue neutrals, one blue for commitments, a dark navigation rail, crisp 1px borders and 8px radius for the PPAP web app and Docs Add-on."
 colors:
 ${[...lines(light, ""), ...lines(dark, "dark-")].join("\n")}
 typography:
