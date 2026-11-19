@@ -141,6 +141,9 @@ class AuditIntakeClosureTests(unittest.TestCase):
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=populated")
             expect(page.get_by_role("combobox", name="审核客户", exact=True)).to_be_visible()
+            # The upload page carries one step line, worded exactly.
+            expect(page.get_by_role("list", name="审核步骤", exact=True)).to_have_count(1)
+            expect(page.get_by_role("list", name="审核步骤", exact=True)).to_have_text(re.compile(r"^① 上传文件\s*›\s*② 预检并匹配规则\s*›\s*③ AI 审核$"))
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             # Files stay on the upload page beside the customer choice.
             expect(page.get_by_role("combobox", name="审核客户", exact=True)).to_be_visible()
@@ -172,8 +175,12 @@ class AuditIntakeClosureTests(unittest.TestCase):
             for name in ("PFMEA.xlsx", "控制计划.xlsx"):
                 page.get_by_role("checkbox", name=f"送审 {name}", exact=True).uncheck()
             expect(page.get_by_role("button", name="重新识别", exact=True)).to_have_count(0)
-            page.get_by_role("button", name="结束任务", exact=True).click()
-            expect(page.get_by_role("heading", name="任务已结束", exact=True)).to_be_visible()
-            expect(page.get_by_text("仅保留比对资料，未开始审核", exact=True)).to_be_visible()
-            expect(page.get_by_text("未产生审核费用，也没有生成报告。", exact=True)).to_be_visible()
+            # Unsaved choices leave the count to the server; 开始审核 completes the task without a Round.
+            expect(page.get_by_text("送审 待确认", exact=True)).to_be_visible()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            expect(page.get_by_role("heading", name="本次任务无送审文件", exact=True)).to_be_visible()
+            expect(page.get_by_text("本次未勾选送审文件。未开始审核，未扣费，也没有生成审核报告。", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="确认规则", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="返回上传新文件", exact=True).click()
+            expect(page.get_by_role("button", name="选择本地文件", exact=True)).to_be_visible()
             browser.close()

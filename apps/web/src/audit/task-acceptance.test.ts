@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {checkerSuiteUnavailable, confirmationScope, createTaskAcceptance, suiteAdmissionBlocks} from './task-acceptance.ts'
+import {checkerSuiteUnavailable, confirmationScope, createTaskAcceptance, submittedCount, suiteAdmissionBlocks, zeroTargetNote} from './task-acceptance.ts'
 
 type Task = components['schemas']['AuditTask']
 function pending(digest = 'a'.repeat(64)): Task {
@@ -255,4 +255,30 @@ test('lost stale-Suite refusal settles the original operation before a fresh rea
 test('a missing Suite is reported as an adoption step, not a file recognition failure', () => {
   assert.equal(checkerSuiteUnavailable({gaps: ['metadata_uses_excerpt', 'checker_suite_unavailable']}), true)
   assert.equal(checkerSuiteUnavailable({gaps: ['metadata_uses_excerpt']}), false)
+})
+
+test('送审 S 份 reads the saved server scope and is 待确认 without one', () => {
+  const task = pending()
+  const reference = {...structuredClone(task.files[0]), file: {...task.files[0].file, id: 'file-r'}, match: {...task.files[0].match!, state: 'reference' as const, rule: null}}
+  const unmatched = {...structuredClone(task.files[0]), file: {...task.files[0].file, id: 'file-u'}, match: {...task.files[0].match!, state: 'unmatched' as const, rule: null}}
+  const unselected = {...structuredClone(task.files[0]), file: {...task.files[0].file, id: 'file-x'}, selection: 'unselected' as const, match: null}
+  const mixed: Task = {...task, files: [...task.files, reference, unmatched, unselected], confirmation_scope: {target_file_version_ids: ['file-a'], reference_file_version_ids: ['file-r'], excluded_files: [{file_version_id: 'file-u', reason: '未匹配到生效规则，未纳入审核'}]}}
+  // References, unmatched and unchecked files never count; only the server's targets do.
+  assert.equal(submittedCount(mixed, false), 1)
+  assert.equal(submittedCount({...mixed, files: mixed.files.slice(1), confirmation_scope: {target_file_version_ids: [], reference_file_version_ids: ['file-r'], excluded_files: [{file_version_id: 'file-u', reason: '未匹配到生效规则，未纳入审核'}]}}, false), 0)
+  // Unsaved choices, a missing scope, a scope that does not fit the files, or recognition still running: 待确认, never a made-up 0.
+  assert.equal(submittedCount(mixed, true), null)
+  assert.equal(submittedCount({...mixed, confirmation_scope: null}, false), null)
+  assert.equal(submittedCount({...mixed, confirmation_scope: {...mixed.confirmation_scope!, target_file_version_ids: ['file-a', 'file-u']}}, false), null)
+  assert.equal(submittedCount({...mixed, state: 'matching'}, false), null)
+})
+
+test('a task without targets says whether files were left out or nothing matched', () => {
+  const base = pending().files[0]
+  const row = (id: string, selection: 'selected' | 'unselected' | 'removed', state: 'matched' | 'unmatched' | 'reference' | null) => ({...structuredClone(base), file: {...base.file, id}, selection, match: state ? {...base.match!, state, rule: state === 'matched' ? base.match!.rule : null} : null})
+  assert.equal(zeroTargetNote([row('a', 'unselected', null), row('r', 'selected', 'reference')]), '本次未勾选送审文件。')
+  assert.equal(zeroTargetNote([row('a', 'removed', null)]), '本次未勾选送审文件。')
+  assert.equal(zeroTargetNote([row('u', 'selected', 'unmatched'), row('r', 'selected', 'reference')]), '上传的文件都没有匹配到审核规则。')
+  assert.equal(zeroTargetNote([row('a', 'unselected', null), row('u', 'selected', 'unmatched')]), '部分文件未勾选送审，其余文件未匹配到审核规则。')
+  assert.equal(zeroTargetNote([row('r', 'selected', 'reference')]), '只有比对资料，比对资料不单独送审。')
 })

@@ -22,7 +22,7 @@ class TemplateLinksPreviewTests(unittest.TestCase):
             for name in ("查看标准模板", "反馈对应模板"):
                 # All three files are stopped for one reason, so they share one set of entries.
                 expect(page.get_by_role("button", name=name, exact=True)).to_have_count(1)
-            expect(page.get_by_role("button", name="结束任务", exact=True)).to_be_enabled()
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
             page.get_by_role("button", name="反馈对应模板", exact=True).click()
             expect(page.get_by_role("dialog", name="补充模板", exact=True)).to_be_visible()
             browser.close()

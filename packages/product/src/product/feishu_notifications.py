@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from urllib.parse import urlencode
 
+from product.customers import full_name
 from product.feishu_drive import OPEN_API
 
 _MARKDOWN_ESCAPES = {ord(char): f"&#{ord(char)};" for char in "&<>*_~[]()\\#!`+-|{}:'\""}
@@ -44,8 +45,6 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
                 detail = "匹配尚未确认，请打开页面核对"
             notices = [gap for gap in match.get("gaps") or [] if gap != "metadata_uses_excerpt"]
             blocks.append("**" + _markdown(row["file"]["original_filename"]) + "**<br>" + "<br>".join(_markdown(value) for value in [detail, *notices]))
-        if task.get("deep_mode"):
-            blocks.append("**深度模式**（点数按 1.5 倍计；未完成深度复核的文件按 500 点计）")
         blocks.append(f"**预计点数：{task.get('estimated_points') if task.get('estimated_points') is not None else '待核对'}**")
     elif stage == "started":
         blocks.append(f"本次审核 **{len(targets)} 份文件**。<br>可离开页面，稍后打开审核查看进度。")
@@ -61,10 +60,19 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
         names = {row["file"]["id"]: row["file"]["original_filename"] for row in files}
         for reference in report_package["reports"]:
             outcome: dict = next((item for item in report_package.get("outcomes", []) if item["reference"] == reference), {})
-            detail = "**" + _markdown(outcome.get("filename") or names[reference["file_version_id"]]) + "**"
-            if outcome.get("checker_verification"):
-                detail += "<br>" + _markdown(outcome["checker_verification"]["notice"])
-            blocks.append(detail)
+            blocks.append("**" + _markdown(outcome.get("filename") or names[reference["file_version_id"]]) + "**")
+    elif task.get("completion_reason") == "no_matching_rules":
+        # Message 4 for a task with nothing to submit: it completed on the confirm page, with no audit, charge or report.
+        title = "本次任务无送审文件"
+        selected = [row for row in files if row.get("selection") == "selected"]
+        reason = (
+            "本次未勾选送审文件"
+            if not selected
+            else "只有比对资料，比对资料不单独送审"
+            if all((row.get("match") or {}).get("state") == "reference" for row in selected)
+            else "上传的文件都没有匹配到审核规则"
+        )
+        blocks.append(reason + "。未开始审核，未扣费，也没有生成审核报告。")
     else:
         ready, failed = reports.count("ready"), reports.count("failed")
         errors = sum((row.get("audit") or {}).get("execution") == "review_failed" or state == "not_eligible" for row, state in zip(targets, reports, strict=True))
@@ -73,10 +81,6 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
         counts = [(row.get("audit") or {})["counts"] for row in targets if isinstance((row.get("audit") or {}).get("counts"), dict)]
         if counts and len(counts) == len(targets):
             blocks.append(_counts_text({key: sum(value[key] for value in counts) for key in counts[0]}))
-        if task.get("completion_reason") == "no_matching_rules":
-            selected = [row for row in files if row.get("selection") == "selected"]
-            reason = "未选择待审文件" if not selected else "仅保留比对资料" if all((row.get("match") or {}).get("state") == "reference" for row in selected) else "没有匹配到生效规则"
-            blocks.append(reason + "，未开始审核，未生成正式报告。")
         for row in targets:
             audit = row.get("audit") or {}
             conclusion = {"PASS": "符合", "NG": "不符合"}.get(audit.get("conclusion") or "", "无正式结论")
@@ -84,22 +88,10 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
             detail = f"<text_tag color='{color}'>{conclusion}</text_tag>"
             if audit.get("counts"):
                 detail += " " + _counts_text(audit["counts"])
-            verification = audit.get("checker_verification")
-            if verification:
-                detail += "<br>" + _markdown(verification["notice"])
             blocks.append("**" + _markdown(row["file"]["original_filename"]) + "**<br>" + detail)
-    if stage in {"completed", "zip_ready"}:
-        verifications = (
-            [outcome.get("checker_verification") for outcome in (report_package or {}).get("outcomes", [])]
-            if stage == "zip_ready"
-            else [(row.get("audit") or {}).get("checker_verification") for row in targets]
-        )
-        unverified = sum(bool(value and value["status"] == "unverified") for value in verifications)
-        not_rerun = sum(bool(value and value["samples_not_rerun"]) for value in verifications)
-        if unverified:
-            blocks[0] += f"<br>**{unverified} 份采用未经验证的检查版本；全部 PASS 不表示版本已通过样本验证。**"
-        if not_rerun:
-            blocks[0] += f"<br>**{not_rerun} 份在受理时平台已更新，样本未重跑。**"
+    # The card body names the customer by its registered full name; automatic mode names none.
+    if stage != "zip_ready" and task.get("customer_preference"):
+        blocks.insert(1, "客户：" + _markdown(full_name(task["customer_preference"])))
     if stage != "zip_ready" and references:
         blocks.append("**比对资料**<br>" + "<br>".join(_markdown(row["file"]["original_filename"]) for row in references) + "<br><font color='grey'>已固定版本，不单独审核。</font>")
     params = {"view": "archive"} if archive_package else {"task": task["id"]}

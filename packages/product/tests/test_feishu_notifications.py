@@ -174,7 +174,9 @@ def test_recall_card_separates_comparison_material_from_audited_files(stage) -> 
 def test_zero_match_card_does_not_claim_an_audit_or_report_and_oversized_card_fails_boundedly() -> None:
     task = {"id": "task-a", "number": "001", "completion_reason": "no_matching_rules", "files": []}
     card = task_notification_card(task, "completed", "https://ppap.example.test")
-    assert "未开始审核，未生成正式报告" in _text(card)
+    assert card["header"]["title"]["content"] == "本次任务无送审文件"
+    assert "本次未勾选送审文件。未开始审核，未扣费，也没有生成审核报告。" in _text(card)
+    assert "报告已就绪" not in _text(card)
     with pytest.raises(ValueError, match="notification_card_too_large"):
         task_notification_card(task, "completed", "https://ppap.example.test/" + "x" * 30000)
 
@@ -302,3 +304,9 @@ def test_confirmation_card_displays_only_server_admission_scope_and_exclusion_re
     assert f"预计点数：{0 if all_blocked else 500}" in text
     callbacks = [element for element in card["body"]["elements"] if any(behavior["type"] == "callback" for behavior in element.get("behaviors", []))]
     assert len(callbacks) == (0 if all_blocked else 1)
+
+
+def test_card_body_names_the_customer_by_its_registered_full_name() -> None:
+    task = {"id": "task-a", "number": "001", "customer_preference": "UAES", "files": []}
+    assert "客户：联合汽车电子有限公司" in _text(task_notification_card(task, "started", "https://ppap.example.test"))
+    assert "客户" not in _text(task_notification_card({**task, "customer_preference": None}, "started", "https://ppap.example.test"))

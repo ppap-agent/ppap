@@ -451,7 +451,7 @@ def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task(
         page.get_by_role("option", name="规则 B", exact=True).click()
         expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
         expect(page.get_by_role("combobox", name="已接收.xlsx 的适用规则", exact=True)).to_contain_text("规则 B")
-        expect(page.get_by_role("status").filter(has_text="文件或规则选择已有变更，请重新识别后再确认或结束任务。")).to_be_visible()
+        expect(page.get_by_role("status").filter(has_text="文件或规则选择已有变更，请重新识别后再开始审核。")).to_be_visible()
         expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
         assert http.task["id"] == original_id and len(http.task_commands) == 1
         page.get_by_role("button", name="按所选规则重新识别", exact=True).click()
@@ -483,7 +483,7 @@ def test_customer_mode_keeps_task_selection_separate_from_confirmed_default():
         server.install(page)
         page.goto(WEB + "/tasks/new")
         choice = page.get_by_role("combobox", name="审核客户", exact=True)
-        expect(choice).to_contain_text("UAES（联电）")
+        expect(choice).to_contain_text("UAES")
         choice.click()
         page.get_by_role("option", name="理想", exact=True).click()
         expect(choice).to_contain_text("理想")
@@ -529,7 +529,7 @@ def test_pending_default_cannot_silently_create_an_auto_customer_upload():
         expect(page.get_by_label("选择审核文件", exact=True)).to_be_disabled()
         assert server.preparation_creates == []
         pending.pop().fulfill(json=server.customer_default)
-        expect(page.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text("UAES（联电）")
+        expect(page.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text("UAES")
         expect(page.get_by_role("button", name="选择本地文件", exact=True)).to_be_enabled()
         pick_audit_files(page, {"name": "资料.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
         expect(page.get_by_role("checkbox", name="选择 资料.xlsx", exact=True)).to_be_checked()
@@ -553,7 +553,7 @@ def test_explicit_auto_selection_can_continue_while_default_read_is_pending():
         expect(page.get_by_role("button", name="选择本地文件", exact=True)).to_be_enabled()
         expect(choice).to_contain_text("自动识别")
         pending.pop().fulfill(json={"customer_preference": "UAES", "revision": 3})
-        expect(page.get_by_text("企业默认：UAES（联电）", exact=True)).to_be_visible()
+        expect(page.get_by_text("企业默认：UAES", exact=True)).to_be_visible()
         expect(choice).to_contain_text("自动识别")
         assert server.default_writes == []
         browser.close()

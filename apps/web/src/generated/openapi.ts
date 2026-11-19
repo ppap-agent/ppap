@@ -1921,15 +1921,27 @@ export interface components {
         };
         /**
          * AuditArchiveCustomer
-         * @description One customer's documents as the same vehicle/part tree; filter by `customer` plus a category id.
+         * @description One customer's documents as the same vehicle/part tree; filter by `customer` = `id` plus a category id.
+         *
+         *     A registered customer is one node whichever registered name its documents recorded (`id` is its customer id).
+         *     A recorded value matching no registered customer is its own node, `registered` false, shown as recorded.
+         *     `values` are the recorded customer values in this node.
          */
         AuditArchiveCustomer: {
             /** Categories */
             categories: components["schemas"]["AuditArchiveCategory"][];
             /** Count */
             count: number;
-            /** Label */
-            label: string;
+            /** Full Name */
+            full_name: string;
+            /** Id */
+            id: string;
+            /** Registered */
+            registered: boolean;
+            /** Short Name */
+            short_name: string;
+            /** Values */
+            values: string[];
         };
         /**
          * AuditArchiveDocument
@@ -2085,20 +2097,30 @@ export interface components {
             /** Observed At */
             observed_at: string;
         };
-        /** AuditCustomer */
+        /**
+         * AuditCustomer
+         * @description A registered customer. `name` is the name rules and the customer preference use; null coverage means M is not configured.
+         */
         AuditCustomer: {
+            coverage: components["schemas"]["CustomerCoverage"] | null;
             /** Customer Id */
             customer_id: string;
+            /** Full Name */
+            full_name: string;
             /** Name */
             name: string;
+            /** Short Name */
+            short_name: string;
         };
         /**
          * AuditCustomerCatalog
-         * @description Customers with current published rules in the requesting tenant.
+         * @description Registered customers, and customer names on current rules that match no registered customer, exactly as recorded.
          */
         AuditCustomerCatalog: {
             /** Customers */
             customers: components["schemas"]["AuditCustomer"][];
+            /** Unregistered */
+            unregistered: string[];
         };
         /** AuditCustomerDefault */
         AuditCustomerDefault: {
@@ -3249,6 +3271,32 @@ export interface components {
             } | null;
         };
         /**
+         * CustomerCoverage
+         * @description M and its two independent numerators: types with a controlled template, and types with a current rule (each type once).
+         */
+        CustomerCoverage: {
+            /** Effective From */
+            effective_from: string;
+            /** Rule Types */
+            rule_types: string[];
+            /** Template Types */
+            template_types: string[];
+            /** Types */
+            types: components["schemas"]["CustomerTypeEntry"][];
+            /** Version */
+            version: string;
+        };
+        /**
+         * CustomerTypeEntry
+         * @description One document type of a customer's type set M: its PPAP code and the type name rules use.
+         */
+        CustomerTypeEntry: {
+            /** Code */
+            code: string;
+            /** Rule Type */
+            rule_type: string;
+        };
+        /**
          * DeepClauseReview
          * @description The deep reviewer's record for one clause, kept apart from human review.
          *
@@ -3665,12 +3713,13 @@ export interface components {
         };
         /** LibraryCustomer */
         LibraryCustomer: {
+            coverage: components["schemas"]["TemplateCoverage"] | null;
+            /** Full Name */
+            full_name: string;
             /** Id */
             id: string;
-            /** Name */
-            name: string;
-            /** Standard Type Codes */
-            standard_type_codes: string[];
+            /** Short Name */
+            short_name: string;
             /** Templates */
             templates: components["schemas"]["LibraryTemplate"][];
         };
@@ -3876,6 +3925,38 @@ export interface components {
             /** Title */
             title: string;
         };
+        /**
+         * PrecheckMissingPeer
+         * @description S04: the peer this file is compared against is not in the batch.
+         */
+        PrecheckMissingPeer: {
+            /** Document */
+            document: string;
+            /** Document Type */
+            document_type: string;
+            /** Part Number */
+            part_number?: string;
+        };
+        /**
+         * PrecheckSourceMismatch
+         * @description S07: the linked peer arrived but names another part; `value` is the audited file's, `found_value` the peer's.
+         */
+        PrecheckSourceMismatch: {
+            /** Document */
+            document: string;
+            /** Document Type */
+            document_type: string;
+            /** Found File Version Id */
+            found_file_version_id: string;
+            /** Found Filename */
+            found_filename: string;
+            /** Found Value */
+            found_value: string;
+            /** Identity */
+            identity: string;
+            /** Value */
+            value: string;
+        };
         /** PrecheckStatus */
         PrecheckStatus: {
             /** Code */
@@ -3884,10 +3965,12 @@ export interface components {
             file_version_id: string;
             /** Filename */
             filename: string;
+            missing?: components["schemas"]["PrecheckMissingPeer"];
             /** Note */
             note: string;
             /** Scope */
             scope?: string;
+            source_mismatch?: components["schemas"]["PrecheckSourceMismatch"];
         };
         /** PresenceRuleBody */
         PresenceRuleBody: {
@@ -4838,6 +4921,20 @@ export interface components {
         TaskDocumentResponse: {
             /** Task Id */
             task_id: string;
+        };
+        /**
+         * TemplateCoverage
+         * @description Template coverage N_t/M against the customer's versioned type set M.
+         */
+        TemplateCoverage: {
+            /** Covered */
+            covered: number;
+            /** Effective From */
+            effective_from: string;
+            /** Total */
+            total: number;
+            /** Version */
+            version: string;
         };
         /** TemplateLibrary */
         TemplateLibrary: {
@@ -7931,7 +8028,6 @@ export interface operations {
         parameters: {
             query?: {
                 ai_item_id?: string;
-                deep_mode?: boolean;
                 target_count?: number | null;
             };
             header?: never;

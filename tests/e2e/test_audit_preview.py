@@ -30,7 +30,13 @@ def original_recognition_address(task_url):
 
 
 def evidence_sheet(page):
-    return page.get_by_role("dialog", include_hidden=True).filter(has=page.get_by_role("tab", name="核对原件", exact=True, include_hidden=True)).and_(page.locator('[data-state="open"]'))
+    """A clause's basis beyond its row is read in 逐条复核/逐条查看; the list itself has no second basis panel."""
+    return page.get_by_role("region", name="专注复核", exact=True)
+
+
+def original_sheet(page):
+    """The original opened from a location in the 判定依据 column or from 查看原件."""
+    return page.get_by_role("dialog", name="原件对照", exact=True, include_hidden=True)
 
 
 def settle(page):
@@ -45,7 +51,7 @@ def settle(page):
 def close_workspace_panel(page):
     settle(page)
     for panel in (
-        evidence_sheet(page),
+        original_sheet(page),
         page.get_by_role("dialog", name="文件信息", exact=True, include_hidden=True),
         page.get_by_role("dialog", name="完成通知设置", exact=True, include_hidden=True),
     ):
@@ -64,6 +70,9 @@ def close_workspace_panel(page):
         expect(panel).to_have_count(0)
     # Let the exit animation finish so its focus return cannot land after the next step.
     settle(page)
+    if evidence_sheet(page).is_visible():
+        page.get_by_role("button", name="返回审核项", exact=True).click()
+        expect(evidence_sheet(page)).to_have_count(0)
 
 
 def open_basis(page):
@@ -71,15 +80,18 @@ def open_basis(page):
     panel = evidence_sheet(page)
     settle(page)
     if not panel.is_visible():
-        page.get_by_role("button", name=re.compile("^查看依据 ")).first.click()
+        page.get_by_role("button", name=re.compile("^逐条(复核|查看)$")).click()
     return panel
 
 
 def select_clause(page, clause):
     close_workspace_panel(page)
     open_task_file(page)
-    page.get_by_role("button", name="查看依据 " + clause, exact=True).click()
-    return evidence_sheet(page)
+    number = clause_row(page, clause).get_by_role("cell").first.inner_text().strip()
+    panel = open_basis(page)
+    panel.get_by_role("combobox", name="条款目录", exact=True).click()
+    page.get_by_role("option", name=re.compile(rf"^第 {number} 条 · ")).click()
+    return panel
 
 
 def file_information(page):
@@ -114,7 +126,12 @@ def audit_details(page):
 
 
 def clause_row(page, clause):
-    return page.get_by_role("region", name="审核项", exact=True).get_by_role("row").filter(has=page.get_by_role("button", name="查看依据 " + clause, exact=True))
+    """A clause's row in the four-column list; its source id stays in the hover text of 序号."""
+    return page.get_by_role("region", name="审核项", exact=True).get_by_role("row").filter(has=page.locator(f'[title="来源编号 {clause}"]'))
+
+
+def clause_result(page, clause):
+    return clause_row(page, clause).get_by_role("cell").nth(2)
 
 
 def history_rail(page):
@@ -183,7 +200,7 @@ def notification_control(page):
 def read_results(page):
     settle(page)
     basis = evidence_sheet(page)
-    # The panel title shows "第 N 条 · 名称"; its source id stays in the title attribute.
+    # The focus title shows "第 N 条 · 名称"; its source id stays in the title attribute.
     clause = basis.get_by_role("heading").first.get_attribute("title") if basis.is_visible() else None
     info = page.get_by_role("dialog", name="文件信息", exact=True, include_hidden=True).is_visible()
     notification = page.get_by_role("dialog", name="完成通知设置", exact=True, include_hidden=True).is_visible()
@@ -192,7 +209,7 @@ def read_results(page):
         open_task_file(page)
     page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True).click()
     if clause:
-        page.get_by_role("button", name="查看依据 " + clause, exact=True).click()
+        select_clause(page, clause)
     elif info:
         file_information(page)
     elif notification:
@@ -826,7 +843,7 @@ class AuditPreviewTests(unittest.TestCase):
             read_results(page)
             open_basis(page)
             page.get_by_role("button", name="记录人工复核", exact=True).click()
-            editor = page.get_by_role("dialog", name="人工复核", exact=True)
+            editor = page.get_by_role("region", name="人工复核编辑", exact=True)
             editor.get_by_role("combobox", name="人工判断", exact=True).click()
             page.get_by_role("option", name="不同意机器结果", exact=True).click()
             editor.get_by_role("textbox", name="判断理由", exact=True).fill("最新人工记录，不能被旧读取覆盖。")
@@ -866,7 +883,7 @@ class AuditPreviewTests(unittest.TestCase):
             open_basis(page)
             expect(record.get_by_role("textbox")).to_have_count(0)
             close_workspace_panel(page)
-            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^第 1 条 频次一致性 .*不符合 .*查看依据 1\.1"))).to_be_visible()
+            expect(clause_result(page, "1.1")).to_have_text("不符合")
             expect(page.get_by_role("button", name="查看报告", exact=True)).to_have_count(0)
             open_basis(page)
             record.get_by_role("button", name="核对复核原件 控制计划.xlsx", exact=True).click()
@@ -884,13 +901,13 @@ class AuditPreviewTests(unittest.TestCase):
             open_basis(page)
             expect(record.get_by_text("人工查阅原件后认为频次符合要求。", exact=True)).to_have_count(0)
             close_workspace_panel(page)
-            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^第 2 条 记录完整性 .*未覆盖 .*查看依据 1\.2"))).to_be_visible()
+            expect(clause_result(page, "1.2")).to_have_text("未覆盖")
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name="控制计划.xlsx", exact=True).click()
             open_basis(page)
             expect(record).to_have_count(0)
             close_workspace_panel(page)
             close_workspace_panel(page)
-            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^第 1 条 频次一致性 .*符合 查看依据 2\.1"))).to_be_visible()
+            expect(clause_result(page, "2.1")).to_have_text("符合")
             browser.close()
 
     def test_legacy_human_judgment_is_preserved_without_assuming_a_known_label(self):
@@ -904,7 +921,7 @@ class AuditPreviewTests(unittest.TestCase):
             open_basis(page)
             expect(record.get_by_text("toString", exact=True)).to_be_visible()
             close_workspace_panel(page)
-            expect(page.get_by_role("table").get_by_role("row", name=re.compile(r"^第 1 条 频次一致性 .*不符合 .*查看依据 1\.1"))).to_be_visible()
+            expect(clause_result(page, "1.1")).to_have_text("不符合")
             browser.close()
 
     def test_saved_human_citation_cannot_open_a_file_outside_the_frozen_round(self):
@@ -919,7 +936,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(record.get_by_role("button", name="核对复核原件 不在本轮的原件", exact=True)).to_be_disabled()
             open_basis(page)
             expect(record.get_by_text("引用不在本轮范围", exact=True)).to_be_visible()
-            expect(page.get_by_role("region", name="原件预览", exact=True)).to_have_count(0)
+            expect(page.get_by_role("region", name="人工复核引用", exact=True)).to_have_count(0)
             browser.close()
 
     def test_old_recovery_uses_the_newer_task_files_and_rules_already_read_from_the_server(self):
@@ -1081,16 +1098,16 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="确认规则", exact=True)).to_be_visible()
             expect(held_reply).to_have_count(1)
             page.get_by_role("button", name="移除", exact=True).first.click()
-            page.get_by_role("button", name="结束任务", exact=True).click()
-            expect(page.get_by_role("heading", name="任务已结束", exact=True)).to_be_visible()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            expect(page.get_by_role("heading", name="本次任务无送审文件", exact=True)).to_be_visible()
             close_workspace_panel(page)
             held_reply.click()
             task_list(page)
             expect(row).to_contain_text("审核完成")
             row.click()
-            expect(page.get_by_role("heading", name="任务已结束", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="本次任务无送审文件", exact=True)).to_be_visible()
             expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
-            expect(page.get_by_role("button", name="结束任务", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
             browser.close()
 
     def test_late_rematch_receipt_cannot_replace_an_active_frozen_task_from_another_entry(self):
@@ -1286,11 +1303,11 @@ class AuditPreviewTests(unittest.TestCase):
             recognize(page)
             for _ in range(3):
                 page.get_by_role("button", name="移除", exact=True).first.click()
-            page.get_by_role("button", name="结束任务", exact=True).click()
-            expect(page.get_by_role("alert").filter(has_text="结束结果待确认")).to_be_visible()
-            expect(page.get_by_role("button", name="结束任务", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            expect(page.get_by_role("alert").filter(has_text="提交结果待确认")).to_be_visible()
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
             page.get_by_role("button", name="读取任务状态", exact=True).click()
-            expect(page.get_by_role("heading", name="任务已结束", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="本次任务无送审文件", exact=True)).to_be_visible()
             task_list(page).get_by_role("button").click()
             expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
             expect(page.get_by_text("未匹配到规则", exact=True)).to_have_count(3)
@@ -1304,12 +1321,12 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=unmatched-end-unknown")
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
             page.get_by_role("button", name="开始识别", exact=True).click()
-            page.get_by_role("button", name="结束任务", exact=True).click()
-            expect(page.get_by_role("alert").filter(has_text="结束结果待确认")).to_be_visible()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            expect(page.get_by_role("alert").filter(has_text="提交结果待确认")).to_be_visible()
             for remove in page.get_by_role("button", name="移除", exact=True).all():
                 expect(remove).to_be_disabled()
             page.get_by_role("button", name="读取任务状态", exact=True).click()
-            expect(page.get_by_role("heading", name="任务已结束", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="本次任务无送审文件", exact=True)).to_be_visible()
             expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_have_count(0)
             browser.close()
 
@@ -1375,10 +1392,10 @@ class AuditPreviewTests(unittest.TestCase):
                     details = audit_details(page)
                     details.get_by_role("textbox", name="搜索审核项", exact=True).fill("记录")
                     select_clause(page, "2.2")
-                    address = page.url
                     selected = evidence_sheet(page).get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)
                     expect(selected).to_be_visible()
                     close_workspace_panel(page)
+                    address = page.url
                     alert = page.get_by_role("alert").filter(has_text=notice)
                     trigger = alert.get_by_role("button", name="联系支持", exact=True)
                     expect(trigger).to_be_visible()
@@ -2434,7 +2451,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="控制计划.xlsx", exact=True).locator("xpath=ancestor::section[1]")).to_contain_text("识别异常")
             expect(page.get_by_text("请返回检查文件后重新识别。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
-            expect(page.get_by_role("button", name="结束任务", exact=True)).to_have_count(0)
             page.get_by_role("button", name="上一步", exact=True).click()
             expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
             expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).to_be_checked()
@@ -2510,7 +2526,6 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).click()
             original = page.get_by_role("region", name="原件预览", exact=True)
             expect(original).to_have_attribute("data-file-version", "preview-recovery-version-1")
-            page.get_by_role("tab", name="审核详情", exact=True).click()
             select_clause(page, "1.2")
             expect(evidence_sheet(page).get_by_text("本项审核中…", exact=True)).to_be_visible()
             expect(evidence_sheet(page).get_by_role("button", name=re.compile("核对 "))).to_have_count(0)
@@ -2529,11 +2544,11 @@ class AuditPreviewTests(unittest.TestCase):
             open_basis(page)
             page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).click()
             expect(original).to_have_attribute("data-file-version", "preview-recovery-version-1")
-            page.get_by_role("tab", name="审核详情", exact=True).click()
             select_clause(page, "1.2")
             selected_url = page.url
             read_results(page)
             expect(evidence_sheet(page).get_by_role("heading", name="第 2 条 · 记录完整性", exact=True)).to_be_visible()
+            expect(page).to_have_url(selected_url)
             close_workspace_panel(page)
             expect(page.get_by_role("status").filter(has_text="文件已结束 3/3")).to_be_visible()
             expect(clause_row(page, "1.2")).to_contain_text("无法判断")
@@ -2542,7 +2557,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(detail.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="不符合", exact=True)).to_have_accessible_description("1")
             expect(detail.get_by_text("无法判断 1", exact=True)).to_be_visible()
             expect(detail.get_by_role("button", name="查看报告", exact=True)).to_have_count(0)
-            expect(page).to_have_url(selected_url)
             browser.close()
 
     def test_matched_rule_comparison_gap_survives_back_without_changing_the_selected_files(self):
@@ -2587,9 +2601,8 @@ class AuditPreviewTests(unittest.TestCase):
             recognize(page)
             page.get_by_role("button", name="开始审核", exact=True).click()
             read_results(page)
-            open_basis(page)
-            page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).click()
-            original = page.get_by_role("region", name="原件预览", exact=True)
+            clause_row(page, "1.1").get_by_role("list", name="证据位置", exact=True).get_by_role("button").first.click()
+            original = original_sheet(page).get_by_role("region", name="原件预览", exact=True)
             expect(original.get_by_role("status")).to_contain_text("正在连接原件预览")
             old = page.get_by_text("原件配置 · 控制计划.xlsx · 读取 1", exact=True).locator("..")
             original.get_by_role("button", name="重新查看原件", exact=True).click()
@@ -2600,10 +2613,7 @@ class AuditPreviewTests(unittest.TestCase):
             deliver_reply(old.get_by_role("button", name=re.compile("返回示例读取"), include_hidden=True))
             expect(page.get_by_text("原件配置 · 控制计划.xlsx · 读取 1", exact=True)).to_have_count(0)
             expect(notice).to_be_visible()
-            page.get_by_role("tab", name="审核详情", exact=True).click()
-            select_clause(page, "1.2")
-            open_basis(page)
-            page.get_by_role("button", name="核对 PFMEA.xlsx", exact=True).click()
+            page.get_by_role("button", name="查看原件", exact=True).click()
             expect(original.get_by_role("status")).to_contain_text("正在连接原件预览")
             expect(original.get_by_text("在线预览暂不可用，请下载查看。", exact=True)).to_have_count(0)
             deliver_reply(page.get_by_text("原件配置 · PFMEA.xlsx · 读取 1", exact=True).locator("..").get_by_role("button", name=re.compile("令示例读取.*失败"), include_hidden=True))
@@ -2649,7 +2659,6 @@ class AuditPreviewTests(unittest.TestCase):
                     self.assertIn(version, cells)
                     self.assertIn("预览原件", cells)
                 self.assertEqual(target.read_bytes(), original_bytes)
-            page.get_by_role("tab", name="审核详情", exact=True).click()
             expect(evidence_sheet(page).get_by_role("heading", name="第 1 条 · 频次一致性", exact=True)).to_be_visible()
             close_workspace_panel(page)
             expect(page.get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()
@@ -2665,10 +2674,10 @@ class AuditPreviewTests(unittest.TestCase):
             recognize(page)
             page.get_by_role("button", name="开始审核", exact=True).click()
             read_results(page)
-            detail = audit_details(page)
+            audit_details(page)
             page.get_by_role("group", name="审核结果筛选", exact=True).get_by_role("button", name="全部", exact=True).click()
-            expect(detail.get_by_role("table").get_by_role("row").filter(has=page.get_by_role("button", name="查看依据 1.1", exact=True))).to_contain_text("不符合")
-            expect(detail.get_by_role("table").get_by_role("row").filter(has=page.get_by_role("button", name="查看依据 1.2", exact=True))).to_contain_text("符合")
+            expect(clause_result(page, "1.1")).to_have_text("不符合")
+            expect(clause_result(page, "1.2")).to_have_text("符合")
             select_clause(page, "1.2")
             expect(evidence_sheet(page).get_by_text("检查范围：已查 0/1，未知 1。", exact=True)).to_be_visible()
             expect(evidence_sheet(page).get_by_text(re.compile("检查范围未完整覆盖。"))).to_be_visible()
@@ -2897,7 +2906,6 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_be_enabled()
             page.get_by_role("button", name="查看原件", exact=True).click()
             expect(page.get_by_text("本次原件不可访问", exact=True)).to_be_visible()
-            page.get_by_role("tab", name="审核详情", exact=True).click()
             close_workspace_panel(page)
             page.get_by_role("button", name="查看报告", exact=True).click()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
@@ -3633,7 +3641,8 @@ class AuditPreviewTests(unittest.TestCase):
             expect(historical).to_contain_text("10/15")
             expect(historical).to_contain_text("19:00")
             information = page.get_by_role("dialog", name="报告信息", exact=True)
-            expect(information.get_by_role("button", name="复制追溯信息", exact=True)).to_have_attribute("title", re.compile(r"规则版本标识：preview-rule-2(\n|$)"))
+            expect(information.get_by_role("button", name="复制追溯信息", exact=True)).to_have_count(0)
+            expect(information.locator("[title*='preview-rule-2']")).to_have_count(0)
             expect(information.get_by_text("preview-rule-2", exact=True)).to_have_count(0)
             browser.close()
 
@@ -4552,7 +4561,6 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).click()
             original = page.get_by_role("region", name="原件预览", exact=True)
             expect(original.get_by_text("控制计划.xlsx", exact=True)).to_have_count(2)
-            page.get_by_role("tab", name="审核详情", exact=True).click()
             close_workspace_panel(page)
             expect(page.get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()
             close_workspace_panel(page)
@@ -4713,7 +4721,6 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="使用三类文件示例").click()
             page.get_by_role("button", name="开始识别", exact=True).click()
             expect(page.get_by_role("status").filter(has_text=re.compile(r"^识别中 \d/3$"))).to_be_visible()
-            expect(page.get_by_role("button", name="结束任务", exact=True)).to_have_count(0)
             expect(page.get_by_role("button", name="返回示例读取 1", exact=True)).to_be_visible()
             new_task(page)
             close_workspace_panel(page)
@@ -4820,9 +4827,10 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="使用三类文件示例").click()
             recognize(page)
             page.get_by_role("button", name="移除", exact=True).first.click()
-            page.get_by_role("button", name="结束任务", exact=True).click()
-            expect(page.get_by_text("未匹配到可用规则，未开始审核", exact=True)).to_be_visible()
-            expect(page.get_by_text("未产生审核费用，也没有生成报告。", exact=True)).to_be_visible()
+            # Every file is unmatched: the server's scope says 0, and 开始审核 completes the task in place.
+            expect(page.get_by_text("送审 0 份", exact=True)).to_be_visible()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            expect(page.get_by_text("上传的文件都没有匹配到审核规则。未开始审核，未扣费，也没有生成审核报告。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
             expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
             expect(page.get_by_text("未匹配到规则", exact=True)).to_be_visible()
@@ -4857,7 +4865,6 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="使用三类文件示例").click()
             recognize(page)
             expect(page.get_by_text("暂时无法确认匹配结果", exact=True)).to_have_count(3)
-            expect(page.get_by_role("button", name="结束任务", exact=True)).to_have_count(0)
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
             page.get_by_role("button", name="上一步", exact=True).click()
             expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).to_be_checked()

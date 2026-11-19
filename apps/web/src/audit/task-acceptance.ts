@@ -27,6 +27,23 @@ export function confirmationScope(task: Task) {
   return scope
 }
 
+/** 「送审 S 份」：S is the server's saved target count; unsaved local choices or a missing scope leave it 待确认 (null), never a local tally. */
+export function submittedCount(task: Task, unsaved: boolean): number | null {
+  if (unsaved || task.state !== 'pending_confirm') return null
+  return confirmationScope(task)?.target_file_version_ids.length ?? null
+}
+
+/** Why a task has no file to submit, told apart so leaving files out never reads as a failed match. */
+export function zeroTargetNote(files: Task['files']): string {
+  const unselected = files.some(row => row.selection === 'unselected')
+  const selected = files.filter(row => row.selection === 'selected')
+  const unmatched = selected.some(row => row.match?.state !== 'reference')
+  if (unselected && unmatched) return '部分文件未勾选送审，其余文件未匹配到审核规则。'
+  if (unselected || !selected.length) return '本次未勾选送审文件。'
+  if (unmatched) return '上传的文件都没有匹配到审核规则。'
+  return '只有比对资料，比对资料不单独送审。'
+}
+
 /** A missing Suite is an adoption step, not a recognition failure of the file. */
 export const checkerSuiteUnavailable = (match: {gaps: string[]}) => match.gaps.includes('checker_suite_unavailable')
 
