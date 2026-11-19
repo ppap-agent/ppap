@@ -91,6 +91,23 @@ def _descendants(root_pid: int) -> set[int]:
     return found
 
 
+def read_progress(work: Path) -> Progress | None:
+    """The guest's latest progress, or None when there is none to read this time.
+
+    The guest replaces the file atomically at each task. A read that meets the replacement (the old file
+    unlinked or changed under it) is simply read again at the next poll: progress is a liveness signal, and a
+    guest that never lets it be read only stops receiving more time. Content that is read whole must be valid.
+    """
+    try:
+        raw = read_regular(work, ("progress.json",), 512)
+    except (OSError, ValueError):
+        return None
+    try:
+        return Progress.model_validate_json(raw)
+    except ValueError:
+        raise ControllerFault("OUTPUT_VALIDATION_ERROR") from None
+
+
 def _kill_tree(process: subprocess.Popen[bytes]) -> None:
     # Capture descendants before killing their parent; a terminal tool can
     # still create another process group, so killpg alone is insufficient.
@@ -309,13 +326,7 @@ class ContainerRuntime:
                 _drain_stderr(process.stderr, stderr_tail)
                 if cancelled.is_set() or time.monotonic() >= deadline:
                     raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
-                try:
-                    raw = read_regular(run / "work", ("progress.json",), 512)
-                    progress = Progress.model_validate_json(raw)
-                except FileNotFoundError:
-                    progress = None
-                except (OSError, ValueError):
-                    raise ControllerFault("OUTPUT_VALIDATION_ERROR") from None
+                progress = read_progress(run / "work")
                 if progress is not None and progress != last_progress:
                     started = progress.completed_count
                     if started is not None and last_task < started <= tasks:

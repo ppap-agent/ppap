@@ -840,3 +840,21 @@ class ContainerBoundaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_progress_met_mid_replacement_is_read_again_and_invalid_progress_still_fails(tmp_path):
+    import pytest
+    from agent.execution.isolation.container import read_progress
+    from agent.execution.isolation.progress import Progress
+    from audit.protocol import ControllerFault
+
+    assert read_progress(tmp_path) is None
+    (tmp_path / "progress.json").write_text('{"phase":"checking","completed_count":1,"total_count":2,"stage":"check","target":"file-a"}')
+    assert read_progress(tmp_path) == Progress(phase="checking", completed_count=1, total_count=2, stage="check", target="file-a")
+    # The guest's atomic replacement leaves the file being read unlinked or linked twice for a moment.
+    os.link(tmp_path / "progress.json", tmp_path / "progress.json.tmp")
+    assert read_progress(tmp_path) is None
+    (tmp_path / "progress.json.tmp").unlink()
+    (tmp_path / "progress.json").write_text('{"phase":"checking","total_count":2}')
+    with pytest.raises(ControllerFault, match="OUTPUT_VALIDATION_ERROR"):
+        read_progress(tmp_path)
