@@ -2,8 +2,9 @@
 
 Activity is a broadcast, never a record: the guest turns Pi events into bounded steps,
 the Controller forwards them, the Worker sends them as notices, and nothing stores them.
-A step names an action, at most one supplier document file name, and the reviewed file.
-Commands, scripts, program source, paths and tool results never leave the guest.
+A step names an action (loading the rules, reading a document or a sheet, viewing an image), at most
+one supplier document file name, and the reviewed file. Notes, commands, scripts, program source,
+paths and tool results never leave the guest.
 """
 
 from __future__ import annotations
@@ -30,18 +31,19 @@ _SEARCH = re.compile(r"(^|[\s|;&(])(rg|grep|egrep)\s")
 _PROGRAM = re.compile(r"\.py\b|checker_lib|site-packages|__file__|\baudit\.", re.IGNORECASE)
 _SHEET = re.compile(r"load_excel_workbook|openpyxl|zipfile|pandas|read_excel|xlrd|\.xlsx?\b", re.IGNORECASE)
 _CONVERT = re.compile(r"\b(soffice|libreoffice)\b", re.IGNORECASE)
-# Commentary that looks like code, paths or markup is not shown.
-_CODE = re.compile(r"[`{}\[\]=;<>/\\$]|\b(def|import|print|return|lambda)\b|\w\(|_\w")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
 
-Action = Literal["read_file", "parse_sheet", "view_image", "convert_image", "search", "read_program", "read_guide", "run_check", "record", "note"]
+# Only what the reviewer does with the user's own material: loading the round's rules (the user's
+# own rules) and reading the documents and their images. Notes, our guides, programs and scripts are not shown.
+Action = Literal["load_rules", "read_file", "read_sheet", "view_image"]
+RULES_FILE = "rules.json"
 
 
 class Activity(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Action
-    # A supplier document file name, or for a note its short sentence.
+    # A supplier document file name.
     subject: str | None = Field(default=None, min_length=1, max_length=MAX_SUBJECT)
     # The reviewed file (its version id), so each file shows its own steps.
     target: str | None = Field(default=None, pattern=r"^[0-9A-Za-z-]{1,64}$")
@@ -63,59 +65,42 @@ def _first_document(text: str) -> str | None:
     return None
 
 
+def _reading(subject: str | None, *, sheet: bool = False) -> Activity | None:
+    """Reading one of the user's documents; nothing without one."""
+    if subject is None:
+        return None
+    if PurePosixPath(subject).suffix.lower() in IMAGES:
+        return Activity(action="view_image", subject=subject)
+    return Activity(action="read_sheet" if sheet else "read_file", subject=subject)
+
+
 def _shell(command: str) -> Activity | None:
     if "stdout.jsonl" in command or "stderr.log" in command:
         return None
     if _CONVERT.search(command):
-        return Activity(action="convert_image", subject=_first_document(command))
-    if _PROGRAM.search(command) and not _SHEET.search(command):
-        return Activity(action="read_program")
-    if _SEARCH.search(command):
-        return Activity(action="read_program" if _PROGRAM.search(command) else "search", subject=_first_document(command))
-    if _SHEET.search(command):
-        return Activity(action="parse_sheet", subject=_first_document(command))
-    return Activity(action="run_check", subject=_first_document(command))
-
-
-def _note(text: str) -> Activity | None:
-    sentence = re.split(r"(?<=[。！？!?])\s*|\n", text.strip(), maxsplit=1)[0].strip()
-    sentence = " ".join(_CONTROL.sub(" ", sentence).split())
-    if not sentence or _CODE.search(sentence):
+        subject = _first_document(command)
+        return Activity(action="view_image", subject=subject) if subject else None
+    if _PROGRAM.search(command) and not _SHEET.search(command) or _SEARCH.search(command):
         return None
-    return Activity(action="note", subject=sentence if len(sentence) <= MAX_SUBJECT else sentence[: MAX_SUBJECT - 1] + "…")
+    if RULES_FILE in command:
+        return Activity(action="load_rules")
+    return _reading(_first_document(command), sheet=bool(_SHEET.search(command)))
 
 
 def activity_from_event(event: Any) -> Activity | None:
     """One Pi event as a step, or None when it says nothing a viewer needs."""
-    if not isinstance(event, dict):
+    if not isinstance(event, dict) or event.get("type") != "tool_execution_start":
         return None
     try:
-        if event.get("type") == "tool_execution_start":
-            tool, raw = event.get("toolName"), event.get("args")
-            args: dict[str, Any] = raw if isinstance(raw, dict) else {}
-            path = args.get("path") if isinstance(args.get("path"), str) else ""
-            if tool == "read" and path:
-                suffix = PurePosixPath(path).suffix.lower()
-                if suffix in IMAGES:
-                    return Activity(action="view_image", subject=_document(path))
-                if suffix in DOCUMENTS:
-                    return Activity(action="read_file", subject=_document(path))
-                if suffix == ".md":
-                    return Activity(action="read_guide")
-                if suffix == ".py" or _PROGRAM.search(path):
-                    return Activity(action="read_program")
-                return None if PurePosixPath(path).name in {"stdout.jsonl", "stderr.log"} else Activity(action="read_file")
-            if tool == "bash" and isinstance(args.get("command"), str):
-                return _shell(args["command"])
-            if tool in {"edit", "write"}:
-                return Activity(action="record")
-            return None
-        if event.get("type") == "message_end":
-            message = event.get("message")
-            if not isinstance(message, dict) or message.get("role") != "assistant" or not isinstance(message.get("content"), list):
-                return None
-            text = " ".join(part["text"] for part in message["content"] if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str))
-            return _note(text) if text.strip() else None
+        tool, raw = event.get("toolName"), event.get("args")
+        args: dict[str, Any] = raw if isinstance(raw, dict) else {}
+        path = args.get("path") if isinstance(args.get("path"), str) else ""
+        if tool == "read" and path:
+            if PurePosixPath(path).name == RULES_FILE:
+                return Activity(action="load_rules")
+            return _reading(_document(path)) if not (path.endswith(".py") or _PROGRAM.search(path)) else None
+        if tool == "bash" and isinstance(args.get("command"), str):
+            return _shell(args["command"])
     except ValidationError:
         return None
     return None

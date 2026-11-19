@@ -8,26 +8,24 @@ const play = (steps: TaskActivity[], from: LiveSteps = NO_STEPS) => steps.reduce
 
 test('consecutive identical actions share a row and every step is counted', () => {
   const steps = play([
-    {action: 'parse_sheet', subject: 'cp.xlsx', target: 'a'},
+    {action: 'read_sheet', subject: 'cp.xlsx', target: 'a'},
     ...[1, 2, 3].map(index => ({action: 'view_image' as const, subject: `image${index}.png`, target: 'a'})),
     {action: 'view_image', subject: 'image1.png', target: 'a'},
-    {action: 'note', subject: '第 3 条维持 NG。', target: 'a'},
-    {action: 'note', subject: '第 4 条改为 PASS。', target: 'a'},
+    {action: 'load_rules', target: 'a'},
   ])
-  assert.equal(steps.count, 7)
+  assert.equal(steps.count, 6)
   assert.deepEqual(steps.items.map(row => [row.action, row.times, row.subjects]), [
-    ['parse_sheet', 1, ['cp.xlsx']],
+    ['read_sheet', 1, ['cp.xlsx']],
     ['view_image', 4, ['image1.png', 'image2.png', 'image3.png']],
-    ['note', 1, ['第 3 条维持 NG。']],
-    ['note', 1, ['第 4 条改为 PASS。']],
+    ['load_rules', 1, []],
   ])
 })
 
 test('only the latest rows stay on screen, and a step without a file belongs to the file under review', () => {
-  let steps = play(Array.from({length: 13}, (_, index) => ({action: index % 2 ? 'search' as const : 'run_check' as const, target: 'a'})))
+  let steps = play(Array.from({length: 13}, (_, index) => ({action: index % 2 ? 'read_file' as const : 'read_sheet' as const, target: 'a'})))
   assert.equal(steps.items.length, LIVE_STEP_WINDOW)
   assert.deepEqual([steps.items[0].id, steps.items.at(-1)!.id], [3, 12])
-  steps = play([{action: 'read_file', subject: 'pfmea.xlsx', target: 'b'}, {action: 'record'}], steps)
+  steps = play([{action: 'read_file', subject: 'pfmea.xlsx', target: 'b'}, {action: 'load_rules'}], steps)
   assert.deepEqual([steps.current, steps.items.at(-1)!.target], ['b', 'b'])
   assert.deepEqual(NO_STEPS, {items: [], count: 0})
 })

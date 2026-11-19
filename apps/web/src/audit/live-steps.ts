@@ -17,7 +17,7 @@ export function appendStep(previous: LiveSteps, step: TaskActivity): LiveSteps {
   // A step without a file belongs to the file under review.
   const target = step.target ?? previous.current
   const last = previous.items.at(-1)
-  const items = last && last.action === step.action && last.target === target && step.action !== 'note'
+  const items = last && last.action === step.action && last.target === target
     ? [...previous.items.slice(0, -1), {...last, times: last.times + 1, subjects: step.subject && !last.subjects.includes(step.subject) && last.subjects.length < MAX_SUBJECTS ? [...last.subjects, step.subject] : last.subjects}]
     : [...previous.items, {id: previous.count, action: step.action, target, subjects: step.subject ? [step.subject] : [], times: 1}].slice(-LIVE_STEP_WINDOW)
   return {items, count: previous.count + 1, current: target}

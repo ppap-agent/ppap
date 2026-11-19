@@ -1,4 +1,4 @@
-import {BookOpen, Check, FileCode2, FileSpreadsheet, FileText, Image, ImageUp, type LucideIcon, MessageSquareText, PencilLine, Search, SquareTerminal} from 'lucide-react'
+import {BookOpen, Check, FileSpreadsheet, FileText, Image, type LucideIcon} from 'lucide-react'
 import {Badge} from '../components/ui/badge'
 import {Progress} from '../components/ui/progress'
 import type {components} from '../generated/openapi'
@@ -14,16 +14,10 @@ type Run = components['schemas']['AuditRun']
 const SHOWN_STEPS = 5
 
 const ACTIONS: Record<ActivityAction, {label: string; icon: LucideIcon}> = {
-  read_file: {label: '读取文件', icon: FileText},
-  parse_sheet: {label: '解析表格', icon: FileSpreadsheet},
+  load_rules: {label: '加载规则', icon: BookOpen},
+  read_file: {label: '阅读文件', icon: FileText},
+  read_sheet: {label: '阅读表格', icon: FileSpreadsheet},
   view_image: {label: '查看图片', icon: Image},
-  convert_image: {label: '转换嵌入图片', icon: ImageUp},
-  search: {label: '检索内容', icon: Search},
-  read_program: {label: '查阅检查程序', icon: FileCode2},
-  read_guide: {label: '查阅审核指引', icon: BookOpen},
-  run_check: {label: '运行核对', icon: SquareTerminal},
-  record: {label: '记录复核结论', icon: PencilLine},
-  note: {label: '说明', icon: MessageSquareText},
 }
 
 function StepLine({row, current, age}: {row: StepRow; current: boolean; age: number}) {
@@ -31,14 +25,10 @@ function StepLine({row, current, age}: {row: StepRow; current: boolean; age: num
   const subject = row.subjects.length > 1 ? `${row.subjects[0]} 等 ${row.subjects.length} 个` : row.subjects[0]
   // Older steps fade; the newest one is the step under way.
   const fade = current ? '' : ['opacity-90', 'opacity-75', 'opacity-60', 'opacity-40'][Math.min(age - 1, 3)]
+  const text = subject ? `${label}《${subject}》` : label
   return <li className={`flex h-7 min-w-0 items-center gap-2 motion-safe:animate-fade-up ${fade}`}>
     <Icon aria-hidden="true" className={`size-3.5 shrink-0 ${current ? 'text-primary' : 'text-muted-foreground'}`}/>
-    {row.action === 'note'
-      ? <span className="min-w-0 truncate text-xs" title={subject}><span className="sr-only">{label}：</span>{subject}</span>
-      : <>
-        <span className="shrink-0 text-xs font-medium">{label}{row.times > 1 && <span className="ml-1 tabular-nums text-muted-foreground">×{row.times}</span>}</span>
-        {subject && <span title={subject} className="inline-flex h-5.5 min-w-0 items-center truncate rounded-md bg-muted px-1.5 font-mono text-xs text-muted-foreground ring-1 ring-border">{subject}</span>}
-      </>}
+    <span className="min-w-0 truncate text-xs" title={text}>{text}</span>
     {current && <PixelLoader/>}
   </li>
 }

@@ -24,35 +24,36 @@ def note(text: str) -> dict:
     return {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "secret plan"}, {"type": "text", "text": text}]}}
 
 
-def test_pi_events_become_actions_with_only_document_names():
+def test_only_the_rules_and_the_users_documents_become_steps():
     step = activity_from_event
+    # The user's own rules, loaded for the round.
+    assert step(tool("read", path="/work/deep-review/review-0-0/rules.json")) == Activity(action="load_rules")
+    assert step(tool("bash", command="python -c 'import json; print(json.load(open(\"rules.json\")))'")) == Activity(action="load_rules")
+    # The user's documents and their images, named by file name only.
     assert step(tool("read", path="/work/deep-review/review-0-0/files/00-控制计划-776.xlsx")) == Activity(action="read_file", subject="控制计划-776.xlsx")
     assert step(tool("read", path="embedded/image3.EMF")) == Activity(action="view_image", subject="image3.EMF")
     script = "cd /work\npython - <<'EOF'\nimport openpyxl\nwb = load_excel_workbook('files/00-控制计划-776.xlsx')\nprint(wb['Sheet1']['A1'].value)\nEOF"
-    assert step(tool("bash", command=script)) == Activity(action="parse_sheet", subject="控制计划-776.xlsx")
-    assert step(tool("bash", command="soffice --headless --convert-to png media/image3.emf")) == Activity(action="convert_image", subject="image3.emf")
-    assert step(tool("bash", command='rg -n "编制人" files/00-cp.xlsx.txt')) == Activity(action="search")
-    # Program source is never named.
-    grep = 'rg -n "跑道|rule_5" /app/.venv/lib/python3.12/site-packages/audit/checker_lib/uaes/control_plan.py | head -80'
-    assert step(tool("bash", command=grep)) == Activity(action="read_program")
-    assert step(tool("bash", command="python -c 'import audit; print(audit.__file__)'")) == Activity(action="read_program")
-    assert step(tool("read", path="/app/.venv/lib/python3.12/site-packages/audit/checker_lib/uaes/fmea.py")) == Activity(action="read_program")
-    assert step(tool("read", path="skills/ppap-semantic-audit/references/review.md")) == Activity(action="read_guide")
-    assert step(tool("bash", command="cands=[]\nfor row in rows: cands.append(row)")) == Activity(action="run_check")
-    assert step(tool("write", path="/work/out/review.json", content="{secret}")) == Activity(action="record")
-    # Pi's own logs are not steps.
-    assert step(tool("bash", command='python - <<EOF\nwith open("stdout.jsonl") as f: print(f.read())\nEOF')) is None
-    assert step(tool("read", path="stdout.jsonl")) is None
-    # Commentary: its first sentence, unless it looks like code or a path.
-    assert step(note("第 3 条：控制项编号齐全，维持 PASS。下一步核对第 4 条。")) == Activity(action="note", subject="第 3 条：控制项编号齐全，维持 PASS。")
-    assert step(note("我先运行 `load_excel_workbook()` 看看")) is None
-    assert step(note("读取 /app/audit/x 下的资料")) is None
-    long = step(note("很长" * 100))
-    assert long is not None and long.subject is not None and len(long.subject) == live.MAX_SUBJECT and long.subject.endswith("…")
-    # Reasoning, tool results and other roles are not steps.
-    assert step({"type": "message_end", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "x"}]}}) is None
-    assert step({"type": "tool_execution_end", "toolName": "read", "result": {"content": "file body"}}) is None
-    assert step({"type": "message_end", "message": {"role": "user", "content": [{"type": "text", "text": "prompt"}]}}) is None
+    assert step(tool("bash", command=script)) == Activity(action="read_sheet", subject="控制计划-776.xlsx")
+    assert step(tool("bash", command="python -c 'import fitz; fitz.open(\"files/01-flow.pdf\")'")) == Activity(action="read_file", subject="flow.pdf")
+    assert step(tool("bash", command="soffice --headless --convert-to png media/image3.emf")) == Activity(action="view_image", subject="image3.emf")
+    # Our guides, programs, searches, scripts, records and Pi's own logs are not shown.
+    hidden = [
+        tool("read", path="skills/ppap-semantic-audit/references/review.md"),
+        tool("read", path="/app/.venv/lib/python3.12/site-packages/audit/checker_lib/uaes/fmea.py"),
+        tool("read", path="/work/deep-review/review-0-0/program-results.json"),
+        tool("bash", command='rg -n "编制人" files/00-cp.xlsx.txt'),
+        tool("bash", command='rg -n "跑道|rule_5" /app/.venv/lib/python3.12/site-packages/audit/checker_lib/uaes/control_plan.py | head -80'),
+        tool("bash", command="python -c 'import audit; print(audit.__file__)'"),
+        tool("bash", command="cands=[]\nfor row in rows: cands.append(row)"),
+        tool("bash", command="soffice --headless --convert-to png"),
+        tool("write", path="/work/out/review.json", content="{secret}"),
+        tool("bash", command='python - <<EOF\nwith open("stdout.jsonl") as f: print(f.read())\nEOF'),
+        tool("read", path="stdout.jsonl"),
+        # Notes are the reviewer's own words about how it works: never shown.
+        note("第 3 条：控制项编号齐全，维持 PASS。下一步核对第 4 条。"),
+        {"type": "tool_execution_end", "toolName": "read", "result": {"content": "file body"}},
+    ]
+    assert [step(event) for event in hidden] == [None] * len(hidden)
 
 
 def test_relay_follows_a_growing_event_stream_and_skips_huge_lines(tmp_path: Path):
@@ -67,13 +68,13 @@ def test_relay_follows_a_growing_event_stream_and_skips_huge_lines(tmp_path: Pat
         stream.write(first[10:] + "\n" + huge + "\n" + json.dumps(tool("bash", command="ls")) + "\n")
     relay.pump()
     steps = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
-    assert steps == [{"action": "read_file", "subject": "a.xlsx", "target": "version-1"}] * 2 + [{"action": "run_check", "target": "version-1"}]
+    assert steps == [{"action": "read_file", "subject": "a.xlsx", "target": "version-1"}] * 2
 
 
 def test_relay_stops_adding_steps_at_the_cap(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(live, "MAX_STEPS", 2)
     events, target = tmp_path / "stdout.jsonl", tmp_path / ACTIVITY_FILE
-    events.write_text("".join(json.dumps(tool("bash", command=f"echo {index}")) + "\n" for index in range(5)), encoding="utf-8")
+    events.write_text("".join(json.dumps(tool("read", path=f"{index}.xlsx")) + "\n" for index in range(5)), encoding="utf-8")
     relay = ActivityRelay(events, target)
     relay.pump()
     relay.pump()
@@ -84,7 +85,10 @@ def test_controller_reads_only_complete_valid_steps_from_a_regular_file(tmp_path
     path = tmp_path / ACTIVITY_FILE
     assert read_appended(tmp_path, ACTIVITY_FILE, 0, 1024) == b""
     path.write_bytes(
-        b'{"action":"read_file","subject":"a.xlsx"}\n{"action":"shell","subject":"rm"}\n{"action":"note","subject":"' + b"x" * 300 + b'"}\n{"action":"run_check","target":"../x"}\n{"action":"search"'
+        b'{"action":"read_file","subject":"a.xlsx"}\n{"action":"shell","subject":"rm"}\n'
+        + b'{"action":"read_file","subject":"'
+        + b"x" * 300
+        + b'"}\n{"action":"read_sheet","target":"../x"}\n{"action":"load_rules"'
     )
     steps, used = parse_steps(read_appended(tmp_path, ACTIVITY_FILE, 0, 64 * 1024))
     # Unknown actions, oversized text and bad targets are dropped; the partial last line waits for its end.
@@ -92,7 +96,7 @@ def test_controller_reads_only_complete_valid_steps_from_a_regular_file(tmp_path
     assert used == path.read_bytes().rfind(b"\n") + 1
     with path.open("ab") as stream:
         stream.write(b',"target":"version-1"}\n')
-    assert parse_steps(read_appended(tmp_path, ACTIVITY_FILE, used, 64 * 1024))[0] == [Activity(action="search", target="version-1")]
+    assert parse_steps(read_appended(tmp_path, ACTIVITY_FILE, used, 64 * 1024))[0] == [Activity(action="load_rules", target="version-1")]
     path.unlink()
     os.symlink("/etc/hosts", path)
     with pytest.raises(OSError):
@@ -112,7 +116,7 @@ def test_client_hands_activity_frames_to_the_worker_before_the_result():
                 read_frame(conn)
                 write_frame(conn, {"op": "activity", "activity": {"action": "read_file", "subject": "cp.xlsx"}})
                 write_frame(conn, {"op": "progress", "progress": {"phase": "checking"}})
-                write_frame(conn, {"op": "activity", "activity": {"action": "note", "subject": "维持 NG"}})
+                write_frame(conn, {"op": "activity", "activity": {"action": "view_image", "subject": "a.png"}})
                 write_frame(conn, {"op": "error", "code": "deep_timeout"})
 
         server = threading.Thread(target=serve, daemon=True)
@@ -125,5 +129,5 @@ def test_client_hands_activity_frames_to_the_worker_before_the_result():
             server.join(timeout=5)
             listener.close()
     assert failed.value.code == "deep_timeout"
-    assert steps == [{"action": "read_file", "subject": "cp.xlsx"}, {"action": "note", "subject": "维持 NG"}]
+    assert steps == [{"action": "read_file", "subject": "cp.xlsx"}, {"action": "view_image", "subject": "a.png"}]
     assert progress == [{"phase": "checking"}]

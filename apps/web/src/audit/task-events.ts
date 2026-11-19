@@ -4,12 +4,12 @@ import {apiUrl} from '../api.ts'
 export type TaskChange = {kinds: string[]; tasks: string[]}
 
 /** What a running deep review is doing. Broadcast only: it is never stored or read back. */
-export type ActivityAction = 'read_file' | 'parse_sheet' | 'view_image' | 'convert_image' | 'search' | 'read_program' | 'read_guide' | 'run_check' | 'record' | 'note'
+export type ActivityAction = 'load_rules' | 'read_file' | 'read_sheet' | 'view_image'
 
 /** One live step: an action, at most a document file name (or a note's sentence), and the reviewed file. */
 export type TaskActivity = {action: ActivityAction; subject?: string; target?: string}
 
-const ACTIONS = new Set<ActivityAction>(['read_file', 'parse_sheet', 'view_image', 'convert_image', 'search', 'read_program', 'read_guide', 'run_check', 'record', 'note'])
+const ACTIONS = new Set<ActivityAction>(['load_rules', 'read_file', 'read_sheet', 'view_image'])
 
 export type TaskStreamHandlers = {
   /** The stream is (re)connected: read once, since a notice may have been missed while it was down. */
