@@ -105,6 +105,8 @@ uv run --no-sync pytest tests/integration/product
 
 规则原文和人工结果是开发 Checker 的依据。实现修改可保留人工判定上下文，但完整 Suite／程序／输入摘要仍改变。规则、附录或绑定改变时，旧人工真值不能直接沿用；须独立重审并在带 `Oracle-Basis:` 依据的单独提交中更新 `<客户>-reviewed-rules.json` 及必要的人工答案，不能与实现或原件内容改动混在一起。`<客户>-cases.csv` 里的原件／文件身份、角色和 Suite／Binding 关联修改也遵循同一独立复核流程，不能把旧答案直接改绑到另一个已存在的来源。行序与 Binding 条款顺序不改变关联。完整规则正文比较是有意保守的，正文里的描述或来源元数据变化也需要显式复核。运行时按显式 Binding 调用实现，不按规则文字猜测方法。
 
+`UAES 评测集.xlsx` 是 V3.33 产品资料包随附的 UAES 金标（预检 58 行、审核 186 行，双层表头），与 `uaes-oracle.csv` 是两套评价来源，互不覆盖。[`uaes_evaluation`](corpus/contracts/src/corpus_contracts/uaes_evaluation.py) 只读载入：工作簿按摘要固定版本，标准答案原样返回；存储地址的旧前缀 `../02_受审文件/` 按声明映射到 `uaes/samples/<零件>/测试文件/…`，缺陷样本在 `uaes/samples/<零件>/缺陷样本(-test-)/…`，不复制受审文件。
+
 `replay/<客户>/<组合>.json` 是录制的模型回答，记录模型看到的文字、图片尺寸和回答，可以直接阅读。
 
 这些 CSV 是带 BOM 的 UTF-8，可用 Excel 打开，改动在 PR 中逐行可审。CI 的 `check_oracle_changes` 守护全部九个文件，按三家合起来的真值、文件绑定和复核语义判断：只在文件之间搬动的行不算改动，任何答案、绑定或复核语义的变化都须单独提交并写明 `Oracle-Basis:`。缺原件、重复行、公式、未知取值都在执行前报错。
