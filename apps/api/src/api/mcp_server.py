@@ -77,9 +77,12 @@ class McpRequestGuard:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         request = Request(scope, receive)
-        rejected = await self.security.validate_request(request, is_post=request.method == "POST")
-        if rejected:
-            return await rejected(scope, receive, send)
+        # A request without a token only learns where to authorize (401 from the auth layer). Clients probe that way
+        # with any content type (ChatGPT sends application/octet-stream); a 400 here reads to them as a broken server.
+        if request.headers.get("authorization"):
+            rejected = await self.security.validate_request(request, is_post=request.method == "POST")
+            if rejected:
+                return await rejected(scope, receive, send)
         try:
             await asyncio.to_thread(self.provider.store.rate_limit, "mcp-http:" + str(scope.get("client", ("unknown",))[0]), 240)
             body = bytearray()

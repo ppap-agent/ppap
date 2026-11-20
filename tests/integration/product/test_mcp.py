@@ -1091,6 +1091,9 @@ def test_mcp_origin_and_body_boundaries_and_origin_root_discovery(mcp_app):
         assert client.post("/mcp", headers={**headers, "Origin": "https://attacker.example"}, json={}).status_code == 403
         assert client.post("/mcp", headers=headers, content=b" " * (1024 * 1024 + 1)).status_code == 413
         assert rpc(client, tokens["access_token"], "tools/list").status_code == 200
+        # A client probing without a token, in any content type, is told where to authorize, not that the server is broken.
+        probe = client.post("/mcp", headers={"Content-Type": "application/octet-stream"}, content=b"")
+        assert probe.status_code == 401 and "resource_metadata" in probe.headers["www-authenticate"]
         preflight = client.options(
             "/oauth/token", headers={"Origin": "https://client.example", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "Authorization,Content-Type"}
         )
