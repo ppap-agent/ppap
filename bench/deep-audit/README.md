@@ -1,6 +1,6 @@
 # deep-audit：深度审核评估
 
-用人工 Oracle 衡量深度模式：检查程序给出结论后，深度复核把多少条改对、改错，有没有把不该通过的改成 PASS，以及每例耗时和模型用量。
+用人工 Oracle 衡量深度模式：检查程序给出结论后，深度复核把多少条改对、改错，有没有把不该通过的改成 PASS，程序无法判断的条款复核后定下了多少，以及每份文件的检查、复核耗时和模型用量。
 
 ## 走的是哪条路径
 
@@ -8,7 +8,7 @@
 
 - 模型：平台模型（`.env` 中的 `PPAP_MODEL_TEXT_*` / `VISION_*` / `CODING_*`），按未配置企业 Key 的租户冻结身份；复核强度、请求上限、沙箱配置取自 `.env.production`。
 - 用例：`assets/corpus` 中一家客户的人工 Oracle（`<客户>-cases.csv`、`<客户>-oracle.csv`、`<客户>-reviewed-rules.json`），`--dataset li|nio|uaes` 选择，默认 `uaes`；三家分开评估、分开汇总，不混在一起。语料合同照常检查条款正文与人工复核语义是否一致，不一致即报错，不评测过期真值。
-- 引用文件按上传流程识别（会调用模型），与线上冻结方式一致。
+- 引用文件按上传流程识别，与线上冻结方式一致；识别请求先用 `assets/corpus/replay` 的录音回答，没有录音才现调模型，且不保存。这样两次运行只在审核本身不同。
 
 它不证明产品的 guest 网络隔离、Worker 调度或计费，也不证明规则解释正确；只衡量同一批人工真值上的结论质量与成本。
 
@@ -30,7 +30,7 @@ bench/deep-audit/run.sh --name trial --jobs 1 -- --case 0 --case 5
 uv run --no-sync python bench/deep-audit/deep_eval.py run --dataset uaes --out /tmp/unused --list
 ```
 
-结果写在 `bench/deep-audit/runs/<名称>/`（不入库）：`cases.jsonl` 每例一行（逐条真值、程序结论、复核后结论、复核决定与理由、文件复核状态、耗时与用量），`summary.json` 与 `summary.md` 为汇总。重算汇总：
+结果写在 `bench/deep-audit/runs/<名称>/`（不入库）：`cases.jsonl` 每例一行（逐条真值、程序结论、复核后结论、复核决定与理由；每份文件的复核状态、检查与复核耗时、复核用量），`summary.json` 与 `summary.md` 为汇总，并逐条列出新增与真值不符的 PASS、改错和订正被拒。重算汇总：
 
 ```bash
 uv run --no-sync python bench/deep-audit/deep_eval.py report bench/deep-audit/runs/<名称>
@@ -45,6 +45,8 @@ uv run --no-sync python bench/deep-audit/deep_eval.py report bench/deep-audit/ru
 | 新增与真值不符的 PASS | 复核把结论改成 PASS，而人工真值不是 PASS。深度模式可以给 PASS，但这一项应为 0 |
 | 未复核条款 | 所在文件复核失败或超时，保留程序结论 |
 | 订正被拒 | 复核给出的订正没有通过宿主的证据核对，保留程序结论 |
+| 无法判断被定下 | 程序结论为 UNABLE 的条款，复核后给出确定结论的条数，及其中与真值一致的条数 |
+| 每份检查 / 复核耗时 | guest 每开始一项任务就报告一次进度，一项任务持续到下一项开始；与线上时限（检查 3 分钟、复核 6 分钟）对照 |
 
 ## 比较两种做法
 
