@@ -113,3 +113,32 @@ def test_replay_recomputes_the_callers_own_arguments_so_a_change_stays_a_conflic
     run(gateway_with(recorded=recorded, task={"input_revision": 9}, writes=writes), "set_deep_mode", {"task_id": task_id, "request_id": rid, "enabled": False})
     # The revision the tool read stays as recorded; the caller's changed choice reaches the receipt, which refuses it.
     assert writes[0]["body"] == {"deep_mode": False, "expected_revision": 3}
+
+
+def _task(files, *, customer=None, state="pending_confirm"):
+    rows = []
+    for index, (match, rule) in enumerate(files):
+        version = str(uuid4())
+        rows.append(
+            {
+                "file": {"id": version, "file_id": str(uuid4()), "original_filename": f"文件{index}.xlsx"},
+                "selection": "selected",
+                "validation": {"state": "valid", "reasons": []},
+                "match": {"state": match, "document_type": "控制计划", "rule": {"id": "r", "title": rule, "body": {"rules": ["x" * 4000]}} if rule else None, "gaps": [], "metadata": {}},
+            }
+        )
+    return {"id": str(uuid4()), "number": "PPAP-1", "state": state, "customer_preference": customer, "files": rows, "estimated_points": 9000}
+
+
+def test_audit_summary_of_a_whole_submission_fits_one_reply_and_says_what_to_do():
+    from api.mcp_gateway import PageRequest, page_result
+    from api.mcp_tools import _audit_view
+
+    task = _task([("matched", "UAES 控制计划")] * 18, customer="UAES")
+    precheck = {"conclusion": "pass", "counts": {"ok": 18}, "unreviewed": 0, "blocks": [], "warnings": [{"file_version_id": task["files"][0]["file"]["id"], "code": "W01", "title": "缺项"}]}
+    view = _audit_view(task, precheck, None)
+    page_result(view, PageRequest())  # raises when the reply exceeds the size bound
+    assert len(view["files"]) == 18 and view["files"][0]["precheck"] == ["W01 缺项"] and "body" not in str(view["files"][0])
+    assert "confirm_audit" in view["next"]
+    missing = _audit_view(_task([("unmatched", None)]), None, None)
+    assert "customer" in missing["next"] and "start_audit" in missing["next"]

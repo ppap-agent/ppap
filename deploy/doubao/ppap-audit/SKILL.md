@@ -19,13 +19,13 @@ PPAP 通过 MCP 连接器 `ppap` 提供工具。你代表当前对话的发起�
 
 1. **拿到文件**：用 `find_feishu_files` 找到飞书文件，再用 `import_feishu_file` 导入。导入时会同时检查文件能否读取。
 2. **开始审核**：用 `start_audit` 提交这些文件（每个文件给出导入结果里的文件版本 `file.id` 和校验 `validation.id`，`selection` 为 `selected`）。需要写回某个飞书文档时，在这一步给出 `writeback_target`。
-3. **核对**：用 `get_audit` 读出识别出的文件类型和规则、预检结论、预计耗时与点数，原样告诉用户。用户要深度模式且可用时，调用 `set_deep_mode`。
+3. **核对**：用 `get_audit` 读出每份文件的类型、规则、预检问题，以及预计耗时与点数，原样告诉用户；按它返回的 `next` 提示走下一步（例如缺客户时补上）。用户要深度模式且可用时，调用 `set_deep_mode`。
 4. **确认**：用户明确说开始后，调用 `confirm_audit`，按“基本规则”完成浏览器确认。想在完成时收到飞书消息，带上 `notify_when_done=true`。
 5. **跟进**：用 `get_audit` 查看进度，间隔从 5 秒逐步放宽到 30 秒，不要高频轮询。
 
 ## 看结果与报告
 
-- **进度或结论**：`list_audits` 找任务，`get_audit` 看逐文件结论和报告状态；条款细节和证据用 `get_result`。
+- **进度或结论**：`list_audits` 找任务，`get_audit` 看逐文件结论和报告状态；条款细节用 `get_result`（分页，可按文件筛选），需要证据原文时加 `detail=true`。
 - **深度审核提问**：`get_result` 里有待回答的问题时，把问题原样给用户，按他的回答调用 `answer_question`。
 - **人工复核**：用户对某条结论给出判断时，用 `review` 提交，由他在浏览器确认。
 - **报告**：单份报告用 `download`；多份打包用 `package_reports`，用同一个 `request_id` 再调用可看进度。发给同事用 `find_recipients` 和 `share_reports`，写进飞书用 `send_to_feishu`。

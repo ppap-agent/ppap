@@ -29,16 +29,33 @@ def bridge(url, auth, roots, *, max_download_bytes=2 * 1024**3, client_factory=N
         mask_error_details=True,
         provider_error_strategy="raise",
         list_page_size=25,
-        instructions="Remote PPAP tools keep their normal approval and receipt rules. Use local_upload_file for files inside the configured directories "
-        "instead of begin_upload/finish_upload. "
+        instructions="Remote PPAP tools keep their normal approval and receipt rules. local_file_roots lists the local files; "
+        "local_upload_folder uploads a whole submission folder and returns the files for start_audit; use these instead of begin_upload/finish_upload. "
         "Keep the same request_id and original bytes after interruption. Use local_download_file only with URLs created through this connection. "
         "Local downloads never overwrite existing files. An uploaded file does not imply validation or audit success.",
     )
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
     def local_file_roots() -> dict:
-        """Read the user-configured directories available for local upload/download."""
-        return {"directories": [str(root) for root in files.roots], "upload_limit_bytes": 200 * 1024 * 1024, "download_limit_bytes": max_download_bytes}
+        """The directories the user allowed, and every file in them (path, path relative to its directory, size; at most 1000)."""
+        return {
+            "directories": [str(root) for root in files.roots],
+            "files": files.listing(),
+            "upload_limit_bytes": 200 * 1024 * 1024,
+            "download_limit_bytes": max_download_bytes,
+        }
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
+    async def local_upload_folder(path: str, request_id: UUID) -> dict:
+        """Upload every file in one folder (and its subfolders) inside local_file_roots, checking each can be read.
+
+        Pass the returned audit_files to start_audit as files. After an interruption call again with the same request_id:
+        files already uploaded are not uploaded again.
+        """
+        try:
+            return await files.upload_folder(path, request_id)
+        except ClientError as exc:
+            return {"status": "error", "error": str(exc), "request_id": str(request_id)}
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
     async def local_upload_file(path: str, request_id: UUID, file_id: UUID | None = None) -> dict:

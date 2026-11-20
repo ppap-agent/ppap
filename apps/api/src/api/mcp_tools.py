@@ -108,6 +108,122 @@ def _audit_input(row: dict) -> dict:
     return {"file_version_id": row["file"]["id"], "validation_id": row.get("validation_id"), "selection": "selected", "removal_reason": None, **chosen}
 
 
+def _short(text, limit: int = 300):
+    return text if not isinstance(text, str) or len(text) <= limit else text[:limit] + "…"
+
+
+def _audit_view(task: dict, precheck: dict | None, estimate: dict | None) -> dict:
+    """The audit as the Web's task page shows it: one line per file, no evidence bodies."""
+    flagged: dict[str, list[str]] = {}
+    for item in ((precheck or {}).get("blocks") or []) + ((precheck or {}).get("warnings") or []):
+        flagged.setdefault(item["file_version_id"], []).append(f"{item['code']} {item['title']}")
+    files = []
+    for row in task.get("files", []):
+        match, audit = row.get("match") or {}, row.get("audit") or {}
+        report = audit.get("report") or {}
+        line = {
+            "file_version_id": row["file"]["id"],
+            "file_id": row["file"]["file_id"],
+            "filename": row["file"]["original_filename"],
+            "selection": row.get("selection"),
+            "readable": (row.get("validation") or {}).get("state"),
+            "document_type": match.get("document_type"),
+            "rule": (match.get("rule") or {}).get("title"),
+            "match": match.get("state"),
+            "gaps": match.get("gaps") or [],
+            "precheck": flagged.get(row["file"]["id"], []),
+        }
+        if audit:
+            line.update(conclusion=audit.get("confirmed_conclusion") or audit.get("conclusion"), execution=audit.get("execution"), counts=audit.get("counts"))
+            if report.get("report_id"):
+                line["report"] = {
+                    "state": report.get("state"),
+                    "reference": {
+                        "task_id": task["id"],
+                        "round_id": audit["round_id"],
+                        "file_version_id": row["file"]["id"],
+                        "result_attempt": audit.get("result_attempt"),
+                        "report_id": report["report_id"],
+                    },
+                    "artifact_id": (report.get("artifact") or {}).get("artifact_id"),
+                }
+        files.append(line)
+    option = task.get("deep_mode_option") or {}
+    summary = {
+        "task_id": task["id"],
+        "number": task.get("number"),
+        "state": task.get("state"),
+        "customer": task.get("customer_preference"),
+        "round_id": task.get("round_id"),
+        "conclusion": task.get("conclusion"),
+        "progress": task.get("progress"),
+        "deep_mode": task.get("deep_mode"),
+        "deep_mode_available": option.get("available"),
+        "deep_mode_unavailable_reason": option.get("reason"),
+        "estimated_points": task.get("estimated_points"),
+        "estimated_time": estimate,
+        "completion_estimate": task.get("completion_estimate"),
+        "precheck": None if precheck is None else {"conclusion": precheck.get("conclusion"), "counts": precheck.get("counts"), "unreviewed": precheck.get("unreviewed")},
+        "files": files,
+    }
+    summary["next"] = _next_step(summary, files)
+    return summary
+
+
+def _next_step(summary: dict, files: list[dict]) -> str:
+    """What the user does now, in their words."""
+    state = summary["state"]
+    if state == "matching":
+        return "正在识别文件，稍后再查。"
+    if state == "pending_confirm":
+        unmatched = [row for row in files if row["selection"] == "selected" and row["match"] == "unmatched"]
+        if unmatched and not summary["customer"]:
+            return "有文件没有匹配到规则，且没有指定客户：用 start_audit 带上 task_id 和 customer（get_account 的客户名之一）重新识别。"
+        if not any(row["selection"] == "selected" and row["match"] == "matched" for row in files):
+            return "没有可以审核的文件：补交或更换文件后用 start_audit 带上 task_id 重新识别，或用 end_audit 结束。"
+        return "核对文件、规则、预检和点数后，用 confirm_audit 开始审核。"
+    if state == "reviewing":
+        return "正在审核，稍后再查。"
+    return "审核已结束：用 get_result 看结论，报告用 download 下载。"
+
+
+def _result_view(round_: dict, questions: dict | None, feishu: dict | None, file_version_id: str | None, offset: int, limit: int) -> dict:
+    """One round's findings, a page at a time, each without its evidence body."""
+    rows = [row for row in round_.get("findings", []) if not file_version_id or (row.get("locator") or {}).get("file_version_id") == file_version_id]
+    page = rows[offset : offset + limit]
+    findings = [
+        {
+            "item_key": row["item_key"],
+            "file": (row.get("locator") or {}).get("filename"),
+            "status": row["status"],
+            "item": _short(row.get("item")),
+            "classification": row.get("classification"),
+            "priority": row.get("priority"),
+            "suggestions": _short(row.get("suggestions")),
+            "review": None if not row.get("review") else {k: row["review"].get(k) for k in ("judgment", "rationale", "version")},
+            "recheck_suggested": bool(row.get("review_hint")),
+        }
+        for row in page
+    ]
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+    open_questions = [
+        {"file_version_id": q["file_version_id"], "field": q["field"], "prompt": q["prompt"], "answer_type": q["answer_type"]} for q in (questions or {}).get("questions", []) if not q.get("answered")
+    ]
+    return {
+        "round_id": round_.get("id"),
+        "execution": round_.get("execution"),
+        "files": [{"file_version_id": i["file_version_id"], "filename": i["original_filename"], "role": i.get("role"), "rule": (i.get("rule") or {}).get("title")} for i in round_.get("inputs", [])],
+        "counts": counts,
+        "total": len(rows),
+        "findings": findings,
+        "next_offset": offset + limit if offset + limit < len(rows) else None,
+        "open_questions": open_questions,
+        "feishu_report": feishu,
+    }
+
+
 def _names(task: dict) -> list[str]:
     return [row["file"]["original_filename"] for row in task.get("files", []) if row.get("selection") == "selected"]
 
@@ -416,18 +532,17 @@ def register_tools(mcp, gateway, authority):
         return await write("audits:write", "start_audit", rid, plan, result_path=lambda v: f"/audit-tasks/{v['id']}")
 
     @mcp.tool(annotations=READ)
-    async def get_audit(task_id: UUID, page: PageRequest | None = None) -> Reply[DataPage]:
-        """Everything about one audit on one page: recognised files and rules, precheck, deep mode, time estimate, progress, conclusion and reports.
-        Poll while it runs: 5 seconds first, backing off to 30."""
+    async def get_audit(task_id: UUID, detail: bool = False, page: PageRequest | None = None) -> Reply[DataPage]:
+        """One audit on one page: state, what to do next, one line per file (type, rule, precheck, conclusion, report),
+        deep mode, points and time. Poll while it runs: 5 seconds first, backing off to 30.
+        detail=true returns the full task and precheck; read parts of it with page.pointer, e.g. /task/files/0."""
 
         async def load(actor):
             task = await get(actor, "audits:read", f"/audit-tasks/{task_id}")
             waiting = task.get("state") in {"matching", "pending_confirm"}
-            return {
-                "task": task,
-                "precheck": await optional(actor, "audits:read", f"/audit-tasks/{task_id}/precheck"),
-                "estimate": await optional(actor, "audits:read", "/audit-duration-estimate") if waiting else None,
-            }
+            precheck = await optional(actor, "audits:read", f"/audit-tasks/{task_id}/precheck")
+            estimate = await optional(actor, "audits:read", "/audit-duration-estimate") if waiting else None
+            return {"task": task, "precheck": precheck, "estimate": estimate} if detail else _audit_view(task, precheck, estimate)
 
         return await read("audits:read", load, page)
 
@@ -496,16 +611,25 @@ def register_tools(mcp, gateway, authority):
     # ---- result and review ---------------------------------------------------------------------------
 
     @mcp.tool(annotations=READ)
-    async def get_result(round_id: UUID, page: PageRequest | None = None) -> Reply[DataPage]:
-        """One audit round's findings with evidence, recorded human reviews, suggested re-checks, open deep-mode questions and the Feishu report.
-        Machine findings and human reviews stay separate; unknown or failed checks are never a pass."""
+    async def get_result(
+        round_id: UUID,
+        file_version_id: UUID | None = Field(default=None, description="Only this file's findings."),
+        offset: Offset = 0,
+        limit: Limit = 30,
+        detail: bool = False,
+        page: PageRequest | None = None,
+    ) -> Reply[DataPage]:
+        """One audit round: findings a page at a time (status, clause, problem, suggestion, human review), counts per status,
+        open deep-mode questions and the Feishu report. Machine findings and human reviews stay separate; unknown or failed checks
+        are never a pass. detail=true returns the full round with evidence; read parts of it with page.pointer, e.g. /round/findings/0."""
 
         async def load(actor):
-            return {
-                "round": await get(actor, "audits:read", f"/rounds/{round_id}", {"read_view": "true"}),
-                "questions": await optional(actor, "audits:read", f"/audit-rounds/{round_id}/fact-answers"),
-                "feishu_report": await optional(actor, "reports:read", f"/integrations/feishu/rounds/{round_id}/report"),
-            }
+            round_ = await get(actor, "audits:read", f"/rounds/{round_id}", {"read_view": "true"} if detail else None)
+            questions = await optional(actor, "audits:read", f"/audit-rounds/{round_id}/fact-answers")
+            feishu = await optional(actor, "reports:read", f"/integrations/feishu/rounds/{round_id}/report")
+            if detail:
+                return {"round": round_, "questions": questions, "feishu_report": feishu}
+            return _result_view(round_, questions, feishu, str(file_version_id) if file_version_id else None, offset, limit)
 
         return await read("audits:read", load, page)
 

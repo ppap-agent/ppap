@@ -9,7 +9,7 @@ import stat
 import tempfile
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 import anyio
 import httpx
@@ -152,6 +152,48 @@ class LocalFiles:
                             "http_status": result.status_code,
                         }
                 return await self.call(client, "finish_upload", {"request_id": rid})
+
+    def listing(self, limit: int = 1000) -> list[dict]:
+        """Regular, non-hidden files under the allowed directories; links and special files are never listed or followed."""
+        found = []
+        for root in self.roots:
+            for directory, folders, names in os.walk(root, followlinks=False):
+                folders[:] = sorted(name for name in folders if not name.startswith(".") and not os.path.islink(os.path.join(directory, name)))
+                for name in sorted(names):
+                    path = Path(directory, name)
+                    info = path.lstat()
+                    if name.startswith(".") or not stat.S_ISREG(info.st_mode):
+                        continue
+                    found.append({"path": str(path), "relative_path": str(path.relative_to(root)), "byte_size": info.st_size})
+                    if len(found) >= limit:
+                        return found
+        return found
+
+    async def upload_folder(self, path: str, request_id: UUID):
+        """Every file under one allowed folder; each file's request ID derives from the call's and its relative path."""
+        folder = Path(path)
+        if not folder.is_absolute() or ".." in folder.parts or not any(folder == root or folder.is_relative_to(root) for root in self.roots):
+            raise ClientError("local_path_not_allowed")
+        rows = [row for row in self.listing() if Path(row["path"]).is_relative_to(folder)]
+        if not rows:
+            raise ClientError("no_files_in_folder")
+        results, inputs = [], []
+        for row in rows:
+            relative = str(Path(row["path"]).relative_to(folder))
+            rid = uuid5(request_id, relative)
+            try:
+                reply = await self.upload(row["path"], rid)
+            except ClientError as exc:
+                reply = {"status": "error", "error": str(exc), "request_id": str(rid)}
+            except OSError:
+                reply = {"status": "error", "error": "local_file_unavailable", "request_id": str(rid)}
+            data = reply.get("data") or {}
+            version, validation = data.get("file") or {}, data.get("validation") or {}
+            results.append({"relative_path": relative, "status": reply.get("status"), "error": reply.get("error"), "request_id": str(rid), "file_version_id": version.get("id")})
+            if reply.get("status") == "ok" and version.get("id") and validation.get("id"):
+                inputs.append({"file_version_id": version["id"], "validation_id": validation["id"], "selection": "selected", "removal_reason": None})
+        failed = sum(row["status"] != "ok" for row in results)
+        return {"status": "ok" if not failed else "partial", "uploaded": len(inputs), "failed": failed, "files": results, "audit_files": inputs}
 
     async def download(self, transfer_url: str, destination: str, *, expected_sha256: str | None = None):
         url = self.transfer_url(transfer_url)

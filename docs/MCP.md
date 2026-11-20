@@ -8,9 +8,9 @@
 
 1. 拿到文件：`begin_upload` → 传字节 → `finish_upload`，或 `import_feishu_file`。两者都会顺带检查文件能否读取；`get_upload` 读回状态。
 2. 开始：`start_audit`（新任务、修改未确认的任务、或用 `reaudit_round_id` 重审；需要写回飞书文档时同时给出 `writeback_target`）。
-3. 核对：`get_audit` 一次给出识别的文件类型和规则、预检、深度模式是否可用、预计耗时与点数、进度和结论；`set_deep_mode` 切换深度模式。
+3. 核对：`get_audit` 默认是精简视图：任务状态、白话的下一步（例如缺客户时提示补上）、每份文件一行（类型、规则、预检问题、结论、报告引用）、深度模式、点数与耗时；`detail=true` 返回完整任务与预检。`set_deep_mode` 切换深度模式。
 4. 确认：`confirm_audit`，由用户在浏览器确认一次后执行。
-5. 结果与交付：`get_result`（发现项、证据、人工复核、复核提示、深度审核提问、飞书报告），`answer_question`、`review`、`respond_hint`；`download`、`regenerate_report`、`package_reports`、`find_recipients`、`share_reports`、`get_share`、`retry_share`、`send_to_feishu`。
+5. 结果与交付：`get_result` 默认分页返回发现项（状态、条款、问题、建议、人工复核，可按文件筛选）、各状态计数、待答的深度审核提问和飞书报告；`detail=true` 返回含证据的完整轮次，`answer_question`、`review`、`respond_hint`；`download`、`regenerate_report`、`package_reports`、`find_recipients`、`share_reports`、`get_share`、`retry_share`、`send_to_feishu`。
 
 此外：`get_account`（身份、功能、可选客户）、`list_audits`、`find_history`、`get_usage`、`list_templates`、`find_feishu_files`、`preview_file`、`get_operation`。规则与检查程序只由平台运营在网页维护，MCP 不提供它们的读写。
 
@@ -61,9 +61,11 @@ OAuth 发现地址按 RFC 8414 / 9728 放在域名根目录，资源路径是其
 
 ### 本地 stdio 适配器
 
-`apps/mcp-client` 是可独立安装的 Python 3.12 包，不依赖 PPAP 数据库、审核引擎或 API 包。它通过 FastMCP 代理远程工具，并增加三个本地工具：
+`apps/mcp-client` 是可独立安装的 Python 3.12 包，不依赖 PPAP 数据库、审核引擎或 API 包。它通过 FastMCP 代理远程工具，并增加四个本地工具：
 
 - `local_file_roots`：读取用户配置的目录和传输上限。
+- `local_file_roots`：列出允许目录及其中的文件（相对路径与大小，最多 1000 个；不列出链接和隐藏文件）。
+- `local_upload_folder`：上传一个目录下的全部文件（含子目录），每份文件的请求 ID 由调用的 `request_id` 与相对路径派生，中断后同一 `request_id` 再调用不会重复上传；返回可直接作为 `start_audit` 的 `files` 的 `audit_files`。
 - `local_upload_file`：读取允许目录中的文件，固定字节快照和 SHA-256，经 `begin_upload` / `finish_upload` 上传、固化并检查能否读取。
 - `local_download_file`：把当前连接取得的传输 URL 写入允许目录中的新文件，检查长度和摘要，不覆盖已有文件。
 
@@ -118,7 +120,7 @@ codex mcp add ppap --url https://ppap.icoastline.com/ppap/mcp
 codex mcp login ppap --oauth-client-registration dcr
 ```
 
-如果添加服务时已完成登录，无须重复执行登录命令。原生 HTTP 连接不会获得适配器的三个本地文件工具。两种连接各自取得委托，不共享传输 URL；通常选择符合文件输入方式的一种即可。授权页只勾选此次工作需要的范围。
+如果添加服务时已完成登录，无须重复执行登录命令。原生 HTTP 连接不会获得适配器的本地文件工具。两种连接各自取得委托，不共享传输 URL；通常选择符合文件输入方式的一种即可。授权页只勾选此次工作需要的范围。
 
 停止使用时，先在 PPAP 连接管理页撤销对应委托。原生 HTTP 连接随后可执行 `codex mcp logout ppap` 清除 Codex 保存的凭据；适配器的凭据由其独立 profile 管理。仅退出客户端或删除配置不会撤销服务端委托。续期或访问失败时，先读取错误与原业务回执，按上节恢复步骤处理，不改变原请求 ID。
 

@@ -138,3 +138,44 @@ async def test_transfer_rejects_other_origin_and_modified_paths_before_credentia
     for url in ("https://attacker.example/mcp/transfers/" + str(uuid4()), URL + "/transfers/../secret", URL + "/transfers/" + str(uuid4()) + "?path=other"):
         with pytest.raises(ClientError, match="untrusted_transfer_url"):
             await files.download(url, str(tmp_path / "result"))
+
+
+def test_listing_shows_regular_files_only(tmp_path):
+    (tmp_path / "10 控制计划").mkdir()
+    (tmp_path / "10 控制计划" / "控制计划.xlsx").write_bytes(b"plan")
+    (tmp_path / ".hidden").write_text("x")
+    (tmp_path / "link.xlsx").symlink_to(tmp_path / "10 控制计划" / "控制计划.xlsx")
+    outside = tmp_path.parent / "outside-dir"
+    outside.mkdir(exist_ok=True)
+    (outside / "secret.xlsx").write_text("private")
+    (tmp_path / "escape").symlink_to(outside, target_is_directory=True)
+    listed = local(tmp_path).listing()
+    assert [row["relative_path"] for row in listed] == [str(Path("10 控制计划") / "控制计划.xlsx")]
+    assert listed[0]["byte_size"] == 4
+
+
+@pytest.mark.asyncio
+async def test_folder_upload_derives_one_request_per_file_and_returns_audit_inputs(tmp_path):
+    folder = tmp_path / "测试文件"
+    (folder / "06 MSA").mkdir(parents=True)
+    (folder / "06 MSA" / "MSA-1.xls").write_bytes(b"a")
+    (folder / "PFMEA.xlsx").write_bytes(b"b")
+    files = local(tmp_path)
+    calls = []
+
+    async def upload(path, request_id, file_id=None):
+        calls.append((Path(path).name, request_id))
+        if Path(path).name == "PFMEA.xlsx":
+            return {"status": "error", "error": "upload_transfer_refused", "request_id": str(request_id)}
+        return {"status": "ok", "data": {"file": {"id": "v-" + Path(path).stem}, "validation": {"id": "c-" + Path(path).stem}}}
+
+    files.upload = upload
+    request_id = uuid4()
+    first = await files.upload_folder(str(folder), request_id)
+    assert first["status"] == "partial" and first["uploaded"] == 1 and first["failed"] == 1
+    assert first["audit_files"] == [{"file_version_id": "v-MSA-1", "validation_id": "c-MSA-1", "selection": "selected", "removal_reason": None}]
+    again = await files.upload_folder(str(folder), request_id)
+    assert [call[1] for call in calls[:2]] == [call[1] for call in calls[2:]]
+    assert again["files"] == first["files"]
+    with pytest.raises(ClientError, match="local_path_not_allowed"):
+        await files.upload_folder(str(tmp_path.parent), request_id)

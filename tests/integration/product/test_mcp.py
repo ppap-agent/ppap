@@ -198,12 +198,12 @@ def read(client, token, name, **arguments):
 
 
 def task_of(client, token, task_id):
-    return read(client, token, "get_audit", task_id=task_id)["task"]
+    return read(client, token, "get_audit", task_id=task_id, detail=True)["task"]
 
 
 def frozen(client, token, round_id):
     """A round's frozen inputs, findings and reviews; the read view's live report state is left out."""
-    body = read(client, token, "get_result", round_id=round_id)["round"]
+    body = read(client, token, "get_result", round_id=round_id, detail=True)["round"]
     return {key: item for key, item in body.items() if key != "read_view"}
 
 
