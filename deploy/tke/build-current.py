@@ -6,6 +6,7 @@ import argparse
 import base64
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -29,6 +30,8 @@ CODEUP = "https://codeup.aliyun.com/icoastline/integration/4.0/ppap-web.git"
 FLOW = "/flow/organizations/60d54c9a70ab8549fd3e10db/pipelines/5339663"
 NAMESPACE = "ppap-test"
 SOURCE_BRANCH = "codex/ppap-current-release"
+BASES = ("deps", "deep-base")
+BASE_RECORD = "deploy/tke/base-images.json"
 
 
 def run(args: list[str], *, data: bytes | None = None, timeout: int = 1800) -> bytes:
@@ -111,13 +114,30 @@ def source_branch(sha: str, attempt: Path) -> str:
     return branch
 
 
-def yunxiao(sha: str, attempt: Path, resume_run: int | None) -> dict[str, str]:
+def base_inputs(sha: str) -> str:
+    """Digest of the selected commit's dependency inputs (deploy/tke/base-inputs.py)."""
+    spec = importlib.util.spec_from_file_location("base_inputs", HERE / "base-inputs.py")
+    require(spec is not None and spec.loader is not None, "base-inputs.py is missing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.base_inputs_digest(lambda path: run(["git", "show", sha + ":" + path], timeout=60))
+
+
+def recorded_bases(sha: str) -> dict:
+    try:
+        return json.loads(run(["git", "show", sha + ":" + BASE_RECORD], timeout=60))
+    except (RuntimeError, ValueError):
+        return {}
+
+
+def yunxiao(sha: str, attempt: Path, resume_run: int | None, mode: str = "release") -> dict[str, str]:
     if resume_run is None:
         branch = source_branch(sha, attempt)
         # No automatic POST retry. Preserve the intent even if the response is lost.
         (attempt / "dispatch-intent.json").write_text(json.dumps({"sha": sha, "branch": branch}))
         try:
-            rid = cloud("POST", FLOW + "/runs", {"params": json.dumps({"runningBranchs": {CODEUP: branch}, "envs": {"PPAP_SOURCE_SHA": sha}})})
+            envs = {"PPAP_SOURCE_SHA": sha, **({"PPAP_BUILD_MODE": mode} if mode != "release" else {})}
+            rid = cloud("POST", FLOW + "/runs", {"params": json.dumps({"runningBranchs": {CODEUP: branch}, "envs": envs})})
         except RuntimeError:
             raise RuntimeError("dispatch result unknown; inspect pipeline runs and use --run-id; never dispatch again blindly") from None
         require(isinstance(rid, (int, str)) and str(rid).isdigit(), "unexpected run response; inspect pipeline runs before retry")
@@ -147,12 +167,21 @@ def yunxiao(sha: str, attempt: Path, resume_run: int | None) -> dict[str, str]:
     for _ in range(1000):
         page = cloud("GET", FLOW + f"/pipelineRuns/{resume_run}/jobs/{jid}/step/log", query={"stepIndex": 5, "offset": offset, "limit": 10000, "buildId": build_id})
         # Never print raw build logs: they may contain temporary signed URLs.
-        refs.update(re.findall(r"PPAP_RELEASE_IMAGE (api|worker|web|deep) (\S+@sha256:[0-9a-f]{64})", page["logs"]))
-        source_seen |= "PPAP_RELEASE_SOURCE " + sha in page["logs"]
+        if mode == "bases":
+            refs.update(re.findall(r"PPAP_BASE_IMAGE (deps|deep-base) (\S+@sha256:[0-9a-f]{64})", page["logs"]))
+            refs.update({"inputs": value for value in re.findall(r"PPAP_BASE_INPUTS ([0-9a-f]{64})", page["logs"])})
+            source_seen |= "PPAP_BASE_SOURCE " + sha in page["logs"]
+        else:
+            refs.update(re.findall(r"PPAP_RELEASE_IMAGE (api|worker|web|deep) (\S+@sha256:[0-9a-f]{64})", page["logs"]))
+            source_seen |= "PPAP_RELEASE_SOURCE " + sha in page["logs"]
         if not page.get("more"):
             break
         require(page["last"] > offset, "Flow log pagination did not advance")
         offset = page["last"]
+    if mode == "bases":
+        require(source_seen and set(refs) == {*BASES, "inputs"}, "Flow did not report both base images")
+        require(all(re.fullmatch(re.escape(PREFIXES["yunxiao"] + name) + r"@sha256:[0-9a-f]{64}", refs[name]) for name in BASES), "Flow reported an unexpected base repository")
+        return refs
     require(source_seen and set(refs) == set(COMPONENTS), "Flow did not report all four fixed-source images")
     require(all(re.fullmatch(re.escape(PREFIXES["yunxiao"] + c) + r"@sha256:[0-9a-f]{64}", refs[c]) for c in COMPONENTS), "Flow reported an unexpected image repository")
     return refs
@@ -274,6 +303,11 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
             print("Reusing four verified images; build skipped.", flush=True)
     if provider == "yunxiao":
         if pins is None:
+            # Releases stack on the recorded dependency images; they must come from these exact inputs.
+            require(
+                recorded_bases(sha).get("inputs") == base_inputs(sha),
+                "base images are stale for this source: run build-current.py --bases, commit deploy/tke/base-images.json, then release that commit",
+            )
             images = yunxiao(sha, attempt, run_id)
     else:
         require(run_id is None, "--run-id applies only to Yunxiao")
@@ -313,18 +347,38 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
     print("Verified all four images. Review and commit deploy/tke/current.yaml; deploy with the native commands in deploy/tke/README.md.", flush=True)
 
 
+def build_bases(sha: str, attempt: Path, run_id: int | None) -> None:
+    """Build deps and deep-base from the selected commit and record them for later releases."""
+    source_commit(sha)
+    inputs = base_inputs(sha)
+    record = ROOT / BASE_RECORD
+    current = json.loads(record.read_text()) if record.exists() else {}
+    if run_id is None and current.get("inputs") == inputs:
+        print("Recorded base images already match these inputs; build skipped.", flush=True)
+        return
+    refs = yunxiao(sha, attempt, run_id, mode="bases")
+    require(refs.pop("inputs") == inputs, "Flow built base images from different inputs")
+    record.write_text(json.dumps({"inputs": inputs, **{name: refs[name] for name in BASES}}, indent=2) + "\n")
+    print("Recorded base images. Commit deploy/tke/base-images.json, then release a commit that contains it.", flush=True)
+
+
 def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_args: sys.exit(143))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", help="full application source SHA")
     parser.add_argument("--provider", choices=tuple(PREFIXES), default="yunxiao")
     parser.add_argument("--run-id", type=int, help="resume an existing Yunxiao run")
+    parser.add_argument("--bases", action="store_true", help="build and record the shared dependency images instead of a release")
     args = parser.parse_args()
     os.chdir(ROOT)
     os.environ.setdefault("KUBECONFIG", str(Path.home() / "Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ipv6.kubeconfig"))
     attempt = Path(tempfile.mkdtemp(prefix="ppap-build-"))
     print("Build/recovery files: " + str(attempt), flush=True)
-    build(args.source, args.provider, attempt, args.run_id)
+    if args.bases:
+        require(args.provider == "yunxiao", "--bases builds on Yunxiao")
+        build_bases(args.source, attempt, args.run_id)
+    else:
+        build(args.source, args.provider, attempt, args.run_id)
 
 
 if __name__ == "__main__":

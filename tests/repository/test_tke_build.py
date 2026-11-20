@@ -113,7 +113,10 @@ def test_build_updates_only_source_and_four_pins_after_verification(tmp_path):
         assert args[0] == "git", "build must not query CI"
         return SHA.encode() if args[1] == "rev-parse" else b""
 
-    with patch.dict(operation.__globals__, {"HERE": tmp_path, "run": run, "yunxiao": lambda *args: IMAGES, "registry_images": checked}):
+    with patch.dict(
+        operation.__globals__,
+        {"base_inputs": lambda sha: "inputs", "recorded_bases": lambda sha: {"inputs": "inputs"}, "HERE": tmp_path, "run": run, "yunxiao": lambda *args: IMAGES, "registry_images": checked},
+    ):
         operation(SHA, "yunxiao", tmp_path, 2)
     text = config.read_text()
     changed = [(a, b) for a, b in zip(original.splitlines(), text.splitlines(), strict=True) if a != b]
@@ -131,7 +134,18 @@ def test_failed_registry_verification_leaves_configuration_unchanged(tmp_path):
     def invalid(*args):
         raise ValueError("source identity mismatch")
 
-    with patch.dict(operation.__globals__, {"HERE": tmp_path, "source_commit": lambda sha: None, "run": lambda args: b"", "yunxiao": lambda *args: IMAGES, "registry_images": invalid}):
+    with patch.dict(
+        operation.__globals__,
+        {
+            "base_inputs": lambda sha: "inputs",
+            "recorded_bases": lambda sha: {"inputs": "inputs"},
+            "HERE": tmp_path,
+            "source_commit": lambda sha: None,
+            "run": lambda args: b"",
+            "yunxiao": lambda *args: IMAGES,
+            "registry_images": invalid,
+        },
+    ):
         with pytest.raises(ValueError):
             operation(SHA, "yunxiao", tmp_path, 2)
     assert config.read_text() == "sentinel"
@@ -318,11 +332,49 @@ def test_confirmed_missing_images_build_once_then_verify_before_pinning(tmp_path
             "run": lambda *args: b"",
             "registry_images": registry,
             "yunxiao": flow,
+            "base_inputs": lambda sha: "inputs",
+            "recorded_bases": lambda sha: {"inputs": "inputs"},
         },
     ):
         operation(SHA, "yunxiao", tmp_path, None)
     assert events == ["registry", "build", "registry"]
     assert all(ref in (tmp_path / "current.yaml").read_text() for ref in IMAGES.values())
+
+
+def test_a_release_on_stale_base_images_is_refused_before_any_build(tmp_path):
+    operation = BUILD["build"]
+    (tmp_path / "current.yaml").write_text((ROOT / "deploy/tke/current.yaml").read_text())
+
+    def missing(sha, refs):
+        raise BUILD["RegistryImageMissing"]("confirmed missing")
+
+    def forbidden(*args):
+        raise AssertionError("a stale base must not reach the pipeline")
+
+    with patch.dict(
+        operation.__globals__,
+        {
+            "HERE": tmp_path,
+            "source_commit": lambda sha: None,
+            "registry_images": missing,
+            "yunxiao": forbidden,
+            "base_inputs": lambda sha: "new-inputs",
+            "recorded_bases": lambda sha: {"inputs": "old-inputs"},
+        },
+    ):
+        with pytest.raises(ValueError, match="base images are stale"):
+            operation(SHA, "yunxiao", tmp_path, None)
+
+
+def test_base_inputs_cover_dependencies_and_the_deep_runner():
+    spec = __import__("importlib.util").util.spec_from_file_location("base_inputs", ROOT / "deploy/tke/base-inputs.py")
+    module = __import__("importlib.util").util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    files = {path: b"x" for path in module.INPUTS}
+    digest = module.base_inputs_digest(files.__getitem__)
+    assert {"uv.lock", "pyproject.toml", "deploy/app/Dockerfile", "deploy/deep/package-lock.json"} <= set(module.INPUTS)
+    for path in module.INPUTS:
+        assert module.base_inputs_digest({**files, path: b"y"}.__getitem__) != digest
 
 
 @pytest.mark.parametrize("branch_head", [SHA, "b" * 40])
