@@ -161,6 +161,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [surface, setSurface] = useState<ProductSurface>(readSurface)
   // Fixed for the page's life: the frame never switches shells while someone works.
   const [inFeishu] = useState(() => openedInFeishu())
+  // Inside Feishu the window title stays blank: the top bar already names the app and the current page.
+  useEffect(() => {if (inFeishu) document.title = ''}, [inFeishu])
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [rulesOpened, setRulesOpened] = useState(surface === 'requirements')
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
