@@ -367,14 +367,13 @@ def test_a_release_on_stale_base_images_is_refused_before_any_build(tmp_path):
 
 
 def test_base_inputs_cover_dependencies_and_the_deep_runner():
-    spec = __import__("importlib.util").util.spec_from_file_location("base_inputs", ROOT / "deploy/tke/base-inputs.py")
-    module = __import__("importlib.util").util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    files = {path: b"x" for path in module.INPUTS}
-    digest = module.base_inputs_digest(files.__getitem__)
-    assert {"uv.lock", "pyproject.toml", "deploy/app/Dockerfile", "deploy/deep/package-lock.json"} <= set(module.INPUTS)
-    for path in module.INPUTS:
-        assert module.base_inputs_digest({**files, path: b"y"}.__getitem__) != digest
+    module = runpy.run_path(str(ROOT / "deploy/tke/base-inputs.py"))
+    inputs, base_inputs_digest = module["INPUTS"], module["base_inputs_digest"]
+    files = {path: b"x" for path in inputs}
+    digest = base_inputs_digest(files.__getitem__)
+    assert {"uv.lock", "pyproject.toml", "deploy/app/Dockerfile", "deploy/deep/package-lock.json"} <= set(inputs)
+    for path in inputs:
+        assert base_inputs_digest({**files, path: b"y"}.__getitem__) != digest
 
 
 @pytest.mark.parametrize("branch_head", [SHA, "b" * 40])
