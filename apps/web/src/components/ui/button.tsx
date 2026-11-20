@@ -10,7 +10,7 @@ const buttonVariants = cva(
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary-strong disabled:bg-primary-line disabled:opacity-100",
         outline:
-          "border-border bg-card hover:border-input hover:bg-header hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+          "border-input bg-card hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary-hover aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:
@@ -20,14 +20,16 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
         quiet: "text-muted-foreground hover:bg-muted hover:text-foreground",
         soft: "border-primary-line bg-primary-soft font-medium text-primary hover:bg-primary-soft-hover",
+        // The chosen item of a segmented control: a white chip on the grey track (Feishu).
+        raised: "bg-card font-medium text-foreground shadow-xs",
       },
       size: {
         default:
-          "h-8.5 gap-1.5 px-4 has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3",
+          "h-8 gap-1.5 px-4 has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3",
         xs: "h-6 gap-1 rounded-md px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-7.5 gap-1 rounded-md px-3 text-sm in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+        sm: "h-7 gap-1 rounded-md px-3 text-sm in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-10 gap-2.5 px-3 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-        icon: "size-8.5",
+        icon: "size-8",
         "icon-xs":
           "size-6 rounded-md in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
         "icon-sm":
@@ -36,6 +38,8 @@ const buttonVariants = cva(
         profile: "h-12 w-full justify-start gap-3 rounded-xl px-2 text-left",
         row: "h-auto min-h-16 w-full justify-start gap-3 rounded-none px-3 py-2.5 text-left whitespace-normal aria-pressed:bg-muted/50",
         "profile-icon": "size-8 rounded-full",
+        // A text action inside a sentence or a value row (Feishu link buttons): no box of its own.
+        inline: "h-auto gap-1 p-0 text-sm",
       },
     },
     defaultVariants: {

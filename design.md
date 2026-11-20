@@ -34,49 +34,49 @@ colors:
 typography:
   label-sm:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
-    fontSize: 11px
+    fontSize: 12px
     fontWeight: 600
-    lineHeight: 14px
+    lineHeight: 18px
   body-sm:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
     fontSize: 12px
     fontWeight: 400
-    lineHeight: 16px
+    lineHeight: 20px
   label-md:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
     fontSize: 12px
     fontWeight: 500
-    lineHeight: 16px
+    lineHeight: 20px
   body-md:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
-    fontSize: 13px
+    fontSize: 14px
     fontWeight: 400
-    lineHeight: 18px
+    lineHeight: 22px
   body-lg:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
-    fontSize: 15px
+    fontSize: 14px
     fontWeight: 400
-    lineHeight: 20px
+    lineHeight: 22px
   headline-sm:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
-    fontSize: 15px
+    fontSize: 14px
     fontWeight: 600
-    lineHeight: 20px
+    lineHeight: 22px
   headline-md:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
-    fontSize: 18px
+    fontSize: 16px
     fontWeight: 600
     lineHeight: 24px
   headline-lg:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
-    fontSize: 22px
+    fontSize: 20px
     fontWeight: 600
     lineHeight: 28px
   headline-xl:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif'
-    fontSize: 28px
+    fontSize: 24px
     fontWeight: 600
-    lineHeight: 36px
+    lineHeight: 32px
 rounded:
   control: 0.5rem
   card: 0.75rem
@@ -189,8 +189,8 @@ The palette follows Feishu's own apps (工作台, 多维表格, 视频会议), s
 Typography prioritizes tabular alignment, compact tracking, and vertical rhythm. Each platform's system UI font carries Latin text and digits (SF Pro on Apple devices, Segoe UI on Windows, Roboto on Android), with PingFang SC, Microsoft YaHei or Noto Sans SC for Simplified Chinese; no web font is loaded.
 
 - Use tabular figures (`tnum`) for part serial numbers, torque tolerances, audit timestamps, and percentage indicators.
-- Maintain compact scale tiers: `body-md` (13px) acts as the operational standard for dense grids and spec tables, while 11px uppercase labels (`label-sm`) anchor status micro-tags.
-- Strict visual hierarchy ensures that metadata headers remain visually subordinate to actual compliance figures.
+- Follow Feishu's scale: 14px body (`body-md`, Tailwind `text-sm`) for text, tables and controls; 12px for secondary text and tags; 16px section titles, 20px page titles, 24px at most. Nothing smaller than 12px.
+- Hierarchy comes from size and spacing, not weight: medium weight only for titles and the current item; links and table text stay regular.
 
 ## Layout & Spacing
 
@@ -209,7 +209,8 @@ Layout follows what the person is doing on the page; visual form follows this do
 - **Result pages** keep the task list open for moving between tasks and put their own heading (status, progress, estimate) in the top bar, once.
 - **While one file's findings are read**, its table keeps about 1000px. Side columns give way in order of relevance: the task list folds first (it stays open only on windows of about 1664px and wider), then the file list narrows to a strip of file icons with result dots (below about 1432px, or when the task has one file). Each keeps its control to open it again; a choice the person makes wins.
 - **Library pages** (files, templates, rules, usage) have no task list.
-- **Two shells, one page**: in a browser the frame has the left navigation, the page heading and the account menu; inside the Feishu client (detected from the user agent or the Feishu web SDK) the five entries sit in a top bar as pills and the account menu is left to Feishu; the window title stays blank, since the top bar already names the app and the current page. Tokens, components and page content are shared; only the frame differs.
+- **Two shells, one page**: in a browser the frame has the left navigation, the page heading and the account menu; inside the Feishu client (detected from the user agent or the Feishu web SDK) the five entries sit in a top bar as pills, the page's actions sit at the right of that bar and the account menu is left to Feishu; the window title names the current page (Feishu shows the address when the title is blank). A library page at its top level and a new audit have no header row there: the pill and the window title already name them. Task, report and rule pages keep a breadcrumb row. Tokens, components and page content are shared; only the frame differs.
+- **Master-detail pages** (rules, templates, files) are one white surface split by a divider: the list on the left chooses, the right side shows; the chosen item is never repeated as a heading card.
 - The page kinds and their frame regions live in one table, `pageFrames` in `apps/web/src/audit/intake.tsx`; change the table, not scattered conditions.
 - Each fact appears once: a count belongs to its section heading; the top verdict says only what the start depends on (files sent, blocked, needing a hand, unmatched).
 - A control whose change redoes work says so beside it (changing the rules re-recognizes the whole batch).
@@ -221,7 +222,7 @@ Layout follows what the person is doing on the page; visual form follows this do
 Depth comes from the page tone, not from shadows or heavy lines.
 
 - **Borders & Dividers**: faint 1px `#E4E6E9` lines separate table rows and sections; tables draw no vertical lines.
-- **Card & Container Elevation**: static containers use zero shadow, resting flat on `#FFFFFF` against the `#F5F6F7` page.
+- **Card & Container Elevation**: static containers use zero shadow and no outline, resting flat on `#FFFFFF` against the `#F5F6F7` page; boxes are not nested inside boxes. Only a card that needs a state (warning, blocking) gets a tinted outline.
 - **Interactive Depth**: dropdowns, popovers and modal panels use a tight, restrained shadow with a 1px `#E4E6E9` border.
 - **Overlay Layering**: modal backdrops use a dark scrim at about 40%.
 
@@ -229,23 +230,30 @@ Depth comes from the page tone, not from shadows or heavy lines.
 
 - **Cards, panels and dialogs**: 12px (`rounded.card`), Tailwind `rounded-lg`.
 - **Buttons, inputs, menus, tabs and navigation pills**: 6px, Tailwind `rounded-md`, derived from `rounded.control` (8px).
-- **Badges**: 6px rounded tags; not pills, which sit poorly around short Chinese labels.
+- **Badges**: 4px rounded tags without an outline; not pills, which sit poorly around short Chinese labels.
 - **Nested Elements**: inner elements step down to 4px (`rounded-sm`).
 
 ## Components
 
 ### Buttons
-- **Primary**: Solid `#1456F0` fill, `#FFFFFF` text, 6px radius, height 36px (dense: 32px). Hover: `#0F46C9`. Focus: 2px offset ring in `#1456F0`.
+- **Primary**: Solid `#1456F0` fill, `#FFFFFF` text, 6px radius, height 32px (small: 28px). Hover: `#0F46C9`. Focus: 2px offset ring in `#1456F0`.
 - **Secondary / Outline**: `#FFFFFF` background, 1px `#DEE0E3` border, `#1F2329` text. Hover: `#F2F3F5` background.
+- **Inline**: a text action inside a sentence or value row, link-coloured with no box ("复制群名").
 - **Ghost**: Transparent fill, `#646A73` text. Hover: `#F2F3F5`, text `#1F2329`.
 
-### Badges & Tag Pills
-- **Style**: Height 20px, 11px medium font (`label-sm`), normal tracking, 6px rounded tags.
-- **Variants**:
-  - *Compliant / Pass*: Background `#EAF7EF`, text `#15803D`, border 1px solid `#BBF7D0`.
-  - *Review / Warning*: Background `#FEF3E2`, text `#B45309`, border 1px solid `#FDE68A`.
-  - *Non-Conformance / Critical*: Background `#FDECEC`, text `#B91C1C`, border 1px solid `#FECACA`.
-  - *Neutral / Pending*: Background `#F2F3F5`, text `#646A73`, border 1px solid `#E4E6E9`.
+### Badges & Tags
+- **Style**: Height 20px, 12px regular text, 4px corners, a light tint and no outline (Feishu tags).
+- **Variants**: Pass `#15803D` on a green tint, Warning `#B45309` on an amber tint, Non-Conformance `#DC2626` on a red tint, Neutral `#646A73` on `#F2F3F5`.
+
+### Segmented Controls
+- A `#F2F3F5` track with 6px corners; the chosen item is a white chip with medium text, the others are quiet text.
+
+### Dialogs and Panels
+- Centered dialogs only: 12px corners, 24px padding, a 16px semibold title, a 40% dark mask without blur, actions right-aligned with no footer band. Feishu does not use slide-in drawers; information that used to slide in (file information, report information, package records, notification settings) opens as a centered dialog.
+- The one docked side panel is the original-document comparison, which stays open beside the findings so both can be read together.
+
+### Tables
+- 14px text, rows about 44px high with faint `#E4E6E9` dividers, 12px horizontal cell padding, a `#F2F3F5` row hover; headers grey and regular weight. Tables sit directly on the white surface, not in a box of their own.
 
 ### Form Inputs & Checkboxes
 - **Inputs**: Height 36px, background `#FFFFFF`, border 1px solid `#DEE0E3`, padding 0 12px, 6px radius. Focus: border `#1456F0`, box-shadow `0 0 0 1px #1456F0`.
@@ -257,6 +265,5 @@ Depth comes from the page tone, not from shadows or heavy lines.
   2. *Body*: White `#FFFFFF`, standard 16px padding, organized into key-value specification pairs with vertical divider lines.
   3. *Action Footer*: 8px padding, right-aligned micro-actions (Audit, Sign-off, Reject).
 
-### Alert Banners
-- Low-saturation, solid tint backgrounds (`#E1EAFF` for info, `#FEF3E2` for notice) with a 1px border. 
-- Integrated left indicator rule (3px solid `#1456F0` or `#B45309`). Includes inline dismiss action and standard text sizes (13px body).
+### Notices
+- A notice is a quiet bar, not a card: `#F2F3F5` (or a red tint for a failure), 6px corners, no outline, a medium title and 14px muted text. Copy-confirmations and other passing results are one line of status text, not a block.

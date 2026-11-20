@@ -102,8 +102,8 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
   const shownSave = saved && customer && saved.customer === customer.id ? saved : null
   const unsettled = shownSave?.results.filter(row => row.state !== 'saved') ?? [], open = unsettled.filter(row => row.state === 'failed' || row.state === 'unknown').length
   const pageCount = Math.max(1, Math.ceil((customer?.templates.length ?? 0) / 10)), shownPage = Math.min(page, pageCount)
-  return <section aria-label="模板库" className="grid min-h-0 flex-1 grid-cols-[16rem_minmax(0,1fr)] grid-rows-1 gap-4">
-    <aside aria-label="模板库客户" className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden rounded-lg border bg-card p-3">
+  return <section aria-label="模板库" className="grid min-h-0 flex-1 grid-cols-[16rem_minmax(0,1fr)] grid-rows-1 overflow-hidden rounded-lg bg-card">
+    <aside aria-label="模板库客户" className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden border-r p-3">
       <div className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Icon icon={faMagnifyingGlass} aria-hidden="true" className="size-3.5"/></span><Input type="search" aria-label="搜索客户" placeholder="搜索客户" iconStart value={customerSearch} onChange={event => setCustomerSearch(event.target.value)}/></div>
       <nav aria-label="客户" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
         {/* Template coverage N_t/M as the backend counted it; without a configured M no ratio is shown. */}
@@ -115,19 +115,20 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
       </nav>
       <div className="flex justify-end border-t pt-3"><Button variant="link" size="sm" onClick={() => setSubmitting(true)}><Icon icon={faPlus} aria-hidden="true"/>更多模板，请补充</Button></div>
     </aside>
-    <div className="flex min-h-0 min-w-0 flex-col gap-4">
+    <div className="flex min-h-0 min-w-0 flex-col">
     {customer ? <>
-      <header className="flex items-center justify-between gap-3 rounded-lg border bg-card p-4">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1"><CustomerAvatar name={customer.short_name}/><h2 className="truncate text-lg font-semibold" title={customer.short_name}>{customer.short_name}</h2></div>
+      {/* The list already names the chosen customer; this bar only holds what can be done with its templates. */}
+      <header className="flex items-center justify-end gap-3 px-4 py-3">
+        <h2 className="sr-only">{customer.short_name}</h2>
         <div className="flex shrink-0 gap-2">
           <Button onClick={() => void share()}><Icon icon={faShareNodes} aria-hidden="true"/>分享</Button>
           <Button variant="outline" disabled={Boolean(busy) || !customer.templates.length} onClick={() => void run('zip', async () => saveBlob(await adapter.downloadAll(customer.id), `${customer.full_name}模板.zip`), '模板 ZIP 暂时无法下载，请重试。')}><Icon icon={faDownload} aria-hidden="true"/>{busy === 'zip' ? '正在打包…' : '下载模板（ZIP）'}</Button>
           {adapter.feishu && <Button variant="outline" disabled={Boolean(busy) || saving || !customer.templates.length} onClick={() => setPicking(true)}>保存到我的飞书</Button>}
         </div>
       </header>
-      {actionError && <Alert variant="destructive"><AlertTitle>操作未完成</AlertTitle><AlertDescription><p>{actionError}</p></AlertDescription></Alert>}
-      {shownSave && <Alert variant={open ? 'destructive' : 'default'}><AlertTitle>{open ? `已保存 ${shownSave.results.filter(row => row.state === 'saved').length} 份，${open} 份未完成` : '模板已在所选飞书目录中'}</AlertTitle><AlertDescription><p>保存位置：{shownSave.folder}</p>{unsettled.length > 0 && <ul className="space-y-1">{unsettled.map(row => <li key={row.template_id}>{row.filename}：{saveStates[row.state]}{row.state !== 'exists' && row.reason ? `。${row.reason}` : ''}</li>)}</ul>}</AlertDescription></Alert>}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
+      {actionError && <Alert variant="destructive" className="mx-4 mb-3 w-auto"><AlertTitle>操作未完成</AlertTitle><AlertDescription><p>{actionError}</p></AlertDescription></Alert>}
+      {shownSave && <Alert variant={open ? 'destructive' : 'default'} className="mx-4 mb-3 w-auto"><AlertTitle>{open ? `已保存 ${shownSave.results.filter(row => row.state === 'saved').length} 份，${open} 份未完成` : '模板已在所选飞书目录中'}</AlertTitle><AlertDescription><p>保存位置：{shownSave.folder}</p>{unsettled.length > 0 && <ul className="space-y-1">{unsettled.map(row => <li key={row.template_id}>{row.filename}：{saveStates[row.state]}{row.state !== 'exists' && row.reason ? `。${row.reason}` : ''}</li>)}</ul>}</AlertDescription></Alert>}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-t">
         {customer.templates.length ? <Table aria-label={`${customer.short_name}模板`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto">
           <TableHeader variant="muted" sticky><TableRow><TableHead>模板名称</TableHead><TableHead>文件类型</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
           <TableBody>{customer.templates.slice((shownPage - 1) * 10, shownPage * 10).map(template => <TableRow key={template.id}>

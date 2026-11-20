@@ -71,7 +71,7 @@ export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdap
   }
   const conclusion = precheckRating(result)
   // A card after the file sections: the conclusion with preview and download, then the chapters, each opening the reader at its page.
-  return <section aria-label="预检报告" className="space-y-3 rounded-lg border bg-card p-4">
+  return <section aria-label="预检报告" className="space-y-3 rounded-lg bg-card p-4">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className={`text-sm font-semibold ${result.conclusion === 'fail' ? 'text-destructive' : ''}`}>预检报告 · {conclusion}</h2>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" disabled={busy} onClick={() => void open(0)}>{busy ? <Icon icon={faCircleNotch} className="animate-spin motion-reduce:animate-none"/> : <Icon icon={faEye}/>}预览预检报告</Button>

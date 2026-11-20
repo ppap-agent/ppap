@@ -42,7 +42,7 @@ consistency is checked on its own, not repaired as a side effect of building.
 
 Tokenize reusable design decisions: semantic colours (light and dark resolve the same roles),
 the font family, the type scale (size and line height of each Tailwind `text-*` step, from
-11px `2xs` to 28px `2xl`, with 13px `sm` as body text), the control radius (`rounded-md` and
+12px `2xs` to 24px `2xl` in Feishu's 12 / 14 / 16 / 20 / 24 steps, with 14px `sm` as body text), the control radius (`rounded-md` and
 smaller derive from it) and the card radius (`rounded-lg`, `rounded-xl`). Add a token only when a real decision needs one; do
 not pre-build layers or brands.
 

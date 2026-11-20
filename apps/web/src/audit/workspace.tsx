@@ -129,7 +129,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   const overview = <section aria-label="全部文件概览" className="min-w-0 space-y-4 p-4">
     {finishing ? <RunFinished/> : running && (runFile && task.run?.file_version_id && task.run.index && task.run.total
       ? <RunStatus run={{...task.run, file_version_id: task.run.file_version_id, index: task.run.index, total: task.run.total}} deep={task.deep_mode} name={runFile.file.original_filename} steps={live ? steps : undefined}/>
-      : <section aria-label="审核进度" className="rounded-lg border bg-card p-4"><LiveProgress label={task.deep_mode ? '正在深度审核' : '正在审核'} since={task.round_started_at} live={live}/></section>)}
+      : <section aria-label="审核进度" className="rounded-lg bg-card p-4"><LiveProgress label={task.deep_mode ? '正在深度审核' : '正在审核'} since={task.round_started_at} live={live}/></section>)}
     {issues.length > 0 && <div className="space-y-4">{shownIssueGroups.map(group => <section key={group.row.file.id} aria-label={group.row.file.original_filename} className="shrink-0 overflow-hidden rounded-lg border bg-card"><div className="px-4 py-3"><h2 className="min-w-0 font-medium"><FileName truncate name={group.row.file.original_filename}/></h2></div>
         <Table aria-label={`${group.row.file.original_filename} 需关注项`}><TableHeader variant="muted"><TableRow><TableHead className="w-24">结果</TableHead><TableHead className="w-20">条款</TableHead><TableHead>审核项</TableHead></TableRow></TableHeader><TableBody>{group.items.map(check => {
           const clauses = group.row.audit?.checks.map(item => item.rule_item) ?? []

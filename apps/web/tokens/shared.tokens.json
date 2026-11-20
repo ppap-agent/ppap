@@ -19,7 +19,7 @@
       "2xs": {
         "$type": "dimension",
         "$value": {
-          "value": 11,
+          "value": 12,
           "unit": "px"
         }
       },
@@ -33,35 +33,35 @@
       "sm": {
         "$type": "dimension",
         "$value": {
-          "value": 13,
+          "value": 14,
           "unit": "px"
         }
       },
       "base": {
         "$type": "dimension",
         "$value": {
-          "value": 15,
+          "value": 14,
           "unit": "px"
         }
       },
       "lg": {
         "$type": "dimension",
         "$value": {
-          "value": 18,
+          "value": 16,
           "unit": "px"
         }
       },
       "xl": {
         "$type": "dimension",
         "$value": {
-          "value": 22,
+          "value": 20,
           "unit": "px"
         }
       },
       "2xl": {
         "$type": "dimension",
         "$value": {
-          "value": 28,
+          "value": 24,
           "unit": "px"
         }
       }
@@ -70,28 +70,28 @@
       "2xs": {
         "$type": "dimension",
         "$value": {
-          "value": 14,
+          "value": 18,
           "unit": "px"
         }
       },
       "xs": {
         "$type": "dimension",
         "$value": {
-          "value": 16,
+          "value": 20,
           "unit": "px"
         }
       },
       "sm": {
         "$type": "dimension",
         "$value": {
-          "value": 18,
+          "value": 22,
           "unit": "px"
         }
       },
       "base": {
         "$type": "dimension",
         "$value": {
-          "value": 20,
+          "value": 22,
           "unit": "px"
         }
       },
@@ -112,7 +112,7 @@
       "2xl": {
         "$type": "dimension",
         "$value": {
-          "value": 36,
+          "value": 32,
           "unit": "px"
         }
       }

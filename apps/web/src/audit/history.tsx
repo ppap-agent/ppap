@@ -89,12 +89,12 @@ export function ArchiveHistory({document, documentId, initialAddress, onNavigate
     <div className={reportView && detail ? 'hidden' : 'flex min-h-0 min-w-0 flex-1 gap-4 overflow-hidden'}>
         {/* With the frame's trail, the file's name follows 审核文件 in the top bar and the trail's first step leads back. */}
         {headerTitle && fileName && createPortal(<><span aria-hidden="true" className="text-muted-foreground/60">/</span><h1 className="min-w-0 font-semibold"><FileName name={fileName} truncate/></h1></>, headerTitle)}
-        <aside aria-label="历次审核" className="flex min-h-0 w-70 shrink-0 flex-col overflow-hidden rounded-lg border bg-card">
+        <aside aria-label="历次审核" className="flex min-h-0 w-70 shrink-0 flex-col overflow-hidden rounded-lg bg-card">
           {!headerTitle && <div className="flex items-center gap-1 border-b p-3">{loading && !(detail?.file.file.original_filename || history?.document.title || document?.title) ? <div className="min-w-0 flex-1"><h1 className="sr-only">历史审核</h1><ReadSkeleton label="正在读取文档…" kind="inline"/></div> : <><Button variant="ghost" size="icon" aria-label={backLabel} onClick={onBack}><Icon icon={faArrowLeft}/></Button><h1 className="min-w-0 text-sm font-semibold"><FileName name={fileName || '历史审核'} colored/></h1></>}</div>}
           <h2 className="flex items-center gap-1.5 border-b px-3.5 py-3 text-sm font-semibold">历次审核{history && <Badge variant="info">{history.entries.length}</Badge>}</h2>
           <div className="min-h-0 flex-1 overflow-y-auto">{history ? list : loading && <ReadSkeleton label="正在读取历次审核…" kind="inline" className="p-3.5"/>}</div>
         </aside>
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto rounded-lg border bg-card">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto rounded-lg bg-card">
           {loading && <ReadSkeleton label="正在读取这次审核…" kind={detail ? 'inline' : 'detail'} className="px-6 py-5"/>}
           {error && <div className="px-6 py-5"><Alert variant="destructive"><AlertTitle>这次记录读取未完成</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" size="sm" onClick={() => history ? setReload(value => value + 1) : setListReload(value => value + 1)}>重新读取这次审核</Button></AlertDescription></Alert></div>}
           {detail && <FactQuestions key={`facts:${resultKey(detail.entry.reference)}`} roundId={detail.entry.reference.round_id} fileVersionId={detail.file.file.id} editable={detail.creator.mine} files={detail.originals.flatMap(row => row.file ? [row.file] : [])} findings={factMachineFindings(detail.file.audit?.checks)}/>}

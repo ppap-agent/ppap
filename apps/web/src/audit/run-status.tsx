@@ -51,7 +51,7 @@ export function RunStatus({run, deep, name, steps}: {run: Run & {file_version_id
   const [before, after] = preparing ? ['正在初始化', '审核环境'] : [deep ? '正在深度审核' : '正在审核', '']
   const rows = deep && !preparing ? (steps?.items ?? []).filter(row => row.target === run.file_version_id).slice(-SHOWN_STEPS) : []
   const last = rows.at(-1)?.id
-  return <section aria-label="审核进度" className="overflow-hidden rounded-lg border bg-card motion-safe:animate-fade-up">
+  return <section aria-label="审核进度" className="overflow-hidden rounded-lg bg-card motion-safe:animate-fade-up">
     <div className="flex min-w-0 items-center justify-between gap-3 px-4 py-3">
       <div className="flex min-w-0 items-center gap-2.5">
         <Badge shape="square" variant={preparing ? 'outline' : 'info'}>{preparing ? '准备' : '审核'}</Badge>

@@ -6,7 +6,7 @@ import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {ReadSkeleton} from '../components/read-skeleton'
-import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
+import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger} from '../components/ui/dialog'
 import {reportShortLabel as labels} from './status-labels'
 import {readReportPdf, type AuditReportAdapter, type AuditReportReference} from './report-contract'
 import {auditReportFilename} from './result-projection'
@@ -44,14 +44,14 @@ export function ReportPreview({name, rule, reference, report, ready, issue, adap
       <p className="flex min-w-0 gap-1"><span className="shrink-0">报告名称：</span><span className="[overflow-wrap:anywhere] text-foreground">{report?.artifact?.filename || auditReportFilename(name)}</span></p><h2 className="sr-only">{name}</h2>
       <p className="flex shrink-0 gap-1"><span>生成时间：</span><span className="text-foreground">{generated}</span></p>
       <div className="ml-auto flex flex-wrap items-center gap-1">
-      <Sheet><SheetTrigger asChild><Button variant="ghost" size="sm"><Icon icon={faCircleInfo}/>报告信息</Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>报告信息</SheetTitle><SheetDescription>查看本报告的来源与审核记录。</SheetDescription></SheetHeader>
+      <Dialog><DialogTrigger asChild><Button variant="ghost" size="sm"><Icon icon={faCircleInfo}/>报告信息</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>报告信息</DialogTitle><DialogDescription>查看本报告的来源与审核记录。</DialogDescription></DialogHeader>
         <div className="min-h-0 space-y-6 overflow-y-auto px-4 pb-6 text-sm">
           {/* Only what the user needs about this report: its name, when it was made, the original file and the rule. */}
           <dl className="grid gap-4 [&>div]:grid [&>div]:grid-cols-[5rem_minmax(0,1fr)] [&>div]:gap-3 [&_dt]:text-muted-foreground [&_dd]:[overflow-wrap:anywhere]">
             <div><dt>报告名称</dt><dd>{report?.artifact?.filename || auditReportFilename(name)}</dd></div><div><dt>生成时间</dt><dd>{generated}</dd></div><div><dt>原始文件</dt><dd>{name}</dd></div><div><dt>审核规则</dt><dd>{rule}</dd></div>{information}
           </dl>
         </div>
-      </SheetContent></Sheet>
+      </DialogContent></Dialog>
       {actions}{share && <ReportShareButton {...share}/>}<Button size="sm" variant="outline" disabled={!currentPdf?.url} onClick={download}><Icon icon={faDownload}/>下载当前报告</Button>
     </div>
     </header>
