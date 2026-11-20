@@ -4,11 +4,11 @@
     "image": "icoastline.tencentcloudcr.com/ppap-feishu/current-system@sha256:d368987cf9ed5379db0182d501936056dd47cefca5b08b3d28edf242fd180f77"
   },
   "deps": {
-    "inputs": "362a739005bfbf922069b9054d9aa955d186f156c1c1c7e59edccc3ab2b30052",
-    "image": "icoastline.tencentcloudcr.com/ppap-feishu/current-deps@sha256:812395780862ce7e12ac5fee09c1df54e20a83806662db71d7bf93a73be84ec8"
+    "inputs": "14f020d903f6beb2b30fcd7504b17137d1ea250b3cbc54d6cf5690d0c5b5c3b0",
+    "image": "icoastline.tencentcloudcr.com/ppap-feishu/current-deps@sha256:ed3bba9dc2084f71e83320b10b4040c268e57f84c68b6a0c38b986d7bc4cbb9a"
   },
   "deep-base": {
-    "inputs": "854801bc45bbca23653d731e2458319cd7983b83889a8b91108ee7d18ad0a22e",
-    "image": "icoastline.tencentcloudcr.com/ppap-feishu/current-deep-base@sha256:72f3318cfc5411ec664bb2b7973096ba365055e20838fa62ee77096ab19f2d49"
+    "inputs": "44ab690dff147013741f0f5e8904f372b4a91aa885827a9f07e3ba28f0d1262d",
+    "image": "icoastline.tencentcloudcr.com/ppap-feishu/current-deep-base@sha256:ceb6473632d514a5bb19e18afe7cb131df1a4615ea437a5a4c0f64a0cfc30f79"
   }
 }
