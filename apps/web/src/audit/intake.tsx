@@ -161,8 +161,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [surface, setSurface] = useState<ProductSurface>(readSurface)
   // Fixed for the page's life: the frame never switches shells while someone works.
   const [inFeishu] = useState(() => openedInFeishu())
-  // Inside Feishu the page name goes to the window title.
-  useEffect(() => {if (inFeishu) document.title = productLinks.find(link => link.view === surface)?.label ?? 'PPAP Audit'}, [inFeishu, surface])
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [rulesOpened, setRulesOpened] = useState(surface === 'requirements')
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
