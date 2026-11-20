@@ -1,24 +1,32 @@
 #!/usr/bin/env bash
-# Run deep mode over the corpus oracle in the deep image built from HEAD.
+# Run deep mode over the UAES oracle in the deep image built from HEAD.
 #
-#   bench/deep-audit/run.sh [--name NAME] [--jobs N] [-- deep_eval.py run options]
+#   bench/deep-audit/run.sh [--name NAME] [--jobs N] [--coding text|vision] [--effort low|medium|high|xhigh] [-- deep_eval.py run options]
 #
 # Non-secret deep configuration comes from .env.production (as deployed); the model endpoints
-# and keys come from the repository-root .env. Results go to bench/deep-audit/runs/<name>/.
+# and keys come from the repository-root .env. --coding reviews with the endpoint, key and model
+# configured for text or vision instead of the coding one; --effort sets the review's reasoning
+# effort. Checks keep the configured text and vision models. Results go to bench/deep-audit/runs/<name>/.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 NAME=""
 JOBS=3
+CODING=""
+EFFORT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --name) NAME=$2; shift 2 ;;
     --jobs) JOBS=$2; shift 2 ;;
+    --coding) CODING=$2; shift 2 ;;
+    --effort) EFFORT=$2; shift 2 ;;
     --) shift; break ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "--jobs must be a positive integer" >&2; exit 2; }
+[[ -z "$CODING" || "$CODING" =~ ^(text|vision)$ ]] || { echo "--coding must be text or vision" >&2; exit 2; }
+[[ -z "$EFFORT" || "$EFFORT" =~ ^(low|medium|high|xhigh)$ ]] || { echo "--effort must be low, medium, high or xhigh" >&2; exit 2; }
 
 cd "$ROOT"
 # The image and the corpus must be the same revision: a dirty tree would evaluate code that no
@@ -39,13 +47,27 @@ mkdir -p "$OUT"
 chmod 0777 "$OUT"
 
 ENV_FILE=$(mktemp)
-trap 'rm -f "$ENV_FILE"' EXIT
+trap 'rm -f "$ENV_FILE" "$ENV_FILE.next"' EXIT
 grep -E '^PPAP_(MODEL_[A-Z_]+_(REASONING_EFFORT|EXTRA_BODY_JSON)|DEEP_SANDBOX_PROFILE|DEEP_MODEL_MAX_REQUESTS|DEEP_EXECUTOR_REVISION)=' .env.production >"$ENV_FILE"
 grep -E '^PPAP_MODEL_(TEXT|VISION|CODING)_(API_KEY|BASE_URL|MODEL)=' .env >>"$ENV_FILE"
 echo "PPAP_BUILD_SHA=$SHA" >>"$ENV_FILE"
+if [[ -n "$CODING" ]]; then
+  # Review with another configured endpoint: its key, base URL and model become the coding ones.
+  FROM=$(echo "$CODING" | tr '[:lower:]' '[:upper:]')
+  grep -vE '^PPAP_MODEL_CODING_(API_KEY|BASE_URL|MODEL)=' "$ENV_FILE" >"$ENV_FILE.next"
+  grep -E "^PPAP_MODEL_${FROM}_(API_KEY|BASE_URL|MODEL)=" .env | sed "s/^PPAP_MODEL_${FROM}_/PPAP_MODEL_CODING_/" >>"$ENV_FILE.next"
+  mv "$ENV_FILE.next" "$ENV_FILE"
+fi
+if [[ -n "$EFFORT" ]]; then
+  grep -v '^PPAP_MODEL_CODING_REASONING_EFFORT=' "$ENV_FILE" >"$ENV_FILE.next"
+  echo "PPAP_MODEL_CODING_REASONING_EFFORT=$EFFORT" >>"$ENV_FILE.next"
+  mv "$ENV_FILE.next" "$ENV_FILE"
+fi
+REVIEW_MODEL=$(grep '^PPAP_MODEL_CODING_MODEL=' "$ENV_FILE" | cut -d= -f2-)
+REVIEW_EFFORT=$(grep '^PPAP_MODEL_CODING_REASONING_EFFORT=' "$ENV_FILE" | cut -d= -f2-)
 
 cat >"$OUT/meta.json" <<EOF
-{"name": "$NAME", "commit": "$SHA", "image": "$IMAGE", "jobs": $JOBS, "options": "$*", "started": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"name": "$NAME", "commit": "$SHA", "image": "$IMAGE", "jobs": $JOBS, "review_model": "$REVIEW_MODEL", "review_effort": "$REVIEW_EFFORT", "options": "$*", "started": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 EOF
 
 pids=()

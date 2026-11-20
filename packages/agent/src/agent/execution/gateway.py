@@ -377,8 +377,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise ModelUnavailable()
                 provider_key = access.api_key.get_secret_value()
                 # Deployment options (reasoning effort, provider routing) the guest cannot know.
-                if access.reasoning_effort and "reasoning" not in body:
-                    body["reasoning"] = {"effort": access.reasoning_effort}
+                # A configured effort is the deployment's choice and wins over what the guest sent.
+                if access.reasoning_effort:
+                    requested = body.get("reasoning")
+                    body["reasoning"] = {**(requested if isinstance(requested, dict) else {}), "effort": access.reasoning_effort}
                 for key, value in access.extra_body().items():
                     body.setdefault(key, value)
             else:

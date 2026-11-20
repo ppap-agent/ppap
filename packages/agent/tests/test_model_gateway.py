@@ -182,10 +182,11 @@ def test_bound_grant_sends_each_use_to_its_frozen_model_with_deployment_options(
             execution_id = uuid4()
             with grants.bind(execution_id, identity, accesses.__getitem__):
                 token = grants.issue(execution_id)
-            for requested in ("vision-m", "pi-internal-alias"):
+            # Pi asks for its own effort; the deployment's configured effort replaces it.
+            for body in ({"input": "x", "model": "vision-m"}, {"input": "x", "model": "pi-internal-alias", "reasoning": {"effort": "high", "summary": "auto"}}):
                 client = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
                 try:
-                    client.request("POST", "/v1/responses", json.dumps({"input": "x", "model": requested}), {"Authorization": "Bearer " + token})
+                    client.request("POST", "/v1/responses", json.dumps(body), {"Authorization": "Bearer " + token})
                     assert client.getresponse().status == 200
                 finally:
                     client.close()
@@ -199,7 +200,7 @@ def test_bound_grant_sends_each_use_to_its_frozen_model_with_deployment_options(
     assert vision[0] == "/api/v1/responses" and vision[2] == "Bearer vision-key"
     assert vision[1]["model"] == "vision-m" and vision[1]["reasoning"] == {"effort": "none"} and vision[1]["provider"] == {"require_parameters": True}
     assert coding[0] == "/v1/responses" and coding[2] == "Bearer coding-key"
-    assert coding[1]["model"] == "coding-m" and coding[1]["reasoning"] == {"effort": "medium"}
+    assert coding[1]["model"] == "coding-m" and coding[1]["reasoning"] == {"effort": "medium", "summary": "auto"}
     assert token not in json.dumps([vision, coding])
 
 

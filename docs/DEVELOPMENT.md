@@ -130,7 +130,7 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 ## 深度审核评估
 
-深度模式的质量与成本用根目录 [`bench/deep-audit/`](../bench/deep-audit/README.md) 评估：在从 `HEAD` 构建的深度镜像里，按线上 Controller 的同一路径对人工 Oracle 逐例执行深度审核并汇总。
+深度模式的质量与成本用根目录 [`bench/deep-audit/`](../bench/deep-audit/README.md) 评估：在从 `HEAD` 构建的深度镜像里，按线上 Controller 的同一路径对 UAES 人工 Oracle 逐例执行深度审核，汇总正确率、耗时与公开价下的模型费用，用于复核模型与强度选型。
 
 ## Checker Core 官方发布
 
@@ -162,7 +162,7 @@ Key 只从标准输入读取，不打印。保存前先用该 Key 完成一次�
 
 普通模型请求（文件识别、规则提取、规则匹配、文字证据、视觉事实）统一经 `documents.ai.run_json`，底层为 PydanticAI 的 OpenAI Responses 模型：文本用 Prompted JSON 输出，视觉用原生 JSON Schema；Codex 端点（`/backend-api/codex`）以流式读取。单次调用最多一次输出校正，不做传输重试，失败只返回代码（`timeout`、`invalid_output`、`provider_status`、`request_failed`）。Schema 合法不等于业务正确，PPAP 仍执行原有业务校验，未知不得 PASS。Token 用量只在 provider 回报时记录，缺失记为未知，不影响结果有效性。
 
-Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key。网关按冻结身份为每个请求选模型：Pi 的请求用编码模型，Suite 程序中的文本与视觉调用分别用冻结的文本、视觉模型，并补上部署选项（如视觉 `reasoning.effort=none`）。每个 Attempt 只有一个请求次数熔断 `PPAP_DEEP_MODEL_MAX_REQUESTS`（默认 200），用于停止失控循环：触发后按资源上限结束。没有累计 Token/Turn 预算，缺少 usage 回执不拒绝有效结果；墙钟时限、容器资源限制与取消保持不变。SDK 可对瞬时错误做少量重试，由请求熔断兜底。
+Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key。网关按冻结身份为每个请求选模型：Pi 的请求用编码模型，Suite 程序中的文本与视觉调用分别用冻结的文本、视觉模型，并补上部署选项（如视觉 `reasoning.effort=none`）；配置了推理强度的用途以配置为准，Pi 自带的强度会被替换，所以复核强度由 `PPAP_MODEL_CODING_REASONING_EFFORT` 决定。每个 Attempt 只有一个请求次数熔断 `PPAP_DEEP_MODEL_MAX_REQUESTS`（默认 200），用于停止失控循环：触发后按资源上限结束。没有累计 Token/Turn 预算，缺少 usage 回执不拒绝有效结果；墙钟时限、容器资源限制与取消保持不变。SDK 可对瞬时错误做少量重试，由请求熔断兜底。
 
 ## 自定义规则与 Suite
 

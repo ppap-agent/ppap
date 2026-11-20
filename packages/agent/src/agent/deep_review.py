@@ -26,6 +26,7 @@ Decision = Literal["confirmed", "corrected"]
 Verdict = Literal["PASS", "NG", "NA", "UNABLE"]
 # Why one target was not deep-reviewed; it keeps its program result.
 DEGRADE_REASONS = frozenset({"deep_timeout", "deep_review_failed", "deep_review_invalid", "deep_input_missing"})
+# What Pi asks for; a deployment that configures the coding model's effort replaces it at the gateway.
 REVIEW_EFFORT = "medium"
 REVIEW_ATTEMPTS = 2
 MAX_EVIDENCE = 12
