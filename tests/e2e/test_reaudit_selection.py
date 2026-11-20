@@ -136,7 +136,9 @@ def reaudit_routes(page, *, accept=False):
             returned = []
             for choice in body["files"]:
                 source = next((file for file in files if file["file"]["id"] == choice["file_version_id"]), None)
-                row = {**source} if source else {"file": dict(uploaded), "validation": {"state": "valid", "reasons": []}, "rule_options": files[0]["rule_options"]}
+                # A new upload carries rule options only as the replacement of an original file, whose options it inherits.
+                replaced = next((file for file in files if file["file"]["id"] == choice.get("replacement_of_file_version_id")), None)
+                row = {**source} if source else {"file": dict(uploaded), "validation": {"state": "valid", "reasons": []}, **({"rule_options": replaced["rule_options"]} if replaced else {})}
                 for field in ("preferred_rule_version_id", "reference_only", "replacement_of_file_version_id"):
                     row.pop(field, None)
                 row.update({key: value for key, value in choice.items() if key != "file_version_id"})

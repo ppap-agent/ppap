@@ -23,11 +23,24 @@ PRINCIPAL = {
 }
 
 
+FEISHU_CLIENT = "Feishu/7.0 PPAP-access-test"
+
+
 @pytest.fixture
 def page():
+    yield from _page(FEISHU_CLIENT)
+
+
+@pytest.fixture
+def browser_page():
+    # In an ordinary browser the product shows the account menu with sign-out; inside Feishu it does not.
+    yield from _page(None)
+
+
+def _page(user_agent):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        context = browser.new_context(user_agent="Feishu/7.0 PPAP-access-test")
+        context = browser.new_context(user_agent=user_agent) if user_agent else browser.new_context()
         page = context.new_page()
         page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
         page.route("**/api/**", lambda route: route.fulfill(status=404, json={"error": "unexpected_test_request"}))
@@ -151,7 +164,7 @@ def test_initial_anonymous_probe_does_not_discard_a_successful_host_login(page):
 
     page.route("**/api/login/feishu/host", host_login)
     page.goto(WEB + "/tasks/new")
-    expect(page.get_by_role("button", name="登录恢复测试，账号菜单")).to_be_visible()
+    expect(page.get_by_role("navigation", name="产品导航", exact=True)).to_be_visible()
     expect(page.get_by_role("heading", name="登录 PPAP Audit")).to_have_count(0)
     assert codes == [{"code": "controlled-host-code"}]
 
@@ -160,7 +173,7 @@ def test_disabled_new_login_does_not_revoke_an_existing_authenticated_session(pa
     login_config(page, "disabled")
     page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
     page.goto(WEB + "/tasks/new")
-    expect(page.get_by_role("button", name="登录恢复测试，账号菜单")).to_be_visible()
+    expect(page.get_by_role("navigation", name="产品导航", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="使用飞书登录")).to_have_count(0)
 
 
@@ -173,7 +186,7 @@ def test_a_business_401_still_hides_the_authenticated_product_without_restarting
     host_posts = []
     page.route("**/api/login/feishu/host", lambda route: (host_posts.append(route.request.url), route.fulfill(json=PRINCIPAL)))
     page.goto(WEB + "/tasks/new")
-    expect(page.get_by_role("button", name="登录恢复测试，账号菜单")).to_be_visible()
+    expect(page.get_by_role("navigation", name="产品导航", exact=True)).to_be_visible()
     # A new audit starts with the task list folded.
     page.get_by_role("button", name="展开审核任务", exact=True).click()
     more = page.get_by_role("navigation", name="审核任务列表", exact=True).get_by_role("button", name="加载更多任务", exact=True)
@@ -182,7 +195,7 @@ def test_a_business_401_still_hides_the_authenticated_product_without_restarting
     page.route("**/api/audit-tasks?*", lambda route: route.fulfill(status=401, json={"error": "unauthenticated"}))
     more.click()
     expect(page.get_by_role("heading", name="登录 PPAP Audit")).to_be_visible()
-    expect(page.get_by_role("button", name="登录恢复测试，账号菜单")).to_have_count(0)
+    expect(page.get_by_role("navigation", name="产品导航", exact=True)).to_have_count(0)
     expect(page.get_by_role("link", name="使用飞书登录")).to_be_visible()
     assert page.url == before
     assert host_posts == []
@@ -216,7 +229,8 @@ def test_authorization_failure_keeps_task_and_requires_an_explicit_new_login(pag
     assert host_posts == []
 
 
-def test_native_usage_and_logout_keep_the_task_report_address(page):
+def test_native_usage_and_logout_keep_the_task_report_address(browser_page):
+    page = browser_page
     page.set_viewport_size({"width": 1280, "height": 720})
     login_config(page)
     page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))

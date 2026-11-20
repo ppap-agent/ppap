@@ -19,6 +19,7 @@ export function FileName({name, format, colored = false, truncate = false, class
   const extension = truncate ? name.match(/\.[a-z0-9]{1,8}$/i)?.[0] : undefined
   return <span className={cn('flex min-w-0 items-start gap-2', className)}>
     <FileIcon name={name} format={format} colored={colored} className={colored ? '' : 'mt-0.5'}/>
-    {truncate ? <span className="flex min-w-0" title={name}><span className="truncate">{extension ? name.slice(0, -extension.length) : name}</span>{extension && <span className="shrink-0">{extension}</span>}</span> : <span className="min-w-0 [overflow-wrap:anywhere]">{name}</span>}
+    {/* The two visible parts keep the extension in view when the name is cut; split flex items would read as "名 .xlsx", so assistive tech gets the whole name. */}
+    {truncate ? <span className="flex min-w-0" title={name}><span className="sr-only">{name}</span><span aria-hidden="true" className="truncate">{extension ? name.slice(0, -extension.length) : name}</span>{extension && <span aria-hidden="true" className="shrink-0">{extension}</span>}</span> : <span className="min-w-0 [overflow-wrap:anywhere]">{name}</span>}
   </span>
 }

@@ -33,7 +33,9 @@ export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, 
   const [skipped, setSkipped] = useState<SkippedUpload[]>([])
   function save(row: UploadRow) {current.current.set(row.id, row); setRows([...current.current.values()])}
   function owners(except: string): ContentOwner[] {
-    const queued = [...current.current.values()].filter(row => row.id !== except && !row.removed)
+    // A transfer whose result is unknown or failed is waiting to be recovered (for instance from the same file in Feishu);
+    // the file that recovers it is not a second copy of it.
+    const queued = [...current.current.values()].filter(row => row.id !== except && !row.removed && !['unknown', 'failed'].includes(row.receipt.state))
     return [...existing?.() ?? [], ...queued.map(row => ({id: row.receipt.file?.id, sha256: row.input.kind === 'local' ? row.input.sha256 : row.receipt.file?.sha256, name: uploadName(row.input)}))]
   }
   function skip(row: UploadRow, twin: string) {
