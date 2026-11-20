@@ -23,6 +23,8 @@ from agent.execution.secure_files import read_json, read_regular, reject_constan
 # What Pi loads natively from its agent directory: the fixed instructions (AGENTS.md) and the
 # reference skills. Each run gets a fresh read-only copy; nothing from the work directory is trusted.
 DEEP_AGENT = Path(__file__).resolve().parents[1] / "deep_agent"
+# The model name Pi sends; never a provider model name.
+PI_MODEL_ALIAS = "ppap-review"
 
 T = TypeVar("T", bound=BaseModel)
 ReasoningEffort = Literal["xhigh", "high", "medium", "low"]
@@ -172,7 +174,9 @@ class PiRunner(ModelRunner):
             "prompt": str(work / "prompt.txt"),
             "base_url": self.grant.base_url,
             "token": self.grant.token,
-            "model": self.grant.model,
+            # An alias, never a real name: the gateway sends it to the coding model even when that
+            # model is also frozen for text or vision.
+            "model": PI_MODEL_ALIAS,
             "reasoning_effort": reasoning_effort,
         }
         request = home / "request.json"

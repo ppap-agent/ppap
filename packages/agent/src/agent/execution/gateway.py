@@ -33,7 +33,6 @@ from agent.execution.secure_files import reject_constant, unique_object
 
 MAX_BODY = 8 * 1024 * 1024
 MAX_RESPONSE = 64 * 1024 * 1024
-# Pi is the main consumer and may send internal aliases; an unknown name selects coding.
 PURPOSE_ORDER: tuple[ModelPurpose, ...] = ("coding", "text", "vision")
 
 
@@ -143,9 +142,10 @@ class Grants:
             lease = self.leases.get(hashlib.sha256(token.encode()).hexdigest())
             if lease is None or lease.expires <= time.monotonic() or lease.in_flight or lease.budget_exhausted:
                 raise ValueError("Invalid execution grant")
-            # The grant selects the paid model. A name outside the frozen set selects
-            # coding; text and vision are reachable only by their frozen names.
-            purpose: ModelPurpose = next((name for name in PURPOSE_ORDER if body.get("model") == lease.models[name]), "coding")
+            # The grant selects the paid model. Text and vision are reachable only by their frozen
+            # names; every other name, Pi's alias included, selects coding. Pi never sends a real
+            # name, so a model frozen for several uses still reaches each with its own options.
+            purpose: ModelPurpose = next((name for name in ("text", "vision") if body.get("model") == lease.models[name]), "coding")
             body["model"] = lease.models[purpose]
             if lease.requests_left <= 0:
                 lease.budget_exhausted = True

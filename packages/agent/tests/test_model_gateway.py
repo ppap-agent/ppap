@@ -160,16 +160,17 @@ def test_each_grant_pins_its_own_key_even_when_the_host_switches_it():
 
 
 def test_bound_grant_sends_each_use_to_its_frozen_model_with_deployment_options():
+    from agent.execution.guest_model import PI_MODEL_ALIAS
     from documents.model_access import ModelAccess
     from pydantic import SecretStr
 
-    identity = {"source": "platform", "provider": "responses-compatible", "model": "text-m", "vision_model": "vision-m", "coding_model": "coding-m", "revision": "r" * 64, "deployment": "d" * 64}
+    identity = {"source": "platform", "provider": "responses-compatible", "model": "text-m", "vision_model": "vision-m", "coding_model": "text-m", "revision": "r" * 64, "deployment": "d" * 64}
     accesses = {
-        "coding": ModelAccess(api_key=SecretStr("coding-key"), model="coding-m", base_url="https://coding.example.test/v1", reasoning_effort="medium"),
+        "coding": ModelAccess(api_key=SecretStr("coding-key"), model="text-m", base_url="https://coding.example.test/v1", reasoning_effort="medium"),
         "vision": ModelAccess(
             api_key=SecretStr("vision-key"), model="vision-m", base_url="https://vision.example.test/api/v1", extra_body_json='{"reasoning":{"effort":"none"},"provider":{"require_parameters":true}}'
         ),
-        "text": ModelAccess(api_key=SecretStr("text-key"), model="text-m", base_url="https://coding.example.test/v1", reasoning_effort="low"),
+        "text": ModelAccess(api_key=SecretStr("text-key"), model="text-m", base_url="https://text.example.test/v1", reasoning_effort="low"),
     }
     reply = json.dumps({"id": "r", "object": "response", "created_at": 0, "model": "m", "status": "completed", "output": [], "usage": {"input_tokens": 1, "output_tokens": 1}}).encode()
     with patch("agent.execution.gateway.http.client.HTTPSConnection") as upstream:
@@ -182,8 +183,9 @@ def test_bound_grant_sends_each_use_to_its_frozen_model_with_deployment_options(
             execution_id = uuid4()
             with grants.bind(execution_id, identity, accesses.__getitem__):
                 token = grants.issue(execution_id)
-            # Pi asks for its own effort; the deployment's configured effort replaces it.
-            for body in ({"input": "x", "model": "vision-m"}, {"input": "x", "model": "pi-internal-alias", "reasoning": {"effort": "high", "summary": "auto"}}):
+            # One model frozen for text and coding, as deployed: the real name reaches text, Pi's alias
+            # reaches coding. Pi asks for its own effort; the deployment's configured effort replaces it.
+            for body in ({"input": "x", "model": "vision-m"}, {"input": "x", "model": PI_MODEL_ALIAS, "reasoning": {"effort": "high", "summary": "auto"}}, {"input": "x", "model": "text-m"}):
                 client = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
                 try:
                     client.request("POST", "/v1/responses", json.dumps(body), {"Authorization": "Bearer " + token})
@@ -194,14 +196,15 @@ def test_bound_grant_sends_each_use_to_its_frozen_model_with_deployment_options(
             server.shutdown()
             thread.join()
             server.server_close()
-    (vision_host, *_), (coding_host, *_) = [call.args for call in upstream.call_args_list]
-    assert (vision_host, coding_host) == ("vision.example.test", "coding.example.test")
-    vision, coding = [(call.args[1], json.loads(call.args[2]), call.args[3]["Authorization"]) for call in upstream.return_value.request.call_args_list]
+    (vision_host, *_), (coding_host, *_), (text_host, *_) = [call.args for call in upstream.call_args_list]
+    assert (vision_host, coding_host, text_host) == ("vision.example.test", "coding.example.test", "text.example.test")
+    vision, coding, text = [(call.args[1], json.loads(call.args[2]), call.args[3]["Authorization"]) for call in upstream.return_value.request.call_args_list]
     assert vision[0] == "/api/v1/responses" and vision[2] == "Bearer vision-key"
     assert vision[1]["model"] == "vision-m" and vision[1]["reasoning"] == {"effort": "none"} and vision[1]["provider"] == {"require_parameters": True}
     assert coding[0] == "/v1/responses" and coding[2] == "Bearer coding-key"
-    assert coding[1]["model"] == "coding-m" and coding[1]["reasoning"] == {"effort": "medium", "summary": "auto"}
-    assert token not in json.dumps([vision, coding])
+    assert text[2] == "Bearer text-key" and text[1]["model"] == "text-m" and text[1]["reasoning"] == {"effort": "low"}
+    assert coding[1]["model"] == "text-m" and coding[1]["reasoning"] == {"effort": "medium", "summary": "auto"}
+    assert token not in json.dumps([vision, coding, text])
 
 
 def test_a_stream_only_model_answers_a_non_streaming_guest_request_with_the_completed_response():
