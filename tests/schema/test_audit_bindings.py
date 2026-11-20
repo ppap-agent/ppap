@@ -203,12 +203,14 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         from pydantic import TypeAdapter
         from worker import process_claimed
 
-        workbook = Workbook()
-        workbook.active.append(["控制计划", "☑批量生产"])
-        content = BytesIO()
-        workbook.save(content)
         files = []
         for name in ("missing.xlsx", "healthy.xlsx", "last.xlsx"):
+            # Same cells, different documents: the product refuses to audit identical content twice in one task.
+            workbook = Workbook()
+            workbook.active.append(["控制计划", "☑批量生产"])
+            workbook.properties.title = name
+            content = BytesIO()
+            workbook.save(content)
             file = self.store.create_staging(self.alice, name, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", len(content.getvalue()))
             self.store.put_blob(file, content.getvalue())
             files.append(self.store.finalize_version(file))
@@ -1806,7 +1808,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             text = "".join("".join(page.get_text().split()) for page in pdf)
             self.assertIn("必须填写零件号", text)
             self.assertIn("P-1", text)
-            self.assertIn("共1项：符合1项，不符合0项，无法判断0项，不适用0项。", "".join(text.split()))
+            self.assertIn("结果计数（共1项审核项）：PASS1项，NG0项，待审核0项，不适用0项。", text)
             self.assertIn("部分判定的证据未经验证", text)
         for field, value in (("round_id", str(uuid.uuid4())), ("file_version_id", str(uuid.uuid4())), ("result_attempt", 2), ("artifact_id", "other-artifact")):
             self.assertEqual(self.display_client.get(pdf_path, params={**query, field: value}).status_code, 403)
