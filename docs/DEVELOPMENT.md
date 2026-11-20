@@ -130,7 +130,7 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 ## 深度审核评估
 
-深度模式的质量与成本用根目录 [`bench/deep-audit/`](../bench/deep-audit/README.md) 评估：在从 `HEAD` 构建的深度镜像里，按线上 Controller 的同一路径对 UAES 人工 Oracle 逐例执行深度审核，汇总正确率、耗时与公开价下的模型费用，用于复核模型与强度选型。
+深度模式的质量与成本用根目录 [`bench/deep-audit/`](../bench/deep-audit/README.md) 评估：在从 `HEAD` 构建的深度镜像里，按线上 Controller 的同一路径对 UAES 人工 Oracle 逐例执行深度审核，汇总正确率、耗时与公开价下的模型费用，用于复核强度选型。
 
 ## Checker Core 官方发布
 

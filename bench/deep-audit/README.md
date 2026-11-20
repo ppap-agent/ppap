@@ -1,13 +1,13 @@
 # deep-audit：深度审核评估
 
-用 UAES 人工 Oracle 衡量深度模式，为复核模型和推理强度选型：检查程序给出结论后，深度复核把多少条改对、改错，有没有把不该通过的改成 PASS，程序无法判断的条款复核后定下了多少，以及每份文件的检查、复核耗时和按公开价计算的模型费用。
+用 UAES 人工 Oracle 衡量深度模式，为复核推理强度选型：检查程序给出结论后，深度复核把多少条改对、改错，有没有把不该通过的改成 PASS，程序无法判断的条款复核后定下了多少，以及每份文件的检查、复核耗时和按公开价计算的模型费用。
 
 ## 走的是哪条路径
 
 与线上 Controller 相同：在从 `HEAD` 构建的深度镜像里，以 root 启动本地模型网关和 `ContainerRuntime`，guest 降权为 uid 10001、在 `prlimit` 下运行，由 `CoreRuntime.execute_snapshot` 在一个 guest 中执行整轮、同组共享上下文：逐份运行已验证的 Suite 程序（允许模型读取，每份 3 分钟），再逐份由 Pi 按 `deep_agent/AGENTS.md` 复核（每份 6 分钟），宿主校验并合并订正。某份复核未完成时，这份保留程序结论，记为未复核。
 
 - 模型：平台模型（`.env` 中的 `PPAP_MODEL_TEXT_*` / `VISION_*` / `CODING_*`），按未配置企业 Key 的租户冻结身份；推理强度、请求上限、沙箱配置取自 `.env.production`。检查用文本与看图模型，复核（Pi）用 coding 模型，强度为 `PPAP_MODEL_CODING_REASONING_EFFORT`（网关以配置的强度为准）。
-- 选型：`--coding text|vision` 让复核改用文本或看图模型的地址、Key 与模型；`--effort low|medium|high|xhigh` 改复核强度。检查用的模型不变，所以比较的只有复核。实际的复核模型与强度写进 `meta.json`。
+- 可调的只有复核强度：`--effort low|medium|high|xhigh`。模型一律用配置的，检查不受影响。实际的复核模型与强度写进 `meta.json`。
 - 用例：`assets/corpus` 中 UAES 的人工 Oracle（`uaes-cases.csv`、`uaes-oracle.csv`、`uaes-reviewed-rules.json`）。语料合同照常检查条款正文与人工复核语义是否一致，不一致即报错，不评测过期真值。
 - 用量与费用：每次模型请求都经过本进程托管的网关，逐次记下用途、模型、实际强度和服务商返回的用量（输入、其中缓存命中、输出、其中推理），按发出时正在进行的任务归到对应文件的检查或复核。费用按 [prices.json](prices.json) 的公开价计算（美元），价格表由人维护，写明来源与读取日期。
 - 引用文件按上传流程识别，与线上冻结方式一致；识别请求先用 `assets/corpus/replay` 的录音回答，没有录音才现调模型，且不保存。这样两次运行只在审核本身不同。
