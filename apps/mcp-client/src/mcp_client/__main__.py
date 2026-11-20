@@ -59,7 +59,8 @@ def bridge(url, auth, roots, *, max_download_bytes=2 * 1024**3, client_factory=N
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
     async def local_upload_file(path: str, request_id: UUID, file_id: UUID | None = None) -> dict:
-        """Upload a local file (<=200 MiB) from local_file_roots and check that it can be read; use the result in start_audit.
+        """Upload one local file (<=200 MiB) from local_file_roots and check that it can be read. For a whole submission
+        folder use local_upload_folder instead: one call, and it returns the files ready for start_audit.
 
         After an interruption call again with the same request_id and unchanged file. file_id adds a new version to that file.
         """
@@ -88,6 +89,11 @@ def bridge(url, auth, roots, *, max_download_bytes=2 * 1024**3, client_factory=N
         except Exception:
             return {"status": "error", "error": "download_incomplete_retry_original_url"}
 
+    # Only tools are offered; an advertised but empty resources or prompts list sends clients searching it.
+    from mcp import types
+
+    for request in (types.ListResourcesRequest, types.ListResourceTemplatesRequest, types.ReadResourceRequest, types.ListPromptsRequest, types.GetPromptRequest):
+        server._mcp_server.request_handlers.pop(request, None)
     return server
 
 

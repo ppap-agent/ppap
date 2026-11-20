@@ -179,3 +179,12 @@ async def test_folder_upload_derives_one_request_per_file_and_returns_audit_inpu
     assert again["files"] == first["files"]
     with pytest.raises(ClientError, match="local_path_not_allowed"):
         await files.upload_folder(str(tmp_path.parent), request_id)
+
+
+def test_adapter_offers_tools_only(tmp_path):
+    from mcp.server.lowlevel.server import NotificationOptions
+    from mcp_client.__main__ import bridge
+
+    server = bridge(URL, Auth(), [tmp_path], client_factory=Connection)
+    offered = server._mcp_server.get_capabilities(NotificationOptions(), {})
+    assert offered.tools is not None and offered.resources is None and offered.prompts is None

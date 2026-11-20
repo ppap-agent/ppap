@@ -29,3 +29,14 @@ def test_requests_with_a_token_still_need_json_and_an_allowed_origin():
     assert client.post("/mcp", headers={**bearer, "Content-Type": "application/octet-stream"}, content=b"{}").status_code == 400
     assert client.post("/mcp", headers={**bearer, "Content-Type": "application/json", "Origin": "https://attacker.example"}, content=b"{}").status_code == 403
     assert client.post("/mcp", headers={**bearer, "Content-Type": "application/json"}, content=b"{}").status_code == 200
+
+
+def test_the_server_offers_tools_only():
+    from api.mcp_server import tools_only
+    from fastmcp import FastMCP
+    from mcp.server.lowlevel.server import NotificationOptions
+
+    server = FastMCP("x")
+    tools_only(server)
+    offered = server._mcp_server.get_capabilities(NotificationOptions(), {})
+    assert offered.tools is not None and offered.resources is None and offered.prompts is None

@@ -20,7 +20,7 @@
 
 设置 `PPAP_MCP_ENABLED=true` 后，现有 API 进程提供 `/mcp`。生产 `PPAP_PUBLIC_API_URL` 为 `https://ppap.icoastline.com/ppap` 时，客户端服务器地址为 `https://ppap.icoastline.com/ppap/mcp`。开发环境仅允许回环地址使用 HTTP。
 
-客户端使用远程 Streamable HTTP 和 OAuth。授权服务器为 API 地址下的 `/oauth`，支持客户端注册、授权码与 S256 PKCE、Scope 选择、刷新和撤销。授权及令牌请求的 `resource` 必须精确等于 MCP 服务器地址。通过飞书登录后，用户核对客户端回调和权限。飞书凭据始终留在服务端。
+客户端使用远程 Streamable HTTP 和 OAuth。授权服务器为 API 地址下的 `/oauth`，支持客户端注册、授权码与 S256 PKCE、Scope 选择、刷新和撤销。授权及令牌请求的 `resource` 必须精确等于 MCP 服务器地址。通过飞书登录后，用户核对客户端回调和权限：读取权限默认勾选，上传、开始审核、复核、发送等操作权限默认不勾，需要时由用户勾选。注册时未指定范围的客户端（如 ChatGPT）可申请全部范围，实际授予以用户勾选为准；已下线的 `rules:read`、`rules:write` 在申请和刷新时被忽略。服务端只提供工具，不提供 Resources 与 Prompts。飞书凭据始终留在服务端。
 
 批准或拒绝后，浏览器会自动返回已注册的客户端回调。若没有自动返回，可点击完成页上的“返回客户端”；不要重复提交授权表单。
 

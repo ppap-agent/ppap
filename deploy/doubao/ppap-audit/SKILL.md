@@ -17,7 +17,7 @@ PPAP 通过 MCP 连接器 `ppap` 提供工具。你代表当前对话的发起�
 
 ## 一次审核
 
-1. **拿到文件**：用 `find_feishu_files` 找到飞书文件，再用 `import_feishu_file` 导入。导入时会同时检查文件能否读取。
+1. **拿到文件**：用 `find_feishu_files` 找到飞书文件，再用 `import_feishu_file` 导入。导入时会同时检查文件能否读取。连接的是本地适配器时，一整个提交件目录用 `local_upload_folder` 一次上传，返回的 `audit_files` 原样交给下一步。
 2. **开始审核**：用 `start_audit` 提交这些文件（每个文件给出导入结果里的文件版本 `file.id` 和校验 `validation.id`，`selection` 为 `selected`）。需要写回某个飞书文档时，在这一步给出 `writeback_target`。
 3. **核对**：用 `get_audit` 读出每份文件的类型、规则、预检问题，以及预计耗时与点数，原样告诉用户；按它返回的 `next` 提示走下一步（例如缺客户时补上）。用户要深度模式且可用时，调用 `set_deep_mode`。
 4. **确认**：用户明确说开始后，调用 `confirm_audit`，按“基本规则”完成浏览器确认。想在完成时收到飞书消息，带上 `notify_when_done=true`。

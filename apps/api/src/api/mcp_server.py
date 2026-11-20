@@ -104,6 +104,14 @@ class McpRequestGuard:
         await self.app(scope, replay, send)
 
 
+def tools_only(server) -> None:
+    """Offer tools and nothing else: an advertised but empty resources or prompts list sends clients searching it."""
+    from mcp import types
+
+    for request in (types.ListResourcesRequest, types.ListResourceTemplatesRequest, types.ReadResourceRequest, types.ListPromptsRequest, types.GetPromptRequest):
+        server._mcp_server.request_handlers.pop(request, None)
+
+
 def install_mcp(app, product, http, session_of):
     store = McpStore(product)
     provider = OAuthProvider(store, http)
@@ -136,6 +144,7 @@ def install_mcp(app, product, http, session_of):
     from api.mcp_tools import register_tools
 
     register_tools(server, gateway, authority)
+    tools_only(server)
     register_oauth(app, provider, session_of)
 
     def sign_in(path: str):

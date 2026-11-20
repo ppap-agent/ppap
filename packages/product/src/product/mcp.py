@@ -79,8 +79,13 @@ class ApprovedCall:
             raise McpError("confirmation_content_changed", 409)
 
 
+# Scopes that once existed. Clients registered before their removal still ask for them; they grant nothing now and are
+# dropped instead of failing the client's sign-in or refresh.
+RETIRED_SCOPES = frozenset({"rules:read", "rules:write"})
+
+
 def parse_scopes(value: str) -> list[str]:
-    scopes = sorted(set(value.split()))
+    scopes = sorted(set(value.split()) - RETIRED_SCOPES)
     if not scopes or not set(scopes).issubset(SCOPES):
         raise McpError("invalid_scope")
     return scopes
