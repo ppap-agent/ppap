@@ -188,9 +188,9 @@ uv run --no-sync pytest tests/corpus/test_cases.py tests/corpus/regressions --ft
 uv run --no-sync python -m scripts.corpus_report
 
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
-docker buildx bake worker
+docker buildx bake app
 docker build \
-  --build-arg PPAP_WORKER_IMAGE="ppap-worker:${PPAP_BUILD_SHA}" \
+  --build-arg PPAP_APP_IMAGE="ppap-app:${PPAP_BUILD_SHA}" \
   --build-context psw-tests=tests \
   --build-context psw-assets="assets/li/samples/模拟测试文件V2-01/16-零件提交保证书" \
   -f tests/corpus/Dockerfile.psw \

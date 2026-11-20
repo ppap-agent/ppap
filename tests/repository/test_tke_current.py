@@ -91,7 +91,9 @@ class TkeCurrentDeployTests(unittest.TestCase):
         self.assertRegex(config["data"]["PPAP_BUILD_SHA"], r"^[0-9a-f]{40}$")
         for container in app_containers:
             registry_path = r"(?:icoastline\.tencentcloudcr\.com/ppap-feishu/current-|unregistry\.xixifusi\.online/ppap-)"
-            self.assertRegex(container["image"], registry_path + container["name"] + r"@sha256:[0-9a-f]{64}$")
+            # API and Worker run the one app image; each selects its process with PPAP_SERVICE.
+            repository = "app" if container["name"] in {"api", "worker"} else container["name"]
+            self.assertRegex(container["image"], registry_path + repository + r"@sha256:[0-9a-f]{64}$")
             self.assertEqual(container["imagePullPolicy"], "IfNotPresent")
         self.assertTrue(any("postgres:" in image for image in images))
         self.assertTrue(any(image.startswith("docker.io/pgsty/silo:") for image in images))

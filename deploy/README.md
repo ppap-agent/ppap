@@ -35,7 +35,7 @@ docker buildx bake
 
 同一 Git revision 的制品：
 
-- `ppap-api:<git_sha>` / `ppap-worker:<git_sha>`：`deploy/app/Dockerfile`（`PPAP_SERVICE=api|worker`，共用安装层）
+- `ppap-app:<git_sha>`：`deploy/app/Dockerfile`，API 与 Worker 共用同一镜像，由运行时环境变量 `PPAP_SERVICE=api|worker` 选择进程
 - `ppap-web:<git_sha>`：`deploy/web/Dockerfile`（nginx；`build-identity.json` 记录 `git_sha`；不把 isolated-dev `runtime-config.json` 打进镜像，进程启动时由 `PPAP_PUBLIC_API_URL` 写入）
 
 Bake 定义在仓库根 [docker-bake.hcl](../docker-bake.hcl)。API `GET /version` 与 Worker heartbeat 读取 `PPAP_BUILD_SHA`。当前镜像不含 isolated-dev 凭据；API/Worker 共用的 app image 包含当前 DOC 支持所需的 LibreOffice 与受限 converter sandbox。

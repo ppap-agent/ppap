@@ -62,8 +62,7 @@ const selected = {PPAP_BUILD_SHA: sha}
 const bake = nativeJson('docker', ['buildx', 'bake', '--print'], {...process.env, ...selected})
 const expected = bake
   ? {
-      api: targetTag(bake, 'api'),
-      worker: targetTag(bake, 'worker'),
+      app: targetTag(bake, 'app'),
       web: targetTag(bake, 'web'),
     }
   : {}
@@ -83,27 +82,29 @@ const release = nativeJson('docker', ['buildx', 'bake', 'release', '--print'], {
 })
 if (release) {
   const targets = release.target || {}
-  for (const target of ['api', 'worker', 'web', 'deep']) {
+  for (const target of ['app', 'web', 'deep']) {
     if (targetTag(release, target) !== `${releasePrefix}${target}:${sha}`) fail(`release ${target} must use the fixed source SHA`)
     const labels = targets[target]?.labels || {}
     if (labels['org.opencontainers.image.revision'] !== sha || labels['org.opencontainers.image.source'] !== 'https://github.com/ppap-agent/ppap') fail(`release ${target} must identify its source`)
   }
   // Deep is the Worker application with Pi: same Dockerfile, same source, Pi layers below the source.
-  for (const [target, stage] of [['api', 'app'], ['worker', 'app'], ['deep', 'deep']]) {
+  for (const [target, stage] of [['app', 'app'], ['deep', 'deep']]) {
     if (targets[target]?.dockerfile !== 'deploy/app/Dockerfile' || targets[target]?.target !== stage) fail(`${target} must build stage ${stage} of deploy/app/Dockerfile`)
   }
   if (targets.deep?.args?.PPAP_APP_BASE !== 'deep-base') fail('Deep must build the application on deep-base')
 }
 
+// API and Worker are two processes of one application image.
+const services = {api: expected.app, worker: expected.app, web: expected.web}
 verifyCompose(
   'isolated-dev',
   composeJson('deploy/isolated-dev/compose.yaml', null, selected),
-  expected,
+  services,
 )
 verifyCompose(
   'production',
   composeJson('deploy/compose.yaml', 'deploy/compose.env.example', selected),
-  expected,
+  services,
 )
 
 const remoteEnv = {
@@ -123,7 +124,7 @@ const remoteEnv = {
 verifyCompose(
   'remote-dev',
   composeJson('deploy/remote-dev/compose.yaml', null, remoteEnv),
-  {api: expected.api, web: expected.web},
+  {api: expected.app, web: expected.web},
 )
 
 if (failures.length) {

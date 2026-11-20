@@ -117,7 +117,7 @@ def release_args(root):
     if outdated:
         sys.exit("base images are stale (" + ", ".join(outdated) + "): run a bases build first")
     deps, deep = record["deps"]["image"], record["deep-base"]["image"]
-    for target, image in (("api", deps), ("worker", deps), ("deep", deep)):
+    for target, image in (("app", deps), ("deep", deep)):
         print("--set " + target + ".args.PPAP_APP_BASE=" + image)
 
 

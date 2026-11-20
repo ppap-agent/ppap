@@ -93,7 +93,7 @@ services:
         mcli mb --ignore-existing "ppap/$$PPAP_S3_BUCKET"
 
   api:
-    image: ppap-api:${PPAP_BUILD_SHA}
+    image: ppap-app:${PPAP_BUILD_SHA}
     depends_on:
       init-db:
         condition: service_completed_successfully
@@ -163,7 +163,7 @@ services:
       start_period: 10s
 
   worker:
-    image: ppap-worker:${PPAP_BUILD_SHA}
+    image: ppap-app:${PPAP_BUILD_SHA}
     depends_on:
       init-db:
         condition: service_completed_successfully

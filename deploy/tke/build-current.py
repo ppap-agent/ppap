@@ -24,7 +24,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-COMPONENTS = ("api", "worker", "web", "deep")
+# API and Worker run the same "app" image; the deployment selects the process (PPAP_SERVICE).
+COMPONENTS = ("app", "web", "deep")
 PREFIXES = {"yunxiao": "icoastline.tencentcloudcr.com/ppap-feishu/current-", "unregistry": "unregistry.xixifusi.online/ppap-"}
 CODEUP = "https://codeup.aliyun.com/icoastline/integration/4.0/ppap-web.git"
 FLOW = "/flow/organizations/60d54c9a70ab8549fd3e10db/pipelines/5339663"
@@ -177,7 +178,7 @@ def yunxiao(sha: str, attempt: Path, resume_run: int | None, mode: str = "releas
                 refs[level] = {"inputs": inputs, "image": image}
             source_seen |= "PPAP_BASE_SOURCE " + sha in page["logs"]
         else:
-            refs.update(re.findall(r"PPAP_RELEASE_IMAGE (api|worker|web|deep) (\S+@sha256:[0-9a-f]{64})", page["logs"]))
+            refs.update(re.findall(r"PPAP_RELEASE_IMAGE (app|web|deep) (\S+@sha256:[0-9a-f]{64})", page["logs"]))
             source_seen |= "PPAP_RELEASE_SOURCE " + sha in page["logs"]
         if not page.get("more"):
             break
@@ -187,7 +188,7 @@ def yunxiao(sha: str, attempt: Path, resume_run: int | None, mode: str = "releas
         require(source_seen and set(refs) == set(BASES), "Flow did not report all three base levels")
         require(all(re.fullmatch(re.escape(PREFIXES["yunxiao"] + name) + r"@sha256:[0-9a-f]{64}", refs[name]["image"]) for name in BASES), "Flow reported an unexpected base repository")
         return refs
-    require(source_seen and set(refs) == set(COMPONENTS), "Flow did not report all four fixed-source images")
+    require(source_seen and set(refs) == set(COMPONENTS), "Flow did not report all fixed-source images")
     require(all(re.fullmatch(re.escape(PREFIXES["yunxiao"] + c) + r"@sha256:[0-9a-f]{64}", refs[c]) for c in COMPONENTS), "Flow reported an unexpected image repository")
     return refs
 
@@ -226,7 +227,7 @@ def tcr_pull_secret() -> str:
 
 
 def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
-    """Resolve tags and verify all four manifests/configs before any rollout."""
+    """Resolve tags and verify all manifests/configs before any rollout."""
     configs, pins = {}, {}
     auth = None
     if next(iter(images.values())).startswith(PREFIXES["yunxiao"]):
@@ -305,7 +306,7 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
         except RegistryImageMissing:
             pass  # Only a confirmed missing image permits a new build.
         else:
-            print("Reusing four verified images; build skipped.", flush=True)
+            print("Reusing verified images; build skipped.", flush=True)
     if provider == "yunxiao":
         if pins is None:
             # Releases stack on the recorded dependency images; they must come from these exact inputs.
@@ -343,13 +344,13 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
     require(count == 1, "expected one application source pin")
     for component, ref in pins.items():
         text, count = re.subn(r"(?m)^([ ]+image: )(?:\S+/)?(?:ppap-|current-)?" + component + r"(?:@|:).+$", lambda m: m[1] + ref, text)
-        # The legacy ticket sync CronJob runs the API image too; every reference moves together.
-        require(count == (2 if component == "api" else 1), "unexpected image pin count for " + component)
+        # The app image runs the API, the Worker and the legacy ticket sync CronJob; all move together.
+        require(count == (3 if component == "app" else 1), "unexpected image pin count for " + component)
     with (HERE / ".build.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         require(config.read_text() == original, "current.yaml changed during build; image pins are not applied")
         config.write_text(text)
-    print("Verified all four images. Review and commit deploy/tke/current.yaml; deploy with the native commands in deploy/tke/README.md.", flush=True)
+    print("Verified all images. Review and commit deploy/tke/current.yaml; deploy with the native commands in deploy/tke/README.md.", flush=True)
 
 
 def build_bases(sha: str, attempt: Path, run_id: int | None) -> None:

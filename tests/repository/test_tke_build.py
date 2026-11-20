@@ -96,7 +96,7 @@ def test_registry_proves_bytes_platform_and_source_before_pinning(fault, tagged)
             assert all(ref.endswith("@" + manifest_digest) for ref in pins.values())
 
 
-def test_build_updates_only_source_and_four_pins_after_verification(tmp_path):
+def test_build_updates_only_source_and_image_pins_after_verification(tmp_path):
     operation = BUILD["build"]
     source = ROOT / "deploy/tke/current.yaml"
     original = source.read_text()
@@ -120,7 +120,7 @@ def test_build_updates_only_source_and_four_pins_after_verification(tmp_path):
         operation(SHA, "yunxiao", tmp_path, 2)
     text = config.read_text()
     changed = [(a, b) for a, b in zip(original.splitlines(), text.splitlines(), strict=True) if a != b]
-    # Source, four images, and the legacy ticket sync CronJob that runs the API image.
+    # Source, the app image (API, Worker, ticket sync CronJob), Web and Deep.
     assert len(changed) == 6 and calls == ["verified"]
     assert "PPAP_BUILD_SHA: " + SHA in text
     assert all(ref in text for ref in IMAGES.values())
@@ -424,7 +424,7 @@ def test_other_run_receipt_cannot_supply_selected_source_images(tmp_path):
         return {"logs": "\n".join(["PPAP_RELEASE_SOURCE " + "b" * 40, *(f"PPAP_RELEASE_IMAGE {c} {IMAGES[c]}" for c in COMPONENTS)]), "more": False}
 
     with patch.dict(operation.__globals__, {"cloud": cloud}):
-        with pytest.raises(ValueError, match="four fixed-source images"):
+        with pytest.raises(ValueError, match="fixed-source images"):
             operation(SHA, tmp_path, 2)
 
 

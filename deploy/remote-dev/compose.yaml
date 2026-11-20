@@ -2,7 +2,7 @@
 # Start through run.sh: it supplies port forwards and current credentials.
 services:
   api:
-    image: ppap-api:${PPAP_BUILD_SHA:-remote-dev}
+    image: ppap-app:${PPAP_BUILD_SHA:-remote-dev}
     env_file:
       - path: ../../.env
         required: false

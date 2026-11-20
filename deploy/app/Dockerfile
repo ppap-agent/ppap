@@ -99,10 +99,14 @@ COPY apps/api /app/apps/api
 COPY apps/worker /app/apps/worker
 COPY apps/mcp-client /app/apps/mcp-client
 COPY deploy/app/entrypoint.sh /app/entrypoint.sh
+# Workspace packages install editable: the venv points at /app/packages instead of carrying a second,
+# byte-compiled copy, so a release pushes the source once (a few MB), not a ~15 MB install layer.
 RUN --mount=type=cache,target=/root/.cache/uv \
     set -eux; \
+    # The import checks below must not leave bytecode caches in this layer.
+    export PYTHONDONTWRITEBYTECODE=1; \
     chmod +x /app/entrypoint.sh; \
-    UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 uv sync --frozen --no-dev --no-editable; \
+    UV_LINK_MODE=copy uv sync --frozen --no-dev; \
     uv pip check --python /app/.venv/bin/python; \
     cd /; \
     /app/.venv/bin/python -c "import api, product, audit.engine, worker"; \

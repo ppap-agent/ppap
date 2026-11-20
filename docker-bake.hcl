@@ -7,11 +7,11 @@ variable "PPAP_IMAGE_PREFIX" {
 }
 
 group "default" {
-  targets = ["api", "worker", "web"]
+  targets = ["app", "web"]
 }
 
 group "release" {
-  targets = ["api", "worker", "web", "deep"]
+  targets = ["app", "web", "deep"]
 }
 
 target "_metadata" {
@@ -21,28 +21,16 @@ target "_metadata" {
   }
 }
 
-target "api" {
+# API and Worker run the same image; each deployment selects its process with PPAP_SERVICE.
+target "app" {
   inherits   = ["_metadata"]
   context    = "."
   dockerfile = "deploy/app/Dockerfile"
   target     = "app"
   args = {
     PPAP_BUILD_SHA = PPAP_BUILD_SHA
-    PPAP_SERVICE   = "api"
   }
-  tags = ["${PPAP_IMAGE_PREFIX}api:${PPAP_BUILD_SHA}"]
-}
-
-target "worker" {
-  inherits   = ["_metadata"]
-  context    = "."
-  dockerfile = "deploy/app/Dockerfile"
-  target     = "app"
-  args = {
-    PPAP_BUILD_SHA = PPAP_BUILD_SHA
-    PPAP_SERVICE   = "worker"
-  }
-  tags = ["${PPAP_IMAGE_PREFIX}worker:${PPAP_BUILD_SHA}"]
+  tags = ["${PPAP_IMAGE_PREFIX}app:${PPAP_BUILD_SHA}"]
 }
 
 target "web" {

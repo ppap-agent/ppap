@@ -102,9 +102,9 @@ CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装�
 
 有意保留的重复（消除它们需要模板化 Dockerfile 或另做包装层）：
 
-- `deploy/app/Dockerfile` 继续用 `python:3.12-slim-bookworm`。uv 来自钉死 digest 的 `ghcr.io/astral-sh/uv:0.9.26`。生产安装是镜像内 `uv sync --frozen --no-dev --no-editable`，不设置 `PYTHONPATH`，也不用 pip。
+- `deploy/app/Dockerfile` 继续用 `python:3.12-slim-bookworm`。uv 来自钉死 digest 的 `ghcr.io/astral-sh/uv:0.9.26`。生产安装是镜像内 `uv sync --frozen --no-dev`，不设置 `PYTHONPATH`，也不用 pip。
 
-  第三方依赖先仅凭根 metadata/lockfile 安装（`--no-install-workspace`），再复制源码并安装非 editable 工作区包；两步共用 BuildKit uv cache mount，下载缓存不进入镜像层。`.dockerignore` 排除各层测试目录，测试改动不影响生产构建缓存。缓存跨云效 runner 的复用由构建平台决定，不能保证 cache mount 在新 runner 上仍存在；现有 inline layer cache 保留。
+  第三方依赖先仅凭根 metadata/lockfile 安装（`--no-install-workspace`），再复制源码并以 editable 方式安装工作区包（venv 指向 `/app/packages`，不另存一份编译副本，发布只推一次源码）；两步共用 BuildKit uv cache mount，下载缓存不进入镜像层。`.dockerignore` 排除各层测试目录，测试改动不影响生产构建缓存。缓存跨云效 runner 的复用由构建平台决定，不能保证 cache mount 在新 runner 上仍存在；现有 inline layer cache 保留。
 - `deploy/web/Dockerfile` 的 `node:22-alpine` 与 `deploy/isolated-dev/web-dev.yaml` 的 `node:22-bookworm` 仍写在镜像 tag 里。
 - `deploy/deep/package.json` 与 `package-lock.json` 固定 `@earendil-works/pi-coding-agent@1.5.0`。Deep 镜像使用固定 digest 的 Node.js 22.22.0、`npm ci --ignore-scripts`（完整性由 lock 中的 integrity 校验），并执行 `pi-runner.test.mjs` 的离线协议测试。运行时版本检查与执行修订使用 `audit.policy.PI_VERSION`，须与部署依赖版本一致。
 

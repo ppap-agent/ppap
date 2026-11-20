@@ -51,7 +51,7 @@ class DeployRuntimeTests(unittest.TestCase):
                 "/app/.venv/bin/python",
                 "--mount",
                 f"type=bind,source={checks},target=/checks.py,readonly",
-                f"ppap-worker:{_sha()}",
+                f"ppap-app:{_sha()}",
                 "/checks.py",
             ],
             capture_output=True,
