@@ -1289,6 +1289,8 @@ class AuditRecognitionRequest(TypedDict):
     predecessor_id: NotRequired[str]
     source_draft_id: NotRequired[str]
     expected_draft_revision: NotRequired[int]
+    # Where the finished audit writes back; fixed with the task's first inputs.
+    writeback_target: NotRequired[WritebackTargetRequest]
 
 
 class AuditReauditFile(AuditRecognitionFile):

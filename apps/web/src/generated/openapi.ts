@@ -798,23 +798,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/file-uploads/{request_id}/resume-url": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Files Url Resume */
-        post: operations["files_url_resume_file_uploads__request_id__resume_url_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/file-validations": {
         parameters: {
             query?: never;
@@ -1013,23 +996,6 @@ export interface paths {
         get: operations["files_latest_validation_files__file_id__versions__version_id__validation_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/files/from-url": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Files From Url */
-        post: operations["files_from_url_files_from_url_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1480,23 +1446,6 @@ export interface paths {
         };
         /** Rounds Get */
         get: operations["rounds_get_rounds__round_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rounds/{round_id}/bundle": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Rounds Bundle */
-        get: operations["rounds_bundle_rounds__round_id__bundle_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6093,6 +6042,18 @@ export interface operations {
                     source_draft_id?: string;
                     /** Task Id */
                     task_id?: string;
+                    /** WritebackTargetRequest */
+                    writeback_target?: {
+                        /** Object Kind */
+                        object_kind: string;
+                        /** Object Ref */
+                        object_ref: string;
+                        /**
+                         * Provider
+                         * @constant
+                         */
+                        provider: "feishu";
+                    };
                 } & {
                     [key: string]: unknown;
                 };
@@ -7298,37 +7259,6 @@ export interface operations {
             };
         };
     };
-    files_url_resume_file_uploads__request_id__resume_url_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                request_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FileVersion"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     files_validate_file_validations_post: {
         parameters: {
             query?: never;
@@ -7769,41 +7699,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LatestFileValidation"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    files_from_url_files_from_url_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -8627,37 +8522,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Round"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rounds_bundle_rounds__round_id__bundle_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                round_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

@@ -4,7 +4,7 @@ from datetime import date
 from typing import Any, Literal, cast
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response
 from product.customers import in_type_set
 from product.files import ObjectMissing, attachment_content_disposition, original_filename, safe_content_type
 from product.identity import can_modify, can_read
@@ -47,6 +47,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "review_hint_response_conflict",
                 "model_configuration_changed",
                 "task_input_locked",
+                "writeback_target_conflict",
                 "validation_scope_mismatch",
                 "customer_scope_conflict",
                 "task_not_ready",
@@ -622,26 +623,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "Content-Disposition": attachment_content_disposition(filename),
                 "X-Content-SHA256": version.sha256 or "",
             },
-        )
-
-    @app.get("/rounds/{round_id}/bundle")
-    def rounds_bundle(round_id: str, request: Request) -> Response:
-        principal, denied = require_object(request, round_id)
-        if denied:
-            return denied
-        try:
-            bundle = store.round_bundle(round_id)
-        except ValueError as exc:
-            code = str(exc)
-            status = 413 if code == "bundle_too_large" else 409
-            return JSONResponse({"error": code}, status_code=status)
-        if bundle is None:
-            return JSONResponse({"error": "access_denied"}, status_code=403)
-        filename, chunks = bundle
-        return StreamingResponse(
-            chunks,
-            media_type="application/zip",
-            headers={"Content-Disposition": attachment_content_disposition(filename)},
         )
 
     @app.get("/rounds/{round_id}/files/{file_id}/versions/{version_id}/preview", response_model=wc.PreviewResponse)

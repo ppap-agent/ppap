@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import io
 import os
-import socket
 import unittest
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import pytest
 from api import create_app
@@ -18,9 +17,7 @@ from fastapi.testclient import TestClient
 from product.files import (
     MAX_UPLOAD_BYTES,
     ObjectExists,
-    UnsafeSource,
     attachment_content_disposition,
-    fetch_remote,
     original_filename,
     safe_content_type,
     sha256_bytes,
@@ -56,123 +53,6 @@ class FilenameTests(unittest.TestCase):
         self.assertEqual(safe_content_type("application/pdf\r\nX-Injected: yes"), "application/octet-stream")
         self.assertEqual(safe_content_type("application/zip; charset=binary"), "application/zip")
         self.assertEqual(safe_content_type("not a type"), "application/octet-stream")
-
-
-class SsrfTests(unittest.TestCase):
-    def test_rejects_loopback_and_file(self):
-        class Http:
-            def get(self, *args, **kwargs):
-                raise AssertionError("must_not_fetch")
-
-        with self.assertRaises(UnsafeSource):
-            fetch_remote("file:///etc/passwd", Http())
-        with self.assertRaises(UnsafeSource):
-            fetch_remote("http://127.0.0.1/x", Http())
-        with self.assertRaises(UnsafeSource):
-            fetch_remote("http://user:pass@example.com/x", Http())
-
-    def _public_dns(self, ip: str = "8.8.8.8", port: int = 80):
-        return patch(
-            "product.files.socket.getaddrinfo",
-            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip, port))],
-        )
-
-    def test_rejects_redirect(self):
-        class Http:
-            def get(self, *args, **kwargs):
-                class R:
-                    status_code = 302
-                    headers = {}
-                    content = b""
-
-                return R()
-
-        with self._public_dns("8.8.8.8", 443):
-            with self.assertRaises(UnsafeSource):
-                fetch_remote("https://example.invalid/x", Http())
-
-    def test_connects_to_resolved_ip_with_original_host_header(self):
-        class Http:
-            def __init__(self):
-                self.url = ""
-                self.headers: dict[str, str] = {}
-                self.extensions = None
-
-            def get(self, url, **kwargs):
-                self.url = url
-                self.headers = kwargs.get("headers") or {}
-                self.extensions = kwargs.get("extensions")
-
-                class R:
-                    status_code = 200
-                    headers = {"content-type": "text/plain"}
-                    content = b"hello"
-
-                return R()
-
-        http = Http()
-        with self._public_dns("8.8.8.8", 443):
-            body, ctype, name = fetch_remote("https://example.invalid/file.bin", http)
-        self.assertEqual(body, b"hello")
-        self.assertEqual(ctype, "text/plain")
-        self.assertEqual(name, "file.bin")
-        host = urlsplit(http.url).hostname
-        self.assertEqual(host, "8.8.8.8")
-        self.assertEqual(http.headers.get("Host"), "example.invalid")
-        self.assertEqual((http.extensions or {}).get("sni_hostname"), "example.invalid")
-
-    def test_rejects_when_any_resolved_address_is_private(self):
-        class Http:
-            def get(self, *args, **kwargs):
-                raise AssertionError("must_not_fetch")
-
-        infos = [
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", 80)),
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.0.0.1", 80)),
-        ]
-        with patch("product.files.socket.getaddrinfo", return_value=infos):
-            with self.assertRaises(UnsafeSource):
-                fetch_remote("http://rebind.example/x", Http())
-
-    def test_content_body_too_large(self):
-        class Http:
-            def get(self, *args, **kwargs):
-                class R:
-                    status_code = 200
-                    headers = {}
-                    content = b"z" * 20
-
-                return R()
-
-        with self._public_dns():
-            with self.assertRaises(UnsafeSource) as ctx:
-                fetch_remote("http://example.invalid/x", Http(), max_bytes=5)
-        self.assertEqual(str(ctx.exception), "too_large")
-
-    def test_streaming_enforces_byte_limit(self):
-        class Http:
-            def stream(self, method, url, **kwargs):
-                class R:
-                    status_code = 200
-                    headers = {"content-type": "application/octet-stream"}
-
-                    def iter_bytes(self):
-                        yield b"x" * 8
-                        yield b"y" * 8
-
-                class CM:
-                    def __enter__(self):
-                        return R()
-
-                    def __exit__(self, *args):
-                        return False
-
-                return CM()
-
-        with self._public_dns():
-            with self.assertRaises(UnsafeSource) as ctx:
-                fetch_remote("http://example.invalid/x", Http(), max_bytes=10)
-        self.assertEqual(str(ctx.exception), "too_large")
 
 
 class FileHttpTests(unittest.TestCase):
@@ -341,12 +221,6 @@ class FileHttpTests(unittest.TestCase):
         blocked = self.client.get(f"/files/{file_id}/versions/{vid}/download")
         self.assertEqual(blocked.status_code, 409)
         self.assertEqual(blocked.json()["error"], "not_ready")
-
-    def test_from_url_rejects_private_hosts(self):
-        self._login("alice")
-        response = self.client.post("/files/from-url", json={"url": "http://127.0.0.1/secret"})
-        self.assertEqual(response.status_code, 400)
-        self.assertIn(response.json()["error"], {"blocked_host", "invalid_url", "unsafe_source"})
 
     def test_unauthenticated_upload_rejected(self):
         self.client.cookies.clear()

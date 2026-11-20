@@ -16,13 +16,13 @@ PostgreSQL  object storage
 
 PC Web 入口在 `apps/web`，只调用 Product API。飞书 docs-addon 进入同一套 round / findings / review。
 
-统一入口 `/mcp` 与 Product API 在同一进程运行，由独立 `fastmcp` 包提供工具装饰器、Schema、Resources、Prompts 和 Streamable HTTP。依赖版本由 `uv.lock` 固定；当前 FastMCP 的上游依赖要求 MCP Python SDK `<2`，不能只升级 SDK 主版本而保留未验证的组合。Tasks 扩展关闭；Deep 使用同一工具注册、确认回执和 Product API，不另设协议入口。长任务读取既有轮次与业务回执。
+统一入口 `/mcp` 与 Product API 在同一进程运行，由独立 `fastmcp` 包提供工具装饰器、Schema 和 Streamable HTTP。工具按审核步骤组织（拿到文件、开始、核对、确认、结果与交付），读取类工具组合网页同一步已在用的接口，不新增后端读取入口。依赖版本由 `uv.lock` 固定；当前 FastMCP 的上游依赖要求 MCP Python SDK `<2`，不能只升级 SDK 主版本而保留未验证的组合。Tasks 扩展关闭；深度模式使用同一工具注册、确认回执和 Product API，不另设协议入口。长任务读取既有轮次与业务回执。
 
 `mcp_gateway` 通过进程内 ASGI 调用同一 Product API 入口，保留路由中的对象授权、来源校验及分享编排。只有该适配器可在 ASGI scope 写入实际 `Delegation` 对象；网络请求头不构成身份。字节传输直接转发 ASGI 流，继续使用文件 owner 的 200 MiB 限制，不额外把整份文件缓存到 MCP JSON 或 HTTP 客户端响应中。
 
 网关检查确认内容后，将原操作的 `ApprovedCall` 放入内部 scope。飞书报告导出、写回和分享在业务入口冻结实际内容时，再核对同一来源快照；分享恢复同样核对当前发送回执。证明绑定委托、操作、HTTP 方法和路径，不能借给另一调用。冻结前的修改使操作失败；冻结后的网页修改仍可正常保存，但不会替换已批准的发送内容。分享继续使用原有 engine 记录冻结报告引用和产物。
 
-`ppap-mcp-client` 是单独发布的本地 stdio 适配器，只依赖 FastMCP、OAuth 和本地凭据/文件组件；不依赖产品 API 或审核引擎。它代理同一授权下的远程工具、Resources 和 Prompts，并在用户指定目录内完成字节上传和下载。客户端只保存加密 OAuth 状态、刷新恢复标记及临时文件；上传、预校验、审核和报告状态仍以服务端业务回执为准。同一 profile 跨进程串行刷新，未知刷新不得重用旧令牌。
+`ppap-mcp-client` 是单独发布的本地 stdio 适配器，只依赖 FastMCP、OAuth 和本地凭据/文件组件；不依赖产品 API 或审核引擎。它代理同一授权下的远程工具，并在用户指定目录内完成字节上传和下载。客户端只保存加密 OAuth 状态、刷新恢复标记及临时文件；上传、预校验、审核和报告状态仍以服务端业务回执为准。同一 profile 跨进程串行刷新，未知刷新不得重用旧令牌。
 
 MCP 表只保存客户端授权、确认、传输凭证和调用回执。写入先持久 claim，再执行原业务入口；响应丢失不自动恢复执行权。人工复核的回执与复核内容在同一事务提交，并通过授权记录关联实际确认人及客户端。其它业务操作仍以各自的原生回执和恢复合同为准，不能从一个通用 `unknown` 状态推导可重试。配置、传输与客户端边界见 [MCP](MCP.md)。
 
@@ -40,7 +40,7 @@ PostgreSQL 中 `product` 保存产品事实，`engine` 保存执行任务/尝试
 
 一个历史审核只需要稳定引用它当时使用的 `file_version_id` 和规则版本。新上传创建新文件版本，不重定向旧版本。内容 hash 可以作为辅助字段保留，但不是产品版本 identity 的前提。
 
-有请求 ID 的 URL 与飞书导入共用 `_receive_import_upload`，使用既有 `file_versions.upload_request` 保存请求拥有者、来源和首次捕获的内容摘要；不建立另一份导入状态表。来源绑定先于外部读取，内容摘要先于对象写入。恢复先核对已有对象，丢失数据库锁会使旧处理者失去提交权。URL 的显式恢复只使用已保存来源；MCP 调用回执与持久文件/Task 回执含义分开。
+有请求 ID 的飞书与飞书项目导入共用 `_receive_import_upload`，使用既有 `file_versions.upload_request` 保存请求拥有者、来源和首次捕获的内容摘要；不建立另一份导入状态表。来源绑定先于外部读取，内容摘要先于对象写入。恢复先核对已有对象，丢失数据库锁会使旧处理者失去提交权。MCP 调用回执与持久文件/Task 回执含义分开。
 
 派生工作簿、页面图像或 OCR 结果只有当前消费者需要时才缓存，并明确指向来源文件版本。浏览器不获得对象存储管理凭据。
 

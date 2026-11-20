@@ -29,7 +29,8 @@ def bridge(url, auth, roots, *, max_download_bytes=2 * 1024**3, client_factory=N
         mask_error_details=True,
         provider_error_strategy="raise",
         list_page_size=25,
-        instructions="Remote PPAP tools keep their normal approval and receipt rules. Use local_upload_file for files inside the configured directories. "
+        instructions="Remote PPAP tools keep their normal approval and receipt rules. Use local_upload_file for files inside the configured directories "
+        "instead of begin_upload/finish_upload. "
         "Keep the same request_id and original bytes after interruption. Use local_download_file only with URLs created through this connection. "
         "Local downloads never overwrite existing files. An uploaded file does not imply validation or audit success.",
     )
@@ -40,14 +41,13 @@ def bridge(url, auth, roots, *, max_download_bytes=2 * 1024**3, client_factory=N
         return {"directories": [str(root) for root in files.roots], "upload_limit_bytes": 200 * 1024 * 1024, "download_limit_bytes": max_download_bytes}
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
-    async def local_upload_file(path: str, request_id: UUID, file_id: UUID | None = None, prevalidate: bool = True) -> dict:
-        """Upload a local file (<=200 MiB), finalize and optionally prevalidate it. Supply an absolute path within local_file_roots.
+    async def local_upload_file(path: str, request_id: UUID, file_id: UUID | None = None) -> dict:
+        """Upload a local file (<=200 MiB) from local_file_roots and check that it can be read; use the result in start_audit.
 
-        Keep the UUID and file bytes unchanged when resuming. file_id appends an independent version to that file.
-        A successful file upload includes a separate validation receipt, which may still be pending or failed.
+        After an interruption call again with the same request_id and unchanged file. file_id adds a new version to that file.
         """
         try:
-            return await files.upload(path, request_id, file_id, prevalidate=prevalidate)
+            return await files.upload(path, request_id, file_id)
         except ClientError as exc:
             return {"status": "error", "error": str(exc), "request_id": str(request_id)}
         except OSError:

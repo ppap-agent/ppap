@@ -52,7 +52,6 @@ from product.files import (
     ImportedFile,
     ObjectExists,
     ObjectMissing,
-    UnsafeSource,
     original_filename,
     safe_content_type,
     sha256_bytes,
@@ -660,13 +659,6 @@ class AuthStore:
 
         return self._receive_import_upload(principal, request_id, {"provider": "feishu", "file_token": file_token, "doc_type": doc_type}, captured)
 
-    def receive_url_upload(self, principal, request_id, url, load) -> FileVersion:
-        def captured():
-            data, content_type, name = load()
-            return ImportedFile(data, name, content_type)
-
-        return self._receive_import_upload(principal, request_id, {"provider": "url", "url": url}, captured)
-
     def receive_meego_upload(self, principal, request_id, object_ref: str, uid: str, name: str, load) -> FileVersion:
         """Import one Meego work-item attachment; the source is bound before any bytes are read."""
 
@@ -676,19 +668,6 @@ class AuthStore:
 
         return self._receive_import_upload(principal, request_id, {"provider": "meego", "work_item": object_ref, "uid": uid}, captured)
 
-    def resume_url_upload(self, principal, request_id, load) -> FileVersion:
-        # Receipt ownership is stricter than a grant to read the imported file.
-        receipt = self.get_upload_request(principal, request_id)
-        with self._conn() as conn:
-            row = conn.execute("SELECT upload_request FROM product.file_versions WHERE id = %s", (request_id,)).fetchone()
-        source = (row[0] or {}).get("source", {}) if row else {}
-        if source.get("provider") != "url":
-            raise ValueError("url_import_not_found")
-        if receipt["state"] == "failed":
-            raise ValueError("upload_not_resumable")
-        url = source["url"]
-        return self.receive_url_upload(principal, request_id, url, lambda: load(url))
-
     def _receive_import_upload(self, principal, request_id, source, load) -> FileVersion:
         version_id = _as_uuid(request_id) if isinstance(request_id, str) else None
         if not version_id:
@@ -697,7 +676,7 @@ class AuthStore:
         # This lock spans provider I/O, but no database transaction does. A second
         # handler observes the original request instead of exporting again.
         with self._conn() as guard:
-            key = {"feishu": "drive-import:", "meego": "meego-import:"}.get(source["provider"], "url-import:") + version_id
+            key = {"feishu": "drive-import:", "meego": "meego-import:"}[source["provider"]] + version_id
             lock_row = guard.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (key,)).fetchone()
             locked = bool(lock_row and lock_row[0])
             if not locked:
@@ -713,14 +692,7 @@ class AuthStore:
                     except ValueError as exc:
                         if str(exc) != "missing_object":
                             raise
-                try:
-                    imported = load()
-                except UnsafeSource:
-                    # A rejected URL/redirect/body is a definite source failure,
-                    # not an unfinished transfer. The original lock session must
-                    # still own this transition; a late handler cannot reconnect.
-                    guard.execute("UPDATE product.file_versions SET status = %s WHERE id = %s AND status = %s", (FAILED, version_id, STAGING))
-                    raise
+                imported = load()
                 if len(imported.data) > MAX_UPLOAD_BYTES:
                     raise ValueError("too_large")
                 captured = {
@@ -1291,7 +1263,13 @@ class AuthStore:
                 normalized[-1]["reference_only"] = True
         if not any(row["selection"] == "selected" for row in normalized):
             raise ValueError("selected_file_required")
-        inputs = {"files": normalized, "customer_preference": customer}
+        # The writeback target is fixed with the task's first inputs; revising or promoting keeps the one already saved.
+        target = normalize_external_ref(body["writeback_target"]) if body.get("writeback_target") is not None else None
+        if target and (revising or promoting):
+            raise ValueError("writeback_target_conflict")
+        inputs: dict[str, Any] = {"files": normalized, "customer_preference": customer}
+        if target:
+            inputs["writeback_target"] = target
         if predecessor:
             inputs["predecessor_id"] = predecessor
         if revising:
@@ -1394,6 +1372,8 @@ class AuthStore:
                     (task_id, principal.tenant_id, principal.user_id, fingerprint, day, sequence, customer, predecessor),
                 )
             self._recognition_inputs(conn, principal, task_id, normalized, customer, 0, request_id if promoting else None, fingerprint if promoting else None)
+            if target:
+                self.save_draft_writeback(conn, task_id, target)
             return self._recognition_public(conn, principal, task_id)
 
     def _recognition_inputs(self, conn, principal, task_id, files, customer, revision, request_id=None, fingerprint=None) -> None:
@@ -3349,44 +3329,6 @@ class AuthStore:
                 (principal.tenant_id, execution, execution, unreviewed, q, needle, needle, needle, limit, offset),
             ).fetchall()
             return self._round_histories(conn, [str(row[0]) for row in rows])
-
-    def round_bundle(self, round_id: str):
-        import tempfile
-        from zipfile import ZIP_DEFLATED, ZipFile
-
-        from product.bundles import archive_member_names
-
-        work = self.round_work(round_id)
-        if work is None:
-            return None
-        names = archive_member_names([(item.file_version_id, item.filename) for item in work.inputs])
-        versions = []
-        total = 0
-        for item in work.inputs:
-            version = self.get_version(item.file_id, item.file_version_id)
-            if version is None:
-                raise ValueError("bundle_source_missing")
-            total += int(version.byte_size or 0)
-            versions.append(version)
-        if total > MAX_UPLOAD_BYTES:
-            raise ValueError("bundle_too_large")
-        tmp = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
-        with ZipFile(tmp, "w", compression=ZIP_DEFLATED) as archive:
-            for version, name in zip(versions, names):
-                archive.writestr(name, self.version_bytes(version))
-        tmp.seek(0)
-
-        def chunks():
-            try:
-                while True:
-                    block = tmp.read(65536)
-                    if not block:
-                        break
-                    yield block
-            finally:
-                tmp.close()
-
-        return f"ppap-round-{work.round_id[:8]}.zip", chunks()
 
     def save_review(
         self,

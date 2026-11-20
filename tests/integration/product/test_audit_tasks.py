@@ -125,6 +125,27 @@ def test_preparation_writeback_target_uses_the_same_revision_and_promotion_lock(
     assert client.get("/usage").json()["events"] == []
 
 
+def test_writeback_target_given_at_creation_is_fixed_with_the_first_inputs(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    target = {"provider": "feishu", "object_kind": "docx", "object_ref": "document-at-creation"}
+    request = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [file], "writeback_target": target}
+    created = client.post("/audit-tasks", json=request)
+    assert created.status_code == 202, created.text
+    task_id = created.json()["id"]
+    api = build_product_store(worker.settings, objects=worker.objects, role="api")
+    with api._conn() as conn:
+        assert api.draft_writeback(conn, task_id) == target
+    # The same request replays; another target under the same request is a different request.
+    assert client.post("/audit-tasks", json=request).json()["id"] == task_id
+    assert client.post("/audit-tasks", json={**request, "writeback_target": {**target, "object_ref": "other"}}).json()["error"] == "idempotency_conflict"
+    # Revising the inputs keeps the target it was created with; a new one is refused.
+    revision = {"request_id": str(uuid.uuid4()), "task_id": task_id, "expected_revision": 0, "customer_preference": None, "files": [file]}
+    assert client.post("/audit-tasks", json={**revision, "writeback_target": {**target, "object_ref": "other"}}).json()["error"] == "writeback_target_conflict"
+    with api._conn() as conn:
+        assert api.draft_writeback(conn, task_id) == target
+
+
 def test_unknown_native_upload_is_a_discoverable_draft_not_a_task_and_survives_a_new_client(task_system):
     client, worker = task_system
     draft_id, upload_id = str(uuid.uuid4()), str(uuid.uuid4())

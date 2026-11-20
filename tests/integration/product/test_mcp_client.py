@@ -106,9 +106,9 @@ def adapter_setup(app, store, browser, tmp_path, *, approved=None):
 
 async def identity(wire, auth):
     async with wire.client(auth) as client:
-        result = await client.call_tool("get_identity")
+        result = await client.call_tool("get_account")
         assert result.structured_content["status"] == "ok"
-        return result.structured_content["data"]["value"]
+        return result.structured_content["data"]["value"]["user"]
 
 
 async def expire(auth):
@@ -174,8 +174,8 @@ def workbook_bytes():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("lost", ["create_file", "PUT", "finalize_file"])
-async def test_proxy_upload_resume_new_version_download_and_remote_resources(mcp_app, tmp_path, lost):
+@pytest.mark.parametrize("lost", ["begin_upload", "PUT", "finish_upload"])
+async def test_proxy_upload_resume_new_version_and_download(mcp_app, tmp_path, lost):
     app, store = mcp_app
     with TestClient(app, base_url="http://127.0.0.1:8080") as browser:
         wire, auth, _ = adapter_setup(app, store, browser, tmp_path, approved=["identity:read", "files:read", "files:write"])
@@ -188,41 +188,40 @@ async def test_proxy_upload_resume_new_version_download_and_remote_resources(mcp
         wire.drop_put = lost == "PUT"
         wire.drop_tool = None if lost == "PUT" else lost
         rid = str(uuid4())
-        args = {"path": str(source), "request_id": rid, "prevalidate": False}
+        args = {"path": str(source), "request_id": rid}
         async with Client(server) as local:
             tools = await local.list_tools()
-            assert {"get_identity", "local_upload_file", "local_download_file"} <= {tool.name for tool in tools}
+            assert {"get_account", "local_upload_file", "local_download_file"} <= {tool.name for tool in tools}
             first = (await local.call_tool("local_upload_file", args)).structured_content
             assert first["status"] == "unknown"
             resumed = (await local.call_tool("local_upload_file", args)).structured_content
             assert resumed["status"] == "ok", resumed
-            version = resumed["file"]
+            version = resumed["data"]["file"]
             assert version["id"] == rid
             assert version["sha256"] == hashlib.sha256(content).hexdigest()
+            # The upload checks readability once; the same request ID never schedules a second check.
+            assert resumed["data"]["validation"]["id"], resumed
             repeated = (await local.call_tool("local_upload_file", args)).structured_content
-            assert repeated["file"] == version
+            assert repeated["status"] == "ok", repeated
+            assert repeated["data"]["file"]["id"] == version["id"] and repeated["data"]["file"]["sha256"] == version["sha256"]
+            assert repeated["data"]["validation"] == resumed["data"]["validation"]
             source.write_bytes(b"changed")
             conflict = (await local.call_tool("local_upload_file", args)).structured_content
             assert conflict["status"] == "error"
             source.write_bytes(content)
             new_args = {**args, "request_id": str(uuid4()), "file_id": version["file_id"]}
             newer = (await local.call_tool("local_upload_file", new_args)).structured_content
-            assert newer["status"] == "ok" and newer["file"]["id"] != version["id"]
-            ids = {"file_id": version["file_id"], "version_id": version["id"]}
-            link = (await local.call_tool("download_file", ids)).structured_content["data"]["url"]
+            assert newer["status"] == "ok" and newer["data"]["file"]["id"] != version["id"]
+            original = {"kind": "original", "file_id": version["file_id"], "version_id": version["id"]}
+            link = (await local.call_tool("download", {"target": original})).structured_content["data"]["url"]
             target = root / "download.xlsx"
             result = (await local.call_tool("local_download_file", {"transfer_url": link, "destination": str(target), "expected_sha256": version["sha256"]})).structured_content
             assert result["status"] == "ok", result
             assert target.read_bytes() == content
-            uri = f"ppap://files/{version['file_id']}/versions/{version['id']}?pointer=%2Fsha256"
-            resource = await local.read_resource(uri)
-            assert json.loads(resource[0].text)["value"] == hashlib.sha256(content).hexdigest()
-            prompts = await local.list_prompts()
-            assert {p.name for p in prompts} == {"summarize_round", "compare_rounds"}
 
 
 @pytest.mark.asyncio
-async def test_local_upload_prevalidation_is_separate_and_grant_bound_download(mcp_app, tmp_path):
+async def test_local_upload_checks_readability_and_download_is_grant_bound(mcp_app, tmp_path):
     app, store = mcp_app
     with TestClient(app, base_url="http://127.0.0.1:8080") as browser:
         wire, auth, _ = adapter_setup(app, store, browser, tmp_path)
@@ -231,11 +230,11 @@ async def test_local_upload_prevalidation_is_separate_and_grant_bound_download(m
         files = LocalFiles([tmp_path], URL, auth, lambda: wire.client(auth), http_factory=wire.http)
         result = await files.upload(str(source), uuid4())
         assert result["status"] == "ok", result
-        assert result["validation"]["status"] == "ok", result
-        assert result["validation"]["data"]
-        version = result["file"]
+        assert result["data"]["validation"]["id"], result
+        version = result["data"]["file"]
         async with wire.client(auth) as client:
-            link = (await client.call_tool("download_file", {"file_id": version["file_id"], "version_id": version["id"]})).structured_content["data"]["url"]
+            original = {"kind": "original", "file_id": version["file_id"], "version_id": version["id"]}
+            link = (await client.call_tool("download", {"target": original})).structured_content["data"]["url"]
         # A different valid delegation, even for the same person, cannot borrow the URL.
         other_dir = tmp_path / "other-profile"
         other = SharedOAuth(URL, other_dir, credentials(other_dir, Fernet.generate_key()), oauth_factory=consent_oauth(browser))
@@ -297,18 +296,19 @@ async def test_cli_stdio_process_http_transfer_and_process_restart(mcp_app, tmp_
             )
 
         rid = str(uuid4())
-        args = {"path": str(source), "request_id": rid, "prevalidate": False}
+        args = {"path": str(source), "request_id": rid}
         async with process() as client:
             result = (await client.call_tool("local_upload_file", args)).structured_content
             assert result["status"] == "ok", result
-            original = result["file"]
+            original = result["data"]["file"]
         before = await auth.adapter.get_tokens()
         await expire(auth)
         async with process() as restarted:
             same = (await restarted.call_tool("local_upload_file", args)).structured_content
-            assert same["file"] == original
-            ids = {"file_id": original["file_id"], "version_id": original["id"]}
-            link = (await restarted.call_tool("download_file", ids)).structured_content["data"]["url"]
+            assert same["status"] == "ok", same
+            assert same["data"]["file"]["id"] == original["id"] and same["data"]["file"]["sha256"] == original["sha256"]
+            target_file = {"kind": "original", "file_id": original["file_id"], "version_id": original["id"]}
+            link = (await restarted.call_tool("download", {"target": target_file})).structured_content["data"]["url"]
             target = root / "retrieved.xlsx"
             downloaded = (await restarted.call_tool("local_download_file", {"transfer_url": link, "destination": str(target)})).structured_content
             assert downloaded["status"] == "ok" and target.read_bytes() == source.read_bytes()

@@ -9,7 +9,7 @@ import stat
 import tempfile
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID, uuid4
 
 import anyio
 import httpx
@@ -116,31 +116,25 @@ class LocalFiles:
             raise ClientError("untrusted_transfer_url") from None
         return value
 
-    async def upload(self, path: str, request_id: UUID, file_id: UUID | None = None, *, prevalidate: bool = True):
+    async def upload(self, path: str, request_id: UUID, file_id: UUID | None = None):
         rid, fid = str(request_id), str(file_id) if file_id else None
         # Snapshot is local disk, not a 200 MiB in-memory or model-context copy.
         async with self.async_snapshot(path) as (frozen, body):
             async with self.client_factory() as client:
-                arguments = {"request_id": rid, "body": body, **({"file_id": fid} if fid else {})}
-                reply = await self.call(client, "create_file_version" if fid else "create_file", arguments)
-                if reply["status"] not in {"ok", "unknown", "running"}:
-                    return reply
-                receipt = await self.call(client, "get_upload", {"request_id": rid})
-                if receipt["status"] != "ok":
-                    return receipt
-                upload = receipt["data"]["value"]
-                version = upload.get("file")
-                if not version:
-                    return {"status": "unknown", "error": "read_upload_receipt", "request_id": rid}
-                self.matches(version, body, fid)
-                if version["status"] != "ready":
-                    if not upload.get("resume_allowed"):
-                        return {"status": "error", "error": "upload_not_resumable", "request_id": rid, "receipt": upload}
-                    ids = {"file_id": version["file_id"], "version_id": version["id"]}
-                    entry = await self.call(client, "create_upload_transfer", ids)
-                    if entry["status"] != "ok":
-                        return entry
-                    transfer = self.transfer_url(entry["data"]["url"])
+                arguments = {
+                    "request_id": rid,
+                    "filename": body["original_filename"],
+                    "byte_size": body["byte_size"],
+                    "sha256": body["sha256"],
+                    "content_type": body["content_type"],
+                    **({"file_id": fid} if fid else {}),
+                }
+                begun = await self.call(client, "begin_upload", arguments)
+                if begun["status"] != "ok":
+                    return begun
+                self.matches(begun["data"]["file"], body, fid)
+                if begun["data"]["upload"]:
+                    transfer = self.transfer_url(begun["data"]["upload"]["url"])
 
                     async def chunks():
                         while part := await anyio.to_thread.run_sync(frozen.read, CHUNK_BYTES):
@@ -150,29 +144,14 @@ class LocalFiles:
                     async with self.http_factory(follow_redirects=False, timeout=httpx.Timeout(120, connect=15)) as http:
                         result = await http.put(transfer, headers=headers, content=chunks())
                     if not result.is_success:
+                        refused = 400 <= result.status_code < 500 and result.status_code != 408
                         return {
-                            "status": "error" if 400 <= result.status_code < 500 and result.status_code != 408 else "unknown",
-                            "error": "upload_transfer_refused" if 400 <= result.status_code < 500 and result.status_code != 408 else "read_upload_receipt",
+                            "status": "error" if refused else "unknown",
+                            "error": "upload_transfer_refused" if refused else "read_upload_receipt",
                             "request_id": rid,
                             "http_status": result.status_code,
                         }
-                    finalized = await self.call(client, "finalize_file", {**ids, "request_id": str(uuid5(request_id, "finalize")), "body": {"sha256": body["sha256"]}})
-                    receipt = await self.call(client, "get_upload", {"request_id": rid})
-                    if receipt["status"] != "ok":
-                        return receipt
-                    version = receipt["data"]["value"].get("file")
-                    if not version or version["status"] != "ready":
-                        if finalized["status"] == "error":
-                            return {"status": "error", "error": "finalization_failed", "request_id": rid, "finalization": finalized}
-                        return {"status": "unknown", "error": "read_upload_receipt", "request_id": rid}
-                    self.matches(version, body, fid)
-                validation = None
-                if prevalidate:
-                    validation_id = str(uuid5(request_id, "validate"))
-                    validation = await self.call(
-                        client, "validate_file", {"request_id": validation_id, "body": {"request_id": validation_id, "source_file_id": version["file_id"], "source_file_version_id": version["id"]}}
-                    )
-                return {"status": "ok", "request_id": rid, "file": version, "validation": validation}
+                return await self.call(client, "finish_upload", {"request_id": rid})
 
     async def download(self, transfer_url: str, destination: str, *, expected_sha256: str | None = None):
         url = self.transfer_url(transfer_url)

@@ -2,9 +2,19 @@
 
 本文说明 MCP 服务合同；工具与参数形状以服务端注册为准，不代替真实客户端验收。
 
-## 审核接入与协议能力
+## 一次审核的五步
 
-`/mcp` 是唯一客户端入口，由锁定的 FastMCP / MCP SDK 提供 Streamable HTTP、工具、Resources 和 Prompts。`prepare_task` 与 `confirm_task` 启动审核。审核执行已验证的 Suite，MCP 工具不提供深度模式开关；规则与检查程序都由平台离线准备。真实第三方客户端联调不由本地协议测试替代。
+`/mcp` 是唯一客户端入口，由锁定的 FastMCP / MCP SDK 提供 Streamable HTTP 和工具。工具按审核步骤组织，每一步读到的就是网页同一步看到的内容：
+
+1. 拿到文件：`begin_upload` → 传字节 → `finish_upload`，或 `import_feishu_file`。两者都会顺带检查文件能否读取；`get_upload` 读回状态。
+2. 开始：`start_audit`（新任务、修改未确认的任务、或用 `reaudit_round_id` 重审；需要写回飞书文档时同时给出 `writeback_target`）。
+3. 核对：`get_audit` 一次给出识别的文件类型和规则、预检、深度模式是否可用、预计耗时与点数、进度和结论；`set_deep_mode` 切换深度模式。
+4. 确认：`confirm_audit`，由用户在浏览器确认一次后执行。
+5. 结果与交付：`get_result`（发现项、证据、人工复核、复核提示、深度审核提问、飞书报告），`answer_question`、`review`、`respond_hint`；`download`、`regenerate_report`、`package_reports`、`find_recipients`、`share_reports`、`get_share`、`retry_share`、`send_to_feishu`。
+
+此外：`get_account`（身份、功能、可选客户）、`list_audits`、`find_history`、`get_usage`、`list_templates`、`find_feishu_files`、`preview_file`、`get_operation`。规则与检查程序只由平台运营在网页维护，MCP 不提供它们的读写。
+
+每个面向用户的 API 路由，要么由某个工具到达，要么在 `apps/api/tests/test_mcp_coverage.py` 写明为何留给网页；新增路由没有归类时测试失败。真实第三方客户端联调不由本地协议测试替代。
 
 ## 服务与授权
 
@@ -27,50 +37,34 @@ OAuth 发现地址按 RFC 8414 / 9728 放在域名根目录，资源路径是其
 
 飞书凭据由浏览器和已确认的 MCP 委托共同引用，服务端串行续期。`provider_refresh_in_progress` 与 `provider_temporarily_unavailable` 带 5 秒重查提示；只重查原操作，不改请求 ID。`provider_reauthorization_required` 表示凭据失效或无法确认刷新结果：用户需重新登录飞书并在客户端重新授权 PPAP。新登录不会自动扩大或替换旧客户端的委托。撤销一个连接不影响其它连接；MCP OAuth 刷新令牌与飞书刷新令牌是两个独立层次，不能互换。
 
-## 工具与写操作
+## 写操作与确认
 
-工具以 FastMCP 装饰器注册，类型和文档字符串生成输入及输出 Schema。客户端应分页读取 `tools/list`，不要假定只有一页。只读、写入和外部效果分别声明。
+每个写操作带一个新的 UUID `request_id`，并一直沿用它。回复丢失时，用同一个工具、同一个 `request_id` 再调用一次即读回原结果，或用 `get_operation` 读取回执；不能换新 ID 掩盖未知结果。一次 MCP 调用的取消不表示已受理审核被取消。
 
-调用写工具前固定 UUID `request_id`。响应丢失时先调用 `get_operation`，需要继续时仍使用相同工具、请求 ID 和参数。不能用新的请求 ID 掩盖未知结果。一次 MCP 调用的取消不表示已受理审核被取消。
+需要当前修订号或确认摘要的写操作（`set_deep_mode`、`confirm_audit`、`end_audit`、`review`、`answer_question`）由工具在第一次调用时读取并随请求记录；重放沿用记录的参数，任务之后的变化不会让重放变成新的请求。一个工具包含几步效果时（上传后的固化与校验、确认前的完成通知），每一步的请求 ID 由调用方的 `request_id` 派生，重放不会重复任何一步。
 
-`confirmation_required` 返回浏览器确认地址。用户核对并批准后，客户端重放原工具调用；网页本身不启动审核或发送报告。已批准内容发生变化时，工具返回 `confirmation_content_changed`。需要先读当前对象，再提出新的明确操作，不能把旧确认换绑到新内容。
+`confirmation_required` 返回浏览器确认地址。页面用白话写出这次会发生什么（例如开始审核的任务、文件和点数，或发送的报告与接收方数量），不显示内部编号；用户确认后，客户端用同一个 `request_id` 再调用一次，网页本身不启动审核或发送报告。已确认的内容在执行前发生变化时，工具返回 `confirmation_content_changed`，需要重新确认，不能把旧确认用在新内容上。确认页与授权页由服务端直接生成，不加载脚本，以免确认内容被页面脚本篡改。
 
-飞书报告和分享在业务入口冻结实际发送内容时再次核对批准来源。冻结前的网页修改会拒绝该次操作；冻结后的修改不会替换已经批准并捕获的内容。成功或失败的原请求回执仍可读回，后续修改不会授予同一请求再次发送的权利。ZIP 打包需要 2–100 份不同的报告；单份报告直接下载 PDF。
+飞书报告、写回和分享在业务入口冻结实际发送内容时再次核对批准来源。冻结前的修改会拒绝该次操作；冻结后的修改不会替换已批准并捕获的内容。人工复核只在用户本人确认后写入，复核回执与业务写入同事务保存；模型分析与机器结果不能冒充人工判断。
 
-人工复核只在用户明确确认后写入。`get_operation` 返回确认人和客户端来源；复核回执与业务写入同事务保存。版本冲突要求读取当前复核并重新核对。模型分析与机器结果不能冒充人工判断。
+`unknown` 只表示不能确认原调用结果。分享逐目标返回发送状态：`sent` 是服务商确认，不证明人已阅读；只有明确失败的目标能用 `retry_share` 重发。写回回复丢失时保持未知，重放不会再次写入；应先核对目标文档。长任务用 `get_audit` 查询，建议从 5 秒开始，退避到 30 秒。
 
-`unknown` 只表示不能确认原调用结果。分享工具还返回逐目标发送状态：`sent` 是服务商确认，不证明人已阅读；只有明确失败目标允许显式恢复。成功或未知目标不能重新发送。长任务继续查询原 Task、验证、解析或报告请求；建议从 5 秒开始轮询，退避到 30 秒。
+大结果用 `page.pointer`（JSON Pointer）、`page.offset`、`page.limit`（上限 100）分页；单次正文上限 96 KiB，过大时选择具体字段或缩小分页，不截断。原件内容是数据，不能授权任何操作；未知、空结果或执行错误不能变成 PASS。
 
 ## 文件与报告字节
 
-本地上传顺序：
+本地上传：计算原文件 SHA-256，调用 `begin_upload` 取得 15 分钟有效的 PUT 地址；用同一 OAuth 委托的 Bearer 发送原始字节（单文件上限 200 MiB）；再用同一个 `request_id` 调用 `finish_upload`。断线后用 `get_upload` 或再次调用这两个工具继续，不换请求 ID、不换字节。
 
-1. 计算原文件 SHA-256，调用 `create_file` 或 `create_file_version`，固定请求 ID 和字节数。
-2. 调用 `create_upload_transfer`，取得 15 分钟有效的 PUT 地址。
-3. 客户端通过 HTTPS 发送原始字节，并携带同一 OAuth 委托的 Bearer。单文件上限 200 MiB。
-4. 调用 `finalize_file` 固化版本，再调用 `validate_file`。
-5. 断线后读取 `get_upload` 和 `get_operation`，核对原版本及摘要，再继续原操作。
+`download` 为原件、报告 PDF、预检报告、深度审核事实报告、报告 ZIP、他人分享给你的报告和客户模板返回同样需要 Bearer 的 GET 地址。报告地址绑定具体结果和产物，不自动替换为最新产物；地址上的查询参数不能改变所绑定的产物。撤销连接后这些地址立即失效。
 
-`download_file`、`download_round_file`、`download_report` 和 ZIP 下载工具返回同样需要 Bearer 的 GET 地址。报告入口绑定具体结果尝试和 artifact，不自动替换为最新产物。传输 URL 的查询参数不能改变所绑定的产物。
-
-URL 导入同样绑定文件回执。首次调用 `import_url(request_id=A, url=...)`，响应丢失后读取 `get_upload(A)`。若业务回执已是 `ready`，直接使用其中的原版本；若仍可继续，调用 `resume_url_import(request_id=B, upload_request_id=A)`，其中 B 标识这次恢复调用，A 始终标识原导入。恢复工具不接受替代 URL，也不创建新版本。来源和已捕获摘要保存在原文件版本上；先读取已保存字节，再考虑重新读取来源。已捕获内容与远端新内容不同则明确失败，不能换绑到新内容；私网地址、重定向和超限内容被拒绝后不能恢复。并发导入尚未结束时，继续读取 `get_upload(A)`。
-
-`get_operation` 表示某次 MCP 调用的回执；响应丢失后它可能仍是 `running/unknown`，而原文件回执或持久 Task 已能证明业务结果。以这些有明确请求绑定的业务读回为准，不重复创建导入或受理。飞书导入沿用原有来源绑定与恢复规则，URL 导入与它共用内容捕获、对象写入和固化边界。
-
-`prepare_task` 首次创建时，Task ID 就是此次 `request_id`；回复丢失后调用 `get_task(task_id=request_id)`。重新识别时沿用提交的 `task_id`，从上传准备草稿开始识别时沿用 `source_draft_id`。使用 `get_recognition(task_id=原任务ID, request_id=原识别请求ID)` 核对具体识别修订。读回不存在时仍保留原请求，不能换 UUID 另建任务；MCP 回执未知不会阻止查询已经提交的业务任务。
-
-需要将审核结果写回飞书文档时，先用 `create_draft` 保存 `upload_preparation`，再用 `save_draft` 同时提交完整准备内容、当前 `expected_revision` 和明确选择的 `writeback_target`。保存仅记录目标，不调用飞书。目标与输入在同一修订事务保存；回复丢失后读取原 `get_draft`，不能用新请求覆盖未知保存。随后用 `prepare_task` 的 `source_draft_id` 和 `expected_draft_revision` 提升同一草稿，再确认审核。提升后不允许更换目标，受理时将目标复制到冻结轮次；结束后由 `writeback_feishu_report` 单独请求确认并执行写回。导入来源不会自动成为写回目标。
-
-写回响应丢失时，`get_operation` 保留原操作的运行中或未知状态，重放原请求不会再次写入文档。未知不证明未写入；应先核对目标文档，不能更换请求 ID 来重发。
-
-远程 MCP 服务不能读取客户端机器的路径。目标客户端必须具有可使用其 OAuth 凭据的字节传输能力；仅能调用 JSON 工具的客户端还需要传输适配，或选择 URL/飞书导入。不能因为服务器提供上传工具就宣称所有客户端的本地文件体验已完成。
+远程 MCP 服务不能读取客户端机器的路径。客户端需要能用 OAuth 凭据传字节；只能调用 JSON 工具的客户端用飞书导入，或使用下面的本地适配器。
 
 ### 本地 stdio 适配器
 
-`apps/mcp-client` 是可独立安装的 Python 3.12 包，不依赖 PPAP 数据库、审核引擎或 API 包。它通过 FastMCP 代理远程工具、Resources 和 Prompts，并增加三个本地工具：
+`apps/mcp-client` 是可独立安装的 Python 3.12 包，不依赖 PPAP 数据库、审核引擎或 API 包。它通过 FastMCP 代理远程工具，并增加三个本地工具：
 
 - `local_file_roots`：读取用户配置的目录和传输上限。
-- `local_upload_file`：读取允许目录中的文件，固定字节快照和 SHA-256，创建文件或新版本，传输、固化，并按参数进行预校验。上传成功与预校验结果分别返回。
+- `local_upload_file`：读取允许目录中的文件，固定字节快照和 SHA-256，经 `begin_upload` / `finish_upload` 上传、固化并检查能否读取。
 - `local_download_file`：把当前连接取得的传输 URL 写入允许目录中的新文件，检查长度和摘要，不覆盖已有文件。
 
 从已核对的仓库版本安装。以下命令在仓库根目录执行，约束文件从同一版本的 `uv.lock` 导出：
@@ -115,9 +109,9 @@ codex mcp add ppap-files -- /absolute/path/to/mcp-client \
 codex mcp get ppap-files
 ```
 
-此连接的 OAuth 由适配器管理，首次连接时打开授权页；不对 stdio 服务执行 `codex mcp login`。在 Codex 中先调用 `get_identity` 核对用户和租户，再调用 `local_file_roots` 取得允许目录的规范路径，之后使用该目录内的绝对路径上传。`mcp get` 只显示配置；成功调用工具才证明已连接。发布、受理、人工复核和发送仍须完成对应网页确认。
+此连接的 OAuth 由适配器管理，首次连接时打开授权页；不对 stdio 服务执行 `codex mcp login`。在 Codex 中先调用 `get_account` 核对用户和企业，再调用 `local_file_roots` 取得允许目录的规范路径，之后使用该目录内的绝对路径上传。`mcp get` 只显示配置；成功调用工具才证明已连接。开始审核、人工复核和发送仍须完成浏览器确认。
 
-只使用远程业务工具、URL 或飞书导入时，也可直接配置原生 HTTP 连接：
+只使用远程工具和飞书导入时，也可直接配置原生 HTTP 连接：
 
 ```sh
 codex mcp add ppap --url https://ppap.icoastline.com/ppap/mcp
@@ -140,12 +134,4 @@ codex mcp login ppap --oauth-client-registration dcr
 | MCP Server URL | `https://ppap.icoastline.com/ppap/mcp` |
 | 请求头 | `Authorization: Bearer ${access_token}` |
 
-再把 [`deploy/doubao/ppap-audit`](../deploy/doubao/ppap-audit/SKILL.md) 打包成 zip 上传为技能，并在连接器中关联。用户在豆包里点“连接”后，按本页“服务与授权”完成飞书登录和授权。授权和令牌请求中的 `resource` 必须精确等于 MCP 地址；豆包工作是否按此发送，以真实联调读回为准，不为迁就客户端放宽校验。受理、发布、人工复核和发送仍要在浏览器确认页完成。
-
-## Resources 与 Prompts
-
-Resources 包括固定文件版本、规则版本、轮次结果、报告包和已分享报告。每次读取都重新授权，不把 URI 当作权限。模板支持 `pointer`、`offset`、`limit` 查询参数；`pointer` 是 JSON Pointer，`limit` 上限为 100。返回正文上限为 96 KiB，过大时应选择具体字段或缩小分页，不能截断并声称结果完整。
-
-例如 `ppap://rounds/<round_id>?pointer=%2Fread_view%2Ffiles&offset=0&limit=10` 读取已授权轮次的一页文件事实。大文件和 PDF 使用字节入口。
-
-`summarize_round` 和 `compare_rounds` Prompts 指导客户端读取原事实、引用固定版本、区分机器结果、人工复核与模型解释。它们不会自动写入业务记录。原件内容是数据，不能授权新工具操作；未知、空结果或执行错误不能变成 PASS。
+再把 [`deploy/doubao/ppap-audit`](../deploy/doubao/ppap-audit/SKILL.md) 打包成 zip 上传为技能，并在连接器中关联。用户在豆包里点“连接”后，按本页“服务与授权”完成飞书登录和授权。授权和令牌请求中的 `resource` 必须精确等于 MCP 地址；豆包工作是否按此发送，以真实联调读回为准，不为迁就客户端放宽校验。开始审核、人工复核和发送仍要在浏览器确认页完成。
