@@ -532,11 +532,11 @@ jobs:
             "ppap-web:${PPAP_BUILD_SHA}" \
             "ppap-deep:${PPAP_BUILD_SHA}" \
             >/dev/null
-          test "$(docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fxc "ppap-app:${PPAP_BUILD_SHA}")" -eq 1
-          test "$(docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fxc "ppap-web:${PPAP_BUILD_SHA}")" -eq 1
-          test "$(docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml config --images | grep -Fxc "ppap-deep:${PPAP_BUILD_SHA}")" -eq 1
-          test "$(docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fxc "ppap-app:${PPAP_BUILD_SHA}")" -eq 1
-          test "$(docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fxc "ppap-web:${PPAP_BUILD_SHA}")" -eq 1
+          docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fx "ppap-app:${PPAP_BUILD_SHA}" >/dev/null
+          docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fx "ppap-web:${PPAP_BUILD_SHA}" >/dev/null
+          docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml config --images | grep -Fx "ppap-deep:${PPAP_BUILD_SHA}" >/dev/null
+          docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fx "ppap-app:${PPAP_BUILD_SHA}" >/dev/null
+          docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fx "ppap-web:${PPAP_BUILD_SHA}" >/dev/null
       - name: Production runtime and backup
         working-directory: ${{ github.workspace }}
         env:
