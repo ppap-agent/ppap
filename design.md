@@ -107,7 +107,7 @@ components:
   card:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.on-surface}"
-    rounded: "{rounded.control}"
+    rounded: "{rounded.card}"
   selected-row:
     backgroundColor: "{colors.accent}"
     textColor: "{colors.on-surface}"
@@ -145,7 +145,7 @@ components:
   card-dark:
     backgroundColor: "{colors.dark-surface}"
     textColor: "{colors.dark-on-surface}"
-    rounded: "{rounded.control}"
+    rounded: "{rounded.card}"
   selected-row-dark:
     backgroundColor: "{colors.dark-accent}"
     textColor: "{colors.dark-on-surface}"
@@ -171,7 +171,7 @@ the frontmatter, the frontmatter wins.
 
 This design system is engineered for industrial supplier compliance, audit traceability, and precision automotive supply-chain operations. The visual posture is clinical, structured, and unapologetically utilitarian. It strips away decorative whimsy in favor of immediate legibility, high information density, and absolute systemic rigor.
 
-The aesthetic blends Modern Enterprise SaaS with the restrained clarity of modern component architecture (shadcn/ui-inspired). By prioritizing crisp 1px borders, subtle slate fills, and an austere neutral canvas, the interface instills confidence during mission-critical inspections, production gate reviews, and regulatory validation workflows.
+The aesthetic follows the quiet, native taste of Feishu's own apps on a shadcn/ui component base: a light grey page, white cards with generous corners, faint dividers instead of boxes, and one Feishu blue for commitments. The interface should feel like part of Feishu, so attention stays on the inspection data, production gate reviews and validation workflows.
 
 ## Colors
 

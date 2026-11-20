@@ -116,7 +116,7 @@ function components(prefix: string, suffix: string, tokens: TokenNormalizedSet):
   card${suffix}:
     backgroundColor: ${c("surface")}
     textColor: ${c("on-surface")}
-    rounded: "{rounded.control}"
+    rounded: "{rounded.card}"
   selected-row${suffix}:
     backgroundColor: ${c("accent")}
     textColor: ${c("on-surface")}
