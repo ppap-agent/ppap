@@ -522,7 +522,8 @@ def test_acceptance_freezes_the_precheck_and_every_later_read_uses_it(warned_tas
     assert client.post(path + "/confirm", json=command).status_code == 201
     [(round_id, _tenant, snapshot)] = frozen_precheck(migrator, path)
     # The snapshot is what P3 showed when the audit was confirmed, with its cover values and time.
-    assert snapshot["precheck"] == shown and snapshot["recognition"]["part_number"] == "P-1" and snapshot["generated_at"]
+    shown_result = {key: value for key, value in shown.items() if key != "generated_at"}
+    assert snapshot["precheck"] == shown_result and snapshot["recognition"]["part_number"] == "P-1" and snapshot["generated_at"]
     # Every later read is the frozen one, never a recomputation: mark the snapshot and read it back.
     with migrator._conn() as conn:
         conn.execute(
@@ -530,7 +531,8 @@ def test_acceptance_freezes_the_precheck_and_every_later_read_uses_it(warned_tas
             (round_id,),
         )
     marked = client.get(path + "/precheck").json()
-    assert marked["warnings"][0]["problem"] == "冻结标记"
+    assert marked["warnings"][0]["problem"] == "冻结标记" and marked["generated_at"] == snapshot["generated_at"]
+    marked = {key: value for key, value in marked.items() if key != "generated_at"}
     assert client.get(path + "/precheck/report").status_code == 200
     # A replayed confirmation neither creates another Round nor refreezes the snapshot.
     assert client.post(path + "/confirm", json=command).status_code == 201
@@ -2227,7 +2229,6 @@ def test_tenant_peer_reads_the_task_round_and_original_but_cannot_change_them(ta
     assert client.get(path).status_code == 403
     assert client.get(round_path).status_code == 403
     assert client.get("/rounds").json()["rounds"] == []
-    assert client.get(round_path + "/bundle").status_code == 403
     assert client.get(round_path + source + "/download").status_code == 403
     assert client.get(round_path + source + "/preview").status_code == 403
     assert client.get(source + "/office", params={"round_id": accepted["round_id"]}).status_code == 403

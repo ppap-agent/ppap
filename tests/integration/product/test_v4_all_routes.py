@@ -1,4 +1,4 @@
-"""Carrier/routing acceptance for all 41 sources, not engineering certification.
+"""Carrier/routing acceptance for every source offered to new tasks, not engineering certification.
 
 Incomplete originals must keep actual NG/UNABLE results. These tests prove the
 API/Worker/frozen-source path, not the quality of real supplier documents.
@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from PIL import Image
 from product import build_product_store
+from product.customers import in_type_set
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from worker import process_claimed
@@ -55,7 +56,8 @@ def test_each_source_accepts_and_freezes_its_actual_customer_checker(auth_store_
     principal = admin.upsert_feishu_identity("routes-" + uuid.uuid4().hex, "owner")
     api = build_product_store(settings, objects=admin.objects, role="api")
     worker = build_product_store(settings, objects=admin.objects, role="worker")
-    sources = [source for source in customer_presets() if source.customer == customer]
+    # New tasks are offered only the types in the customer's M (蔚来 keeps N06–N17 stored but not offered).
+    sources = [source for source in customer_presets() if source.customer == customer and in_type_set({"customers": [customer], "type": preset_document_type(source)})]
     assert sources
     expected_count = len(sources)
     core_system.adopt_standard(admin, principal, *(f"{source.customer}:{source.entry_id}" for source in sources))

@@ -48,9 +48,9 @@ def test_http_fact_answer_and_report_keep_the_original(auth_store_factory, tmp_p
             # Expand font ligatures so identifiers are compared as source text.
             text = "".join(page.get_text(flags=fitz.TEXTFLAGS_TEXT & ~fitz.TEXT_PRESERVE_LIGATURES) for page in document)
         assert "UNABLE" in text and "PASS" in text
-        assert alice.user_id in text
-        assert version["id"] in text
-        assert round_id in text
+        # The delivered report names people and files as users know them, never by internal identifiers.
+        assert alice.display_name in text and "original.pdf" in text
+        assert alice.user_id not in text and version["id"] not in text and round_id not in text
     reopened = build_product_store(store.settings, objects=store.objects, role="api")
     assert reopened.get_round(round_id) == original
     assert reopened.read_fact_answer_operation(alice, round_id, request["operation_id"]) == receipt

@@ -51,13 +51,13 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
     captured = []
     original_run = core_system.run
 
-    def observe(job, inputs, work, deadline, cancelled):
+    def observe(job, inputs, work, deadline, cancelled, **live):
         manifest = json.loads((inputs / "manifest.json").read_text())
         if job.operation == "execute-audit":
             assert manifest["spec"]["allow_model_calls"] is False
             programs = {digest: {name: (inputs / path).read_bytes() for name, path in paths.items()} for digest, paths in manifest["program_paths"].items()}
             captured.append((manifest["snapshot"], programs))
-        return original_run(job, inputs, work, deadline, cancelled)
+        return original_run(job, inputs, work, deadline, cancelled, **live)
 
     monkeypatch.setattr(core_system, "run", observe)
     with TestClient(create_app(settings, auth_store=build_product_store(settings, objects=v4_objects, role="api"))) as client:

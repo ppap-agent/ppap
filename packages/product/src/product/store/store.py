@@ -3357,7 +3357,7 @@ class AuthStore:
                     operation = conn.execute(
                         """SELECT o.arguments,o.state,o.result,o.confirmed_by FROM product.mcp_operations o
                            JOIN product.mcp_grants g ON g.id=o.grant_id
-                           WHERE o.id=%s AND o.tool='submit_review' AND g.user_id=%s AND g.tenant_id=%s
+                           WHERE o.id=%s AND o.tool='review' AND g.user_id=%s AND g.tenant_id=%s
                            AND g.revoked_at IS NULL AND g.expires_at>now() AND 'reviews:write'=ANY(g.scopes)
                            FOR UPDATE OF o""",
                         (mcp_operation_id, principal.user_id, principal.tenant_id),
