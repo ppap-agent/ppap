@@ -39,9 +39,19 @@ test('the document content names the audit, every audited file and each open ite
   assert.ok(text.startsWith(`## ${marker(task)}\n`))
   assert.match(text, /\*\*总体结论：不符合\*\*　不符合 1 项，待审核 1 项/)
   // A file name or reason cannot break the table or the list it is written into.
-  assert.match(text, /\| PFMEA｜A\.xlsx \| 不符合 \| 1 \| 1 \|/)
+  assert.match(text, /\| PFMEA｜A\.xlsx \| 不符合，另 1 项待审核 \| 1 \|/)
   assert.match(text, /- \[ \] 【不符合】PFMEA｜A\.xlsx：特殊特性已标识——特殊特性｜符号缺失/)
   assert.match(text, /- \[ \] 【待审核】PFMEA｜A\.xlsx：签字日期可辨认/)
   assert.ok(!text.includes('参考.pdf') && !text.includes('封面完整'))
   assert.ok(text.includes('](https://ppap.example/tasks/task-1)'))
+})
+
+test('a file still pending as a whole carries no 另 N 项 note, and errors are not counted as 待审核', () => {
+  const task = finished()
+  const audit = task.files[0].audit!
+  audit.counts = {...audit.counts, error_count: 2}
+  audit.conclusion = 'UNKNOWN'
+  const text = resultMarkdown(task, 'https://ppap.example/tasks/task-1')
+  assert.match(text, /不符合 1 项，待审核 1 项，审核异常 2 项/)
+  assert.match(text, /\| PFMEA｜A\.xlsx \| 待审核 \| 1 \|/)
 })

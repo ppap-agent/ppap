@@ -1,7 +1,7 @@
 // What a finished audit says, in the words the PPAP web app uses, and the native document
 // content that states it. Pure: no host, no network.
 import type {components} from '../generated/openapi'
-import {clauseObservation} from '../audit/result-projection.ts'
+import {clauseObservation, pendingCount, pendingNote} from '../audit/result-projection.ts'
 import {needsAttention} from '../audit/review-navigation.ts'
 import {conclusionLabel, resultLabel, uncoveredLabel} from '../audit/status-labels.ts'
 
@@ -41,14 +41,24 @@ export function attention(task: Task): {row: TaskFile; check: Check}[] {
     .sort((left, right) => urgency(left.check) - urgency(right.check))
 }
 
+/** The machine result's totals: 待审核 is 无法判断 and 未覆盖, as the web app counts it; technical errors are told apart. */
 export function totals(task: Task) {
-  let ng = 0, unsure = 0
+  let ng = 0, pending = 0, errors = 0
   for (const row of audited(task)) {
-    const counts = row.audit!.counts
-    ng += counts.ng_count
-    unsure += counts.unknown_count + counts.not_covered_count + counts.error_count
+    const audit = row.audit!
+    ng += audit.counts.ng_count
+    pending += pendingCount(audit, true)
+    errors += audit.counts.error_count
   }
-  return {ng, unsure}
+  return {ng, pending, errors}
+}
+
+/** A file's conclusion, with 「另 N 项待审核」 beside it as the web app shows it. */
+export function fileConclusion(row: TaskFile): string {
+  const audit = row.audit!
+  const label = conclusionLabel[audit.conclusion ?? ''] ?? '待审核'
+  const note = audit.execution === 'completed' ? pendingNote(audit, true) : ''
+  return note ? `${label}，${note}` : label
 }
 
 export function when(raw: string | null | undefined): string {
@@ -72,14 +82,11 @@ export function resultMarkdown(task: Task, link: string): string {
   const lines = [
     `## ${marker(task)}`,
     '',
-    `**总体结论：${verdictLabel[overall]}**　不符合 ${sum.ng} 项，待审核 ${sum.unsure} 项。审核时间：${when(task.round_started_at ?? task.created_at)}`,
+    `**总体结论：${verdictLabel[overall]}**　不符合 ${sum.ng} 项，待审核 ${sum.pending} 项${sum.errors ? `，审核异常 ${sum.errors} 项` : ''}。审核时间：${when(task.round_started_at ?? task.created_at)}`,
     '',
-    '| 文件 | 结论 | 不符合 | 待审核 |',
-    '| --- | --- | --- | --- |',
-    ...audited(task).map(row => {
-      const counts = row.audit!.counts
-      return `| ${cell(row.file.original_filename)} | ${conclusionLabel[row.audit!.conclusion ?? ''] ?? '待审核'} | ${counts.ng_count} | ${counts.unknown_count + counts.not_covered_count + counts.error_count} |`
-    }),
+    '| 文件 | 结论 | 不符合 |',
+    '| --- | --- | --- |',
+    ...audited(task).map(row => `| ${cell(row.file.original_filename)} | ${fileConclusion(row)} | ${row.audit!.counts.ng_count} |`),
     '',
   ]
   if (open.length) {

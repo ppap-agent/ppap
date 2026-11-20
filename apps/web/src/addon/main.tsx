@@ -3,9 +3,11 @@
 // permissions come from the document host. It drives the same audit-task flow as the web app.
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import {createRoot} from 'react-dom/client'
-import {clauseObservation} from '../audit/result-projection'
+import {customerFullName, customerShortName, type RegisteredCustomer} from '../audit/customer-register'
+import {clauseObservation, pendingNote} from '../audit/result-projection'
 import {taskAddress} from '../audit/routes'
 import {conclusionLabel} from '../audit/status-labels'
+import {submittedCount} from '../audit/task-acceptance'
 import type {components} from '../generated/openapi'
 import {resolveHost, type AddonHost} from './host'
 import {OfficeView, type Evidence} from './office'
@@ -42,7 +44,7 @@ const messages: Record<string, string> = {
 const say = (cause: unknown) => cause instanceof ApiError && messages[cause.code] || (cause instanceof Error && (cause as Error & {reason?: string}).reason ? cause.message : '操作没有完成，请稍后重试。')
 
 const kindLabel: Record<string, string> = {file: '文件', sheet: '电子表格', bitable: '多维表格', doc: '文档', docx: '文档'}
-const matchLabel: Record<string, string> = {matched: '已匹配规则', reference: '作为参考资料', unmatched: '没有可用规则', failed: '识别失败'}
+const matchLabel: Record<string, string> = {matched: '已匹配规则', reference: '作为参考资料', unmatched: '无适配规则', failed: '识别失败'}
 const newId = () => crypto.randomUUID()
 const tones: Record<string, string> = {
   PASS: 'bg-success/10 text-success',
@@ -194,6 +196,7 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
   const [links, setLinks] = useState<DocLink[] | null>(null)
   const [chosen, setChosen] = useState<Set<string>>(new Set())
   const [customer, setCustomer] = useState<string | null | undefined>(undefined)
+  const [customers, setCustomers] = useState<RegisteredCustomer[] | null>(null)
   const [progress, setProgress] = useState('')
   const [skipped, setSkipped] = useState<string[]>([])
   const [failure, setFailure] = useState('')
@@ -212,6 +215,8 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
   useEffect(() => {
     void load()
     void call<{customer_preference: string | null}>('/audit-customers/default').then(value => setCustomer(value.customer_preference), () => setCustomer(null))
+    // Until the register arrives (or if it cannot), a customer shows as recorded.
+    void call<components['schemas']['AuditCustomerCatalog']>('/audit-customers').then(catalog => setCustomers(catalog.customers), () => undefined)
     return host.onDocumentChange?.(() => void load())
   }, [call, host, load])
 
@@ -255,7 +260,7 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
   return (
     <section aria-label="选择要审核的文件" data-testid="addon-documents">
       <h2 className="mb-2 text-base font-semibold">{predecessor ? '选择再次审核的文件' : '选择要审核的文件'}</h2>
-      {predecessor && <p className="text-muted-foreground">上一次的审核结果会保留。</p>}
+      {predecessor && <p className="text-muted-foreground">原任务和报告都保留。本次重新审核所有文件，人工复核从头开始。</p>}
       {progress && <p role="status" className="text-muted-foreground">{progress}</p>}
       {failure && <p role="alert" className="mb-2 rounded-md bg-warning/10 px-3 py-2 text-warning">{failure}</p>}
       {skipped.length > 0 && <p role="alert" className="mb-2 rounded-md bg-warning/10 px-3 py-2 text-warning">以下文件无法审核，已跳过：{skipped.join('、')}</p>}
@@ -274,7 +279,7 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
           ))}
         </ul>
       )}
-      {customer !== undefined && <p className="text-muted-foreground text-xs">审核客户：{customer ?? '自动识别'}（企业默认）</p>}
+      {customer !== undefined && <p className="text-muted-foreground text-xs">审核客户：{customer ? <span title={customerFullName(customers, customer)}>{customerShortName(customers, customer)}</span> : '自动识别'}（企业默认）</p>}
       {onCancel && <button type="button" className="text-primary underline-offset-4 hover:underline disabled:opacity-50" disabled={Boolean(progress)} onClick={onCancel}>返回上一次审核</button>}
     </section>
   )
@@ -283,10 +288,12 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
 function Confirm({task, call, open, onReselect, onConfirmed, setPrimary, notify}: {task: Task; open: (path: string) => void; onReselect: () => void; onConfirmed: () => void} & Shared & Calls) {
   const [busy, setBusy] = useState(false)
   const [quota, setQuota] = useState<Quota | 'unavailable' | null>(null)
-  const matched = task.files.filter(row => row.selection === 'selected' && row.match?.state === 'matched').length
+  // 送审份数 is the server's saved scope; without it the count is unknown, never a local tally.
+  const submitted = submittedCount(task, false)
   useEffect(() => {
-    call<Quota>(`/integrations/feishu/usage/quota?target_count=${matched}`).then(setQuota, () => setQuota('unavailable'))
-  }, [call, matched])
+    if (!submitted) { setQuota('unavailable'); return }
+    call<Quota>(`/integrations/feishu/usage/quota?target_count=${submitted}`).then(setQuota, () => setQuota('unavailable'))
+  }, [call, submitted])
   const blocked = quota !== null && quota !== 'unavailable' && !quota.unavailable && quota.accept_allowed === false
   const refusal = quota !== null && quota !== 'unavailable' ? quota.accept_reason || quota.detailed_message || quota.message || '' : ''
   const confirm = useCallback(async () => {
@@ -296,7 +303,7 @@ function Confirm({task, call, open, onReselect, onConfirmed, setPrimary, notify}
       onConfirmed()
     } catch (cause) { notify('error', say(cause)) } finally { setBusy(false) }
   }, [call, notify, onConfirmed, task.confirmation_basis_digest, task.id, task.input_revision])
-  const ready = Boolean(task.confirmation_basis_digest) && matched > 0
+  const ready = Boolean(task.confirmation_basis_digest) && Boolean(submitted)
   useEffect(() => setPrimary(ready ? {label: '确认并开始审核', disabled: blocked, busy, run: () => void confirm()} : {label: '在 PPAP 中核对', run: () => open(taskAddress(task.id))}), [blocked, busy, confirm, open, ready, setPrimary, task.id])
 
   return (
@@ -386,7 +393,7 @@ function Result({task, call, host, canEdit, open, onReaudit, setPrimary, notify}
   return (
     <section aria-label="审核结果" data-testid="addon-round">
       <h2 className="mb-2 text-base font-semibold">审核结果</h2>
-      <p className="mb-2 flex flex-wrap items-center gap-2.5"><span className={tag(overall)}>{verdictLabel[overall]}</span>{audited(task).length > 0 && <span>不符合 <strong>{sum.ng}</strong> 项 · 尚未确定 <strong>{sum.unsure}</strong> 项</span>}</p>
+      <p className="mb-2 flex flex-wrap items-center gap-2.5"><span className={tag(overall)}>{verdictLabel[overall]}</span>{audited(task).length > 0 && <span>不符合 <strong>{sum.ng}</strong> 项 · 待审核 <strong>{sum.pending}</strong> 项{sum.errors > 0 && <> · 审核异常 <strong>{sum.errors}</strong> 项</>}</span>}</p>
       {overall === 'NONE' && <p className="text-muted-foreground">没有可用的审核规则，这一次没有审核，也没有扣点。</p>}
       {overall === 'ERROR' && <p role="alert" className="mb-2 rounded-md bg-warning/10 px-3 py-2 text-warning">审核出现技术错误，结果不完整，不能写入文档。</p>}
       {writable && !canEdit && !written && <p className="text-muted-foreground">你没有这篇文档的编辑权限，不能把结果写入文档。</p>}
@@ -394,7 +401,10 @@ function Result({task, call, host, canEdit, open, onReaudit, setPrimary, notify}
         {audited(task).map(row => (
           <li key={row.file.id}>
             <span className="min-w-0 truncate" title={row.file.original_filename}>{row.file.original_filename}</span>
-            <span className={tag(row.audit!.execution === 'review_failed' ? 'ERROR' : row.audit!.conclusion ?? 'UNKNOWN')}>{row.audit!.execution === 'review_failed' ? '审核异常' : conclusionLabel[row.audit!.conclusion ?? ''] ?? '待审核'}</span>
+            <span className="flex shrink-0 items-center gap-2">
+              {row.audit!.execution === 'completed' && pendingNote(row.audit!, true) && <span className="text-xs tabular-nums">{pendingNote(row.audit!, true)}</span>}
+              <span className={tag(row.audit!.execution === 'review_failed' ? 'ERROR' : row.audit!.conclusion ?? 'UNKNOWN')}>{row.audit!.execution === 'review_failed' ? '审核异常' : conclusionLabel[row.audit!.conclusion ?? ''] ?? '待审核'}</span>
+            </span>
           </li>
         ))}
       </ul>
