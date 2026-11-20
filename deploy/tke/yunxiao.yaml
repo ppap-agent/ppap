@@ -69,49 +69,16 @@ stages:
                 export PPAP_IMAGE_PREFIX=icoastline.tencentcloudcr.com/ppap-feishu/current-
                 test "$(git rev-parse HEAD)" = "$PPAP_BUILD_SHA"
                 git diff --exit-code
-                PPAP_BASE_TAG="$(python3 deploy/tke/base-inputs.py)"
-                export PPAP_BASE_TAG
-                test "${#PPAP_BASE_TAG}" -eq 64
-                # The shared dependency images (deps, deep-base) are built only in "bases" mode, tagged by
-                # the digest of their inputs. Releases build source layers on the recorded images, so a
-                # missed layer cache can no longer re-push hundreds of MB from Hong Kong.
+                # The base levels (system, deps, deep-base; deploy/tke/bases.py) are built only in "bases"
+                # mode, each tagged by the digest of its inputs. Releases build source layers on the recorded
+                # images, so a missed layer cache can no longer re-push hundreds of MB from Hong Kong.
                 if [ "${PPAP_BUILD_MODE:-release}" = bases ]; then
-                  python3 - <<'PY'
-                import json
-                python = 'python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df'
-                node = 'node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94'
-                contexts = {base: 'docker-image://docker.m.daocloud.io/library/' + base for base in (python, node)}
-                with open('/tmp/ppap-current-bases.json', 'w') as output:
-                    json.dump({'target': {name: {'contexts': contexts} for name in ('deps', 'deep-base')}}, output)
-                PY
-                  attempt=1
-                  until docker buildx bake -f docker-bake.hcl -f /tmp/ppap-current-bases.json bases --set '*.platform=linux/amd64' \
-                    --provenance=false --metadata-file /tmp/ppap-current-base-images.json --push; do
-                    test "$attempt" -lt 3
-                    attempt=$((attempt + 1))
-                    sleep 20
-                  done
-                  python3 - <<'PY'
-                import json, os, re
-                metadata = json.load(open('/tmp/ppap-current-base-images.json'))
-                for name in ('deps', 'deep-base'):
-                    digest = metadata[name]['containerimage.digest']
-                    assert re.fullmatch(r'sha256:[0-9a-f]{64}', digest)
-                    print('PPAP_BASE_IMAGE ' + name + ' ' + os.environ['PPAP_IMAGE_PREFIX'] + name + '@' + digest)
-                print('PPAP_BASE_INPUTS ' + os.environ['PPAP_BASE_TAG'])
-                print('PPAP_BASE_SOURCE ' + os.environ['PPAP_BUILD_SHA'])
-                PY
+                  python3 deploy/tke/bases.py build
+                  echo "PPAP_BASE_SOURCE $PPAP_BUILD_SHA"
                   exit 0
                 fi
                 # A release stacks on the recorded images, and only on images built from these exact inputs.
-                python3 - <<'PY'
-                import json, os, re
-                record = json.load(open('deploy/tke/base-images.json'))
-                assert record['inputs'] == os.environ['PPAP_BASE_TAG'], 'base images are stale: run a bases build first'
-                for name in ('deps', 'deep-base'):
-                    assert re.fullmatch(re.escape(os.environ['PPAP_IMAGE_PREFIX'] + name) + r'@sha256:[0-9a-f]{64}', record[name])
-                print('Recorded base images match the source inputs')
-                PY
+                base_args="$(python3 deploy/tke/bases.py release-args)"
                 # Flow public runners reject docker-container startup; use their native inline cache.
                 # JSON tag overrides also work on the runner's older Buildx (no tags+=).
                 python3 - <<'PY'
@@ -141,9 +108,8 @@ stages:
                 for component in api worker web deep; do
                   set -- "$@" --set "$component.cache-from=type=registry,ref=${PPAP_IMAGE_PREFIX}${component}:build-cache"
                 done
-                deps="$(python3 -c "import json; print(json.load(open('deploy/tke/base-images.json'))['deps'])")"
-                deep_base="$(python3 -c "import json; print(json.load(open('deploy/tke/base-images.json'))['deep-base'])")"
-                set -- "$@" --set "api.args.PPAP_APP_BASE=$deps" --set "worker.args.PPAP_APP_BASE=$deps" --set "deep.args.PPAP_APP_BASE=$deep_base"
+                # shellcheck disable=SC2086 # three "--set target.args.PPAP_APP_BASE=<image>" pairs
+                set -- "$@" $base_args
                 # The base-image mirror and the registry are reached over the network from the Hong Kong
                 # runner; a dropped connection fails the whole bake. Finished steps are cached, so a retry
                 # repeats only what had not finished.

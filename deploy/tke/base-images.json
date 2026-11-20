@@ -1,5 +1,0 @@
-{
-  "inputs": "27ffb4b76d89c00421ab54995d0bd579b10596d232229998f0425734432e9d10",
-  "deps": "icoastline.tencentcloudcr.com/ppap-feishu/current-deps@sha256:82463fb1a26f62152c4b7dde841a068f76295ceb8c27cf68796f648fc9cd55ab",
-  "deep-base": "icoastline.tencentcloudcr.com/ppap-feishu/current-deep-base@sha256:3e41f737ec7e845a7f3b925fa2b35d5cb25282a9859301423b5296e3096f1593"
-}

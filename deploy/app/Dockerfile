@@ -2,6 +2,10 @@
 # release: base image and system packages, third-party dependencies, fixed tools, then source.
 # Anything built in a separate stage enters the final images only above the dependency layers, so a
 # rebuilt helper never invalidates (and re-pushes) the large layers below it.
+# The three base levels (system, deps, deep-base) are built and recorded by deploy/tke/bases.py;
+# releases pass the recorded images here. Without them, the stages below are built in place.
+ARG PPAP_SYSTEM_BASE=system
+ARG PPAP_DEPS_BASE=deps
 ARG PPAP_APP_BASE=deps
 
 FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS converter-builder
@@ -37,8 +41,8 @@ RUN npx tsc -p tsconfig.json \
  && rm pi-runner.test.mjs tsconfig.json \
  && npm prune --omit=dev
 
-# Third-party layers: they change with the base image, system packages or uv.lock, never with source.
-FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS deps
+# System layers: Debian packages and uv. They change only with this stage, never with uv.lock.
+FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS system
 COPY --from=ghcr.io/astral-sh/uv:0.9.26@sha256:9a23023be68b2ed09750ae636228e903a54a05ea56ed03a934d00fe9fbeded4b /uv /uvx /bin/
 
 ENV PYTHONUNBUFFERED=1
@@ -63,6 +67,8 @@ RUN set -eux; \
     done; \
     rm -rf /var/lib/apt/lists/*
 
+# Python dependency layers: they change with uv.lock, never with source.
+FROM ${PPAP_SYSTEM_BASE} AS deps
 COPY pyproject.toml uv.lock /app/
 ARG PPAP_PIP_INDEX_URL=
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -77,7 +83,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     rm -f /tmp/ppap-requirements.txt
 
 # Deep's fixed tools sit on the dependency layers, below the source: a source change rebuilds none of them.
-FROM deps AS deep-base
+FROM ${PPAP_DEPS_BASE} AS deep-base
 RUN useradd --uid 10001 --create-home --shell /bin/bash audit
 COPY --from=pi /usr/local/bin/node /usr/local/bin/node
 COPY --from=pi /opt/ppap-pi /opt/ppap-pi

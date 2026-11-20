@@ -115,7 +115,7 @@ def test_build_updates_only_source_and_four_pins_after_verification(tmp_path):
 
     with patch.dict(
         operation.__globals__,
-        {"base_inputs": lambda sha: "inputs", "recorded_bases": lambda sha: {"inputs": "inputs"}, "HERE": tmp_path, "run": run, "yunxiao": lambda *args: IMAGES, "registry_images": checked},
+        {"stale_bases": lambda sha: [], "HERE": tmp_path, "run": run, "yunxiao": lambda *args: IMAGES, "registry_images": checked},
     ):
         operation(SHA, "yunxiao", tmp_path, 2)
     text = config.read_text()
@@ -137,8 +137,7 @@ def test_failed_registry_verification_leaves_configuration_unchanged(tmp_path):
     with patch.dict(
         operation.__globals__,
         {
-            "base_inputs": lambda sha: "inputs",
-            "recorded_bases": lambda sha: {"inputs": "inputs"},
+            "stale_bases": lambda sha: [],
             "HERE": tmp_path,
             "source_commit": lambda sha: None,
             "run": lambda args: b"",
@@ -332,8 +331,7 @@ def test_confirmed_missing_images_build_once_then_verify_before_pinning(tmp_path
             "run": lambda *args: b"",
             "registry_images": registry,
             "yunxiao": flow,
-            "base_inputs": lambda sha: "inputs",
-            "recorded_bases": lambda sha: {"inputs": "inputs"},
+            "stale_bases": lambda sha: [],
         },
     ):
         operation(SHA, "yunxiao", tmp_path, None)
@@ -358,22 +356,35 @@ def test_a_release_on_stale_base_images_is_refused_before_any_build(tmp_path):
             "source_commit": lambda sha: None,
             "registry_images": missing,
             "yunxiao": forbidden,
-            "base_inputs": lambda sha: "new-inputs",
-            "recorded_bases": lambda sha: {"inputs": "old-inputs"},
+            "stale_bases": lambda sha: ["deps"],
         },
     ):
         with pytest.raises(ValueError, match="base images are stale"):
             operation(SHA, "yunxiao", tmp_path, None)
 
 
-def test_base_inputs_cover_dependencies_and_the_deep_runner():
-    module = runpy.run_path(str(ROOT / "deploy/tke/base-inputs.py"))
-    inputs, base_inputs_digest = module["INPUTS"], module["base_inputs_digest"]
-    files = {path: b"x" for path in inputs}
-    digest = base_inputs_digest(files.__getitem__)
-    assert {"uv.lock", "pyproject.toml", "deploy/app/Dockerfile", "deploy/deep/package-lock.json"} <= set(inputs)
-    for path in inputs:
-        assert base_inputs_digest({**files, path: b"y"}.__getitem__) != digest
+def test_a_base_level_changes_only_with_its_own_inputs_or_a_level_below():
+    module = runpy.run_path(str(ROOT / "deploy/tke/bases.py"))
+    levels, level_inputs = [level[0] for level in module["LEVELS"]], module["level_inputs"]
+    dockerfile = (ROOT / "deploy/app/Dockerfile").read_text()
+    files = {path: b"x" for level in module["LEVELS"] for path in level[2]}
+
+    def inputs(**changes):
+        source = {**files, "deploy/app/Dockerfile": dockerfile.encode(), **changes}
+        return level_inputs(source.__getitem__)
+
+    def changed(**changes):
+        before, after = inputs(), inputs(**changes)
+        return [level for level in levels if before[level] != after[level]]
+
+    assert levels == ["system", "deps", "deep-base"]
+    edit = lambda old, new: {"deploy/app/Dockerfile": dockerfile.replace(old, new, 1).encode()}  # noqa: E731
+    assert changed(**edit("fonts-noto-cjk", "fonts-noto-cjk fonts-noto")) == levels
+    assert changed(**{"uv.lock": b"y"}) == ["deps", "deep-base"]
+    assert changed(**{"deploy/deep/package-lock.json": b"y"}) == ["deep-base"]
+    # Source stages and comments are not base inputs.
+    assert changed(**edit("COPY apps/api /app/apps/api", "COPY apps/api /app/apps/api/")) == []
+    assert changed(**edit("# Python dependency layers", "# Python deps")) == []
 
 
 @pytest.mark.parametrize("branch_head", [SHA, "b" * 40])
