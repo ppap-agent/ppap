@@ -125,6 +125,13 @@
         "value": 0.5,
         "unit": "rem"
       }
+    },
+    "card": {
+      "$type": "dimension",
+      "$value": {
+        "value": 0.75,
+        "unit": "rem"
+      }
     }
   }
 }

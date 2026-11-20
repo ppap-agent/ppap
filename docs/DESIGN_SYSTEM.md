@@ -17,7 +17,7 @@ runtime theme → src/index.css (Tailwind @theme) → src/components/ui → page
 ```
 
 `apps/web/tokens/web.resolver.json` selects the inputs: `shared.tokens.json` (font family,
-type scale, control radius), `light.tokens.json` (colours) and the `dark` theme context
+type scale, control and card radius), `light.tokens.json` (colours) and the `dark` theme context
 (`dark.tokens.json`). One implementation, `apps/web/scripts/design-tokens.ts`, produces both
 the runtime theme and the design.md frontmatter, so they cannot disagree.
 
@@ -42,7 +42,8 @@ consistency is checked on its own, not repaired as a side effect of building.
 
 Tokenize reusable design decisions: semantic colours (light and dark resolve the same roles),
 the font family, the type scale (size and line height of each Tailwind `text-*` step, from
-11px `2xs` to 28px `2xl`, with 13px `sm` as body text) and the control radius. Add a token only when a real decision needs one; do
+11px `2xs` to 28px `2xl`, with 13px `sm` as body text), the control radius (`rounded-md` and
+smaller derive from it) and the card radius (`rounded-lg`, `rounded-xl`). Add a token only when a real decision needs one; do
 not pre-build layers or brands.
 
 Keep content-driven breakpoints, grid tracks, chart coordinates, percentages and measured

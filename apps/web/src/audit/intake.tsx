@@ -23,6 +23,7 @@ import {Tooltip, TooltipContent, TooltipProvider, TooltipTrigger} from '../compo
 import {FileIcon, FileName} from '../journey/file-name'
 import {FileTypeBadge} from './file-type-badge'
 import {AccountMenu, useAccess} from '../journey/access'
+import {openedInFeishu} from '../hostLogin'
 import {FeishuPicker, FeishuFolderPicker, type DrivePickerSource} from './feishu-picker'
 import {checkerSuiteUnavailable, confirmationScope, submittedCount, suiteAdmissionBlocks, useTaskAcceptance, zeroTargetNote, type AuditAcceptanceAdapter} from './task-acceptance'
 import {ruleChoicesFor, ruleCustomer, useTaskRecognition, type AuditRecognitionAdapter} from './task-recognition'
@@ -158,6 +159,10 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     return surface === 'templates' && !templateAdapter ? 'audit' : surface === 'requirements' && !rules ? 'audit' : surface
   }
   const [surface, setSurface] = useState<ProductSurface>(readSurface)
+  // Fixed for the page's life: the frame never switches shells while someone works.
+  const [inFeishu] = useState(() => openedInFeishu())
+  // Inside Feishu the page name goes to the window title.
+  useEffect(() => {if (inFeishu) document.title = productLinks.find(link => link.view === surface)?.label ?? 'PPAP Audit'}, [inFeishu, surface])
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [rulesOpened, setRulesOpened] = useState(surface === 'requirements')
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
@@ -879,8 +884,18 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     for (const key of rulesAddressKeys) url.searchParams.delete(key)
     writeAuditAddress(url)
   }
-  // One 64px dark icon rail: each item is its icon over its short name; the current page is solid primary.
+  // One 64px light icon rail (browser shell): each item is its icon over its short name; the current page is highlighted.
   const railItem = 'flex size-11 flex-col items-center justify-center gap-1 rounded-lg text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-[current=page]:bg-sidebar-primary aria-[current=page]:text-sidebar-primary-foreground'
+  // Inside Feishu the same entries sit in a top bar as pills (design.md「Page Frame」: two shells, one page).
+  const pillItem = 'flex h-8 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm text-foreground transition-colors hover:bg-muted aria-[current=page]:bg-secondary-hover aria-[current=page]:font-medium'
+  const topNavigation = <nav aria-label="产品导航" className="flex min-w-0 items-center gap-1 overflow-x-auto">
+    {productLinks.filter(link => link.view !== 'requirements' || rules).map(({view, label, short, icon}) => {
+      const content = <><Icon icon={icon} aria-hidden="true" className="size-3.5 text-muted-foreground"/><span aria-hidden="true">{short}</span></>
+      return view === 'templates' && !templateAdapter
+        ? <a key={view} className={pillItem} href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer" aria-label="模板库（在飞书新窗口打开）">{content}</a>
+        : <button key={view} type="button" className={pillItem} aria-label={label} aria-current={surface === view ? 'page' : undefined} onClick={() => view === 'requirements' ? openRules() : showSurface(view)}>{content}</button>
+    })}
+  </nav>
   const navigation = <nav aria-label="产品导航" className="grid justify-items-center gap-2">
     {productLinks.filter(link => link.view !== 'requirements' || rules).map(({view, label, short, icon}) => {
       const active = surface === view
@@ -1069,17 +1084,22 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   </>
   return <TooltipProvider><SupportEntryContext.Provider value={openSupport}><div className="flex h-dvh overflow-hidden bg-canvas text-sm text-foreground">
     <a href="#audit-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-background focus:p-3 focus-visible:outline-ring focus-visible:ring-2 focus-visible:ring-ring">跳到主要内容</a>
-    <aside aria-label="产品侧栏" className="flex h-dvh w-16 shrink-0 flex-col items-center justify-between bg-sidebar py-4">
+    {!inFeishu && <aside aria-label="产品侧栏" className="flex h-dvh w-16 shrink-0 flex-col items-center justify-between border-r border-sidebar-border bg-sidebar py-4">
       <div className="grid justify-items-center gap-6"><span className="flex size-10 items-center justify-center rounded-lg bg-linear-135 from-brand-light to-primary text-primary-foreground"><Icon icon={faWandMagicSparkles} aria-hidden="true" className="size-5"/><span className="sr-only">PPAP Audit</span></span>{navigation}</div>
       <Tooltip><TooltipTrigger asChild><button type="button" className={railItem} aria-label="联系支持" onClick={() => openSupport({scenario: supportScenario})}><Icon icon={faCircleQuestion} aria-hidden="true" className="size-4.5"/></button></TooltipTrigger><TooltipContent side="right">联系支持</TooltipContent></Tooltip>
-    </aside>
+    </aside>}
     <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      {inFeishu && <div className="flex h-12 shrink-0 items-center gap-4 border-b bg-card px-4">
+        <span className="flex shrink-0 items-center gap-2 text-base font-semibold"><span aria-hidden="true" className="flex size-6 items-center justify-center rounded-md bg-linear-135 from-brand-light to-primary text-primary-foreground"><Icon icon={faWandMagicSparkles} className="size-3"/></span>PPAP Audit</span>
+        {topNavigation}
+        <Button variant="ghost" size="icon-sm" className="ml-auto shrink-0" aria-label="联系支持" onClick={() => openSupport({scenario: supportScenario})}><Icon icon={faCircleQuestion}/></Button>
+      </div>}
       <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-6 py-2"><div className="flex min-w-0 items-center gap-3">
         {frame.heading === 'page' && workbench && !reportView ? <div ref={setPageTitle} className="min-w-0"/> : surface === 'audit' && reportView ? <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <li className="flex min-w-0 items-center gap-1">{task && !recovery ? <a href={taskResultsAddress().href} aria-label="返回审核结果" className="font-medium hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showTaskResults()}}}>{task.number}</a> : <span className="text-muted-foreground">审核任务</span>}</li>
           <li aria-hidden="true" className="text-muted-foreground">/</li><li aria-current="page" className="font-medium">审核报告</li>
         </ol></nav> : <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-3 gap-y-1">{surface === 'audit' && task && !recovery && <><li className="text-xs text-muted-foreground">任务详情</li><li aria-hidden="true" className="text-muted-foreground/60">/</li></>}<li aria-current="page" className="flex min-w-0 items-center gap-1 font-medium">{surface === 'requirements' && ruleDetailOpen ? <a href="/requirements" className="min-w-0 truncate hover:underline" onClick={event => {if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); const url = new URL(location.href); for (const key of rulesAddressKeys) url.searchParams.delete(key); url.pathname = surfaceAddress('requirements'); url.searchParams.delete('view'); writeAuditAddress(url)}}>{pageContext}</a> : (surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) || surface === 'audit' && !task && !recovery && step === 'upload') ? <h1 className={`min-w-0 truncate ${surface === 'audit' && step === 'upload' ? 'text-base font-semibold' : 'text-sm font-medium'}`}>{pageContext}</h1> : surface === 'audit' && task && !recovery ? <span className="min-w-0 truncate font-semibold">{task.number}</span> : surface === 'archive' ? <button type="button" className="min-w-0 truncate hover:underline" onClick={() => showSurface('archive')}>{pageContext}</button> : <span className="min-w-0 truncate">{pageContext}</span>}</li>{surface === 'archive' && <li ref={setPageTitle} className="flex min-w-0 items-center gap-2 empty:hidden"/>}{surface === 'audit' && task && !recovery && !workbench && <li><span role="status"><Badge variant={taskStateTone(task.state)}>{task.state === 'matching' ? `识别中 ${matchingFiles.filter(row => row.match && ['matched', 'unmatched', 'reference', 'failed'].includes(row.match.state)).length}/${matchingFiles.length}` : taskLabels[task.state]}</Badge></span></li>}</ol></nav>}
-      </div><div className="flex shrink-0 items-center gap-4"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && <AccountMenu compact/>}</div></header>
+      </div><div className="flex shrink-0 items-center gap-4"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && !inFeishu && <AccountMenu compact/>}</div></header>
       {/* PPAP Audit keeps its task list on the left, on the new-audit page and on every task. */}
       <main id="audit-main" tabIndex={-1} className="flex min-h-0 w-full flex-1 overflow-hidden">
         {taskRail}

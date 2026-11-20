@@ -6,11 +6,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.9451,
+          0.949,
           0.9529,
-          0.9686
+          0.9608
         ],
-        "hex": "#f1f3f7"
+        "hex": "#f2f3f5"
       }
     },
     "accent-foreground": {
@@ -18,11 +18,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1059,
-          0.1412,
-          0.1882
+          0.1216,
+          0.1373,
+          0.1608
         ],
-        "hex": "#1b2430"
+        "hex": "#1f2329"
       }
     },
     "background": {
@@ -42,11 +42,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.9137,
-          0.9255,
-          0.949
+          0.8941,
+          0.902,
+          0.9137
         ],
-        "hex": "#e9ecf2"
+        "hex": "#e4e6e9"
       }
     },
     "brand-light": {
@@ -54,11 +54,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.4235,
-          0.6078,
+          0.298,
+          0.5333,
           1.0
         ],
-        "hex": "#6c9bff"
+        "hex": "#4c88ff"
       }
     },
     "canvas": {
@@ -66,11 +66,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.9686,
-          0.9725,
-          0.9804
+          0.9608,
+          0.9647,
+          0.9686
         ],
-        "hex": "#f7f8fa"
+        "hex": "#f5f6f7"
       }
     },
     "card": {
@@ -90,11 +90,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1059,
-          0.1412,
-          0.1882
+          0.1216,
+          0.1373,
+          0.1608
         ],
-        "hex": "#1b2430"
+        "hex": "#1f2329"
       }
     },
     "chart-1": {
@@ -102,11 +102,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1725,
-          0.4196,
-          0.8784
+          0.0784,
+          0.3373,
+          0.9412
         ],
-        "hex": "#2c6be0"
+        "hex": "#1456f0"
       }
     },
     "chart-2": {
@@ -174,11 +174,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1059,
-          0.1412,
-          0.1882
+          0.1216,
+          0.1373,
+          0.1608
         ],
-        "hex": "#1b2430"
+        "hex": "#1f2329"
       }
     },
     "header": {
@@ -186,11 +186,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.9804,
-          0.9843,
-          0.9922
+          1.0,
+          1.0,
+          1.0
         ],
-        "hex": "#fafbfd"
+        "hex": "#ffffff"
       }
     },
     "info": {
@@ -198,11 +198,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1725,
-          0.4196,
-          0.8784
+          0.0784,
+          0.3373,
+          0.9412
         ],
-        "hex": "#2c6be0"
+        "hex": "#1456f0"
       }
     },
     "input": {
@@ -210,11 +210,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.8667,
-          0.8863,
-          0.9176
+          0.8706,
+          0.8784,
+          0.8902
         ],
-        "hex": "#dde2ea"
+        "hex": "#dee0e3"
       }
     },
     "muted": {
@@ -222,11 +222,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.9451,
+          0.949,
           0.9529,
-          0.9686
+          0.9608
         ],
-        "hex": "#f1f3f7"
+        "hex": "#f2f3f5"
       }
     },
     "muted-foreground": {
@@ -235,10 +235,10 @@
         "colorSpace": "srgb",
         "components": [
           0.3922,
-          0.4353,
-          0.5098
+          0.4157,
+          0.451
         ],
-        "hex": "#646f82"
+        "hex": "#646a73"
       }
     },
     "popover": {
@@ -258,11 +258,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1059,
-          0.1412,
-          0.1882
+          0.1216,
+          0.1373,
+          0.1608
         ],
-        "hex": "#1b2430"
+        "hex": "#1f2329"
       }
     },
     "primary": {
@@ -270,11 +270,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1725,
-          0.4196,
-          0.8784
+          0.0784,
+          0.3373,
+          0.9412
         ],
-        "hex": "#2c6be0"
+        "hex": "#1456f0"
       }
     },
     "primary-foreground": {
@@ -294,11 +294,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.7961,
-          0.8627,
-          0.9843
+          0.7294,
+          0.8078,
+          0.9922
         ],
-        "hex": "#cbdcfb"
+        "hex": "#bacefd"
       }
     },
     "primary-soft": {
@@ -306,11 +306,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
+          0.8824,
           0.9176,
-          0.9451,
-          0.9961
+          1.0
         ],
-        "hex": "#eaf1fe"
+        "hex": "#e1eaff"
       }
     },
     "primary-soft-hover": {
@@ -318,11 +318,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.8627,
-          0.9098,
-          0.9922
+          0.8196,
+          0.8706,
+          1.0
         ],
-        "hex": "#dce8fd"
+        "hex": "#d1deff"
       }
     },
     "primary-strong": {
@@ -330,11 +330,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1412,
-          0.349,
-          0.7608
+          0.0588,
+          0.2745,
+          0.7882
         ],
-        "hex": "#2459c2"
+        "hex": "#0f46c9"
       }
     },
     "ring": {
@@ -342,11 +342,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1725,
-          0.4196,
-          0.8784
+          0.0784,
+          0.3373,
+          0.9412
         ],
-        "hex": "#2c6be0"
+        "hex": "#1456f0"
       }
     },
     "secondary": {
@@ -354,11 +354,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.9451,
+          0.949,
           0.9529,
-          0.9686
+          0.9608
         ],
-        "hex": "#f1f3f7"
+        "hex": "#f2f3f5"
       }
     },
     "secondary-foreground": {
@@ -366,11 +366,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1059,
-          0.1412,
-          0.1882
+          0.1216,
+          0.1373,
+          0.1608
         ],
-        "hex": "#1b2430"
+        "hex": "#1f2329"
       }
     },
     "secondary-hover": {
@@ -378,11 +378,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.9137,
-          0.9255,
-          0.949
+          0.898,
+          0.902,
+          0.9216
         ],
-        "hex": "#e9ecf2"
+        "hex": "#e5e6eb"
       }
     },
     "sidebar": {
@@ -390,11 +390,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1176,
-          0.1529,
-          0.2
+          1.0,
+          1.0,
+          1.0
         ],
-        "hex": "#1e2733"
+        "hex": "#ffffff"
       }
     },
     "sidebar-accent": {
@@ -402,11 +402,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1725,
-          0.2157,
-          0.2745
+          0.949,
+          0.9529,
+          0.9608
         ],
-        "hex": "#2c3746"
+        "hex": "#f2f3f5"
       }
     },
     "sidebar-accent-foreground": {
@@ -414,11 +414,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          1.0,
-          1.0,
-          1.0
+          0.1216,
+          0.1373,
+          0.1608
         ],
-        "hex": "#ffffff"
+        "hex": "#1f2329"
       }
     },
     "sidebar-border": {
@@ -426,11 +426,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1176,
-          0.1529,
-          0.2
+          0.8941,
+          0.902,
+          0.9137
         ],
-        "hex": "#1e2733"
+        "hex": "#e4e6e9"
       }
     },
     "sidebar-foreground": {
@@ -438,11 +438,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.6824,
-          0.7137,
-          0.7608
+          0.3922,
+          0.4157,
+          0.451
         ],
-        "hex": "#aeb6c2"
+        "hex": "#646a73"
       }
     },
     "sidebar-primary": {
@@ -450,11 +450,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.1725,
-          0.4196,
-          0.8784
+          0.8824,
+          0.9176,
+          1.0
         ],
-        "hex": "#2c6be0"
+        "hex": "#e1eaff"
       }
     },
     "sidebar-primary-foreground": {
@@ -462,11 +462,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          1.0,
-          1.0,
-          1.0
+          0.0784,
+          0.3373,
+          0.9412
         ],
-        "hex": "#ffffff"
+        "hex": "#1456f0"
       }
     },
     "sidebar-ring": {
@@ -474,11 +474,11 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.4235,
-          0.6078,
-          1.0
+          0.0784,
+          0.3373,
+          0.9412
         ],
-        "hex": "#6c9bff"
+        "hex": "#1456f0"
       }
     },
     "success": {

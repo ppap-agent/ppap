@@ -29,6 +29,14 @@ export function isFeishuHost(win: Window = window): boolean {
   return Boolean(host.h5sdk && host.tt && typeof host.tt.requestAccess === 'function')
 }
 
+/**
+ * Whether the page runs inside the Feishu client, known at first render: the client marks its
+ * user agent (Lark/Feishu); the web SDK confirms it once loaded. Only the page frame depends on it.
+ */
+export function openedInFeishu(win: Window = window): boolean {
+  return /\b(?:Lark|Feishu)\//i.test(win.navigator.userAgent) || isFeishuHost(win)
+}
+
 function hostUnavailable(): Error {
   return new Error('当前环境不是飞书宿主')
 }

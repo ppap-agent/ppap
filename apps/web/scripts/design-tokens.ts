@@ -9,6 +9,7 @@ const resolver = new URL("../tokens/web.resolver.json", import.meta.url);
 function variableName(token: TokenNormalized): string {
   if (token.id.startsWith("color.")) return token.id.slice("color.".length);
   if (token.id === "rounded.control") return "radius";
+  if (token.id === "rounded.card") return "radius-card";
   if (token.id === "font.sans") return "font-family-sans";
   return token.id.replaceAll(".", "-");
 }
@@ -155,13 +156,14 @@ function frontmatter(light: TokenNormalizedSet, dark: TokenNormalizedSet): strin
   return `---
 version: alpha
 name: PPAP Web
-description: "PRD V3.33 palette: grey-blue neutrals, one blue for commitments, a dark navigation rail, crisp 1px borders and 8px radius for the PPAP web app and Docs Add-on."
+description: "Feishu taste: light grey canvas, white cards with 12px corners, Feishu blue for commitments, a light navigation, faint 1px dividers and 6px controls for the PPAP web app and Docs Add-on."
 colors:
 ${[...lines(light, ""), ...lines(dark, "dark-")].join("\n")}
 typography:
 ${typography(light)}
 rounded:
   control: ${dimension(light, "rounded.control")}
+  card: ${dimension(light, "rounded.card")}
 components:
 ${components("", "", light)}
 ${components("dark-", "-dark", dark)}

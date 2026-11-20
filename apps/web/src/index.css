@@ -34,8 +34,9 @@
   --color-ring: var(--ring);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  /* Cards and panels: rounded.card. Controls (rounded-md) stay derived from rounded.control. */
+  --radius-lg: var(--radius-card);
+  --radius-xl: calc(var(--radius-card) + 4px);
   --font-heading: var(--font-family-sans);
   --font-sans: var(--font-family-sans);
   --color-canvas: var(--canvas);

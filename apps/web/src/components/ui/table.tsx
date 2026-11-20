@@ -23,7 +23,7 @@ function TableHeader({ className, variant = "default", sticky = false, ...props 
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", variant === "muted" && "bg-header [&_th]:font-semibold [&_th]:text-sm", sticky && "[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-header", className)}
+      className={cn("[&_tr]:border-b", variant === "muted" && "bg-header [&_th]:text-sm", sticky && "[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-header", className)}
       {...props}
     />
   )
@@ -71,7 +71,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
+        "h-10 px-2 text-left align-middle font-normal whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}

@@ -1,32 +1,32 @@
 ---
 version: alpha
 name: PPAP Web
-description: "PRD V3.33 palette: grey-blue neutrals, one blue for commitments, a dark navigation rail, crisp 1px borders and 8px radius for the PPAP web app and Docs Add-on."
+description: "Feishu taste: light grey canvas, white cards with 12px corners, Feishu blue for commitments, a light navigation, faint 1px dividers and 6px controls for the PPAP web app and Docs Add-on."
 colors:
-  primary: "#2c6be0"
+  primary: "#1456f0"
   on-primary: "#ffffff"
-  background: "#f7f8fa"
+  background: "#f5f6f7"
   surface: "#ffffff"
-  on-surface: "#1b2430"
-  muted: "#646f82"
-  border: "#e9ecf2"
-  input-border: "#dde2ea"
-  secondary: "#f1f3f7"
-  accent: "#eaf1fe"
+  on-surface: "#1f2329"
+  muted: "#646a73"
+  border: "#e4e6e9"
+  input-border: "#dee0e3"
+  secondary: "#f2f3f5"
+  accent: "#e1eaff"
   success: "#15803d"
   warning: "#b45309"
   error: "#dc2626"
-  info: "#2c6be0"
-  dark-primary: "#2c6be0"
+  info: "#1456f0"
+  dark-primary: "#2f66e8"
   dark-on-primary: "#ffffff"
-  dark-background: "#0f141b"
-  dark-surface: "#161d27"
-  dark-on-surface: "#e6eaf0"
-  dark-muted: "#98a2b3"
-  dark-border: "#2a3442"
-  dark-input-border: "#333e4e"
-  dark-secondary: "#1f2833"
-  dark-accent: "#172540"
+  dark-background: "#1a1a1a"
+  dark-surface: "#262626"
+  dark-on-surface: "#ebebeb"
+  dark-muted: "#a6a6a6"
+  dark-border: "#333333"
+  dark-input-border: "#3d3d3d"
+  dark-secondary: "#2e2e2e"
+  dark-accent: "#1f2d4d"
   dark-success: "#22c55e"
   dark-warning: "#e8901a"
   dark-error: "#dc2626"
@@ -79,6 +79,7 @@ typography:
     lineHeight: 36px
 rounded:
   control: 0.5rem
+  card: 0.75rem
 components:
   input:
     backgroundColor: "{colors.surface}"
@@ -162,7 +163,7 @@ components:
 
 The token frontmatter above is generated from `apps/web/tokens/` by `pnpm design:update` (see
 [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)); do not edit it by hand. The layout and component guidance below
-comes from the Stitch design system "Precision Slate"; the colours follow the PRD V3.33 design images. It is
+comes from the Stitch design system "Precision Slate"; the colours and shapes follow the taste of Feishu's own apps. It is
 reviewed by people; where an exact value in it differs from
 the frontmatter, the frontmatter wins.
 
@@ -174,13 +175,14 @@ The aesthetic blends Modern Enterprise SaaS with the restrained clarity of moder
 
 ## Colors
 
-The palette follows the PRD V3.33 interaction design images (卷一 `_imgbuild`): cool grey-blue neutrals, one blue for commitments and a dark navigation rail. Text colours that the images draw below WCAG AA are darkened to the nearest compliant value of the same hue.
+The palette follows Feishu's own apps (工作台, 多维表格, 视频会议), so PPAP sits quietly inside the Feishu window: a light grey page, white cards, Feishu blue for commitments. Text colours stay at or above WCAG AA.
 
-- **Primary (`#2C6BE0`)**: primary interactive commitments, active step indicators, focus rings and the current navigation item. Hover `#2459C2`.
-- **Subtle Accents (`#EAF1FE`, `#DCE8FD`, line `#CBDCFB`)**: selection, active tabs, info badges and low-contrast hover states.
-- **Neutrals**: text `#1B2430`, secondary text `#3A4657`, muted text `#646F82` (the images' `#8A94A6`, darkened for AA), page `#F7F8FA`, cards `#FFFFFF` with `#E9ECF2` borders, inputs `#DDE2EA`, subtle fills `#F1F3F7`.
-- **Navigation rail**: `#1E2733` with `#AEB6C2` items; the current item is solid primary.
-- **Semantic Signals**: Success (`#15803D` / `#EAF7EF`), Warning (`#B45309` / `#FEF3E2`, solid `#E8901A` for charts), Destructive/Non-Conformance (`#DC2626` / `#FDECEC`).
+- **Primary (`#1456F0`)**: primary interactive commitments, active step indicators, focus rings and the current navigation item. Hover `#0F46C9`.
+- **Subtle Accents (`#E1EAFF`, `#D1DEFF`, line `#BACEFD`)**: selection, the current navigation item, info badges and low-contrast hover states.
+- **Neutrals**: text `#1F2329`, muted text `#646A73`, page `#F5F6F7`, cards `#FFFFFF` with faint `#E4E6E9` dividers, inputs `#DEE0E3`, subtle fills `#F2F3F5`, hover and selected pills `#E5E6EB`.
+- **Navigation**: white with `#646A73` items; the current item is `#E1EAFF` with primary text.
+- **Semantic Signals**: Success (`#15803D` / `#EAF7EF`), Warning (`#B45309` / `#FEF3E2`, solid `#E8901A` for charts), Destructive/Non-Conformance (`#DC2626` / `#FDECEC`). They stay darker than Feishu's own status colours so their text keeps AA contrast.
+- **Dark**: follows Feishu's dark theme: page `#1A1A1A`, cards `#262626`, text `#EBEBEB`, primary `#2F66E8` (white labels keep AA).
 
 ## Typography
 
@@ -207,6 +209,7 @@ Layout follows what the person is doing on the page; visual form follows this do
 - **Result pages** keep the task list open for moving between tasks and put their own heading (status, progress, estimate) in the top bar, once.
 - **While one file's findings are read**, its table keeps about 1000px. Side columns give way in order of relevance: the task list folds first (it stays open only on windows of about 1664px and wider), then the file list narrows to a strip of file icons with result dots (below about 1432px, or when the task has one file). Each keeps its control to open it again; a choice the person makes wins.
 - **Library pages** (files, templates, rules, usage) have no task list.
+- **Two shells, one page**: in a browser the frame has the left navigation, the page heading and the account menu; inside the Feishu client (detected from the user agent or the Feishu web SDK) the five entries sit in a top bar as pills, the account menu is left to Feishu and the page name goes to the window title. Tokens, components and page content are shared; only the frame differs.
 - The page kinds and their frame regions live in one table, `pageFrames` in `apps/web/src/audit/intake.tsx`; change the table, not scattered conditions.
 - Each fact appears once: a count belongs to its section heading; the top verdict says only what the start depends on (files sent, blocked, needing a hand, unmatched).
 - A control whose change redoes work says so beside it (changing the rules re-recognizes the whole batch).
@@ -215,27 +218,26 @@ Layout follows what the person is doing on the page; visual form follows this do
 
 ## Elevation & Depth
 
-This design system avoids heavy blurred drop shadows, utilizing low-contrast ghost outlines and crisp structural borders to construct depth.
+Depth comes from the page tone, not from shadows or heavy lines.
 
-- **Borders & Dividers**: Visual separation relies on 1px solid borders (`#E9ECF2` for outer boundaries, `#F1F3F7` for internal cell dividers).
-- **Card & Container Elevation**: Static containers use zero shadow, resting flat on `#FFFFFF` against `#F7F8FA` page backdrops. 
-- **Interactive Depth**: Dropdowns, popovers, and elevated modal panels use a tight, restrained shadow paired with a perimeter line: `0 1px 3px 0 rgba(27, 36, 48, 0.08), 0 1px 2px -1px rgba(27, 36, 48, 0.08)` with a 1px `#E9ECF2` border.
-- **Overlay Layering**: Modal backdrops employ a clean slate scrim: `rgba(27, 36, 48, 0.4)`.
+- **Borders & Dividers**: faint 1px `#E4E6E9` lines separate table rows and sections; tables draw no vertical lines.
+- **Card & Container Elevation**: static containers use zero shadow, resting flat on `#FFFFFF` against the `#F5F6F7` page.
+- **Interactive Depth**: dropdowns, popovers and modal panels use a tight, restrained shadow with a 1px `#E4E6E9` border.
+- **Overlay Layering**: modal backdrops use a dark scrim at about 40%.
 
 ## Shapes
 
-The geometric signature is grounded at a default radius of 8px (`0.5rem`). This strikes a balance between sharp industrial discipline and modern software ergonomics.
-
-- **Inputs, Buttons, and Cards**: Standardize on `rounded` (8px).
-- **Badges**: 6px (`0.375rem`) rounded tags, one step inside the 8px controls; not pills, which sit poorly around short Chinese labels.
-- **Nested Elements**: Inner nested elements (e.g., input addons, segmented control items) use 6px (`0.375rem`) to ensure concentric alignment with outer 8px containers.
+- **Cards, panels and dialogs**: 12px (`rounded.card`), Tailwind `rounded-lg`.
+- **Buttons, inputs, menus, tabs and navigation pills**: 6px, Tailwind `rounded-md`, derived from `rounded.control` (8px).
+- **Badges**: 6px rounded tags; not pills, which sit poorly around short Chinese labels.
+- **Nested Elements**: inner elements step down to 4px (`rounded-sm`).
 
 ## Components
 
 ### Buttons
-- **Primary**: Solid `#2C6BE0` fill, `#FFFFFF` text, 8px radius, height 36px (dense: 32px). Hover: `#2459C2`. Focus: 2px offset ring in `#2C6BE0`.
-- **Secondary / Outline**: `#FFFFFF` background, 1px `#E9ECF2` border, `#1B2430` text. Hover: `#F7F8FA` background with `#DDE2EA` border.
-- **Ghost**: Transparent fill, `#646F82` text. Hover: `#F1F3F7`, text `#1B2430`.
+- **Primary**: Solid `#1456F0` fill, `#FFFFFF` text, 6px radius, height 36px (dense: 32px). Hover: `#0F46C9`. Focus: 2px offset ring in `#1456F0`.
+- **Secondary / Outline**: `#FFFFFF` background, 1px `#DEE0E3` border, `#1F2329` text. Hover: `#F2F3F5` background.
+- **Ghost**: Transparent fill, `#646A73` text. Hover: `#F2F3F5`, text `#1F2329`.
 
 ### Badges & Tag Pills
 - **Style**: Height 20px, 11px medium font (`label-sm`), normal tracking, 6px rounded tags.
@@ -243,18 +245,18 @@ The geometric signature is grounded at a default radius of 8px (`0.5rem`). This 
   - *Compliant / Pass*: Background `#EAF7EF`, text `#15803D`, border 1px solid `#BBF7D0`.
   - *Review / Warning*: Background `#FEF3E2`, text `#B45309`, border 1px solid `#FDE68A`.
   - *Non-Conformance / Critical*: Background `#FDECEC`, text `#B91C1C`, border 1px solid `#FECACA`.
-  - *Neutral / Pending*: Background `#F1F3F7`, text `#3A4657`, border 1px solid `#E9ECF2`.
+  - *Neutral / Pending*: Background `#F2F3F5`, text `#646A73`, border 1px solid `#E4E6E9`.
 
 ### Form Inputs & Checkboxes
-- **Inputs**: Height 36px, background `#FFFFFF`, border 1px solid `#E9ECF2`, padding 0 12px. Focus: border `#2C6BE0`, box-shadow `0 0 0 1px #2C6BE0`.
-- **Checkboxes**: 16px square, 4px radius, border 1px solid `#DDE2EA`. Checked state: `#2C6BE0` background with white checkmark icon.
+- **Inputs**: Height 36px, background `#FFFFFF`, border 1px solid `#DEE0E3`, padding 0 12px, 6px radius. Focus: border `#1456F0`, box-shadow `0 0 0 1px #1456F0`.
+- **Checkboxes**: 16px square, 4px radius, border 1px solid `#DEE0E3`. Checked state: `#1456F0` background with white checkmark icon.
 
 ### Inspection Cards
 - Structured 3-tier card layout:
-  1. *Header*: 12px top/bottom padding, subtle background `#F7F8FA`, border-bottom 1px `#E9ECF2`, housing part ID, revision code, and status badge.
+  1. *Header*: 12px top/bottom padding, subtle background `#F5F6F7`, border-bottom 1px `#E4E6E9`, housing part ID, revision code, and status badge.
   2. *Body*: White `#FFFFFF`, standard 16px padding, organized into key-value specification pairs with vertical divider lines.
   3. *Action Footer*: 8px padding, right-aligned micro-actions (Audit, Sign-off, Reject).
 
 ### Alert Banners
-- Low-saturation, solid tint backgrounds (`#EAF1FE` for info, `#FEF3E2` for notice) with a 1px border. 
-- Integrated left indicator rule (3px solid `#2C6BE0` or `#B45309`). Includes inline dismiss action and standard text sizes (13px body).
+- Low-saturation, solid tint backgrounds (`#E1EAFF` for info, `#FEF3E2` for notice) with a 1px border. 
+- Integrated left indicator rule (3px solid `#1456F0` or `#B45309`). Includes inline dismiss action and standard text sizes (13px body).
