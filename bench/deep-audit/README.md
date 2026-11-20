@@ -23,7 +23,7 @@ bench/deep-audit/run.sh --jobs 3
 ```
 
 ```bash
-bench/deep-audit/run.sh --name deepseek-high --jobs 4 --coding vision --effort high
+bench/deep-audit/run.sh --name effort-high --jobs 4 --effort high
 ```
 
 ```bash
