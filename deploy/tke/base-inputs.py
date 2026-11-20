@@ -9,7 +9,6 @@ Usage: python3 deploy/tke/base-inputs.py   (prints the digest of the working tre
 
 import hashlib
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
 # The whole Dockerfile counts: a stage edit is rare, and a stale base must never pass silently.
@@ -25,7 +24,8 @@ INPUTS = (
 )
 
 
-def base_inputs_digest(read: Callable[[str], bytes]) -> str:
+def base_inputs_digest(read):
+    # read(path) -> bytes. No annotations: the Yunxiao runner's python3 is 3.6 (Alibaba Cloud Linux 3).
     digest = hashlib.sha256()
     for path in INPUTS:
         digest.update(path.encode() + b"\0" + read(path) + b"\0")

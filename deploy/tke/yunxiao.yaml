@@ -69,7 +69,9 @@ stages:
                 export PPAP_IMAGE_PREFIX=icoastline.tencentcloudcr.com/ppap-feishu/current-
                 test "$(git rev-parse HEAD)" = "$PPAP_BUILD_SHA"
                 git diff --exit-code
-                export PPAP_BASE_TAG="$(python3 deploy/tke/base-inputs.py)"
+                PPAP_BASE_TAG="$(python3 deploy/tke/base-inputs.py)"
+                export PPAP_BASE_TAG
+                test "${#PPAP_BASE_TAG}" -eq 64
                 # The shared dependency images (deps, deep-base) are built only in "bases" mode, tagged by
                 # the digest of their inputs. Releases build source layers on the recorded images, so a
                 # missed layer cache can no longer re-push hundreds of MB from Hong Kong.
