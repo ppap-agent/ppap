@@ -3,7 +3,7 @@ import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/bf7f2f7d5c4742a193c29da18e7688bf
 import {useEffect, useRef, useState} from 'react'
 import {createPortal} from 'react-dom'
-import {faArrowLeft} from '@fortawesome/free-solid-svg-icons'
+import {iconArrowLeft} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
@@ -90,7 +90,7 @@ export function ArchiveHistory({document, documentId, initialAddress, onNavigate
         {/* With the frame's trail, the file's name follows 审核文件 in the top bar and the trail's first step leads back. */}
         {headerTitle && fileName && createPortal(<><span aria-hidden="true" className="text-muted-foreground/60">/</span><h1 className="min-w-0 font-semibold"><FileName name={fileName} truncate/></h1></>, headerTitle)}
         <aside aria-label="历次审核" className="flex min-h-0 w-70 shrink-0 flex-col overflow-hidden rounded-lg bg-card">
-          {!headerTitle && <div className="flex items-center gap-1 border-b p-3">{loading && !(detail?.file.file.original_filename || history?.document.title || document?.title) ? <div className="min-w-0 flex-1"><h1 className="sr-only">历史审核</h1><ReadSkeleton label="正在读取文档…" kind="inline"/></div> : <><Button variant="ghost" size="icon" aria-label={backLabel} onClick={onBack}><Icon icon={faArrowLeft}/></Button><h1 className="min-w-0 text-sm font-semibold"><FileName name={fileName || '历史审核'} colored/></h1></>}</div>}
+          {!headerTitle && <div className="flex items-center gap-1 border-b p-3">{loading && !(detail?.file.file.original_filename || history?.document.title || document?.title) ? <div className="min-w-0 flex-1"><h1 className="sr-only">历史审核</h1><ReadSkeleton label="正在读取文档…" kind="inline"/></div> : <><Button variant="ghost" size="icon" aria-label={backLabel} onClick={onBack}><Icon icon={iconArrowLeft}/></Button><h1 className="min-w-0 text-sm font-semibold"><FileName name={fileName || '历史审核'} colored/></h1></>}</div>}
           <h2 className="flex items-center gap-1.5 border-b px-3.5 py-3 text-sm font-semibold">历次审核{history && <Badge variant="info">{history.entries.length}</Badge>}</h2>
           <div className="min-h-0 flex-1 overflow-y-auto">{history ? list : loading && <ReadSkeleton label="正在读取历次审核…" kind="inline" className="p-3.5"/>}</div>
         </aside>

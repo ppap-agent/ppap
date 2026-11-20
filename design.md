@@ -245,6 +245,9 @@ Depth comes from the page tone, not from shadows or heavy lines.
 - **Style**: Height 20px, 12px regular text, 4px corners, a light tint and no outline (Feishu tags).
 - **Variants**: Pass `#15803D` on a green tint, Warning `#B45309` on an amber tint, Non-Conformance `#DC2626` on a red tint, Neutral `#646A73` on `#F2F3F5`.
 
+### Icons
+- Thin outlined line icons (1.75px stroke on a 24px grid), never solid glyphs; one set for the whole product.
+
 ### Segmented Controls
 - A `#F2F3F5` track with 6px corners; the chosen item is a white chip with medium text, the others are quiet text.
 

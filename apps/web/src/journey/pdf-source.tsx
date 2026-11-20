@@ -1,7 +1,7 @@
 import {Disclosure} from '../components/disclosure'
 // Same Stitch reader: pages are rendered locally, never uploaded to a conversion service.
 import {useEffect, useRef, useState} from 'react'
-import {faChevronLeft, faChevronRight, faMinus, faPlus, faRotateRight} from '@fortawesome/free-solid-svg-icons'
+import {iconChevronLeft, iconChevronRight, iconMinus, iconPlus, iconRotateRight} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import {getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask} from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
@@ -82,13 +82,13 @@ export function PdfSource({url, name, onCite}: {url: string; name: string; onCit
   }
   return <div className={"flex flex-col h-full min-h-95"}>
     <div className={"flex shrink-0 flex-wrap gap-1 py-1 px-2 border-b"} role="toolbar" aria-label="PDF 阅读工具">
-      <Button variant="ghost" size="icon-sm" aria-label="上一页" disabled={!pdf || page === 1} onClick={() => setPage(value => value - 1)}><Icon icon={faChevronLeft}/></Button>
+      <Button variant="ghost" size="icon-sm" aria-label="上一页" disabled={!pdf || page === 1} onClick={() => setPage(value => value - 1)}><Icon icon={iconChevronLeft}/></Button>
       <label className={"flex items-center gap-1 whitespace-nowrap text-xs"}>第 <Input aria-label="PDF 页码" type="number" min={1} max={pdf?.numPages ?? 1} value={page} disabled={!pdf} onChange={event => {const next = Number(event.target.value); if (pdf && Number.isInteger(next) && next >= 1 && next <= pdf.numPages) setPage(next)}}/> / {pdf?.numPages ?? '—'} 页</label>
-      <Button variant="ghost" size="icon-sm" aria-label="下一页" disabled={!pdf || page >= pdf.numPages} onClick={() => setPage(value => value + 1)}><Icon icon={faChevronRight}/></Button>
-      <Button variant="ghost" size="icon-sm" aria-label="缩小 PDF" disabled={zoom <= .5} onClick={() => setZoom(value => Math.max(.5, value - .25))}><Icon icon={faMinus}/></Button>
+      <Button variant="ghost" size="icon-sm" aria-label="下一页" disabled={!pdf || page >= pdf.numPages} onClick={() => setPage(value => value + 1)}><Icon icon={iconChevronRight}/></Button>
+      <Button variant="ghost" size="icon-sm" aria-label="缩小 PDF" disabled={zoom <= .5} onClick={() => setZoom(value => Math.max(.5, value - .25))}><Icon icon={iconMinus}/></Button>
       <Button variant="ghost" size="sm" onClick={() => setZoom(1)}>{zoom === 1 ? '适合宽度' : `适宽 × ${zoom}`}</Button>
-      <Button variant="ghost" size="icon-sm" aria-label="放大 PDF" disabled={zoom >= 3} onClick={() => setZoom(value => Math.min(3, value + .25))}><Icon icon={faPlus}/></Button>
-      <Button variant="ghost" size="icon-sm" aria-label="旋转 PDF" onClick={() => setRotation(value => (value + 90) % 360)}><Icon icon={faRotateRight}/></Button>
+      <Button variant="ghost" size="icon-sm" aria-label="放大 PDF" disabled={zoom >= 3} onClick={() => setZoom(value => Math.min(3, value + .25))}><Icon icon={iconPlus}/></Button>
+      <Button variant="ghost" size="icon-sm" aria-label="旋转 PDF" onClick={() => setRotation(value => (value + 90) % 360)}><Icon icon={iconRotateRight}/></Button>
     </div>
     {onCite && <div className="flex flex-wrap items-center gap-2 px-2 py-1"><Button variant="outline" size="sm" disabled={rendering || Boolean(error)} onClick={() => onCite(page, region || undefined)}>{region ? '引用选区' : '引用当前页'}</Button>{region && <><span role="status" className="text-xs">已选择第 {page} 页区域</span><Button variant="ghost" size="sm" onClick={clearRegion}>清除选区</Button></>}</div>}
     <div className={"relative flex-1 min-h-40 overflow-auto"} ref={viewport} role="region" aria-label="PDF 页面" tabIndex={0} aria-busy={!error && rendering}>

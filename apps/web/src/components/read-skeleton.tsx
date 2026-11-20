@@ -1,4 +1,4 @@
-import {faCircleNotch} from '@fortawesome/free-solid-svg-icons'
+import {iconCircleNotch} from './icons'
 import {Icon} from './ui/icon'
 import {Skeleton} from './ui/skeleton'
 import {cn} from '../lib/utils'
@@ -7,7 +7,7 @@ import {cn} from '../lib/utils'
 export function ReadSkeleton({label, kind = 'list', rows = 4, className}: {label: string; kind?: 'list' | 'table' | 'detail' | 'document' | 'inline'; rows?: number; className?: string}) {
   return <div role="status" aria-label={label} className={cn('min-w-0', className)}>
     {/* A slow read should say what it is waiting for, not only show grey bars. */}
-    <p className="flex items-center gap-2 text-xs text-muted-foreground"><Icon icon={faCircleNotch} aria-hidden="true" className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none"/>{label}</p>
+    <p className="flex items-center gap-2 text-xs text-muted-foreground"><Icon icon={iconCircleNotch} aria-hidden="true" className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none"/>{label}</p>
     {kind !== 'inline' && <div aria-hidden="true" className={kind === 'document' ? 'mt-3 space-y-5 rounded-md border p-6' : 'mt-3 space-y-3'}>
       {kind === 'document' ? <>
         <div className="flex gap-2 border-b pb-4"><Skeleton className="h-7 w-24"/><Skeleton className="h-7 w-32"/></div>

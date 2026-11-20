@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {faBell} from '@fortawesome/free-solid-svg-icons'
+import {iconBell} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import type {components} from '../generated/openapi'
 import {Button} from '../components/ui/button'
@@ -53,5 +53,5 @@ export function CompletionNotification({task, adapter, onChange, compact = false
   const unavailable = preference && !preference.available
   const status = preference?.delivery.reason === 'feishu_connection_unavailable' ? '等待飞书连接恢复' : preference ? states[preference.delivery.state] : ''
   const controls = <div className="grid gap-2 text-sm"><Label><Checkbox checked={preference?.enabled ?? task.notification_enabled ?? false} disabled={busy || Boolean(error) || !preference?.available || !preference.can_change} onCheckedChange={value => void save(value === true)}/>完成后飞书通知</Label>{busy && <ReadSkeleton label="正在核对设置…" kind="inline"/>}{unavailable && <span className="text-muted-foreground">飞书通知暂不可用</span>}{!unavailable && status && <span role="status" className="text-muted-foreground">{status}</span>}{error && <p role="alert">{error}</p>}{(error || preference?.delivery.state === 'unknown' || preference?.delivery.state === 'failed') && <Button size="sm" variant="outline" disabled={busy} onClick={() => void read()}>读取通知设置</Button>}</div>
-  return compact ? <Dialog><Tooltip><TooltipTrigger asChild><DialogTrigger asChild><Button variant="ghost" size="icon" aria-label="完成通知设置"><Icon icon={faBell}/></Button></DialogTrigger></TooltipTrigger><TooltipContent>完成后飞书通知</TooltipContent></Tooltip><DialogContent><DialogHeader><DialogTitle>完成通知设置</DialogTitle><DialogDescription>本任务的飞书完成通知</DialogDescription></DialogHeader>{controls}</DialogContent></Dialog> : controls
+  return compact ? <Dialog><Tooltip><TooltipTrigger asChild><DialogTrigger asChild><Button variant="ghost" size="icon" aria-label="完成通知设置"><Icon icon={iconBell}/></Button></DialogTrigger></TooltipTrigger><TooltipContent>完成后飞书通知</TooltipContent></Tooltip><DialogContent><DialogHeader><DialogTitle>完成通知设置</DialogTitle><DialogDescription>本任务的飞书完成通知</DialogDescription></DialogHeader>{controls}</DialogContent></Dialog> : controls
 }

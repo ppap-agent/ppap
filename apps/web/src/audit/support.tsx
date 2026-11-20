@@ -6,6 +6,7 @@ import {Button} from '../components/ui/button'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger} from '../components/ui/dialog'
 import {Input} from '../components/ui/input'
 import {Label} from '../components/ui/label'
+import {showToast} from '../components/toast'
 export type AuditSupportAdapter = {
   read: () => Promise<components['schemas']['AuditSupportInfo']>
   readQr: (configVersion: string) => Promise<Blob>
@@ -39,7 +40,7 @@ export function AuditSupport({adapter, snapshot, pageReference, returnTargets, o
     }).catch(() => {if (current) {setInfo(null); setFailed(true); setLoading(false)}})
     return () => {current = false; if (url) URL.revokeObjectURL(url)}
   }, [adapter, retry])
-  async function copy(value: string) {try {await navigator.clipboard.writeText(value); setNotice('已复制。')} catch {setNotice('浏览器未允许复制，请选择文字后手动复制。')}}
+  async function copy(value: string) {try {await navigator.clipboard.writeText(value); showToast('已复制')} catch {setNotice('浏览器未允许复制，请选择文字后手动复制。')}}
   const copyText = [scenario, `本页参考编号：${pageReference}`, ...(traceId ? [`服务请求编号：${traceId}`] : []), ...facts.map(fact => `${fact.label}：${fact.value}`)].join('\n')
   const available = info?.state === 'configured' && Boolean(info.config_version) && Boolean(info.phone?.trim() || info.email?.trim() || qr)
   return <Dialog open onOpenChange={open => {if (!open) onClose()}}><DialogContent className="max-h-[88dvh] overflow-y-auto" onCloseAutoFocus={event => {event.preventDefault(); [...returnTargets, document.getElementById('audit-main')].find(element => element?.isConnected && element.getClientRects().length)?.focus()}} onEscapeKeyDown={event => {if (zoom) {event.preventDefault(); setZoom(false)}}}><DialogHeader><DialogTitle>联系支持</DialogTitle><DialogDescription className="sr-only">获取帮助与联系方式。</DialogDescription></DialogHeader>

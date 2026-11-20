@@ -1,7 +1,7 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import { Dialog as SheetPrimitive } from "radix-ui"
-import {faXmark} from '@fortawesome/free-solid-svg-icons'
+import {iconXmark} from '../icons'
 import {Icon} from './icon'
 import { Button } from "@/components/ui/button"
 
@@ -30,7 +30,7 @@ function SheetContent({ className, children, side = "right", showCloseButton = t
     {overlay && <SheetOverlay />}
     <SheetPrimitive.Content data-slot="sheet-content" data-side={side} className={cn("fixed z-50 flex flex-col gap-4 bg-card p-5 shadow-sm outline-none data-[side=right]:border-l data-[side=left]:border-r duration-300 data-open:animate-in data-closed:animate-out", "data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:max-h-[90dvh] data-[side=bottom]:rounded-t-xl data-[side=bottom]:data-open:slide-in-from-bottom data-[side=bottom]:data-closed:slide-out-to-bottom data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:w-3/4 data-[side=left]:max-w-sm data-[side=left]:data-open:slide-in-from-left data-[side=left]:data-closed:slide-out-to-left data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:w-3/4 data-[side=right]:max-w-sm data-[side=right]:data-open:slide-in-from-right data-[side=right]:data-closed:slide-out-to-right data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:max-h-[90dvh] data-[side=top]:rounded-b-xl data-[side=top]:data-open:slide-in-from-top data-[side=top]:data-closed:slide-out-to-top", className)} {...props}>
       {children}
-      {showCloseButton && <SheetPrimitive.Close data-slot="sheet-close" asChild><Button variant="ghost" size="icon-sm" className="absolute top-3 right-3"><Icon icon={faXmark} /><span className="sr-only">关闭</span></Button></SheetPrimitive.Close>}
+      {showCloseButton && <SheetPrimitive.Close data-slot="sheet-close" asChild><Button variant="ghost" size="icon-sm" className="absolute top-3 right-3"><Icon icon={iconXmark} /><span className="sr-only">关闭</span></Button></SheetPrimitive.Close>}
     </SheetPrimitive.Content>
   </SheetPortal>
 }

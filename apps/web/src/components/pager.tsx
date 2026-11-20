@@ -1,5 +1,5 @@
 import {useState} from 'react'
-import {faChevronLeft, faChevronRight} from '@fortawesome/free-solid-svg-icons'
+import {iconChevronLeft, iconChevronRight} from './icons'
 import {Icon} from './ui/icon'
 import {cn} from '../lib/utils'
 import {Button} from './ui/button'
@@ -20,9 +20,9 @@ export function Pager({total, page, pageSize = 10, onPage, jump = false, disable
   return <nav aria-label="分页" className={cn('flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground', className)}>
     <span>共 {total} 条</span>
     <span>{pageSize} 条/页</span>
-    <Button type="button" variant="outline" size="icon-xs" aria-label="上一页" disabled={disabled || page <= 1} onClick={() => go(page - 1)}><Icon icon={faChevronLeft}/></Button>
+    <Button type="button" variant="outline" size="icon-xs" aria-label="上一页" disabled={disabled || page <= 1} onClick={() => go(page - 1)}><Icon icon={iconChevronLeft}/></Button>
     {pageWindow(page, count).map((value, index) => value === null ? <span key={`gap-${index}`} aria-hidden="true">…</span> : <Button key={value} type="button" variant={value === page ? 'soft' : 'outline'} size="icon-xs" aria-label={`第 ${value} 页`} aria-current={value === page ? 'page' : undefined} disabled={disabled && value !== page} onClick={() => go(value)}>{value}</Button>)}
-    <Button type="button" variant="outline" size="icon-xs" aria-label="下一页" disabled={disabled || page >= count} onClick={() => go(page + 1)}><Icon icon={faChevronRight}/></Button>
+    <Button type="button" variant="outline" size="icon-xs" aria-label="下一页" disabled={disabled || page >= count} onClick={() => go(page + 1)}><Icon icon={iconChevronRight}/></Button>
     {jump && <label className="flex items-center gap-1.5">跳至<Input inputMode="numeric" aria-label="跳转页码" className="h-6 w-11 text-center" value={target} disabled={disabled} onChange={event => setTarget(event.target.value.replace(/\D/g, ''))} onKeyDown={event => {if (event.key === 'Enter') {event.preventDefault(); go(Math.min(count, Math.max(1, Number(target) || page))); setTarget('')}}}/>页</label>}
   </nav>
 }

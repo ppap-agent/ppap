@@ -1,7 +1,7 @@
 // Stitch: projects/13261964020862199279/screens/cf4afdece8974624b77ad36da11cf669 (templates),
 // 4c5d072e721f4760b801c13e4d63b3fa (template detail) and 6ab6498d58c94a1497dabd5309ede5b3 (rule detail).
 import {Fragment, useEffect, useState, type MouseEvent} from 'react'
-import {faChevronRight, faCircleExclamation, faMagnifyingGlass} from '@fortawesome/free-solid-svg-icons'
+import {iconChevronRight, iconCircleExclamation, iconMagnifyingGlass} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import {request} from '../api'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
@@ -32,7 +32,7 @@ function followRulesLink(event: MouseEvent<HTMLAnchorElement>, href: string) {
 
 export function RulesTrail({items}: {items: {label: string; href?: string}[]}) {
   return <nav aria-label="位置" className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-muted-foreground">{items.map((item, index) => <Fragment key={`${index}:${item.label}`}>
-    {index > 0 && <Icon icon={faChevronRight} aria-hidden="true" className="size-3.5 shrink-0"/>}
+    {index > 0 && <Icon icon={iconChevronRight} aria-hidden="true" className="size-3.5 shrink-0"/>}
     {item.href ? <a className="min-h-9 content-center underline-offset-4 hover:text-foreground hover:underline" href={item.href} onClick={event => followRulesLink(event, item.href!)}>{item.label}</a> : <span aria-current="page" className="break-words text-foreground">{item.label}</span>}
   </Fragment>)}</nav>
 }
@@ -52,7 +52,7 @@ export function CustomerRulesBrowser({entries, selectedId, loading}: {entries: C
   // One surface split by a divider (Feishu master-detail): the list chooses, the table shows; the choice is not repeated as a heading.
   return <div className="grid min-h-0 flex-1 grid-cols-[17.5rem_minmax(0,1fr)] grid-rows-1 overflow-hidden rounded-lg bg-card">
     <aside aria-label="客户" className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden border-r p-3">
-      <div role="search" className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Icon icon={faMagnifyingGlass} aria-hidden="true" className="size-3.5"/></span><Input aria-label="搜索客户" type="search" iconStart placeholder="搜索客户" maxLength={200} value={query} onChange={event => setQuery(event.target.value)}/></div>
+      <div role="search" className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Icon icon={iconMagnifyingGlass} aria-hidden="true" className="size-3.5"/></span><Input aria-label="搜索客户" type="search" iconStart placeholder="搜索客户" maxLength={200} value={query} onChange={event => setQuery(event.target.value)}/></div>
       <ul className="grid min-h-0 flex-1 content-start gap-1 overflow-y-auto">{shown.map(item => {
         const {customer} = item, href = rulesAddress({template: customer.customer_id}), current = customer.customer_id === entry?.customer.customer_id, ratio = ruleCoverage(customer), described = `rules-customer-${customer.customer_id}`
         return <li key={customer.customer_id}><a aria-current={current ? 'page' : undefined} aria-describedby={described} href={href} onClick={event => followRulesLink(event, href)} className={`flex min-w-0 items-center gap-3 rounded-md px-3 py-2 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${current ? 'bg-primary-soft text-primary' : 'hover:bg-muted'}`}>
@@ -84,7 +84,7 @@ function CustomerRulesDetail({entry, focus}: {entry: CustomerRules; focus: strin
   const rows = types.flatMap((type): {type: TypeRules; rule: RuleRow | null; first: boolean}[] => type.rules.length ? type.rules.map((rule, index) => ({type, rule, first: index === 0})) : [{type, rule: null, first: true}])
   return <section aria-label={`${customer.short_name} 的规则`} className="flex min-h-0 flex-1 flex-col">
     <h2 className="sr-only">{customer.short_name}</h2>
-    {entry.types === null ? <Alert className="m-4 w-auto"><Icon icon={faCircleExclamation} aria-hidden="true"/><AlertTitle>这个客户的文件类型范围尚未配置</AlertTitle><AlertDescription>暂不显示规则覆盖。请联系我们配置后再查看。</AlertDescription></Alert> : <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    {entry.types === null ? <Alert className="m-4 w-auto"><Icon icon={iconCircleExclamation} aria-hidden="true"/><AlertTitle>这个客户的文件类型范围尚未配置</AlertTitle><AlertDescription>暂不显示规则覆盖。请联系我们配置后再查看。</AlertDescription></Alert> : <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {rows.length ? <Table aria-label={`${customer.short_name} 的规则列表`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>文件类型</TableHead><TableHead>规则</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead></TableRow></TableHeader><TableBody>{rows.map(({type, rule, first}) => {
         const href = rule && rulesAddress({systemRule: rule.id}), updated = rule ? day(rule.updatedAt) : ''
         return <TableRow key={rule ? rule.id : `type:${type.code}`}>

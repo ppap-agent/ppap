@@ -1,5 +1,5 @@
 import {useEffect, useId, useRef, useState} from 'react'
-import {faDownload, faMagnifyingGlass, faPaperPlane, faPlus, faShareNodes, faTrashCan, faUpload} from '@fortawesome/free-solid-svg-icons'
+import {iconDownload, iconMagnifyingGlass, iconPaperPlane, iconPlus, iconShareNodes, iconTrashCan, iconUpload} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import type {components} from '../generated/openapi'
 import {ReadSkeleton} from '../components/read-skeleton'
@@ -93,6 +93,7 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
     try {
       const response = await adapter.feishu.save(customer.id, folder.token)
       setSaved({customer: customer.id, folder: folder.name, results: response.results}); setPicking(false)
+      if (response.results.every(row => row.state === 'saved')) showToast(`模板已保存到「${folder.name}」`)
     } catch {
       setActionError('保存结果尚未确认。请先在飞书目录中查看；再次保存时会先核对同名文件，不会重复保存。'); setPicking(false)
     } finally {setSaving(false)}
@@ -104,7 +105,7 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
   const pageCount = Math.max(1, Math.ceil((customer?.templates.length ?? 0) / 10)), shownPage = Math.min(page, pageCount)
   return <section aria-label="模板库" className="grid min-h-0 flex-1 grid-cols-[16rem_minmax(0,1fr)] grid-rows-1 overflow-hidden rounded-lg bg-card">
     <aside aria-label="模板库客户" className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden border-r p-3">
-      <div className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Icon icon={faMagnifyingGlass} aria-hidden="true" className="size-3.5"/></span><Input type="search" aria-label="搜索客户" placeholder="搜索客户" iconStart value={customerSearch} onChange={event => setCustomerSearch(event.target.value)}/></div>
+      <div className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Icon icon={iconMagnifyingGlass} aria-hidden="true" className="size-3.5"/></span><Input type="search" aria-label="搜索客户" placeholder="搜索客户" iconStart value={customerSearch} onChange={event => setCustomerSearch(event.target.value)}/></div>
       <nav aria-label="客户" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
         {/* Template coverage N_t/M as the backend counted it; without a configured M no ratio is shown. */}
         {shownCustomers.map(row => {const value = row.coverage, current = row.id === customer?.id, described = `template-customer-${row.id}`; return <Button key={row.id} type="button" variant={current ? 'soft' : 'ghost'} aria-pressed={current} aria-describedby={described} onClick={() => choose(row.id)} className="h-auto w-full justify-start whitespace-normal text-left"><span className="flex min-w-0 flex-1 items-center gap-3 py-2">
@@ -113,7 +114,7 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
         </span></Button>})}
         {!shownCustomers.length && <p className="py-12 text-center text-sm text-muted-foreground">没有匹配的客户。</p>}
       </nav>
-      <div className="flex justify-end border-t pt-3"><Button variant="link" size="sm" onClick={() => setSubmitting(true)}><Icon icon={faPlus} aria-hidden="true"/>更多模板，请补充</Button></div>
+      <div className="flex justify-end border-t pt-3"><Button variant="link" size="sm" onClick={() => setSubmitting(true)}><Icon icon={iconPlus} aria-hidden="true"/>更多模板，请补充</Button></div>
     </aside>
     <div className="flex min-h-0 min-w-0 flex-col">
     {customer ? <>
@@ -121,20 +122,20 @@ export function TemplateLibraryPage({adapter}: {adapter: TemplateLibraryAdapter}
       <header className="flex items-center justify-end gap-3 px-4 py-3">
         <h2 className="sr-only">{customer.short_name}</h2>
         <div className="flex shrink-0 gap-2">
-          <Button onClick={() => void share()}><Icon icon={faShareNodes} aria-hidden="true"/>分享</Button>
-          <Button variant="outline" disabled={Boolean(busy) || !customer.templates.length} onClick={() => void run('zip', async () => saveBlob(await adapter.downloadAll(customer.id), `${customer.full_name}模板.zip`), '模板 ZIP 暂时无法下载，请重试。')}><Icon icon={faDownload} aria-hidden="true"/>{busy === 'zip' ? '正在打包…' : '下载模板（ZIP）'}</Button>
+          <Button onClick={() => void share()}><Icon icon={iconShareNodes} aria-hidden="true"/>分享</Button>
+          <Button variant="outline" disabled={Boolean(busy) || !customer.templates.length} onClick={() => void run('zip', async () => saveBlob(await adapter.downloadAll(customer.id), `${customer.full_name}模板.zip`), '模板 ZIP 暂时无法下载，请重试。')}><Icon icon={iconDownload} aria-hidden="true"/>{busy === 'zip' ? '正在打包…' : '下载模板（ZIP）'}</Button>
           {adapter.feishu && <Button variant="outline" disabled={Boolean(busy) || saving || !customer.templates.length} onClick={() => setPicking(true)}>保存到我的飞书</Button>}
         </div>
       </header>
       {actionError && <Alert variant="destructive" className="mx-4 mb-3 w-auto"><AlertTitle>操作未完成</AlertTitle><AlertDescription><p>{actionError}</p></AlertDescription></Alert>}
-      {shownSave && <Alert variant={open ? 'destructive' : 'default'} className="mx-4 mb-3 w-auto"><AlertTitle>{open ? `已保存 ${shownSave.results.filter(row => row.state === 'saved').length} 份，${open} 份未完成` : '模板已在所选飞书目录中'}</AlertTitle><AlertDescription><p>保存位置：{shownSave.folder}</p>{unsettled.length > 0 && <ul className="space-y-1">{unsettled.map(row => <li key={row.template_id}>{row.filename}：{saveStates[row.state]}{row.state !== 'exists' && row.reason ? `。${row.reason}` : ''}</li>)}</ul>}</AlertDescription></Alert>}
+      {shownSave && unsettled.length > 0 && <Alert variant={open ? 'destructive' : 'default'} className="mx-4 mb-3 w-auto"><AlertTitle>{open ? `已保存 ${shownSave.results.filter(row => row.state === 'saved').length} 份，${open} 份未完成` : '模板已在所选飞书目录中'}</AlertTitle><AlertDescription><p>保存位置：{shownSave.folder}</p>{unsettled.length > 0 && <ul className="space-y-1">{unsettled.map(row => <li key={row.template_id}>{row.filename}：{saveStates[row.state]}{row.state !== 'exists' && row.reason ? `。${row.reason}` : ''}</li>)}</ul>}</AlertDescription></Alert>}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-t">
         {customer.templates.length ? <Table aria-label={`${customer.short_name}模板`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto">
           <TableHeader variant="muted" sticky><TableRow><TableHead>模板名称</TableHead><TableHead>文件类型</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
           <TableBody>{customer.templates.slice((shownPage - 1) * 10, shownPage * 10).map(template => <TableRow key={template.id}>
             <TableCell className="whitespace-normal"><span className="flex min-w-0 items-center gap-2"><FileTypeBadge name={template.filename}/><span className="[overflow-wrap:anywhere]">{template.filename}</span></span></TableCell>
             <TableCell><span className="text-muted-foreground">{template.document_type}</span></TableCell>
-            <TableCell className="text-right"><Button variant="ghost" size="sm" aria-label={`下载 ${template.filename}`} disabled={Boolean(busy)} onClick={() => void run(template.id, async () => saveBlob(await adapter.download(customer.id, template.id), template.filename), `${template.filename} 暂时无法下载，请重试。`)}><Icon icon={faDownload} aria-hidden="true"/>{busy === template.id ? '下载中…' : '下载'}</Button></TableCell>
+            <TableCell className="text-right"><Button variant="ghost" size="sm" aria-label={`下载 ${template.filename}`} disabled={Boolean(busy)} onClick={() => void run(template.id, async () => saveBlob(await adapter.download(customer.id, template.id), template.filename), `${template.filename} 暂时无法下载，请重试。`)}><Icon icon={iconDownload} aria-hidden="true"/>{busy === template.id ? '下载中…' : '下载'}</Button></TableCell>
           </TableRow>)}</TableBody>
         </Table> : <p className="grid flex-1 place-items-center py-12 text-center text-sm text-muted-foreground">暂无模板</p>}
         {customer.templates.length > 0 && <Pager className="border-t px-3 py-3" total={customer.templates.length} page={shownPage} onPage={setPage}/>}
@@ -182,7 +183,7 @@ function TemplateSubmissionDialog({adapter, customer = null, onClose}: {adapter:
   return <Dialog open onOpenChange={open => {if (!open && !sending) onClose()}}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
     <DialogHeader><DialogTitle>补充模板</DialogTitle><DialogDescription>提交后我们会在 1-3 个工作日内评估并补充到模板库；模板仅用于识别与规则匹配，不会对外共享。</DialogDescription></DialogHeader>
     <label htmlFor={`${id}-files`} data-dragging={dragging} className="flex min-h-64 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-primary-line bg-primary-soft/40 p-5 text-center focus-within:ring-3 focus-within:ring-ring/50 data-[dragging=true]:border-primary data-[dragging=true]:bg-primary/5" onDragOver={event => {event.preventDefault(); setDragging(true)}} onDragLeave={() => setDragging(false)} onDrop={event => {event.preventDefault(); setDragging(false); add(Array.from(event.dataTransfer.files))}}>
-      <Icon icon={faUpload} aria-hidden="true" className="size-10 text-primary"/>
+      <Icon icon={iconUpload} aria-hidden="true" className="size-10 text-primary"/>
       <span className="text-lg font-semibold">上传模板</span>
       <span className="text-sm leading-relaxed text-muted-foreground">支持压缩包（ZIP / RAR / 7Z）或多个文件<br/>支持 Excel / Word / 图片</span>
       <input id={`${id}-files`} type="file" multiple accept={submissionAccept} className="sr-only" disabled={sending} onChange={event => {add(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
@@ -191,10 +192,10 @@ function TemplateSubmissionDialog({adapter, customer = null, onClose}: {adapter:
     {files.length > 0 && <ul aria-label="已选材料" className="grid gap-0.5">{files.map((file, index) => <li key={`${file.name}-${file.size}-${file.lastModified}`} className="flex items-center gap-3 py-1.5 text-sm">
       <FileTypeBadge name={file.name}/>
       <span className="min-w-0 flex-1 truncate text-primary" title={file.name}>{file.name}</span>
-      <Button variant="ghost" size="icon-sm" aria-label={`下载 ${file.name}`} disabled={sending} onClick={() => keep(file)}><Icon icon={faDownload}/></Button>
-      <Button variant="ghost" size="icon-sm" aria-label={`移除 ${file.name}`} disabled={sending} onClick={() => remove(index)}><Icon icon={faTrashCan}/></Button>
+      <Button variant="ghost" size="icon-sm" aria-label={`下载 ${file.name}`} disabled={sending} onClick={() => keep(file)}><Icon icon={iconDownload}/></Button>
+      <Button variant="ghost" size="icon-sm" aria-label={`移除 ${file.name}`} disabled={sending} onClick={() => remove(index)}><Icon icon={iconTrashCan}/></Button>
     </li>)}</ul>}
     {error && <Alert variant="destructive"><AlertTitle>材料未提交</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-    <DialogFooter><DialogClose asChild><Button variant="outline" disabled={sending}>取消</Button></DialogClose><Button disabled={!files.length || sending} onClick={() => void submit()}><Icon icon={faPaperPlane} aria-hidden="true"/>{sending ? '正在提交…' : '提交材料'}</Button></DialogFooter>
+    <DialogFooter><DialogClose asChild><Button variant="outline" disabled={sending}>取消</Button></DialogClose><Button disabled={!files.length || sending} onClick={() => void submit()}><Icon icon={iconPaperPlane} aria-hidden="true"/>{sending ? '正在提交…' : '提交材料'}</Button></DialogFooter>
   </DialogContent></Dialog>
 }

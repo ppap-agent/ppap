@@ -1,5 +1,5 @@
 import {lazy, Suspense, useEffect, useRef, useState} from 'react'
-import {faCircleNotch, faDownload, faEye} from '@fortawesome/free-solid-svg-icons'
+import {iconCircleNotch, iconDownload, iconEye} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import type {components} from '../generated/openapi'
 import {Button} from '../components/ui/button'
@@ -74,8 +74,8 @@ export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdap
   return <section aria-label="预检报告" className="space-y-3 rounded-lg bg-card p-4">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className={`text-sm font-semibold ${result.conclusion === 'fail' ? 'text-destructive' : ''}`}>预检报告 · {conclusion}</h2>
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => void open(0)}>{busy ? <Icon icon={faCircleNotch} className="animate-spin motion-reduce:animate-none"/> : <Icon icon={faEye}/>}预览预检报告</Button>
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => void download()}><Icon icon={faDownload}/>下载预检报告(PDF)</Button>
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => void open(0)}>{busy ? <Icon icon={iconCircleNotch} className="animate-spin motion-reduce:animate-none"/> : <Icon icon={iconEye}/>}预览预检报告</Button>
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => void download()}><Icon icon={iconDownload}/>下载预检报告(PDF)</Button>
       </div></div>
     <ol aria-label="预检报告目录" className="flex flex-wrap gap-1.5">{precheckReportChapters.map((title, index) => <li key={title} className="min-w-0"><button type="button" disabled={busy} title={title} className="max-w-full truncate rounded-md border bg-header px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-ring disabled:opacity-60" onClick={() => void open(index)}>{title}</button></li>)}</ol>
     {busy && <p role="status" className="text-xs text-muted-foreground">正在生成预检报告…</p>}

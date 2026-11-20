@@ -1,4 +1,4 @@
-import {faFile, faFileExcel, faFileImage, faFilePdf, faFileWord} from '@fortawesome/free-solid-svg-icons'
+import {iconFile, iconFileExcel, iconFileImage, iconFilePdf, iconFileWord} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import {cn} from '../lib/utils'
 
@@ -9,7 +9,7 @@ export function FileIcon({name, format, colored = false, className}: {name: stri
   const type = format ?? (extension && ['xlsx', 'xls', 'xlsm', 'xlsb', 'xltx', 'xltm', 'csv', 'ods'].includes(extension) ? 'excel'
     : extension && ['doc', 'docx', 'docm', 'dotx', 'dotm', 'odt', 'rtf'].includes(extension) ? 'word'
       : extension === 'pdf' ? 'pdf' : extension && ['png', 'jpg', 'jpeg', 'webp', 'gif', 'tif', 'tiff', 'bmp'].includes(extension) ? 'image' : 'file')
-  const icon = {excel: faFileExcel, word: faFileWord, pdf: faFilePdf, image: faFileImage, file: faFile}[type]
+  const icon = {excel: iconFileExcel, word: iconFileWord, pdf: iconFilePdf, image: iconFileImage, file: iconFile}[type]
   // A coloured tile names the format at a glance, like a file browser.
   const tile = {excel: 'bg-success', word: 'bg-primary', pdf: 'bg-destructive', image: 'bg-warning', file: 'bg-muted-foreground'}[type]
   return colored ? <span aria-hidden="true" className={cn('flex size-6 shrink-0 items-center justify-center rounded-sm text-white', tile, className)}><Icon icon={icon} data-file-type={type} className="size-3.5"/></span> : <Icon icon={icon} data-file-type={type} aria-hidden="true" className={cn('size-4 shrink-0', type === 'excel' ? 'text-success' : type === 'word' ? 'text-primary' : type === 'pdf' ? 'text-destructive' : type === 'image' ? 'text-warning' : 'text-muted-foreground', className)}/>

@@ -1,6 +1,6 @@
 // Stitch: projects/13261964020862199279/screens/9b9779cdcfd848ee9da0538030cb7771.
 import {lazy, Suspense, useEffect, useRef, useState} from 'react'
-import {faArrowsRotate, faCompress, faDownload, faExpand} from '@fortawesome/free-solid-svg-icons'
+import {iconArrowsRotate, iconCompress, iconDownload, iconExpand} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import {originalUrl, request, type Material, type OfficePreviewResponse} from '../api'
 import {Button} from '../components/ui/button'
@@ -89,16 +89,16 @@ export function RemoteSourcePane({file, roundId, focus, source = productOriginal
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
       <span className="text-sm text-muted-foreground">原件</span>
       <div className="flex flex-wrap items-center gap-1">
-        {canFullscreen && <Button variant="ghost" size="sm" onClick={() => void toggleFullscreen()}>{fullscreen ? <Icon icon={faCompress}/> : <Icon icon={faExpand}/>}{fullscreen ? '退出全屏' : '全屏'}</Button>}
-        <Button variant="ghost" size="icon-sm" aria-label="重新查看原件" title="重新查看原件" onClick={() => setAttempt(value => value + 1)}><Icon icon={faArrowsRotate}/></Button>
-        <Button variant="outline" size="sm" asChild><a href={source.url(file, roundId)} download={file.original_filename}><Icon icon={faDownload}/>下载原件</a></Button>
+        {canFullscreen && <Button variant="ghost" size="sm" onClick={() => void toggleFullscreen()}>{fullscreen ? <Icon icon={iconCompress}/> : <Icon icon={iconExpand}/>}{fullscreen ? '退出全屏' : '全屏'}</Button>}
+        <Button variant="ghost" size="icon-sm" aria-label="重新查看原件" title="重新查看原件" onClick={() => setAttempt(value => value + 1)}><Icon icon={iconArrowsRotate}/></Button>
+        <Button variant="outline" size="sm" asChild><a href={source.url(file, roundId)} download={file.original_filename}><Icon icon={iconDownload}/>下载原件</a></Button>
       </div>
     </div>
     {focus?.location && focus.location !== '位置待确认' && <p className="shrink-0 break-words text-sm text-muted-foreground">核对位置：{focus.location}</p>}
     {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
     <div className="relative min-h-80 min-w-0 flex-1">
       {browserOriginal ? <BrowserOriginal key={`${roundId}:${file.file_id}:${file.file_version_id}:${attempt}`} file={file} roundId={roundId} source={source} focus={focus} onCite={onCite}/>
-        : officeFailed || office && (!office.available || !office.script_url || !office.config) ? <div className="grid min-h-80 content-center justify-items-start gap-3 p-4 text-sm"><p role="alert">原件预览暂不可用</p><p className="text-muted-foreground">{office?.notice || '请重新读取，或下载原件核对。'}</p><Button variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}><Icon icon={faArrowsRotate}/>重新读取</Button></div>
+        : officeFailed || office && (!office.available || !office.script_url || !office.config) ? <div className="grid min-h-80 content-center justify-items-start gap-3 p-4 text-sm"><p role="alert">原件预览暂不可用</p><p className="text-muted-foreground">{office?.notice || '请重新读取，或下载原件核对。'}</p><Button variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}><Icon icon={iconArrowsRotate}/>重新读取</Button></div>
           : office?.script_url && office.config ? <OfficePreview key={attempt} scriptUrl={office.script_url} config={office.config} onFailed={() => setOfficeFailed(true)}/>
             : <ReadSkeleton label="正在连接原件预览…" kind="document" className="p-3"/>}
     </div>

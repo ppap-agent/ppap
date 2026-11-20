@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { Button } from "@/components/ui/button"
-import {faXmark} from '@fortawesome/free-solid-svg-icons'
+import {iconXmark} from '../icons'
 import {Icon} from './icon'
 
 function Dialog({
@@ -76,7 +76,7 @@ function DialogContent({
               className="absolute top-4 right-4"
               size="icon-sm"
             >
-              <Icon icon={faXmark}
+              <Icon icon={iconXmark}
               />
               <span className="sr-only">Close</span>
             </Button>

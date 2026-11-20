@@ -1,7 +1,7 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
-import {faCheck, faChevronRight} from '@fortawesome/free-solid-svg-icons'
+import {iconCheck, iconChevronRight} from '../icons'
 import {Icon} from './icon'
 
 function DropdownMenu({
@@ -104,7 +104,7 @@ function DropdownMenuCheckboxItem({
         data-slot="dropdown-menu-checkbox-item-indicator"
       >
         <DropdownMenuPrimitive.ItemIndicator>
-          <Icon icon={faCheck}
+          <Icon icon={iconCheck}
           />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
@@ -147,7 +147,7 @@ function DropdownMenuRadioItem({
         data-slot="dropdown-menu-radio-item-indicator"
       >
         <DropdownMenuPrimitive.ItemIndicator>
-          <Icon icon={faCheck}
+          <Icon icon={iconCheck}
           />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
@@ -230,7 +230,7 @@ function DropdownMenuSubTrigger({
       {...props}
     >
       {children}
-      <Icon icon={faChevronRight} className="ml-auto" />
+      <Icon icon={iconChevronRight} className="ml-auto" />
     </DropdownMenuPrimitive.SubTrigger>
   )
 }

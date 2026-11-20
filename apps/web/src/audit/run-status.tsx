@@ -1,4 +1,4 @@
-import {faBookOpen, faCheck, faFileExcel, faFileLines, faImage} from '@fortawesome/free-solid-svg-icons'
+import {iconBookOpen, iconCheck, iconFileExcel, iconFileLines, iconImage} from '../components/icons'
 import {Icon, type IconDefinition} from '../components/ui/icon'
 import {Badge} from '../components/ui/badge'
 import {Progress} from '../components/ui/progress'
@@ -15,10 +15,10 @@ type Run = components['schemas']['AuditRun']
 const SHOWN_STEPS = 5
 
 const ACTIONS: Record<ActivityAction, {label: string; icon: IconDefinition}> = {
-  load_rules: {label: '加载规则', icon: faBookOpen},
-  read_file: {label: '阅读文件', icon: faFileLines},
-  read_sheet: {label: '阅读表格', icon: faFileExcel},
-  view_image: {label: '查看图片', icon: faImage},
+  load_rules: {label: '加载规则', icon: iconBookOpen},
+  read_file: {label: '阅读文件', icon: iconFileLines},
+  read_sheet: {label: '阅读表格', icon: iconFileExcel},
+  view_image: {label: '查看图片', icon: iconImage},
 }
 
 function StepLine({row, current, age}: {row: StepRow; current: boolean; age: number}) {
@@ -37,7 +37,7 @@ function StepLine({row, current, age}: {row: StepRow; current: boolean; age: num
 /** The round finished: a short pop-in check, before the results take its place. */
 export function RunFinished() {
   return <div role="status" className="flex items-center justify-center gap-3 rounded-lg border border-success/25 bg-success/10 px-4 py-6">
-    <span className="flex size-10 items-center justify-center rounded-full bg-success text-white motion-safe:animate-pop-in"><Icon icon={faCheck} aria-hidden="true" className="size-5"/></span>
+    <span className="flex size-10 items-center justify-center rounded-full bg-success text-white motion-safe:animate-pop-in"><Icon icon={iconCheck} aria-hidden="true" className="size-5"/></span>
     <span className="text-base font-semibold text-success">审核完成</span>
   </div>
 }

@@ -1,8 +1,8 @@
 import {useEffect, useState} from 'react'
-import {faCheck} from '@fortawesome/free-solid-svg-icons'
+import {iconCheck} from './icons'
 import {Icon} from './ui/icon'
 
-// A brief confirmation for actions whose own surface closes on success; failures stay inline.
+// A brief confirmation (Feishu message: white, top centre, a green check) for actions that succeeded; failures stay inline.
 type Toast = {id: number; text: string}
 const listeners = new Set<(toast: Toast) => void>()
 let sequence = 0
@@ -22,7 +22,7 @@ export function Toaster() {
     listeners.add(add)
     return () => {listeners.delete(add)}
   }, [])
-  return <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-6 z-[60] flex flex-col items-center gap-2 px-4">
-    {toasts.map(toast => <div key={toast.id} role="status" className="flex items-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm text-background shadow-lg animate-in fade-in-0 slide-in-from-bottom-2 duration-200 motion-reduce:animate-none"><Icon icon={faCheck} aria-hidden="true" className="size-4"/>{toast.text}</div>)}
+  return <div aria-live="polite" className="pointer-events-none fixed inset-x-0 top-16 z-[60] flex flex-col items-center gap-2 px-4">
+    {toasts.map(toast => <div key={toast.id} role="status" className="flex items-center gap-2 rounded-md bg-popover px-4 py-2.5 text-sm text-popover-foreground shadow-lg animate-in fade-in-0 slide-in-from-top-2 duration-200 motion-reduce:animate-none"><Icon icon={iconCheck} aria-hidden="true" className="size-4 text-success"/>{toast.text}</div>)}
   </div>
 }

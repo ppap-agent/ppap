@@ -1,5 +1,5 @@
 import {useId, useState} from 'react'
-import {faArrowUpRightFromSquare} from '@fortawesome/free-solid-svg-icons'
+import {iconArrowUpRightFromSquare} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import type {SourceMismatch} from './upload-board'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
@@ -33,8 +33,8 @@ export function MatchingFeedback({gaps, candidates, onCheck, onRules, onRemove, 
       {needsInput && <Button size="sm" onClick={onCheck}>{reason === 'matching_customer_required' || reason === 'matching_customer_conflict' ? '返回核对客户' : '返回核对文件'}</Button>}
       {!needsInput && onRules && <Button size="sm" onClick={onRules}>{reason === 'matching_rules_customer_unassigned' || reason === 'ambiguous_available_rules' ? '核对规则范围与版本' : '上传对应规则'}</Button>}
       {onTemplates ? <><Button variant="link" size="sm" onClick={() => onTemplates(false)}>查看标准模板</Button><Button variant="link" size="sm" onClick={() => onTemplates(true)}>反馈对应模板</Button></> : <>
-        <Button asChild variant="link" size="sm"><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer">查看模板<Icon icon={faArrowUpRightFromSquare} aria-hidden="true"/></a></Button>
-        <Button asChild variant="link" size="sm"><a href={TEMPLATE_CONTACT_URL} target="_blank" rel="noopener noreferrer">模板反馈<Icon icon={faArrowUpRightFromSquare} aria-hidden="true"/></a></Button>
+        <Button asChild variant="link" size="sm"><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer">查看模板<Icon icon={iconArrowUpRightFromSquare} aria-hidden="true"/></a></Button>
+        <Button asChild variant="link" size="sm"><a href={TEMPLATE_CONTACT_URL} target="_blank" rel="noopener noreferrer">模板反馈<Icon icon={iconArrowUpRightFromSquare} aria-hidden="true"/></a></Button>
       </>}
       {onRemove && <Button variant="ghost" size="sm" onClick={onRemove}>移除</Button>}
     </div>

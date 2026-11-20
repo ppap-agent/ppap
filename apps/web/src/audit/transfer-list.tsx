@@ -1,5 +1,5 @@
 import {useRef} from 'react'
-import {faXmark} from '@fortawesome/free-solid-svg-icons'
+import {iconXmark} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
@@ -34,7 +34,7 @@ export function TransferItem({row, onRead, onResume, onRetry, onRemove, onCheckD
       {onResume && canResumeUpload(row) && <Button size="sm" variant="outline" aria-label={`继续传输 ${name}`} onClick={() => onResume(row.id)}>继续传输</Button>}
       {onCheckDrive && personalUnknown && <Button size="sm" variant="outline" disabled={row.busy} aria-label={`从飞书核对 ${name}`} onClick={event => onCheckDrive(event.currentTarget)}>从飞书核对</Button>}
       {canRetryUpload(row) && <Button size="sm" variant="outline" aria-label={`重试传输 ${name}`} onClick={() => onRetry(row.id)}>重试</Button>}
-      {!row.removed && <Button variant="ghost" size="icon-sm" aria-label={`移除传输 ${name}`} onClick={() => onRemove(row.id)}><Icon icon={faXmark}/></Button>}
+      {!row.removed && <Button variant="ghost" size="icon-sm" aria-label={`移除传输 ${name}`} onClick={() => onRemove(row.id)}><Icon icon={iconXmark}/></Button>}
     </div>
     {note && <p className="text-xs text-muted-foreground">{note}</p>}
     {row.inputIssue && <p role="alert" className="text-xs">{row.inputIssue}</p>}
@@ -48,7 +48,7 @@ export function SkippedItem({row, onDismiss}: {row: SkippedUpload; onDismiss: (i
       <FileTypeBadge name={row.name}/>
       <span className="min-w-0 flex-1 basis-40 truncate text-sm text-muted-foreground" title={row.name}>{row.name}</span>
       <Badge variant="outline">已跳过（重复）</Badge>
-      <Button variant="ghost" size="icon-sm" aria-label={`关闭 ${row.name}`} onClick={() => onDismiss(row.id)}><Icon icon={faXmark}/></Button>
+      <Button variant="ghost" size="icon-sm" aria-label={`关闭 ${row.name}`} onClick={() => onDismiss(row.id)}><Icon icon={iconXmark}/></Button>
     </div>
     <p className="text-xs text-muted-foreground"><span className="inline-block max-w-full truncate align-bottom" title={row.twin}>与「{row.twin}」内容相同</span>，未重复添加。</p>
   </li>
