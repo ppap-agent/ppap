@@ -785,3 +785,89 @@ spec:
               port: 4173
             periodSeconds: 20
             timeoutSeconds: 3
+---
+# Transitional: copy the app_ticket the legacy UAC receives (README「飞书票据：暂以旧版为来源」).
+# Delete after the Feishu event callback points at the current API.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ppap-current-legacy-ticket-sync
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current-legacy-ticket-sync
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            k8s-app: ppap-current-legacy-ticket-sync
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          containers:
+            - name: sync
+              image: icoastline.tencentcloudcr.com/ppap-feishu/current-api@sha256:9b116d6d1551dc967cc815f3022053803c1f3ded6a625aef514a7dc67f9c2e2f
+              imagePullPolicy: IfNotPresent
+              command: ["python", "/sync/legacy-ticket-sync.py"]
+              envFrom:
+                - configMapRef:
+                    name: ppap-current
+              env:
+                - name: PPAP_PG_API_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: ppap-current
+                      key: PPAP_PG_API_PASSWORD
+                - name: PPAP_S3_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: ppap-current
+                      key: PPAP_S3_ACCESS_KEY
+                - name: PPAP_S3_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: ppap-current
+                      key: PPAP_S3_SECRET_KEY
+                - name: FEISHU_APP_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: ppap-current
+                      key: FEISHU_APP_SECRET
+                # The legacy UAC's own Redis settings, read from its ConfigMap.
+                - name: LEGACY_REDIS_HOST
+                  valueFrom:
+                    configMapKeyRef:
+                      name: redis
+                      key: REDIS_HOST
+                - name: LEGACY_REDIS_PORT
+                  valueFrom:
+                    configMapKeyRef:
+                      name: redis
+                      key: REDIS_PORT
+                - name: LEGACY_REDIS_PASSWORD
+                  valueFrom:
+                    configMapKeyRef:
+                      name: redis
+                      key: REDIS_PWD
+              volumeMounts:
+                - name: script
+                  mountPath: /sync
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+          volumes:
+            - name: script
+              configMap:
+                name: legacy-ticket-sync

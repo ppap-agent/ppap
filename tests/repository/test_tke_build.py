@@ -117,7 +117,8 @@ def test_build_updates_only_source_and_four_pins_after_verification(tmp_path):
         operation(SHA, "yunxiao", tmp_path, 2)
     text = config.read_text()
     changed = [(a, b) for a, b in zip(original.splitlines(), text.splitlines(), strict=True) if a != b]
-    assert len(changed) == 5 and calls == ["verified"]
+    # Source, four images, and the legacy ticket sync CronJob that runs the API image.
+    assert len(changed) == 6 and calls == ["verified"]
     assert "PPAP_BUILD_SHA: " + SHA in text
     assert all(ref in text for ref in IMAGES.values())
 

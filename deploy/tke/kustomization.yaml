@@ -10,3 +10,7 @@ configMapGenerator:
     namespace: ppap-test
     files:
       - default.conf=edition-proxy.conf
+  - name: legacy-ticket-sync
+    namespace: ppap-test
+    files:
+      - legacy-ticket-sync.py

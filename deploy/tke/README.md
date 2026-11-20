@@ -17,6 +17,16 @@ TKE qcloud Ingress only accepts NodePort / LoadBalancer Service. `edition-proxy`
 
 ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `default legacy` 改为 current。新版选择入口 `/enter-current` 在登录和租户校验通过后，默认返回 `/tasks/new`。可用 `return_to=<同源完整地址>` 保留任务、报告或历史轮次深链；外部地址及指回版本选择入口的地址回退到 `/tasks/new`。旧 `/audit` 和合法 Draft／Round／报告深链继续兼容。`/enter-legacy` 仍选择旧版并返回 `/`。版本 cookie 不是任务或报告的授权凭据。
 
+## 飞书票据：暂以旧版为来源
+
+切换回调之前，飞书只把 app_ticket 推给旧版 UAC，新版库里的票据会过期（过期后分享、完成通知、用量上报和 JSAPI 签名都拿不到企业令牌）。产品负责人决定：过渡期以旧版收到的票据为来源。
+
+- CronJob `ppap-current-legacy-ticket-sync`（`current.yaml`）每 10 分钟运行 `legacy-ticket-sync.py`，用 API 镜像。
+- 只读旧版 Redis（连接取自旧版 ConfigMap `redis`）第 11 库、Java 序列化的键 `feishu-app-ticket`。同库的普通字符串键和第 0 库的 `feishu:app:ticket` 都是失效旧值，不使用。
+- 先用该票据向飞书做一次不产生业务效果的 `app_access_token` 交换，飞书确认有效才写入；写入走 `save_app_ticket`，不带事件时间（不伪造事件时间）。失效的旧版票据不会覆盖新版现有票据。
+- 业务代码只读新版自己的 `product.app_tickets`，不知道票据来源。日志只记结果（`updated`、`unchanged`、`legacy_invalid` 等），不记票据、令牌或密码。
+- 回调切到新版后，新版收到的票据带事件时间，同步任务写不进去（结果 `superseded_by_callback`）；确认后删除这个 CronJob 及其 ConfigMap。
+
 ## 飞书回调切换（尚未执行）
 
 新旧系统共用飞书应用时，不要求两个事件回调地址。当前阶段只准备新版代码与测试，不修改飞书控制台、旧 UAC、旧 Redis、现网 Secret 或请求路由，不执行本节切换。
@@ -25,8 +35,6 @@ ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `
 
 - 旧 UAC 的 `RedisUtils` 将 `feishu-app-ticket` 的键和值按 Java 序列化保存；同名普通字符串键可能是失效旧值。先核对 UAC 的实际 Redis 连接和数据库，再按二进制键读取并解码值。`redis-cli --scan` 可在序列化键的空字节处截断，不能用字符串扫描未命中证明票据不存在。
 - 新版正常运行从自己的 PostgreSQL `product.app_tickets` 读取，不查询 UAC 或旧 Redis。本地客户端模式也须核对当前 API 连接的数据库；有票据记录不代表票据仍有效，须用同一应用的真实飞书接口验证。
-
-切换前的已授权联调可只读共享 UAC 现网接收的同一应用票据，向飞书验证有效后初始化新版票据存储；不修改旧缓存，也不伪造事件时间。此过渡方式不接入新版业务代码，不建设 UAC／Redis 自动回退；它只证明当前票据可用，不证明新版已直接收到推送或完成连续更新验收。切换后由下述新版回调独立接收和更新。
 
 正式发布获批后，同一切换窗口内核对以下内容：
 

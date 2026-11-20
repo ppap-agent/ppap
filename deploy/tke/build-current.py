@@ -304,7 +304,8 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
     require(count == 1, "expected one application source pin")
     for component, ref in pins.items():
         text, count = re.subn(r"(?m)^([ ]+image: )(?:\S+/)?(?:ppap-|current-)?" + component + r"(?:@|:).+$", lambda m: m[1] + ref, text)
-        require(count == 1, "expected one image pin for " + component)
+        # The legacy ticket sync CronJob runs the API image too; every reference moves together.
+        require(count == (2 if component == "api" else 1), "unexpected image pin count for " + component)
     with (HERE / ".build.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         require(config.read_text() == original, "current.yaml changed during build; image pins are not applied")
