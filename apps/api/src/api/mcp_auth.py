@@ -232,7 +232,9 @@ class OAuthGuard:
 
 
 def register_oauth(app, provider: OAuthProvider, session_of):
-    registration = ClientRegistrationOptions(enabled=True, valid_scopes=list(SCOPES), default_scopes=list(READ_SCOPES))
+    # A client that registers without a scope may later ask for any of them (ChatGPT asks for every advertised scope);
+    # the user still picks what is granted on the consent page.
+    registration = ClientRegistrationOptions(enabled=True, valid_scopes=list(SCOPES), default_scopes=list(SCOPES))
     revocation = RevocationOptions(enabled=True)
     issuer = AnyHttpUrl(provider.issuer)
     routes = create_auth_routes(provider, issuer, client_registration_options=registration, revocation_options=revocation)

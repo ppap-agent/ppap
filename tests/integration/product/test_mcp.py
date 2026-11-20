@@ -174,6 +174,27 @@ def test_invalid_resource_and_concurrent_code_exchange(mcp_app):
         assert sorted(replies) == [200, 400]
 
 
+def test_client_registered_without_scope_can_ask_for_every_scope(mcp_app):
+    # ChatGPT registers without a scope, then asks for every advertised scope; refusing that ends its connection.
+    app, store = mcp_app
+    with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+        callback = "https://chatgpt.com/connector/oauth/example"
+        registered = client.post("/oauth/register", json={"client_name": "ChatGPT", "redirect_uris": [callback], "token_endpoint_auth_method": "none"})
+        assert registered.status_code == 201, registered.text
+        args = {
+            "response_type": "code",
+            "client_id": registered.json()["client_id"],
+            "redirect_uri": callback,
+            "scope": " ".join(SCOPES),
+            "state": "s",
+            "code_challenge": pkce_challenge(secrets.token_urlsafe(48)),
+            "code_challenge_method": "S256",
+            "resource": "http://127.0.0.1:8080/mcp",
+        }
+        started = client.get("/oauth/authorize", params=args, follow_redirects=False)
+        assert started.status_code == 302 and "/oauth/consent/" in started.headers["location"], started.headers.get("location")
+
+
 def test_browser_cookie_alone_cannot_call_mcp(mcp_app):
     app, store = mcp_app
     with TestClient(app, base_url="http://127.0.0.1:8080") as client:
