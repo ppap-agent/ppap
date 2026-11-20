@@ -1254,7 +1254,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.display_client.get(history_path + "/result", params={**old, "result_attempt": 99}).status_code, 403)
         self.assertEqual(self.display_client.get("/audit-archive", params={"search": "missing"}).json()["total"], 0)
         self.assertEqual(self.display_client.get("/audit-archive", params={"page": 2}).json()["documents"], [])
-        self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "测试客户"}).json()["total"], 2)
+        self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "recorded:测试客户"}).json()["total"], 2)
         self.assertEqual(self.display_client.get("/audit-archive", params={"from_date": "2099-01-01"}).json()["total"], 0)
         self.assertEqual(self.display_client.get("/audit-archive", params={"from_date": "2026-10-20", "through_date": "2026-10-01"}).status_code, 400)
         category = page["categories"][0]
@@ -1274,7 +1274,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         refreshed = self.display_client.get("/audit-archive").json()["documents"]
         self.assertEqual(refreshed[0]["document_id"], other_doc["document_id"])
         self.assertGreater(refreshed[0]["updated_at"], refreshed[1]["updated_at"])
-        self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "更正客户"}).json()["total"], 1)
+        self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "recorded:更正客户"}).json()["total"], 1)
         self.assertIs(detail.json()["creator"]["mine"], True)
         # Another member of the enterprise reads the same archive and history, but cannot correct it.
         self.display_principal = self.store.principal_for_fixture("bob")
