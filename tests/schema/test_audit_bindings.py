@@ -91,8 +91,10 @@ class AuditDatabaseCase(unittest.TestCase):
         releases.publish(principal, key, program.id, head[1], str(uuid.uuid4()), True)
 
     def upload(self, name):
-        version = self.store.create_staging(self.alice, name, "application/octet-stream", 1)
-        self.store.put_blob(version, b"x")
+        # Each name its own content: one task never audits the same content twice.
+        content = name.encode()
+        version = self.store.create_staging(self.alice, name, "application/octet-stream", len(content))
+        self.store.put_blob(version, content)
         return self.store.finalize_version(version)
 
     def draft(self, items, predecessor_id=None):
