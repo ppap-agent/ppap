@@ -44,7 +44,7 @@ def vision(monkeypatch):
     monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "controlled")
     monkeypatch.setenv("PPAP_MODEL_VISION_API_KEY", "controlled")
     monkeypatch.setenv("PPAP_MODEL_VISION_BASE_URL", "https://controlled.invalid/v1")
-    monkeypatch.setenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON", "{}")
+    monkeypatch.setenv("PPAP_MODEL_VISION_REASONING_EFFORT", "none")
     monkeypatch.setenv("PPAP_MODEL_TEXT_MODEL", "controlled-text")
     monkeypatch.setenv("PPAP_MODEL_TEXT_API_KEY", "controlled")
     monkeypatch.setenv("PPAP_MODEL_TEXT_BASE_URL", "https://controlled.invalid/v1")
@@ -210,7 +210,7 @@ def test_live_corpus_uses_one_platform_model_per_use(monkeypatch):
         "PPAP_MODEL_VISION_API_KEY",
         "PPAP_MODEL_VISION_BASE_URL",
         "PPAP_MODEL_VISION_MODEL",
-        "PPAP_MODEL_VISION_EXTRA_BODY_JSON",
+        "PPAP_MODEL_VISION_REASONING_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
     assert configured_model_access() is None
@@ -221,6 +221,7 @@ def test_live_corpus_uses_one_platform_model_per_use(monkeypatch):
         "PPAP_MODEL_VISION_API_KEY": "ocr-test-key",
         "PPAP_MODEL_VISION_BASE_URL": "https://ocr.invalid/v1",
         "PPAP_MODEL_VISION_MODEL": "ocr-model",
+        "PPAP_MODEL_VISION_REASONING_EFFORT": "none",
     }.items():
         monkeypatch.setenv(name, value)
     resolve = configured_model_access()
@@ -228,8 +229,8 @@ def test_live_corpus_uses_one_platform_model_per_use(monkeypatch):
     text, vision, coding = resolve("text"), resolve("vision"), resolve("coding")
     assert (text.api_key.get_secret_value(), text.base_url, text.model) == ("text-test-key", "https://text.invalid/v1", "text-model")
     assert (vision.api_key.get_secret_value(), vision.base_url, vision.model) == ("ocr-test-key", "https://ocr.invalid/v1", "ocr-model")
-    # As in production: vision calls default to no reasoning, coding falls back to the text model.
-    assert vision.extra_body() == {"reasoning": {"effort": "none"}}
+    # As in production: vision sends its configured effort, coding falls back to the text model.
+    assert vision.reasoning_effort == "none"
     assert (coding.base_url, coding.model) == ("https://text.invalid/v1", "text-model")
     assert "ocr-test-key" not in repr(vision)
 

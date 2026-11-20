@@ -74,10 +74,10 @@ def issue(grants, chosen, resolver):
     return execution, token
 
 
-def post(server, token, prompt="check"):
+def post(server, token, model, prompt="check"):
     connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
     try:
-        connection.request("POST", "/v1/responses", json.dumps({"model": "cli-compaction-alias", "input": prompt}), {"Authorization": "Bearer " + token})
+        connection.request("POST", "/v1/responses", json.dumps({"model": model, "input": prompt}), {"Authorization": "Bearer " + token})
         response = connection.getresponse()
         return response.status, response.read()
     finally:
@@ -105,8 +105,8 @@ def test_interleaved_grants_bind_endpoint_model_and_initiator_without_rebinding(
         upstream.return_value.getresponse.side_effect = [response(), response(), response()]
         a, token_a = issue(server.grants, alice, resolver("alice"))
         b, token_b = issue(server.grants, bob, resolver("bob"))
-        for token, prompt in ((token_b, "bob"), (token_a, "late-alice"), (token_b, "bob-again")):
-            assert post(server, token, prompt)[0] == 200
+        for token, chosen, prompt in ((token_b, bob, "bob"), (token_a, alice, "late-alice"), (token_b, bob, "bob-again")):
+            assert post(server, token, chosen.model, prompt)[0] == 200
         assert owners == ["bob", "alice", "bob"]
         assert [call.args[0] for call in upstream.call_args_list] == ["bob.example", "alice.example", "bob.example"]
         calls = upstream.return_value.request.call_args_list
@@ -139,7 +139,7 @@ def test_configuration_change_after_grant_is_known_no_send(change):
             "provider": replace(chosen, provider="other"),
             "removed": None,
         }[change]
-        status, body = post(server, token)
+        status, body = post(server, token, chosen.model)
         assert status == 503
         upstream.assert_not_called()
         assert chosen.base_url.encode() not in body and chosen.api_key.get_secret_value().encode() not in body
@@ -153,7 +153,7 @@ def test_redirect_does_not_send_any_request_to_another_endpoint():
     with patch("agent.execution.gateway.http.client.HTTPSConnection") as upstream, gateway() as server:
         upstream.return_value.getresponse.return_value = response(status=307)
         execution, token = issue(server.grants, chosen, lambda purpose: chosen)
-        assert post(server, token)[0] == 502
+        assert post(server, token, chosen.model)[0] == 502
         assert upstream.call_count == upstream.return_value.request.call_count == 1
         assert server.grants.usage(execution)["usage_known"] is False
 
@@ -164,10 +164,10 @@ def test_revoked_late_grant_cannot_use_a_new_users_access():
         execution, token_a = issue(server.grants, alice, lambda purpose: alice)
         server.grants.revoke(execution)
         _, token_b = issue(server.grants, bob, lambda purpose: bob)
-        assert post(server, token_a)[0] == 403
+        assert post(server, token_a, alice.model)[0] == 403
         upstream.assert_not_called()
         upstream.return_value.getresponse.return_value = response()
-        assert post(server, token_b)[0] == 200
+        assert post(server, token_b, bob.model)[0] == 200
         assert upstream.call_args.args[0] == "bob.example"
         assert upstream.return_value.request.call_args.args[3]["Authorization"] == "Bearer " + bob.api_key.get_secret_value()
 
@@ -246,7 +246,7 @@ def test_container_issues_only_actual_execution_binding_and_stages_no_endpoint(t
     chosen = access("custom")
     grants = Grants("inert-default", require_binding=True)
     runtime = object.__new__(ContainerRuntime)
-    runtime.config = SimpleNamespace(gateway_socket=tmp_path / "control", gateway_host="127.0.0.1", model=chosen.model)
+    runtime.config = SimpleNamespace(gateway_socket=tmp_path / "control", gateway_host="127.0.0.1", model=chosen.model, reasoning_effort="medium")
     runtime.model_grant_binding = lambda execution: grants.bind(execution, identity(chosen), lambda purpose: chosen)
     (tmp_path / "grant").mkdir()
     execution = uuid4()
@@ -312,7 +312,7 @@ def test_http_request_waiting_in_queue_checks_current_configuration_before_send(
     with patch("agent.execution.gateway.http.client.HTTPSConnection") as upstream, gateway() as server:
         server.inference_lock = QueueGate()
         execution, token = issue(server.grants, chosen, selected(current, identity(chosen)))
-        pending = Thread(target=lambda: result.append(post(server, token)), daemon=True)
+        pending = Thread(target=lambda: result.append(post(server, token, chosen.model)), daemon=True)
         pending.start()
         try:
             assert queued.wait(2)

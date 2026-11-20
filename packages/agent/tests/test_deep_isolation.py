@@ -328,7 +328,7 @@ class GatewayGrantTests(unittest.TestCase):
                         # An agent's next turn can be much larger than an
                         # auxiliary request. Upload must not wait for the
                         # previous provider stream to reach EOF.
-                        second = executor.submit(post, port, token, "audit context " * 400_000, "xai-compact")
+                        second = executor.submit(post, port, token, "audit context " * 400_000, "test-model")
                         self.assertTrue(second_sent.wait(5), "second request was not sent")
                         self.assertFalse(first.done(), "first provider response unexpectedly reached EOF")
                     finally:
@@ -408,27 +408,47 @@ class GatewayGrantTests(unittest.TestCase):
             grants.authorize(token, {"model": "test-model", "input": "one"}, 20)
 
     def test_bound_grant_selects_the_frozen_model_for_each_use(self) -> None:
-        from documents.model_access import ModelUnavailable
+        from documents.model_access import ModelAccess, ModelUnavailable
+        from pydantic import SecretStr
 
         identity = {"source": "platform", "provider": "responses-compatible", "model": "text-m", "vision_model": "vision-m", "coding_model": "coding-m", "revision": "r" * 64, "deployment": "d" * 64}
+        models, efforts = {"text": "text-m", "vision": "vision-m", "coding": "coding-m"}, {"text": "low", "vision": "none", "coding": "medium"}
         resolved: list[str] = []
+
+        def resolve(purpose):
+            resolved.append(purpose)
+            return ModelAccess(SecretStr("host-key"), model=models[purpose], base_url="https://models.example.test/v1", reasoning_effort=efforts[purpose])
+
         grants = Grants("unconfigured", require_binding=True)
         execution_id = uuid4()
         with self.assertRaises(ValueError):
             grants.issue(execution_id)
-        with self.assertRaises(ModelUnavailable), grants.bind(uuid4(), {key: identity[key] for key in ("provider", "model", "revision", "deployment")}, resolved.append):
+        with self.assertRaises(ModelUnavailable), grants.bind(uuid4(), {key: identity[key] for key in ("provider", "model", "revision", "deployment")}, resolve):
             pass
-        with grants.bind(execution_id, identity, resolved.append):
+        with grants.bind(execution_id, identity, resolve):
             token = grants.issue(execution_id)
+        # The guest learns each use's model and the checker uses' efforts; never a key or endpoint.
         self.assertEqual(
             grants.identity(token),
-            {"model": "coding-m", "text_model": "text-m", "vision_model": "vision-m", "provider": "responses-compatible", "revision": "r" * 64, "deployment": "d" * 64},
+            {
+                "model": "coding-m",
+                "text_model": "text-m",
+                "vision_model": "vision-m",
+                "text_effort": "low",
+                "vision_effort": "none",
+                "provider": "responses-compatible",
+                "revision": "r" * 64,
+                "deployment": "d" * 64,
+            },
         )
-        for requested, purpose in (("vision-m", "vision"), ("text-m", "text"), ("coding-m", "coding"), ("internal-alias", "coding")):
+        # Each frozen model is sent unchanged; a name outside the grant is never sent.
+        for requested, purpose in (("vision-m", "vision"), ("text-m", "text"), ("coding-m", "coding")):
             body = {"model": requested, "input": "x"}
             lease, selected = grants.authorize(token, body, 10)
-            self.assertEqual((selected, body["model"]), (purpose, identity["coding_model" if purpose == "coding" else "vision_model" if purpose == "vision" else "model"]))
+            self.assertEqual((selected, body["model"]), (purpose, requested))
             grants.record_usage(lease, None)
+        with self.assertRaisesRegex(ValueError, "outside the grant"):
+            grants.authorize(token, {"model": "internal-alias", "input": "x"}, 10)
 
 
 class ContainerBoundaryTests(unittest.TestCase):

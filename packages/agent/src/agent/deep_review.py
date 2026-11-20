@@ -26,8 +26,6 @@ Decision = Literal["confirmed", "corrected"]
 Verdict = Literal["PASS", "NG", "NA", "UNABLE"]
 # Why one target was not deep-reviewed; it keeps its program result.
 DEGRADE_REASONS = frozenset({"deep_timeout", "deep_review_failed", "deep_review_invalid", "deep_input_missing"})
-# What Pi asks for; a deployment that configures the coding model's effort replaces it at the gateway.
-REVIEW_EFFORT = "medium"
 REVIEW_ATTEMPTS = 2
 MAX_EVIDENCE = 12
 CORRECTED_PREFIX = "深度复核订正"
@@ -356,7 +354,7 @@ def review_targets(
                 stage.mkdir(parents=True)
                 prompt = stage_review(stage, snapshot, sources, target, program, programs[target.binding.checker_digest].get("resources.py"), unavailable, feedback)
                 try:
-                    review = runner.run(stage, prompt, DeepReview, deadline, reasoning_effort=REVIEW_EFFORT)
+                    review = runner.run(stage, prompt, DeepReview, deadline)
                     state = {"state": "completed", "reviews": check_review(review, target=target, program=program, reader=reader, unavailable=unavailable)}
                     break
                 except (ValidationError, ValueError) as exc:

@@ -148,7 +148,7 @@ def generic_image_check(agent: Any, rule: Any) -> AuditResultItem:
     not issue a verdict. Page failures are retained and never replayed by the
     next clause. Specialized clauses use the fixed fact checks above instead.
     """
-    from documents.ocr.env import ocr_extra_body, ocr_model_name, ocr_openai_base_url
+    from documents.ocr.env import ocr_model_name, ocr_openai_base_url, ocr_request_options
 
     from audit.engine.checkers.ocr_visual_facts import request_ocr_visual_facts
     from audit.engine.checkers.text_evidence import evaluate_located_text
@@ -174,7 +174,7 @@ def generic_image_check(agent: Any, rule: Any) -> AuditResultItem:
         if rule.rule_to_check not in needs:
             needs.append(rule.rule_to_check)
         current_need = needs.index(rule.rule_to_check)
-        identity = json.dumps([digest, needs, ocr_model_name(), ocr_openai_base_url(), ocr_extra_body()], ensure_ascii=False, sort_keys=True)
+        identity = json.dumps([digest, needs, ocr_model_name(), ocr_openai_base_url(), ocr_request_options()], ensure_ascii=False, sort_keys=True)
         if source.suffix.lower() == ".pdf":
             with fitz.open(source) as document:
                 page_count = len(document)

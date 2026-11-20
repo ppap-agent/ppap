@@ -401,8 +401,8 @@ def summarize(lines: list[dict], prices: dict) -> dict:
 
 
 def _detail(row: dict) -> str:
-    proposed = f"，提议 {row['proposed']}（{row['rejection']}）" if row.get("decision") == "rejected" else ""
-    return f"- {row['case']} 《{row['file']}》 {row['clause']}：真值 {row['truth']}，程序 {row['program']}，复核后 {row['deep']}{proposed}。{row['reason']}"
+    proposed = f"，提议 {row.get('proposed')}（{row.get('rejection')}）" if row.get("decision") == "rejected" else ""
+    return f"- {row['case']} 《{row['file']}》 {row['clause']}：真值 {row['truth']}，程序 {row['program']}，复核后 {row['deep']}{proposed}。{row.get('reason') or ''}"
 
 
 def _usage_row(name: str, usage: dict) -> str:

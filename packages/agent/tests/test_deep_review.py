@@ -111,7 +111,7 @@ def controlled_pi(monkeypatch, write, deadlines=None):
         def __init__(self, _grant):
             self.input_tokens = self.output_tokens = 0
 
-        def run(self, stage, prompt, schema, deadline, *, reasoning_effort):
+        def run(self, stage, prompt, schema, deadline):
             assert schema is DeepReview and "深度复核" in prompt
             listed = json.loads((stage / "files.json").read_text())
             target = next(row["file_version_id"] for row in listed if row["role"] == "本次审核目标")

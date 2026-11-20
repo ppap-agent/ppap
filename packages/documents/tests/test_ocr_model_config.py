@@ -24,31 +24,20 @@ def vision_key(monkeypatch):
     monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "dedicated-ocr-model")
 
 
-def test_ocr_dedicated_model_and_extra_body_are_canonical(monkeypatch, vision_key):
-    monkeypatch.setenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON", '{"reasoning":true,"a":1}')
+def test_ocr_sends_its_configured_effort_and_the_effort_is_part_of_its_identity(monkeypatch, vision_key):
+    monkeypatch.setenv("PPAP_MODEL_VISION_REASONING_EFFORT", "none")
     first = env.ocr_policy_identity()
     assert env.ocr_model_name() == "dedicated-ocr-model"
-    assert env.ocr_extra_body() == {"reasoning": True, "a": 1}
-    monkeypatch.setenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON", '{"a":1,"reasoning":true}')
-    assert env.ocr_policy_identity() == first
-    monkeypatch.setenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON", '{"a":1,"reasoning":false}')
+    assert env.ocr_request_options() == {"reasoning": {"effort": "none"}}
+    monkeypatch.setenv("PPAP_MODEL_VISION_REASONING_EFFORT", "low")
+    assert env.ocr_request_options() == {"reasoning": {"effort": "low"}}
     assert env.ocr_policy_identity() != first
 
 
-def test_ocr_transcription_defaults_to_no_reasoning_without_overriding_user(monkeypatch, vision_key):
-    monkeypatch.delenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON", raising=False)
-    assert env.ocr_extra_body() == {"reasoning": {"effort": "none"}}
-    default_identity = env.ocr_policy_identity()
-    monkeypatch.setenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON", '{"reasoning":{"effort":"high"},"other":true}')
-    assert env.ocr_extra_body() == {"reasoning": {"effort": "high"}, "other": True}
-    assert env.ocr_policy_identity() != default_identity
-
-
-@pytest.mark.parametrize("raw", ["[]", "null", "not-json"])
-def test_invalid_ocr_extra_body_fails_without_network(monkeypatch, vision_key, raw):
-    monkeypatch.setenv("PPAP_MODEL_VISION_EXTRA_BODY_JSON", raw)
-    with pytest.raises(ValueError, match="one JSON object"):
-        env.ocr_extra_body()
+def test_ocr_without_a_configured_effort_sends_none(monkeypatch, vision_key):
+    # No effort is chosen in code: an unconfigured effort leaves the model's own default.
+    monkeypatch.delenv("PPAP_MODEL_VISION_REASONING_EFFORT", raising=False)
+    assert env.ocr_request_options() == {}
 
 
 def test_explicit_model_grant_owns_ocr_model_endpoint_and_policy(monkeypatch):
@@ -63,7 +52,7 @@ def test_explicit_model_grant_owns_ocr_model_endpoint_and_policy(monkeypatch):
         assert env.ocr_openai_api_key() == "granted-key"
         assert env.ocr_model_name() == "granted-model"
         assert env.ocr_openai_base_url() == "http://127.0.0.1:12345/model"
-        assert env.ocr_extra_body() == {}
+        assert env.ocr_request_options() == {}
         identity = env.ocr_policy_identity()
         assert "granted-key" not in identity
         monkeypatch.setenv("PPAP_MODEL_VISION_MODEL", "changed-ambient-model")

@@ -20,7 +20,7 @@ jobs:
     env:
       PPAP_MODEL_TEXT_REASONING_EFFORT: low
       PPAP_CORPUS_MODEL: live
-      PPAP_MODEL_VISION_EXTRA_BODY_JSON: '{"reasoning":{"effort":"none"}}'
+      PPAP_MODEL_VISION_REASONING_EFFORT: none
       ROUNDS: ${{ inputs.rounds || '3' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

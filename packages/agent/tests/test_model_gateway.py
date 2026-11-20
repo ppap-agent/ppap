@@ -159,20 +159,24 @@ def test_each_grant_pins_its_own_key_even_when_the_host_switches_it():
     assert lease.provider_key() == keys[alice]
 
 
-def test_bound_grant_sends_each_use_to_its_frozen_model_with_deployment_options():
-    from agent.execution.guest_model import PI_MODEL_ALIAS
+def test_bound_grant_sends_each_request_unchanged_to_its_models_endpoint():
     from documents.model_access import ModelAccess
     from pydantic import SecretStr
 
+    # As deployed: one model frozen for text and coding, so both uses share its endpoint and key.
     identity = {"source": "platform", "provider": "responses-compatible", "model": "text-m", "vision_model": "vision-m", "coding_model": "text-m", "revision": "r" * 64, "deployment": "d" * 64}
     accesses = {
-        "coding": ModelAccess(api_key=SecretStr("coding-key"), model="text-m", base_url="https://coding.example.test/v1", reasoning_effort="medium"),
-        "vision": ModelAccess(
-            api_key=SecretStr("vision-key"), model="vision-m", base_url="https://vision.example.test/api/v1", extra_body_json='{"reasoning":{"effort":"none"},"provider":{"require_parameters":true}}'
-        ),
+        "coding": ModelAccess(api_key=SecretStr("text-key"), model="text-m", base_url="https://text.example.test/v1", reasoning_effort="medium"),
+        "vision": ModelAccess(api_key=SecretStr("vision-key"), model="vision-m", base_url="https://vision.example.test/api/v1", reasoning_effort="none"),
         "text": ModelAccess(api_key=SecretStr("text-key"), model="text-m", base_url="https://text.example.test/v1", reasoning_effort="low"),
     }
     reply = json.dumps({"id": "r", "object": "response", "created_at": 0, "model": "m", "status": "completed", "output": [], "usage": {"input_tokens": 1, "output_tokens": 1}}).encode()
+    # Each use writes its own effort; the gateway sends exactly that.
+    sent = [
+        {"input": "x", "model": "vision-m", "reasoning": {"effort": "none"}},
+        {"input": "x", "model": "text-m", "reasoning": {"effort": "medium", "summary": "auto"}},
+        {"input": "x", "model": "text-m", "reasoning": {"effort": "low"}},
+    ]
     with patch("agent.execution.gateway.http.client.HTTPSConnection") as upstream:
         upstream.return_value.getresponse.side_effect = lambda: type("R", (), {"status": 200, "read1": BytesIO(reply).read1})()
         grants = Grants("unconfigured", require_binding=True)
@@ -183,28 +187,24 @@ def test_bound_grant_sends_each_use_to_its_frozen_model_with_deployment_options(
             execution_id = uuid4()
             with grants.bind(execution_id, identity, accesses.__getitem__):
                 token = grants.issue(execution_id)
-            # One model frozen for text and coding, as deployed: the real name reaches text, Pi's alias
-            # reaches coding. Pi asks for its own effort; the deployment's configured effort replaces it.
-            for body in ({"input": "x", "model": "vision-m"}, {"input": "x", "model": PI_MODEL_ALIAS, "reasoning": {"effort": "high", "summary": "auto"}}, {"input": "x", "model": "text-m"}):
+            statuses = []
+            for body in (*sent, {"input": "x", "model": "not-frozen"}):
                 client = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
                 try:
                     client.request("POST", "/v1/responses", json.dumps(body), {"Authorization": "Bearer " + token})
-                    assert client.getresponse().status == 200
+                    statuses.append(client.getresponse().status)
                 finally:
                     client.close()
         finally:
             server.shutdown()
             thread.join()
             server.server_close()
-    (vision_host, *_), (coding_host, *_), (text_host, *_) = [call.args for call in upstream.call_args_list]
-    assert (vision_host, coding_host, text_host) == ("vision.example.test", "coding.example.test", "text.example.test")
-    vision, coding, text = [(call.args[1], json.loads(call.args[2]), call.args[3]["Authorization"]) for call in upstream.return_value.request.call_args_list]
-    assert vision[0] == "/api/v1/responses" and vision[2] == "Bearer vision-key"
-    assert vision[1]["model"] == "vision-m" and vision[1]["reasoning"] == {"effort": "none"} and vision[1]["provider"] == {"require_parameters": True}
-    assert coding[0] == "/v1/responses" and coding[2] == "Bearer coding-key"
-    assert text[2] == "Bearer text-key" and text[1]["model"] == "text-m" and text[1]["reasoning"] == {"effort": "low"}
-    assert coding[1]["model"] == "text-m" and coding[1]["reasoning"] == {"effort": "medium", "summary": "auto"}
-    assert token not in json.dumps([vision, coding, text])
+    assert statuses[:3] == [200, 200, 200] and statuses[3] != 200
+    assert [call.args[0] for call in upstream.call_args_list] == ["vision.example.test", "text.example.test", "text.example.test"]
+    requests = [(call.args[1], json.loads(call.args[2]), call.args[3]["Authorization"]) for call in upstream.return_value.request.call_args_list]
+    assert [(path, key) for path, _body, key in requests] == [("/api/v1/responses", "Bearer vision-key"), ("/v1/responses", "Bearer text-key"), ("/v1/responses", "Bearer text-key")]
+    assert [(body["model"], body["reasoning"]) for _path, body, _key in requests] == [(item["model"], item["reasoning"]) for item in sent]
+    assert token not in json.dumps(requests)
 
 
 def test_a_stream_only_model_answers_a_non_streaming_guest_request_with_the_completed_response():

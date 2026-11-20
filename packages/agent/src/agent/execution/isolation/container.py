@@ -206,7 +206,8 @@ class ContainerRuntime:
 
     def _write_grant(self, execution_id: UUID, run: Path) -> None:
         with self.model_grant_binding(execution_id) if self.model_grant_binding is not None else nullcontext():
-            grant = ModelGrant.model_validate(grant_request(str(self.config.gateway_socket), "issue", execution_id))
+            # The review's effort is the execution policy's; the gateway grants the models and the other uses' efforts.
+            grant = ModelGrant.model_validate({**grant_request(str(self.config.gateway_socket), "issue", execution_id), "coding_effort": self.config.reasoning_effort})
         url = urlsplit(grant.base_url)
         if (
             url.scheme != "http"

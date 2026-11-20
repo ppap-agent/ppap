@@ -2,17 +2,28 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
-from corpus_contracts.oracle import DATASETS
+from corpus_contracts.oracle import DATASETS, REPO_ROOT
 from corpus_contracts.replay import LIVE, Recorder, configured_model_access, install, mode, offline, replay_model_access
 from documents.model_access import model_access_scope
 
 _active: list[Recorder] = []
+
+
+def pytest_configure(config: Any) -> None:
+    """Send what production sends: recordings were made with the deployed vision effort."""
+    name = "PPAP_MODEL_VISION_REASONING_EFFORT"
+    deployed = REPO_ROOT / ".env.production"
+    if name not in os.environ and deployed.is_file():
+        for line in deployed.read_text(encoding="utf-8").splitlines():
+            if line.startswith(name + "="):
+                os.environ[name] = line.split("=", 1)[1].strip()
 
 
 def pytest_addoption(parser: Any) -> None:

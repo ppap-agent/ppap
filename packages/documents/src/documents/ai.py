@@ -90,9 +90,6 @@ def _settings(access: ModelAccess, max_tokens: int, timeout: float, reasoning_ef
     effort = reasoning_effort or access.reasoning_effort
     if effort:
         settings["openai_reasoning_effort"] = effort  # type: ignore[typeddict-item]
-    extra = access.extra_body()
-    if extra:
-        settings["extra_body"] = extra
     return settings
 
 

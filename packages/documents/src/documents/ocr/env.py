@@ -31,8 +31,10 @@ def ocr_model_name() -> str:
     return _vision().model
 
 
-def ocr_extra_body() -> dict:
-    return _vision().extra_body()
+def ocr_request_options() -> dict:
+    """The reasoning option a vision call sends; part of what a cached reading was asked with."""
+    effort = _vision().reasoning_effort
+    return {"reasoning": {"effort": effort}} if effort else {}
 
 
 def ocr_policy_identity() -> str:

@@ -23,11 +23,11 @@ from agent.execution.secure_files import read_json, read_regular, reject_constan
 # What Pi loads natively from its agent directory: the fixed instructions (AGENTS.md) and the
 # reference skills. Each run gets a fresh read-only copy; nothing from the work directory is trusted.
 DEEP_AGENT = Path(__file__).resolve().parents[1] / "deep_agent"
-# The model name Pi sends; never a provider model name.
-PI_MODEL_ALIAS = "ppap-review"
 
 T = TypeVar("T", bound=BaseModel)
 ReasoningEffort = Literal["xhigh", "high", "medium", "low"]
+# Any effort a Responses endpoint accepts; empty sends none and the model decides.
+EFFORT = r"^(|none|minimal|low|medium|high|xhigh)$"
 
 
 class ModelProtocolError(ValueError):
@@ -43,6 +43,12 @@ class ModelGrant(Artifact):
     model: str = Field(min_length=1, max_length=128)
     text_model: str = Field(default="", max_length=128)
     vision_model: str = Field(default="", max_length=128)
+    # Each use sends its configured effort itself; the gateway never changes a request.
+    text_effort: str = Field(default="", pattern=EFFORT)
+    vision_effort: str = Field(default="", pattern=EFFORT)
+    # The deep review's effort: the execution policy's, which the host adds to the gateway's grant.
+    # Only Pi needs it; a grant for checker programs alone has none.
+    coding_effort: ReasoningEffort | None = None
     provider: str = Field(default="responses-compatible", min_length=1, max_length=64)
     revision: str = Field(default="", max_length=64)
     deployment: str = Field(default="", pattern=r"^$|^[a-f0-9]{64}$")
@@ -72,8 +78,11 @@ class ModelGrant(Artifact):
         from pydantic import SecretStr
 
         models = self.models()
+        efforts = {"text": self.text_effort, "vision": self.vision_effort, "coding": self.coding_effort or ""}
         return model_access_scope(
-            lambda purpose: ModelAccess(api_key=SecretStr(self.token), provider=self.provider, model=models[purpose], base_url=self.base_url, source="grant", revision=self.revision)
+            lambda purpose: ModelAccess(
+                api_key=SecretStr(self.token), provider=self.provider, model=models[purpose], base_url=self.base_url, source="grant", revision=self.revision, reasoning_effort=efforts[purpose]
+            )
         )
 
 
@@ -104,10 +113,8 @@ class ModelRunner:
         # Provider token counts are observed when every turn reports them.
         self.usage_known = True
 
-    def run(self, work: Path, prompt: str, schema: type[T], deadline: float, *, reasoning_effort: str) -> T:
+    def run(self, work: Path, prompt: str, schema: type[T], deadline: float) -> T:
         """Let the agent finish file work before it emits a small terminal receipt."""
-        if reasoning_effort not in {"xhigh", "high", "medium", "low"}:
-            raise ModelProtocolError("Invalid reasoning effort")
         artifact = "execution.json"
         if (work / artifact).exists() or (work / artifact).is_symlink():
             raise ModelProtocolError("Stage artifact already exists")
@@ -119,7 +126,9 @@ class ModelRunner:
             "This is only a completion receipt; it must not contain the business output. "
             "A receipt without a complete execution.json fails the stage."
         )
-        terminal = self._run(work, artifact_prompt, deadline, reasoning_effort=cast(ReasoningEffort, reasoning_effort))
+        if self.grant.coding_effort is None:
+            raise ModelProtocolError("The grant carries no review effort")
+        terminal = self._run(work, artifact_prompt, deadline, reasoning_effort=self.grant.coding_effort)
         try:
             receipt = json.loads(terminal.get("result", ""), object_pairs_hook=unique_object, parse_constant=reject_constant)
         except (ValueError, TypeError):
@@ -174,9 +183,7 @@ class PiRunner(ModelRunner):
             "prompt": str(work / "prompt.txt"),
             "base_url": self.grant.base_url,
             "token": self.grant.token,
-            # An alias, never a real name: the gateway sends it to the coding model even when that
-            # model is also frozen for text or vision.
-            "model": PI_MODEL_ALIAS,
+            "model": self.grant.model,
             "reasoning_effort": reasoning_effort,
         }
         request = home / "request.json"

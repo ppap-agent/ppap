@@ -50,7 +50,7 @@ ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `
 
 ## Apply current stack
 
-Secret `ppap-current` is not in git. Create it when absent, then update its managed keys from the confirmed production configuration on each release; creating it once is insufficient. It also contains passwords, Feishu secret and S3 keys, so never replace the entire Secret to update one capability. Host fields in the ConfigMap already point at in-cluster Services. Text-model credentials use Secret `ppap-current-text-model-v1`, key `PPAP_MODEL_TEXT_API_KEY`; API and Worker read it through explicit references. `PPAP_MODEL_TEXT_BASE_URL` and `PPAP_MODEL_TEXT_MODEL` belong to ConfigMap `ppap-current`. Updating only the Deep model does not switch rule extraction or other text calls. Existing images support the Codex Responses endpoint; model configuration changes require a process restart, not an image rebuild.
+Secret `ppap-current` is not in git. Create it when absent, then update its managed keys from the confirmed production configuration on each release; creating it once is insufficient. It also contains passwords, Feishu secret and S3 keys, so never replace the entire Secret to update one capability. Host fields in the ConfigMap already point at in-cluster Services. Models are configured once per model, named after it (`PPAP_MODEL_GROK_4_7_*`, `PPAP_MODEL_DEEPSEEK_FLASH_4_1_*`); each container points its `PPAP_MODEL_TEXT_*` / `PPAP_MODEL_VISION_*` variables at a model through explicit `configMapKeyRef` / `secretKeyRef` entries, and the code reads only those. Changing a model's key or endpoint is one edit; switching a use to another model changes its references. Existing images support the Codex Responses endpoint; model configuration changes require a process restart, not an image rebuild.
 
 API reads only its API database password; Worker and Deep read only the Worker password. Runtime containers must use explicit `secretKeyRef` entries, not `envFrom` for the whole Secret. Bootstrap and migrator credentials belong to database initialization, not application processes. Adding a new secret setting requires an explicit reference in its owning container.
 
@@ -93,11 +93,12 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 
 | 配置项 | 存放位置 | 容器引用 |
 |---|---|---|
-| `PPAP_MODEL_TEXT_MODEL`、`PPAP_MODEL_TEXT_BASE_URL` | ConfigMap `ppap-current` | API、Worker；Deep 沿用其需要的公共配置 |
-| `PPAP_MODEL_TEXT_API_KEY` | Secret `ppap-current-text-model-v1` | API、Worker、Deep Controller（Suite 程序的文本调用经本地网关）|
-| `PPAP_MODEL_CODING_*` | 当前未设置：Coding 使用文本模型 | 需要 Deep 专用端点时，新建 Secret 存放 `PPAP_MODEL_CODING_API_KEY` 并只在 Deep Controller 显式引用 |
-| `PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_EXTRA_BODY_JSON` | Secret `ppap-current` | API、Worker、Deep 的配置身份 |
-| `PPAP_MODEL_VISION_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller；不向 Deep guest 注入 |
+| `PPAP_MODEL_GROK_4_7_MODEL`、`PPAP_MODEL_GROK_4_7_BASE_URL` | ConfigMap `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_TEXT_MODEL`、`PPAP_MODEL_TEXT_BASE_URL` |
+| `PPAP_MODEL_GROK_4_7_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_TEXT_API_KEY`（Suite 程序的文本调用经本地网关）|
+| `PPAP_MODEL_CODING_*` | 当前未设置：Coding 使用文本模型（grok-4.7） | 需要 Deep 专用模型时，在所有容器把 `PPAP_MODEL_CODING_*` 指向那个模型的分组 |
+| `PPAP_MODEL_DEEPSEEK_FLASH_4_1_MODEL`、`PPAP_MODEL_DEEPSEEK_FLASH_4_1_BASE_URL` | Secret `ppap-current` | API、Worker、Deep 的 `PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_BASE_URL` |
+| `PPAP_MODEL_DEEPSEEK_FLASH_4_1_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_VISION_API_KEY`；不向 Deep guest 注入 |
+| `PPAP_MODEL_{TEXT,VISION,CODING}_REASONING_EFFORT` | ConfigMap `ppap-current` | 各用途的推理强度：`low`、`none`（看图模型须支持）、`medium` |
 | `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS`、`PPAP_DEEP_MODEL_MAX_REQUESTS` | ConfigMap `ppap-current` | API、Worker、Deep（企业 Key 的允许地址；每个 Deep Attempt 的请求次数熔断）|
 | 企业 Key（企业 BYOK） | 表 `product.tenant_model_credentials`（密文） | 运营用 `python -m product.tenant_models` 设置；无客户接口 |
 | `PPAP_MEEGO_AI_NODE_PLUGIN_ID`、`PPAP_MEEGO_AI_NODE_TOKEN`、`PPAP_MEEGO_AI_NODE_PLUGIN_SECRET` | Secret `ppap-current`（值记在仓库根目录不入 Git 的 `.env`） | API（飞书项目 AI 节点：事件验签、完成节点）|
@@ -125,7 +126,7 @@ grep '^PPAP_MEEGO_AI_NODE_' .env \
 kubectl -n ppap-test rollout restart deploy/ppap-current-api
 ```
 
-Secret 不存在时，先用同一个已确认文件创建；其他 Secret 按表中归属分别更新，不把整份 `ppap-current-text-model-v1` 覆盖到 `ppap-current`。新配置 key 还必须出现在所属容器的明确 `secretKeyRef`／`configMapKeyRef` 中；只写入 Secret 而没有容器引用，同样属于未完成配置。
+Secret 不存在时，先用同一个已确认文件创建；其他 Secret 按表中归属分别更新。新配置 key 还必须出现在所属容器的明确 `secretKeyRef`／`configMapKeyRef` 中；只写入 Secret 而没有容器引用，同样属于未完成配置。
 
 将本次镜像 digest、`PPAP_BUILD_SHA` 和非敏感配置写入 `current.yaml`，然后直接应用现有应用的 ConfigMap 与 Deployment：
 
@@ -216,6 +217,6 @@ python3 deploy/tke/build-current.py <full-source-sha> --provider unregistry
 
 ## Deep 配置
 
-现网 Deep 沿用 `PPAP_MODEL_TEXT_BASE_URL`、`PPAP_MODEL_TEXT_MODEL` 与 `PPAP_MODEL_TEXT_API_KEY`。只有需要 Deep 专用模型时才同时设置 `PPAP_MODEL_CODING_BASE_URL`、`PPAP_MODEL_CODING_MODEL`，并在 Deep Controller 显式引用 `PPAP_MODEL_CODING_API_KEY`；代码拒绝只有 Deep 密钥而没有 Deep 端点的配置。`PPAP_MODEL_CODING_REASONING_EFFORT` 属于 Deep。
+现网 Deep 沿用文本模型（`PPAP_MODEL_TEXT_*`，即 grok-4.7）。需要 Deep 专用模型时，在每个容器把 `PPAP_MODEL_CODING_BASE_URL`、`PPAP_MODEL_CODING_MODEL`、`PPAP_MODEL_CODING_API_KEY` 指向那个模型的分组；代码拒绝只有 Deep 密钥而没有 Deep 端点的配置。`PPAP_MODEL_CODING_REASONING_EFFORT` 属于 Deep。
 
 Worker 与 Deep Controller 共享 `/run/ppap-deep` 的 UDS。配置变更后直接重启其 Deployment；UDS 可用只表示进程连通，不证明真实 Deep 审核成功。当前 `container-only` / sandbox `off` 的能力边界仍见 `deploy/deep/README.md`。

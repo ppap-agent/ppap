@@ -17,7 +17,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from documents.model_access import ModelAccess, ModelPurpose, ModelResolver, effective_vision_extra_body, platform_model_access
+from documents.model_access import ModelAccess, ModelPurpose, ModelResolver, platform_model_access
 from pydantic import SecretStr
 
 REPLAY_DIR = Path(__file__).resolve().parents[5] / "assets/corpus/replay"
@@ -40,15 +40,10 @@ def offline() -> bool:
     return value in {"1", "true"}
 
 
-def _vision_options() -> str:
-    """The vision request options the platform model would send, so recordings match every mode."""
-    return json.dumps(effective_vision_extra_body(os.environ.get("PPAP_MODEL_VISION_EXTRA_BODY_JSON", "").strip()), sort_keys=True)
-
-
 def configured_model_access() -> ModelResolver | None:
     """Live corpus calls use the platform models exactly as production does, one per use.
 
-    Text reads PPAP_MODEL_TEXT_*, vision PPAP_MODEL_VISION_* (with its default options),
+    Text reads PPAP_MODEL_TEXT_*, vision PPAP_MODEL_VISION_*,
     coding PPAP_MODEL_CODING_* or the text model. Without a text or vision key there is no
     live model and recordings answer every call.
     """
@@ -60,7 +55,8 @@ def configured_model_access() -> ModelResolver | None:
 def replay_model_access() -> ModelAccess:
     # This inert grant lets recorded observations pass the same scope boundary.
     # Offline Recorder transports below reject every cache miss before sending.
-    return ModelAccess(SecretStr("corpus-replay-only"), provider="corpus-replay", model="recorded-model", base_url="http://127.0.0.1:1/v1", extra_body_json=_vision_options())
+    effort = os.environ.get("PPAP_MODEL_VISION_REASONING_EFFORT", "").strip()
+    return ModelAccess(SecretStr("corpus-replay-only"), provider="corpus-replay", model="recorded-model", base_url="http://127.0.0.1:1/v1", reasoning_effort=effort)
 
 
 class OfflineReplayMiss(AssertionError):
@@ -182,10 +178,11 @@ def ocr_request(images: list[bytes], prompt: str, response_schema: dict, max_out
     observation = current_ocr_observation()
     if observation is not None:
         request["observation"] = observation
-    # An explicit policy cannot consume an answer recorded under different request options.
-    extra = current_model_access("vision").extra_body()
-    if extra:
-        request["extra_body"] = extra
+    # An answer recorded under another reasoning effort cannot answer this request. The key keeps
+    # the name existing recordings were made with.
+    effort = current_model_access("vision").reasoning_effort
+    if effort:
+        request["extra_body"] = {"reasoning": {"effort": effort}}
     return request
 
 

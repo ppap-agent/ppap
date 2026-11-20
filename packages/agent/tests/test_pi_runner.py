@@ -11,7 +11,7 @@ import pytest
 from agent.execution.guest_model import ModelProtocolError, PiRunner
 from pydantic import BaseModel
 
-GRANT = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 48, "model": "test-model", "wall_seconds": 10}
+GRANT = {"base_url": "http://127.0.0.1:12345/v1", "token": "x" * 48, "model": "test-model", "coding_effort": "medium", "wall_seconds": 10}
 
 
 class Receipt(BaseModel):
@@ -56,7 +56,7 @@ def launch(events, *, returncode=0, write_output=False):
 def test_pi_uses_scoped_grant_and_accounts_for_completed_work(tmp_path, guest):
     runner = PiRunner(GRANT)
     with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal()], write_output=True)) as process:
-        output = runner.run(tmp_path, "review", Receipt, 10**12, reasoning_effort="medium")
+        output = runner.run(tmp_path, "review", Receipt, 10**12)
     assert output == Receipt(verdict="PASS")
     assert (runner.input_tokens, runner.output_tokens, runner.usage_known) == (13, 5, True)
     assert (runner.tool_calls, runner.completed_tool_calls, runner.compactions) == (2, 1, 1)
@@ -65,6 +65,8 @@ def test_pi_uses_scoped_grant_and_accounts_for_completed_work(tmp_path, guest):
     assert command == ["/usr/local/bin/ppap-pi", str(tmp_path / "pi-home/request.json")]
     assert GRANT["token"] not in command
     assert config["token"] == GRANT["token"]
+    # Pi writes its own request: the real model name and the review effort from the grant.
+    assert (config["model"], config["reasoning_effort"]) == ("test-model", "medium")
     assert (tmp_path / "pi-home/request.json").stat().st_mode & 0o777 == 0o600
     env = process.call_args.kwargs["env"]
     assert "UNRELATED_SECRET" not in env and env["PYTHONPATH"] == "/trusted/packages"
@@ -93,14 +95,14 @@ def test_pi_rejects_missing_failed_or_invalid_completion(tmp_path, guest, events
 def test_failed_pi_output_is_not_accepted_even_when_written(tmp_path, guest):
     with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal(is_error=True)], write_output=True)):
         with pytest.raises(ModelProtocolError):
-            PiRunner(GRANT).run(tmp_path, "review", Receipt, 10**12, reasoning_effort="low")
+            PiRunner(GRANT).run(tmp_path, "review", Receipt, 10**12)
 
 
 @pytest.mark.parametrize("usage", [None, {"input_tokens": True, "output_tokens": 2}, {"input_tokens": 3}])
 def test_missing_or_invalid_usage_does_not_reject_a_completed_stage(tmp_path, guest, usage):
     runner = PiRunner(GRANT)
     with patch("agent.execution.guest_model.subprocess.Popen", side_effect=launch([terminal(usage=usage, tool_calls=-1)], write_output=True)):
-        output = runner.run(tmp_path, "review", Receipt, 10**12, reasoning_effort="low")
+        output = runner.run(tmp_path, "review", Receipt, 10**12)
     assert output == Receipt(verdict="PASS")
     assert (runner.input_tokens, runner.output_tokens, runner.usage_known) == (0, 0, False)
 

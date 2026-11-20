@@ -286,8 +286,8 @@ jobs:
     timeout-minutes: 120
     env:
       PPAP_MODEL_TEXT_REASONING_EFFORT: low
-      # Verified OpenRouter dedicated OCR deployment; not inherited by text/personal grants.
-      PPAP_MODEL_VISION_EXTRA_BODY_JSON: '{"reasoning":{"effort":"none"}}'
+      # As deployed: the OCR model reads with reasoning off (.env.production); recordings were made so.
+      PPAP_MODEL_VISION_REASONING_EFFORT: none
     strategy:
       fail-fast: false
       matrix:
@@ -380,7 +380,7 @@ jobs:
             -e PPAP_MODEL_VISION_API_KEY \
             -e PPAP_MODEL_VISION_BASE_URL \
             -e PPAP_MODEL_VISION_MODEL \
-            -e PPAP_MODEL_VISION_EXTRA_BODY_JSON \
+            -e PPAP_MODEL_VISION_REASONING_EFFORT \
             "ppap-psw-test:${PPAP_BUILD_SHA}" \
             pytest tests/corpus/psw -vv --durations=25 -o faulthandler_timeout=120 --junitxml=/ci-report/junit.xml
 

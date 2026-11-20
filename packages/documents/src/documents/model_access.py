@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import SecretStr
@@ -49,27 +49,14 @@ class ModelAccess:
     # "platform" or "tenant": who owns the key this call spends.
     source: str = "platform"
     revision: str = ""
+    # The reasoning effort this use sends, as configured; empty sends none and the model decides.
     reasoning_effort: str = ""
-    extra_body_json: str = field(default="", repr=False)
-
-    def extra_body(self) -> dict[str, Any]:
-        """Provider-specific request options owned by whoever configured this model."""
-        if not self.extra_body_json:
-            return {}
-        try:
-            value = json.loads(self.extra_body_json)
-        except ValueError:
-            raise ValueError("Model options must contain one JSON object") from None
-        if not isinstance(value, dict):
-            raise ValueError("Model options must contain one JSON object")
-        return value
 
     def identity(self) -> dict[str, str]:
         """Opaque execution identity: never a credential or a private endpoint URL."""
-        options = self.extra_body()
         revision = self.revision
-        if options or self.reasoning_effort:
-            revision = hashlib.sha256(json.dumps([revision, options, self.reasoning_effort], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if self.reasoning_effort:
+            revision = hashlib.sha256(json.dumps([revision, {}, self.reasoning_effort], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         return {
             "source": self.source,
             "provider": self.provider,
@@ -92,37 +79,21 @@ def _env(name: str) -> str:
     return os.environ.get(name, "").strip()
 
 
-def effective_vision_extra_body(raw: str) -> dict[str, Any]:
-    """The platform OCR parameter default shared by requests and policy hashes."""
-    defaults: dict[str, Any] = {"reasoning": {"effort": "none"}}
-    raw = raw.strip()
-    if not raw:
-        return defaults
-    try:
-        value = json.loads(raw)
-    except ValueError:
-        raise ValueError("PPAP_MODEL_VISION_EXTRA_BODY_JSON must contain one JSON object") from None
-    if not isinstance(value, dict):
-        raise ValueError("PPAP_MODEL_VISION_EXTRA_BODY_JSON must contain one JSON object")
-    return {**defaults, **value}
-
-
 def platform_model_access(purpose: ModelPurpose) -> ModelAccess:
     """The platform model for one use, read from this process's deployment configuration."""
     isolated = (_env("PPAP_PROFILE") or "isolated-dev") == "isolated-dev"
     text_url = _env("PPAP_MODEL_TEXT_BASE_URL") or (ISOLATED_DEV_LLM_BASE_URL if isolated else "")
     text_model = _env("PPAP_MODEL_TEXT_MODEL") or (ISOLATED_DEV_LLM_MODEL if isolated else "")
     if purpose == "text":
-        base_url, model, key, effort, extra = text_url, text_model, _env("PPAP_MODEL_TEXT_API_KEY"), _env("PPAP_MODEL_TEXT_REASONING_EFFORT"), ""
+        base_url, model, key, effort = text_url, text_model, _env("PPAP_MODEL_TEXT_API_KEY"), _env("PPAP_MODEL_TEXT_REASONING_EFFORT")
     elif purpose == "vision":
-        base_url, model, key, effort = _env("PPAP_MODEL_VISION_BASE_URL"), _env("PPAP_MODEL_VISION_MODEL"), _env("PPAP_MODEL_VISION_API_KEY"), ""
-        extra = json.dumps(effective_vision_extra_body(_env("PPAP_MODEL_VISION_EXTRA_BODY_JSON")), sort_keys=True)
+        base_url, model, key, effort = _env("PPAP_MODEL_VISION_BASE_URL"), _env("PPAP_MODEL_VISION_MODEL"), _env("PPAP_MODEL_VISION_API_KEY"), _env("PPAP_MODEL_VISION_REASONING_EFFORT")
     elif purpose == "coding":
         overridden = bool(_env("PPAP_MODEL_CODING_BASE_URL") or _env("PPAP_MODEL_CODING_MODEL"))
         base_url = _env("PPAP_MODEL_CODING_BASE_URL") if overridden else text_url
         model = _env("PPAP_MODEL_CODING_MODEL") if overridden else text_model
         key = _env("PPAP_MODEL_CODING_API_KEY") if overridden else _env("PPAP_MODEL_TEXT_API_KEY")
-        effort, extra = _env("PPAP_MODEL_CODING_REASONING_EFFORT"), ""
+        effort = _env("PPAP_MODEL_CODING_REASONING_EFFORT")
     else:
         raise ModelUnavailable()
     # The identity depends only on non-secret configuration, so every process agrees on it
@@ -130,7 +101,7 @@ def platform_model_access(purpose: ModelPurpose) -> ModelAccess:
     if not base_url or not model:
         raise ModelUnavailable("platform_model_unconfigured")
     revision = hashlib.sha256(json.dumps({"purpose": purpose, "model": model, "base_url": base_url}, sort_keys=True).encode()).hexdigest()
-    return ModelAccess(api_key=SecretStr(key), model=model, base_url=base_url, source="platform", revision=revision, reasoning_effort=effort, extra_body_json=extra)
+    return ModelAccess(api_key=SecretStr(key), model=model, base_url=base_url, source="platform", revision=revision, reasoning_effort=effort)
 
 
 def model_access_scoped() -> bool:

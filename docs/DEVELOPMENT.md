@@ -48,7 +48,7 @@
 
 - 原生 Excel、PDF 文字和可靠表格优先。非扫描 PDF 的表格审核先走 PDF→Excel，保留原 PDF SHA、页码、单元格和区域映射；没有可靠转换或页面未覆盖时，不能退到 OCR 猜表格并报告通过。空的 OCR 结果不证明没有内容。
 - 印章、签字、实际勾选、照片及复杂图形事实使用原图和专用 OCR 模型。PSW、V4、检具、尺寸和通用图像规则复用同一事实入口；专属规则用代码判定，通用规则将可定位观察交给文本语义检查。
-- `PPAP_MODEL_TEXT_*` 是文本配置。`PPAP_MODEL_VISION_API_KEY`、`PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_MODEL` 是独立 OCR 配置，缺少时不能借用文本配置。OCR 事实提取默认使用 `reasoning.effort=none`（关闭推理）；推理强度与输出上限是能力约束，不保证服务必定成功。可选 `PPAP_MODEL_VISION_EXTRA_BODY_JSON` 只给 OCR；显式 `reasoning` 原样优先，实际参数进入配置摘要。Secret 仅通过现有进程环境注入，不写日志。
+- `PPAP_MODEL_TEXT_*` 是文本配置。`PPAP_MODEL_VISION_API_KEY`、`PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_MODEL` 是独立 OCR 配置，缺少时不能借用文本配置。三组各有推理强度 `PPAP_MODEL_{TEXT,VISION,CODING}_REASONING_EFFORT`，代码不设默认；部署配置中 OCR 为 `none`（关闭推理，所选模型须支持，grok 最低只到 `low`），文本为 `low`，Deep 复核为 `medium`。强度进入配置摘要；推理强度与输出上限是能力约束，不保证服务必定成功。Secret 仅通过现有进程环境注入，不写日志。
 - OCR 复用 `documents.ocr.client` 的 OpenAI Responses 调用，`store=False`、严格 schema、单次 HTTP connect/read/write/pool timeout 20 秒、零自动重试；没有整页或整份文件的总墙钟预算。持续接收数据可能超过 20 秒。视觉事实每次最多 4096 tokens，包含推理与可见 JSON；截断或空白结果为技术失败，不解析残缺证据。
 - 同轮同源页及同组事实复用成功/失败回执。缓存绑定原件、原页、模型/端点与提取配置；原件或配置改变不能覆盖冻结依据。局部未知保留来源，不抹除其余可靠原生内容。
 - 扫描 PDF 优先级低，当前不自动做整份表格转录或多页补格。没有可靠原生表格时明确返回无法检查；仍可由具体条款请求指定页/区域的视觉事实。不要为补齐工作簿触发整份 OCR。
@@ -162,7 +162,7 @@ Key 只从标准输入读取，不打印。保存前先用该 Key 完成一次�
 
 普通模型请求（文件识别、规则提取、规则匹配、文字证据、视觉事实）统一经 `documents.ai.run_json`，底层为 PydanticAI 的 OpenAI Responses 模型：文本用 Prompted JSON 输出，视觉用原生 JSON Schema；Codex 端点（`/backend-api/codex`）以流式读取。单次调用最多一次输出校正，不做传输重试，失败只返回代码（`timeout`、`invalid_output`、`provider_status`、`request_failed`）。Schema 合法不等于业务正确，PPAP 仍执行原有业务校验，未知不得 PASS。Token 用量只在 provider 回报时记录，缺失记为未知，不影响结果有效性。
 
-Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key。网关按冻结身份为每个请求选模型：Pi 的请求用编码模型，Suite 程序中的文本与视觉调用分别用冻结的文本、视觉模型，并补上部署选项（如视觉 `reasoning.effort=none`）；配置了推理强度的用途以配置为准，Pi 自带的强度会被替换，所以复核强度由 `PPAP_MODEL_CODING_REASONING_EFFORT` 决定。每个 Attempt 只有一个请求次数熔断 `PPAP_DEEP_MODEL_MAX_REQUESTS`（默认 200），用于停止失控循环：触发后按资源上限结束。没有累计 Token/Turn 预算，缺少 usage 回执不拒绝有效结果；墙钟时限、容器资源限制与取消保持不变。SDK 可对瞬时错误做少量重试，由请求熔断兜底。
+Deep（Pi）只通过本地网关取得短期 Grant，Guest 内没有真实 Key。Guest 自己写完整请求：Grant 给出各用途冻结的模型名，以及文本、视觉的推理强度；Pi 的复核强度是执行策略的 `PPAP_MODEL_CODING_REASONING_EFFORT`，由宿主写进 Grant。网关不看用途、不改请求：请求的模型名必须是本次冻结的模型之一，网关按模型名找到它的地址和 Key，原样转发。每个 Attempt 只有一个请求次数熔断 `PPAP_DEEP_MODEL_MAX_REQUESTS`（默认 200），用于停止失控循环：触发后按资源上限结束。没有累计 Token/Turn 预算，缺少 usage 回执不拒绝有效结果；墙钟时限、容器资源限制与取消保持不变。SDK 可对瞬时错误做少量重试，由请求熔断兜底。
 
 ## 自定义规则与 Suite
 

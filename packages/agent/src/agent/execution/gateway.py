@@ -102,14 +102,23 @@ class Grants:
                 self.bindings.pop(execution_id, None)
 
     def identity(self, token: str) -> dict[str, str]:
-        """The non-secret grant fields the guest needs: one model per use, never a key."""
+        """The non-secret grant fields the guest needs to write its own requests: each use's model and effort, never a key."""
         with self.lock:
             lease = self.leases.get(hashlib.sha256(token.encode()).hexdigest())
             if lease is None:
                 raise ValueError("Invalid execution grant")
             granted = {"model": lease.models["coding"], "text_model": lease.models["text"], "vision_model": lease.models["vision"]}
             granted.update({key: lease.identity[key] for key in ("provider", "revision", "deployment") if key in lease.identity})
-            return granted
+            resolver = lease.access_resolver
+        if resolver is not None:
+            for purpose in ("text", "vision"):
+                try:
+                    effort = resolver(purpose).reasoning_effort
+                except ModelUnavailable:
+                    effort = ""
+                if effort:
+                    granted[f"{purpose}_effort"] = effort
+        return granted
 
     def issue(self, execution_id: UUID) -> str:
         with self.lock:
@@ -142,11 +151,11 @@ class Grants:
             lease = self.leases.get(hashlib.sha256(token.encode()).hexdigest())
             if lease is None or lease.expires <= time.monotonic() or lease.in_flight or lease.budget_exhausted:
                 raise ValueError("Invalid execution grant")
-            # The grant selects the paid model. Text and vision are reachable only by their frozen
-            # names; every other name, Pi's alias included, selects coding. Pi never sends a real
-            # name, so a model frozen for several uses still reaches each with its own options.
-            purpose: ModelPurpose = next((name for name in ("text", "vision") if body.get("model") == lease.models[name]), "coding")
-            body["model"] = lease.models[purpose]
+            # Only a model frozen for this operation is sent. One model name has one endpoint and
+            # key, so any use that froze the name finds them; the request itself is not changed.
+            purpose = next((name for name in PURPOSE_ORDER if body.get("model") == lease.models[name]), None)
+            if purpose is None:
+                raise ValueError("Model outside the grant")
             if lease.requests_left <= 0:
                 lease.budget_exhausted = True
                 raise RequestLimitReached("Model request limit reached")
@@ -376,13 +385,6 @@ class Handler(BaseHTTPRequestHandler):
                 if access.model != lease.models[purpose] or url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
                     raise ModelUnavailable()
                 provider_key = access.api_key.get_secret_value()
-                # Deployment options (reasoning effort, provider routing) the guest cannot know.
-                # A configured effort is the deployment's choice and wins over what the guest sent.
-                if access.reasoning_effort:
-                    requested = body.get("reasoning")
-                    body["reasoning"] = {**(requested if isinstance(requested, dict) else {}), "effort": access.reasoning_effort}
-                for key, value in access.extra_body().items():
-                    body.setdefault(key, value)
             else:
                 url = self.server.upstream
                 selected_key = lease.provider_key or self.server.provider_key
