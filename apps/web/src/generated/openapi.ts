@@ -1141,6 +1141,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integrations/feishu/jsapi-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Feishu Jsapi Config */
+        get: operations["feishu_jsapi_config_integrations_feishu_jsapi_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/integrations/feishu/root-folder": {
         parameters: {
             query?: never;
@@ -3661,6 +3678,20 @@ export interface components {
             };
             /** Prompt */
             prompt: string;
+        };
+        /**
+         * FeishuJsapiConfig
+         * @description Arguments for window.h5sdk.config on the signed page; valid for about 10 minutes.
+         */
+        FeishuJsapiConfig: {
+            /** App Id */
+            app_id: string;
+            /** Nonce Str */
+            nonce_str: string;
+            /** Signature */
+            signature: string;
+            /** Timestamp */
+            timestamp: number;
         };
         /** FileValidationJob */
         FileValidationJob: {
@@ -7966,6 +7997,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FileVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    feishu_jsapi_config_integrations_feishu_jsapi_config_get: {
+        parameters: {
+            query?: {
+                url?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeishuJsapiConfig"];
                 };
             };
             /** @description Validation Error */

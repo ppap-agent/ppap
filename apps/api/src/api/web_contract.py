@@ -1150,6 +1150,15 @@ class AuditTaskFile(AuditRecognitionFile):
     display_info: NotRequired[AuditFileDisplayInfo | None]
 
 
+class FeishuJsapiConfig(TypedDict):
+    """Arguments for window.h5sdk.config on the signed page; valid for about 10 minutes."""
+
+    app_id: str
+    timestamp: int
+    nonce_str: str
+    signature: str
+
+
 class AuditShareTargetReference(TypedDict):
     id: str
     kind: Literal["user", "group"]

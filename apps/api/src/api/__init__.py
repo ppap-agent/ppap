@@ -78,6 +78,7 @@ from product.writeback_targets import public_target
 
 from api import web_contract as wc
 from api.audit_routes import register_audit_routes
+from api.feishu_jsapi_routes import register_feishu_jsapi_routes
 from api.mcp_confirmation import require_approved_source
 from api.meego_routes import register_meego_routes
 from api.notifications import run_task_notifications
@@ -1013,6 +1014,7 @@ def create_app(
     register_template_routes(app, store, session_of, http, settings)
     register_meego_routes(app, store, meego_store, session_of, http, settings)
     register_sharing_routes(app, store, session_of, http, settings)
+    register_feishu_jsapi_routes(app, store, session_of, http, settings)
     wc.add_ui_contract(app)
     if settings.mcp_enabled:
         from api.mcp_server import install_mcp

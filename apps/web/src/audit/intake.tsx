@@ -24,6 +24,7 @@ import {FileIcon, FileName} from '../journey/file-name'
 import {FileTypeBadge} from './file-type-badge'
 import {AccountMenu, useAccess} from '../journey/access'
 import {openedInFeishu} from '../hostLogin'
+import {pickFeishuDocuments} from '../feishu-native'
 import {FeishuPicker, FeishuFolderPicker, type DrivePickerSource} from './feishu-picker'
 import {checkerSuiteUnavailable, confirmationScope, submittedCount, suiteAdmissionBlocks, useTaskAcceptance, zeroTargetNote, type AuditAcceptanceAdapter} from './task-acceptance'
 import {ruleChoicesFor, ruleCustomer, useTaskRecognition, type AuditRecognitionAdapter} from './task-recognition'
@@ -644,7 +645,15 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (!customerReady || confirmationLocked || inputLocked || recognizing || workbench) return
     uploads.add(picked.map(file => ({kind: 'feishu', file}))); setDriveOpen(false); setError('')
   }
-  const driveButton = adapter.drive && <Button variant="outline" disabled={inputLocked || recognizing || !customerReady} onClick={event => {driveTrigger.current = event.currentTarget; setDriveOpen(true)}}><Icon icon={iconCloud} aria-hidden="true"/>从飞书云文档选择</Button>
+  // Inside Feishu, Feishu's own cloud document picker; the web picker when it is not available here.
+  async function chooseDrive(trigger: HTMLButtonElement) {
+    driveTrigger.current = trigger
+    const picked = inFeishu ? await pickFeishuDocuments() : null
+    if (!picked) {setDriveOpen(true); return}
+    if (picked.files.length) receiveDrive(picked.files)
+    if (picked.skipped.length) setError(`${picked.skipped.join('、')} 不能审核：仅支持飞书文档、表格、多维表格，以及 Excel、Word、PDF 文件。`)
+  }
+  const driveButton = adapter.drive && <Button variant="outline" disabled={inputLocked || recognizing || !customerReady} onClick={event => void chooseDrive(event.currentTarget)}><Icon icon={iconCloud} aria-hidden="true"/>从飞书云文档选择</Button>
   function remove(id: string, reason?: string) {
     if (confirmationLocked || inputLocked || recognizing || workbench) return
     uploads.rows.filter(row => row.receipt.file?.id === id).forEach(row => uploads.remove(row.id))

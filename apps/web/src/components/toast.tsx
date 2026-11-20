@@ -1,6 +1,7 @@
 import {useEffect, useState} from 'react'
 import {iconCheck} from './icons'
 import {Icon} from './ui/icon'
+import {feishuToast} from '../feishu-native'
 
 // A brief confirmation (Feishu message: white, top centre, a green check) for actions that succeeded; failures stay inline.
 type Toast = {id: number; text: string}
@@ -8,8 +9,11 @@ const listeners = new Set<(toast: Toast) => void>()
 let sequence = 0
 
 export function showToast(text: string) {
-  const toast = {id: ++sequence, text}
-  listeners.forEach(listener => listener(toast))
+  void feishuToast(text).then(shown => {
+    if (shown) return
+    const toast = {id: ++sequence, text}
+    listeners.forEach(listener => listener(toast))
+  })
 }
 
 export function Toaster() {

@@ -8,6 +8,8 @@ import {Label} from '../components/ui/label'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {targetKey, type AuditSharingAdapter, type ShareTarget} from './sharing-contract'
+import {chooseFeishuTargets} from '../feishu-native'
+import {isFeishuHost} from '../hostLogin'
 
 /** Organization targets are not Drive files. Eligibility comes from the service. */
 export function ShareTargets({adapter, value, onChange, onReadyChange}: {adapter: Pick<AuditSharingAdapter, 'listTargets'>; value: ShareTarget[]; onChange: (targets: ShareTarget[]) => void; onReadyChange: (ready: boolean) => void}) {
@@ -60,6 +62,25 @@ export function ShareTargets({adapter, value, onChange, onReadyChange}: {adapter
     const next = checked ? [...selected.current, target] : selected.current.filter(row => targetKey(row) !== targetKey(target))
     selected.current = next; onChange(next)
   }
+  // Inside Feishu its own picker chooses; eligibility still comes from the service's directory.
+  const native = isFeishuHost()
+  async function pickInFeishu() {
+    const picked = await chooseFeishuTargets(kind)
+    if (picked === null) {setNotice('飞书选择器暂不可用，请在下方搜索。'); return}
+    const run = ++epoch.current
+    setLoading(true); setNotice('')
+    const resolved: ShareTarget[] = []
+    for (const row of picked) {
+      if (selected.current.some(target => targetKey(target) === targetKey(row))) continue
+      const pending = {...row, organization_id: organizationId.current, eligibility: 'unknown' as const, reason: '接收资格待确认，请点“核对”。'}
+      try {
+        const page = await adapter.listTargets(row.display_name, row.kind)
+        resolved.push(page.targets.find(target => targetKey(target) === targetKey(row) && target.organization_id === organizationId.current) ?? pending)
+      } catch {resolved.push(pending)}
+    }
+    if (epoch.current !== run) return
+    selected.current = [...selected.current, ...resolved]; onChange(selected.current); setLoading(false)
+  }
   function verify(target: ShareTarget) {
     setQuery(target.display_name)
     if (kind !== target.kind) setKind(target.kind)
@@ -70,6 +91,7 @@ export function ShareTargets({adapter, value, onChange, onReadyChange}: {adapter
     {notice && <p role="status">{notice}</p>}
     {value.length > 0 && <ItemGroup aria-label="已选接收人">{value.map(target => <Item role="listitem" size="xs" key={targetKey(target)}><ItemContent><span>{target.display_name}</span>{target.reason && <p className="text-xs text-muted-foreground">{target.reason}</p>}</ItemContent>{target.eligibility !== 'eligible' && <Button variant="outline" size="sm" disabled={loading} aria-label={`核对 ${target.display_name}`} onClick={() => verify(target)}>核对</Button>}<Button variant="ghost" size="sm" aria-label={`移除 ${target.display_name}`} onClick={() => toggle(target, false)}>移除</Button></Item>)}</ItemGroup>}
     <Tabs value={kind} onValueChange={value => setKind(value as ShareTarget['kind'])}><TabsList><TabsTrigger value="user">人员</TabsTrigger><TabsTrigger value="group">群组</TabsTrigger></TabsList><TabsContent value={kind}><div className="space-y-3">
+    {native && <Button variant="outline" disabled={loading} onClick={() => void pickInFeishu()}>{kind === 'user' ? '从飞书选择人员' : '从飞书选择群组'}</Button>}
     <form role="search" aria-label="搜索分享目标" className="flex gap-2" onSubmit={event => {event.preventDefault(); void load()}}><Input aria-label="搜索人员或群组" placeholder={kind === 'user' ? '搜索飞书用户' : '搜索飞书群组'} value={query} onChange={event => setQuery(event.target.value)}/><Button type="submit" variant="outline" disabled={loading}>搜索</Button></form>
     {error && <Alert variant="destructive"><AlertTitle>无法读取接收人</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" size="sm" onClick={() => {const last = retry.current; if (last) void load(last.pageToken, last.lookup)}}>重新读取目标</Button></AlertDescription></Alert>}
     {loading && <ReadSkeleton label="正在读取组织目录…" kind={targets.length ? 'inline' : 'list'} rows={3}/>}
