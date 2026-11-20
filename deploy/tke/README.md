@@ -203,7 +203,7 @@ python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 | 级 | 内容 | 大小 | 输入 |
 |---|---|---|---|
 | `system` | Debian 系统包（LibreOffice、中文字体）与 uv | 约 300MB | Dockerfile 的 `system` 阶段 |
-| `deps` | Python 依赖，建在 `system` 上 | 约 180MB | `deps` 阶段、`pyproject.toml`、`uv.lock` |
+| `deps` | Python 依赖与转换沙箱，建在 `system` 上 | 约 180MB | `converter-builder`、`deps` 阶段，`pyproject.toml`、`uv.lock`、沙箱 C 源码 |
 | `deep-base` | Node 与 Pi，建在 `deps` 上 | 约 70MB | `pi`、`deep-base` 阶段与 `deploy/deep/` 的 Node、Pi 文件 |
 
 每级摘要包含下一级的摘要，所以某级变了，它和上面的级重建，下面的级直接引用、不再上传。阶段里的注释和源码阶段不算输入。正式构建把 API/Worker 建在 `deps`、Deep 建在 `deep-base` 上，只构建、推送源码层（香港构建集群上传到 TCR 约 0.2MB/s）。
@@ -212,7 +212,7 @@ python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 - 任一级记录与源码输入不一致时，`build-current.py` 和流水线都拒绝正式构建。
 - 本地与 GitHub CI 仍按 Dockerfile 内的阶段原地构建（`PPAP_SYSTEM_BASE`、`PPAP_DEPS_BASE`、`PPAP_APP_BASE` 的默认值），不需要镜像仓库。
 
-构建保持四组件统一源码 SHA，一次 Bake 共享步骤并按依赖调度；不增加按文件选择组件的发布分支。API、Worker、Deep 出自同一个 `deploy/app/Dockerfile`：基础镜像（按 digest 固定）→ uv → 系统包（`system`）→ 第三方依赖（`deps`，只随 `uv.lock` 变）→ Deep 的 Node/Pi（`deep-base`，只随 `deploy/deep` 的锁文件和 runner 变）→ 源码。单独阶段编译的产物（转换沙箱）只放在依赖层之上，重新编译不会让下面的大层失效。只改源码的发布只重推源码层。依赖校验和打包后的 import 检查继续保留。
+构建保持四组件统一源码 SHA，一次 Bake 共享步骤并按依赖调度；不增加按文件选择组件的发布分支。API、Worker、Deep 出自同一个 `deploy/app/Dockerfile`：基础镜像（按 digest 固定）→ uv → 系统包（`system`）→ 第三方依赖（`deps`，只随 `uv.lock` 变）→ Deep 的 Node/Pi（`deep-base`，只随 `deploy/deep` 的锁文件和 runner 变）→ 源码。转换沙箱在 `deps` 级编译放入（流水线的 inline 缓存不保存中间阶段，放在源码阶段会让每次发布都重装 gcc），只随它的 C 源码变。只改源码的发布只重推源码层。依赖校验和打包后的 import 检查继续保留。
 
 云效公共 Runner 使用原生 Docker 驱动和 inline 缓存，导出到现有各组件的 `:build-cache` 镜像；缓存 tag 不能作为部署 pin。该节点实际拒绝 `docker-container` BuildKit 启动（`flow not support`），因此不启用依赖该驱动的 registry `mode=max` 中间阶段缓存，也不为缓存新增构建服务。中间阶段（转换沙箱编译、Pi 的 npm 安装、Web 的 pnpm 安装）每次重新执行，但它们的产物都放在依赖层之上，不会引起大层重推。镜像站或仓库连接中断时，构建在流水线内最多重试两次，已完成的步骤走缓存。临时 Runner 的本地 uv cache mount 不保证跨运行持久化；实际缓存收益由构建步骤耗时确认。
 

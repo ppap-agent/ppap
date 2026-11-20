@@ -381,6 +381,7 @@ def test_a_base_level_changes_only_with_its_own_inputs_or_a_level_below():
     edit = lambda old, new: {"deploy/app/Dockerfile": dockerfile.replace(old, new, 1).encode()}  # noqa: E731
     assert changed(**edit("fonts-noto-cjk", "fonts-noto-cjk fonts-noto")) == levels
     assert changed(**{"uv.lock": b"y"}) == ["deps", "deep-base"]
+    assert changed(**{"packages/documents/native/legacy_doc_sandbox.c": b"y"}) == ["deps", "deep-base"]
     assert changed(**{"deploy/deep/package-lock.json": b"y"}) == ["deep-base"]
     # Source stages and comments are not base inputs.
     assert changed(**edit("COPY apps/api /app/apps/api", "COPY apps/api /app/apps/api/")) == []

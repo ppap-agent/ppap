@@ -1,7 +1,8 @@
 """The shared base images, in three levels, and their build on the Yunxiao runner.
 
     system     Debian system packages (LibreOffice, CJK fonts) and uv   ~300 MB, changes rarely
-    deps       Python dependencies from uv.lock, on system              ~180 MB
+    deps       Python dependencies from uv.lock and the legacy-document
+               sandbox binary, on system                                ~180 MB
     deep-base  Node and the Pi runner, on deps                          ~70 MB
 
 Releases build only source layers on the recorded images (deploy/tke/base-images.json). Each level
@@ -27,7 +28,7 @@ RECORD = "deploy/tke/base-images.json"
 # (level, Dockerfile stages, files, build argument that receives the level below)
 LEVELS = (
     ("system", ("system",), (), None),
-    ("deps", ("deps",), ("pyproject.toml", "uv.lock"), "PPAP_SYSTEM_BASE"),
+    ("deps", ("converter-builder", "deps"), ("pyproject.toml", "uv.lock", "packages/documents/native/legacy_doc_sandbox.c"), "PPAP_SYSTEM_BASE"),
     (
         "deep-base",
         ("pi", "deep-base"),

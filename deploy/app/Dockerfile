@@ -1,7 +1,7 @@
 # API, Worker and Deep images, one graph. Layers go from what changes least to what changes every
 # release: base image and system packages, third-party dependencies, fixed tools, then source.
-# Anything built in a separate stage enters the final images only above the dependency layers, so a
-# rebuilt helper never invalidates (and re-pushes) the large layers below it.
+# Helpers built in a separate stage enter at the base level whose inputs they belong to, so a release
+# never rebuilds them and a rebuilt helper never invalidates the large layers below that level.
 # The three base levels (system, deps, deep-base) are built and recorded by deploy/tke/bases.py;
 # releases pass the recorded images here. Without them, the stages below are built in place.
 ARG PPAP_SYSTEM_BASE=system
@@ -81,6 +81,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     fi; \
     UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 uv sync --frozen --no-dev --no-editable --no-install-workspace; \
     rm -f /tmp/ppap-requirements.txt
+# The legacy-document sandbox changes only with its C source; built here, a release never reinstalls gcc
+# (the runner's inline cache keeps only final-image layers, not the builder stage).
+COPY --from=converter-builder /usr/local/bin/ppap-local-converter-sandbox /usr/local/bin/
 
 # Deep's fixed tools sit on the dependency layers, below the source: a source change rebuilds none of them.
 FROM ${PPAP_DEPS_BASE} AS deep-base
@@ -93,7 +96,6 @@ ENV PI_OFFLINE=1 PI_TELEMETRY=0
 
 # The application: API and Worker on the dependency layers, Deep on deep-base. Same source either way.
 FROM ${PPAP_APP_BASE} AS app
-COPY --from=converter-builder /usr/local/bin/ppap-local-converter-sandbox /usr/local/bin/
 COPY packages /app/packages
 COPY apps/api /app/apps/api
 COPY apps/worker /app/apps/worker
