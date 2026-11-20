@@ -1166,6 +1166,30 @@ class AuthStore:
             },
         }
 
+    def _kept_reaudit_targets(self, conn, principal: Principal, predecessor_id: str | None, rows: list[tuple[str, str, str | None]]) -> dict:
+        """Targets whose person kept a superseded rule version get the previous round's frozen rules and program.
+
+        rows are (file_version_id, source_file_version_id, rule_version_id); only the source's own rule is kept.
+        """
+        if not predecessor_id:
+            return {}
+        current = {rule["id"] for rule in latest_rule_versions(self._list_rules(conn, principal.tenant_id))}
+        rows = [row for row in rows if row[2] and row[2] not in current]
+        if not rows:
+            return {}
+        from product.store.suites import SuiteStore
+
+        source = self._reaudit_source(conn, principal, predecessor_id)
+        snapshot = SuiteStore(self.settings, self.objects, self.role).read_snapshot(predecessor_id, principal.tenant_id, conn=conn)
+        frozen = {target.file_version_id: target for target in snapshot.targets} if snapshot else {}
+        kept = {}
+        for vid, source_vid, rule_id in rows:
+            if source["inputs"].get(source_vid, {}).get("rule_id") != rule_id:
+                continue
+            # None: the previous round froze no program for it, so the kept version cannot run.
+            kept[vid] = (frozen[source_vid], snapshot.library_revision) if snapshot and source_vid in frozen else None
+        return kept
+
     @staticmethod
     def _reaudit_rule_options(rule: dict | None, all_rules: list[dict]) -> list[dict]:
         if not rule:
@@ -1197,6 +1221,8 @@ class AuthStore:
                 checked = self.latest_file_validation(principal, version.file_id, vid)
                 rule = material["rule"]
                 options = self._reaudit_rule_options(rule, all_rules)
+                origin = conn.execute("SELECT upload_request->'source' FROM product.file_versions WHERE id=%s AND tenant_id=%s", (vid, principal.tenant_id)).fetchone()
+                imported = origin[0] if origin and isinstance(origin[0], dict) and origin[0].get("provider") == "feishu" else None
                 files.append(
                     {
                         "file": version.public(),
@@ -1206,6 +1232,7 @@ class AuthStore:
                         **({"validation_id": checked["id"]} if checked else {}),
                         "match": None,
                         **({"preferred_rule_version_id": rule["id"], "rule_options": options} if rule else {"reference_only": True}),
+                        **({"feishu_file_token": imported["file_token"]} if imported and imported.get("file_token") else {}),
                     }
                 )
             return {"predecessor_id": predecessor_id, "customer_preference": source["customer_preference"], "files": files}
@@ -2617,11 +2644,23 @@ class AuthStore:
         from product.store.suites import freeze_selected_targets
 
         targets: list[FrozenTarget] = []
+        kept = self._kept_reaudit_targets(
+            conn,
+            principal,
+            task.get("predecessor_id"),
+            [
+                (file["file"]["id"], file.get("replacement_of_file_version_id") or file["file"]["id"], file["match"]["rule"]["id"])
+                for file in task["files"]
+                if (file.get("match") or {}).get("state") == "matched" and file["match"].get("rule")
+            ],
+        )
         for file in task["files"]:
             match = file.get("match") or {}
             if match.get("state") != "matched" or not match.get("rule"):
                 continue
             prepared = [{"role": "target", "file_version_id": file["file"]["id"], "rule_body": match["rule"]["body"]}]
+            if file["file"]["id"] in kept:
+                prepared[0]["kept_target"] = kept[file["file"]["id"]]
             try:
                 targets.extend(freeze_selected_targets(self, conn, principal.tenant_id, prepared, preparation=True))
             except (ValueError, KeyError):
@@ -4318,6 +4357,7 @@ class AuthStore:
         precheck_task_view: dict | None = None
         recognized_metadata: dict[str, dict] = {}
         recognized_types: dict[str, str | None] = {}
+        kept_sources: dict[str, str] = {}
         if source_draft_id:
             draft = conn.execute(
                 """
@@ -4349,6 +4389,7 @@ class AuthStore:
                 # The precheck freezes the task as confirmed, before unmatched files leave the audit.
                 precheck_task_view = task
                 selected = [row for row in task["files"] if row["selection"] == "selected"]
+                kept_sources = {row["file"]["id"]: row.get("replacement_of_file_version_id") or row["file"]["id"] for row in selected}
                 recognized_metadata = {row["file"]["id"]: dict((row.get("match") or {}).get("metadata") or {}) for row in selected}
                 recognized_types = {row["file"]["id"]: (row.get("match") or {}).get("document_type") for row in selected}
                 basis = expected_confirmation_basis_digest
@@ -4424,6 +4465,13 @@ class AuthStore:
             return cast(dict, self._round_public(conn, str(existing[0])))
         if source_draft_id and draft_status == DRAFT_ACCEPTED:
             raise ValueError("draft_already_accepted")
+        kept_rows = [
+            (item["file_version_id"], kept_sources[item["file_version_id"]], item["rule_version_id"]) for item in prepared if item["role"] == "target" and item["file_version_id"] in kept_sources
+        ]
+        kept = self._kept_reaudit_targets(conn, principal, predecessor_id, kept_rows)
+        for item in prepared:
+            if item["file_version_id"] in kept:
+                item["kept_target"] = kept[item["file_version_id"]]
         round_id = str(uuid.uuid4())
         from product.store.suites import SuiteStore, freeze_round_execution
 

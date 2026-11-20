@@ -6,6 +6,7 @@ import {createRoot} from 'react-dom/client'
 import {customerFullName, customerShortName, type RegisteredCustomer} from '../audit/customer-register'
 import {clauseObservation, pendingNote} from '../audit/result-projection'
 import {taskAddress} from '../audit/routes'
+import {newerRuleOf, ruleName, type RuleVersionChoice} from '../audit/reaudit-intent'
 import {conclusionLabel} from '../audit/status-labels'
 import {submittedCount} from '../audit/task-acceptance'
 import type {components} from '../generated/openapi'
@@ -19,6 +20,7 @@ type FileVersion = components['schemas']['FileVersion']
 type Job = components['schemas']['FileValidationJob']
 type Quota = components['schemas']['QuotaEstimate']
 type Summary = components['schemas']['AuditTaskSummary']
+type ReauditInputs = components['schemas']['AuditReauditInputs']
 type Primary = {label: string; disabled?: boolean; busy?: boolean; run?: () => void}
 
 class ApiError extends Error {
@@ -200,6 +202,9 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
   const [progress, setProgress] = useState('')
   const [skipped, setSkipped] = useState<string[]>([])
   const [failure, setFailure] = useState('')
+  // A re-audit carries each linked file's previous rule and the previous customer; null until read.
+  const [reaudit, setReaudit] = useState<ReauditInputs | null>(null)
+  const [ruleChoice, setRuleChoice] = useState<RuleVersionChoice>('newer')
   const seen = useRef<Set<string>>(new Set())
 
   const load = useCallback(async () => {
@@ -214,18 +219,26 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
   }, [call, doc])
   useEffect(() => {
     void load()
-    void call<{customer_preference: string | null}>('/audit-customers/default').then(value => setCustomer(value.customer_preference), () => setCustomer(null))
+    if (predecessor) {
+      void call<ReauditInputs>(`/rounds/${predecessor}/reaudit-inputs`).then(value => { setReaudit(value); setCustomer(value.customer_preference) }, cause => { setFailure(say(cause)); setCustomer(null) })
+    } else {
+      void call<{customer_preference: string | null}>('/audit-customers/default').then(value => setCustomer(value.customer_preference), () => setCustomer(null))
+    }
     // Until the register arrives (or if it cannot), a customer shows as recorded.
     void call<components['schemas']['AuditCustomerCatalog']>('/audit-customers').then(catalog => setCustomers(catalog.customers), () => undefined)
     return host.onDocumentChange?.(() => void load())
-  }, [call, host, load])
+  }, [call, host, load, predecessor])
+
+  // The same document link as last time keeps its previous rule; a linked file is matched by its Feishu token.
+  const previous = useMemo(() => new Map((reaudit?.files ?? []).flatMap(file => file.feishu_file_token ? [[file.feishu_file_token, file] as const] : [])), [reaudit])
+  const newerRules = [...new Set((links ?? []).filter(item => chosen.has(item.token)).flatMap(item => { const newer = previous.get(item.token) && newerRuleOf(previous.get(item.token)!); return newer ? [ruleName(newer)] : [] }))]
 
   const start = useCallback(async () => {
     if (!links) return
     setFailure(''); setSkipped([])
     try {
       const picked = links.filter(item => chosen.has(item.token))
-      const files: {file_version_id: string; validation_id: string; selection: 'selected'; removal_reason: null}[] = []
+      const files: components['schemas']['AuditRecognitionInput'][] = []
       const left: string[] = []
       for (const [index, item] of picked.entries()) {
         setProgress(`正在读取文件 ${index + 1}/${picked.length}…`)
@@ -239,7 +252,14 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
         const result = checked.result as {state?: string; reasons?: string[]} | null
         if (checked.status !== 'succeeded') throw new ApiError('validation_failed', 0)
         if (result?.state !== 'valid') { left.push(`${item.name}（${(result?.reasons ?? []).join('；') || '无法审核'}）`); continue }
-        files.push({file_version_id: version.id, validation_id: checked.id, selection: 'selected', removal_reason: null})
+        const before = previous.get(item.token)
+        const newer = before && newerRuleOf(before)
+        files.push({
+          file_version_id: version.id, validation_id: checked.id, selection: 'selected', removal_reason: null,
+          ...(before && before.file.id !== version.id ? {replacement_of_file_version_id: before.file.id} : {}),
+          ...(before?.reference_only ? {reference_only: true} : {}),
+          ...(before?.preferred_rule_version_id ? {preferred_rule_version_id: newer && ruleChoice === 'newer' ? newer.id : before.preferred_rule_version_id} : {}),
+        })
       }
       setSkipped(left)
       if (!files.length) return
@@ -252,10 +272,11 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
       setFailure(say(cause))
       notify('error', say(cause))
     } finally { setProgress('') }
-  }, [call, chosen, customer, doc, links, notify, onStarted, predecessor])
+  }, [call, chosen, customer, doc, links, notify, onStarted, predecessor, previous, ruleChoice])
 
   const count = links?.filter(item => chosen.has(item.token)).length ?? 0
-  useEffect(() => setPrimary({label: `开始识别（${count} 份）`, disabled: !count || customer === undefined, busy: Boolean(progress), run: () => void start()}), [count, customer, progress, setPrimary, start])
+  const reading = customer === undefined || Boolean(predecessor) && !reaudit
+  useEffect(() => setPrimary({label: `开始识别（${count} 份）`, disabled: !count || reading, busy: Boolean(progress), run: () => void start()}), [count, progress, reading, setPrimary, start])
 
   return (
     <section aria-label="选择要审核的文件" data-testid="addon-documents">
@@ -279,7 +300,17 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
           ))}
         </ul>
       )}
-      {customer !== undefined && <p className="text-muted-foreground text-xs">审核客户：{customer ? <span title={customerFullName(customers, customer)}>{customerShortName(customers, customer)}</span> : '自动识别'}（企业默认）</p>}
+      {newerRules.length > 0 && (
+        <section aria-labelledby="addon-rule-update" className="mb-2 rounded-md border border-primary-line bg-primary-soft px-3 py-2">
+          <h3 id="addon-rule-update" className="font-semibold">审核规则已更新</h3>
+          <p className="text-xs">{newerRules.join('、')}在上次审核后有新版本。</p>
+          <div role="radiogroup" aria-label="本次使用的规则版本" className="mt-1.5 flex gap-4 [&_label]:flex [&_label]:cursor-pointer [&_label]:items-center [&_label]:gap-1.5">
+            <label><input type="radio" name="addon-rule-version" checked={ruleChoice === 'newer'} disabled={Boolean(progress)} onChange={() => setRuleChoice('newer')} />使用新版本</label>
+            <label><input type="radio" name="addon-rule-version" checked={ruleChoice === 'original'} disabled={Boolean(progress)} onChange={() => setRuleChoice('original')} />沿用上次版本</label>
+          </div>
+        </section>
+      )}
+      {!reading && <p className="text-muted-foreground text-xs">审核客户：{customer ? <span title={customerFullName(customers, customer)}>{customerShortName(customers, customer)}</span> : '自动识别'}{predecessor ? '（与上次审核相同）' : '（企业默认）'}</p>}
       {onCancel && <button type="button" className="text-primary underline-offset-4 hover:underline disabled:opacity-50" disabled={Boolean(progress)} onClick={onCancel}>返回上一次审核</button>}
     </section>
   )

@@ -1282,10 +1282,15 @@ class AuditRecognitionRequest(TypedDict):
     expected_draft_revision: NotRequired[int]
 
 
+class AuditReauditFile(AuditRecognitionFile):
+    # The Feishu document this file was imported from, so the Docs Add-on can tell which link it is.
+    feishu_file_token: NotRequired[str]
+
+
 class AuditReauditInputs(TypedDict):
     predecessor_id: str
     customer_preference: str | None
-    files: list[AuditRecognitionFile]
+    files: list[AuditReauditFile]
 
 
 class AuditRecognitionRead(TypedDict):

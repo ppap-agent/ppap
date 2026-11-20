@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import uuid
 from contextlib import nullcontext
@@ -256,6 +257,38 @@ def programless_suite_keys(conn, tenant_id: str, suite_keys) -> set[str]:
     return {key for key in keys if programs.get(key) in {None, content_digest(UNIMPLEMENTED_CHECKER_SOURCE)}}
 
 
+def _describe_target(conn, suites, tenant_id: str, item: dict, suite, target: FrozenTarget, *, accepted: bool, verification_status: str, force_unverified: bool, samples_not_rerun: bool) -> None:
+    rules = json.loads(suite.files["rules.json"])
+    appendix = json.loads(suite.files.get("appendix.json", b"[]"))
+    # Preparation remains inspectable even when formal admission needs fresh
+    # proof. Mirror freeze_execution's policy, including explicit risk
+    # adoption; library drift alone is a notice.
+    item["suite_admission"] = {
+        "state": "ready" if accepted else "validation_required",
+        "suite_key": suite.revision.suite_key,
+        "suite_revision_id": suite.revision.id,
+        "verification_status": verification_status,
+        "force_unverified": force_unverified,
+        "samples_not_rerun": samples_not_rerun,
+    }
+    # Existing Round/report readers retain actual accepted text and the new
+    # explicit clause mapping, without deriving coverage from method order.
+    item["rule_body"] = {**rules, "suite_key": suite.revision.suite_key, "appendix": appendix}
+    from product.store.rule_impact import published_rule_update
+
+    rule_update = published_rule_update(conn, suites, tenant_id, suite)
+    item["rule_execution"] = {
+        "rule_version_mismatch": rule_update is not None,
+        "latest_rule_suite_revision_id": rule_update["target_revision_id"] if rule_update else None,
+        "mode": "checker_core",
+        "suite_revision_id": suite.revision.id,
+        "suite_revision_number": suite.revision.revision_number,
+        "binding": target.binding.to_dict(),
+        "verification": target.verification,
+        "samples_not_rerun": target.samples_not_rerun,
+    }
+
+
 def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *, preparation: bool = False) -> tuple[FrozenTarget, ...]:
     """Resolve the same adopted immutable Suite for preparation and acceptance.
 
@@ -278,6 +311,16 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
             key = f"{body['customers'][0]}:{body['preset_key']}"
         if not key:
             raise ValueError("checker_suite_required")
+        if "kept_target" in item:
+            # Keeping the previous rule version re-runs exactly the rules and program the previous round froze.
+            if item["kept_target"] is None:
+                raise ValueError("reaudit_rule_unavailable")
+            previous, previous_library = item["kept_target"]
+            suite = suites.resolve_suite(previous.suite_revision_id, tenant_id, conn=conn)
+            target = dataclasses.replace(previous, file_version_id=item["file_version_id"], samples_not_rerun=previous.samples_not_rerun or previous_library != library)
+            targets.append(target)
+            _describe_target(conn, suites, tenant_id, item, suite, target, accepted=True, verification_status=target.verification, force_unverified=False, samples_not_rerun=target.samples_not_rerun)
+            continue
         selection = current_selection(conn, tenant_id, key)
         suite = suites.resolve_suite(selection["revision_id"], tenant_id, conn=conn)
         rules = json.loads(suite.files["rules.json"])
@@ -307,33 +350,8 @@ def freeze_selected_targets(store, conn, tenant_id: str, prepared: list[dict], *
             allow_unverified=preparation or accepted,
         )
         targets.append(target)
-        # Preparation remains inspectable even when formal admission needs fresh
-        # proof. Mirror freeze_execution's policy, including explicit risk
-        # adoption; library drift alone is a notice.
-        item["suite_admission"] = {
-            "state": "ready" if accepted else "validation_required",
-            "suite_key": suite.revision.suite_key,
-            "suite_revision_id": suite.revision.id,
-            "verification_status": selection["verification_status"],
-            "force_unverified": selection["force_unverified"],
-            "samples_not_rerun": receipt["samples_not_rerun"],
-        }
-        # Existing Round/report readers retain actual accepted text and the new
-        # explicit clause mapping, without deriving coverage from method order.
-        item["rule_body"] = {**rules, "suite_key": suite.revision.suite_key, "appendix": list(appendix)}
-        from product.store.rule_impact import published_rule_update
-
-        rule_update = published_rule_update(conn, suites, tenant_id, suite)
-        item["rule_execution"] = {
-            "rule_version_mismatch": rule_update is not None,
-            "latest_rule_suite_revision_id": rule_update["target_revision_id"] if rule_update else None,
-            "mode": "checker_core",
-            "suite_revision_id": suite.revision.id,
-            "suite_revision_number": suite.revision.revision_number,
-            "binding": binding.to_dict(),
-            "verification": target.verification,
-            "samples_not_rerun": target.samples_not_rerun,
-        }
+        admission = {"verification_status": selection["verification_status"], "force_unverified": selection["force_unverified"], "samples_not_rerun": receipt["samples_not_rerun"]}
+        _describe_target(conn, suites, tenant_id, item, suite, target, accepted=accepted, **admission)
     return tuple(targets)
 
 

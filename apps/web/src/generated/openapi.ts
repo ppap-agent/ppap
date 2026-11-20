@@ -2455,17 +2455,10 @@ export interface components {
             /** Total */
             total: number;
         };
-        /** AuditReauditInputs */
-        AuditReauditInputs: {
-            /** Customer Preference */
-            customer_preference: string | null;
-            /** Files */
-            files: components["schemas"]["AuditRecognitionFile"][];
-            /** Predecessor Id */
-            predecessor_id: string;
-        };
-        /** AuditRecognitionFile */
-        AuditRecognitionFile: {
+        /** AuditReauditFile */
+        AuditReauditFile: {
+            /** Feishu File Token */
+            feishu_file_token?: string;
             file: components["schemas"]["FileVersion"];
             match: components["schemas"]["AuditRuleMatch"] | null;
             /** Preferred Rule Version Id */
@@ -2486,6 +2479,15 @@ export interface components {
             validation: components["schemas"]["AuditFileValidation"];
             /** Validation Id */
             validation_id?: string;
+        };
+        /** AuditReauditInputs */
+        AuditReauditInputs: {
+            /** Customer Preference */
+            customer_preference: string | null;
+            /** Files */
+            files: components["schemas"]["AuditReauditFile"][];
+            /** Predecessor Id */
+            predecessor_id: string;
         };
         /** AuditRecognitionInput */
         AuditRecognitionInput: {

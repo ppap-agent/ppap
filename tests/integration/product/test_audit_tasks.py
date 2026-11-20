@@ -1397,7 +1397,7 @@ def test_task_round_cannot_prepare_a_legacy_retry(matched_task):
     assert client.get("/usage").json() == usage
 
 
-def test_linked_reaudit_keeps_provenance_but_freezes_current_suite_without_copying_results(matched_task):
+def test_linked_reaudit_keeping_the_original_rule_reruns_its_frozen_program_without_copying_results(matched_task):
     client, worker, path, body, old = matched_task
     accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
     job = worker.claim_job("original")
@@ -1428,14 +1428,13 @@ def test_linked_reaudit_keeps_provenance_but_freezes_current_suite_without_copyi
     assert client.post(next_path + "/confirm", json=confirmation).json() == new_round.json()
     frozen = client.get(f"/rounds/{new_round.json()['round_id']}").json()
     assert frozen["predecessor_id"] == original["id"]
-    # Reusing a source rule is provenance, not a per-audit executable version
-    # selector. The current enterprise Suite owns every newly accepted Round.
+    # Keeping the original version re-runs the rules and program the original round froze, not the newer adoption.
     assert [{key: item[key] for key in ("file_id", "file_version_id", "role", "rule_version_id")} for item in frozen["inputs"]] == [
         {key: item[key] for key in ("file_id", "file_version_id", "role", "rule_version_id")} for item in original["inputs"]
     ]
     assert frozen["inputs"][0]["rule"]["id"] == old["id"]
-    assert frozen["inputs"][0]["rule"]["body"]["title"] == newer["title"]
-    assert frozen["inputs"][0]["rule"]["body"]["rules"] == newer["body"]["rules"]
+    assert frozen["inputs"][0]["rule"]["body"] == original["inputs"][0]["rule"]["body"]
+    assert current["files"][0]["match"]["rule"]["body"] == original["inputs"][0]["rule"]["body"]
     with worker._conn() as conn:
         executions = {
             str(rid): execution
@@ -1444,10 +1443,10 @@ def test_linked_reaudit_keeps_provenance_but_freezes_current_suite_without_copyi
                 ([original["id"], frozen["id"]],),
             ).fetchall()
         }
-        # Each round runs the program generated on its own rule revision.
-        bases = {rid: conn.execute("SELECT base_revision_id::text FROM product.suite_revisions WHERE id=%s", (execution["suite_revision_id"],)).fetchone()[0] for rid, execution in executions.items()}
-    assert bases[original["id"]] == old["body"]["suite_revision_id"]
-    assert bases[frozen["id"]] == newer["body"]["suite_revision_id"]
+        base = conn.execute("SELECT base_revision_id::text FROM product.suite_revisions WHERE id=%s", (executions[original["id"]]["suite_revision_id"],)).fetchone()[0]
+    assert base == old["body"]["suite_revision_id"]
+    assert executions[frozen["id"]]["suite_revision_id"] == executions[original["id"]]["suite_revision_id"]
+    assert executions[frozen["id"]]["binding"] == executions[original["id"]]["binding"]
     assert frozen["findings"] == []
     assert client.get(f"/rounds/{original['id']}").json() == original
 
@@ -1461,6 +1460,7 @@ def test_reaudit_replacement_respects_the_explicit_rule_choice(matched_task, rul
     worker.complete_job(job, "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
     original_round = client.get(f"/rounds/{accepted['round_id']}").json()
     newer = publish_rule(client, body["files"][0], predecessor=old["id"])
+    adopt_rule_suite(worker, newer)
     expected_rule = old["id"] if rule_choice == "original" else newer["id"]
     replacement = checked_file(client, worker, "补件.xlsx")
     original = body["files"][0]
@@ -1490,6 +1490,15 @@ def test_reaudit_replacement_respects_the_explicit_rule_choice(matched_task, rul
     assert result.status_code == 201, result.text
     frozen = client.get(f"/rounds/{result.json()['round_id']}").json()
     assert [(row["file_version_id"], row["rule_version_id"]) for row in frozen["inputs"]] == [(replacement["file_version_id"], expected_rule)]
+    with worker._conn() as conn:
+        executed = {
+            str(rid): execution["suite_revision_id"]
+            for rid, execution in conn.execute(
+                "SELECT round_id,rule_execution FROM product.round_inputs WHERE round_id=ANY(%s::uuid[]) AND role='target'", ([accepted["round_id"], frozen["id"]],)
+            ).fetchall()
+        }
+    # Only the kept original version re-runs the original round's frozen program.
+    assert (executed[frozen["id"]] == executed[accepted["round_id"]]) == (rule_choice == "original")
     assert client.get(path).json()["files"][0]["file"]["id"] == original["file_version_id"]
     assert client.get(f"/rounds/{accepted['round_id']}").json() == original_round
 

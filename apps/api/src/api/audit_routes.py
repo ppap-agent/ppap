@@ -64,6 +64,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "task_not_ready",
                 "target_required",
                 "rule_candidate_expired",
+                "reaudit_rule_unavailable",
                 "reaudit_source_not_finished",
                 "reaudit_scope_changed",
                 "report_not_ready",
