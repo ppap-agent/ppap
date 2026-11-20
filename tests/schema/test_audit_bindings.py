@@ -1227,7 +1227,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                 str(uuid.uuid4()),
                 token,
                 "file",
-                lambda: ImportedMaterial(filename="same.xlsx", content_type="application/octet-stream", data=b"x", file_token=token, doc_type="file"),
+                lambda: ImportedMaterial(filename="same.xlsx", content_type="application/octet-stream", data=token.encode(), file_token=token, doc_type="file"),
             )
             return self.store.finalize_version(version)
 
