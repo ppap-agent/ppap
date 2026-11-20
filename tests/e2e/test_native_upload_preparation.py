@@ -226,7 +226,7 @@ def test_unknown_upload_and_other_success_survive_a_fresh_page(lose_prepare_repl
         http = PreparationHTTP(lose_prepare_reply)
         http.install(page)
         page.goto(WEB + "/tasks/new")
-        pick_audit_files(page, [{"name": name, "mimeType": "application/octet-stream", "buffer": b"original"} for name in ("已接收.xlsx", "待核对.xlsx")])
+        pick_audit_files(page, [{"name": name, "mimeType": "application/octet-stream", "buffer": b"original " + name.encode()} for name in ("已接收.xlsx", "待核对.xlsx")])
         expect(page.get_by_role("checkbox", name="选择 已接收.xlsx", exact=True)).to_be_checked()
         expect(page.get_by_role("button", name="读取传输 待核对.xlsx", exact=True)).to_be_enabled()
         saved_url = page.url
@@ -385,7 +385,7 @@ def test_one_unreadable_local_file_does_not_block_the_other_files_before_transfe
           };
         })();""")
         page.goto(WEB + "/tasks/new")
-        pick_audit_files(page, [{"name": name, "mimeType": "application/octet-stream", "buffer": b"original"} for name in ("已接收.xlsx", "不可读取.xlsx", "另一份.xlsx")])
+        pick_audit_files(page, [{"name": name, "mimeType": "application/octet-stream", "buffer": b"original " + name.encode()} for name in ("已接收.xlsx", "不可读取.xlsx", "另一份.xlsx")])
         expect(page.get_by_role("checkbox", name="选择 已接收.xlsx", exact=True)).to_be_checked()
         expect(page.get_by_role("checkbox", name="选择 另一份.xlsx", exact=True)).to_be_checked()
         expect(page.get_by_text("本地原件无法读取，未开始上传。请排除此文件后重新选择。", exact=True)).to_be_visible()

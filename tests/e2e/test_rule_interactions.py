@@ -344,7 +344,8 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/file-validations/*", read_validation)
             page.route("**/api/file-validations", create_validation)
             page.goto(WEB + "/audit")
-            pick_audit_files(page, [{"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"} for name in ("flow.xlsx", "control.xlsx")])
+            sheet = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            pick_audit_files(page, [{"name": name, "mimeType": sheet, "buffer": b"fixture " + name.encode()} for name in ("flow.xlsx", "control.xlsx")])
             retry = page.get_by_role("button", name="重新读取 flow.xlsx 检查结果", exact=True)
             expect(retry).to_be_enabled()
             expect(page.get_by_role("checkbox", name="选择 control.xlsx", exact=True)).to_be_checked()

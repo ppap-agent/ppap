@@ -49,6 +49,8 @@ def checked_file(client, worker, name="控制计划.xlsx", document_type="控制
         stream = io.BytesIO()
         book = Workbook()
         book.active.append([document_type, "测试客户", "零件号 P-1"])
+        # Each upload is its own file; identical content is rejected as a duplicate.
+        book.properties.identifier = str(uuid.uuid4())
         book.save(stream)
         book.close()
         content = stream.getvalue()
@@ -1354,6 +1356,24 @@ def test_customer_recovery_rematches_and_finishes_the_original_task_without_chan
     assert finished["files"][0]["file"]["id"] == file["file_version_id"]
     assert len(client.get("/rounds").json()["rounds"]) == 1
     assert client.get("/usage").json()["events"] == []
+
+
+def test_two_selected_files_with_the_same_content_are_not_accepted(task_system):
+    client, worker = task_system
+    stream = io.BytesIO()
+    book = Workbook()
+    book.active.append(["控制计划", "测试客户", "零件号 P-1"])
+    book.save(stream)
+    book.close()
+    first = checked_file(client, worker, content=stream.getvalue())
+    copy = checked_file(client, worker, "改名后的同一份.xlsx", content=stream.getvalue())
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": [first, copy]}
+    refused = client.post("/audit-tasks", json=body)
+    assert refused.status_code == 400
+    assert refused.json() == {"error": "duplicate_file_content"}
+    # Leaving the copy out of this audit is allowed: only selected files are audited and charged.
+    accepted = client.post("/audit-tasks", json={**body, "request_id": str(uuid.uuid4()), "files": [first, {**copy, "selection": "unselected"}]})
+    assert accepted.status_code == 202, accepted.text
 
 
 def test_legacy_draft_operations_cannot_replace_or_accept_a_recognition_task(task_system):

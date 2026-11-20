@@ -4,7 +4,7 @@ import {Icon} from '../components/ui/icon'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {FileTypeBadge} from './file-type-badge'
-import {canResumeUpload, canRetryUpload, uploadName, type UploadRow} from './uploads'
+import {canResumeUpload, canRetryUpload, uploadName, type SkippedUpload, type UploadRow} from './uploads'
 
 const transferLabel = {uploading: '传输中', failed: '上传失败', unknown: '结果未确认'} as const
 const transferTone = {uploading: 'info', failed: 'destructive', unknown: 'warning'} as const
@@ -38,5 +38,18 @@ export function TransferItem({row, onRead, onResume, onRetry, onRemove, onCheckD
     </div>
     {note && <p className="text-xs text-muted-foreground">{note}</p>}
     {row.inputIssue && <p role="alert" className="text-xs">{row.inputIssue}</p>}
+  </li>
+}
+
+/** A file left out because one with the same content is already added; it was not uploaded and is not audited. */
+export function SkippedItem({row, onDismiss}: {row: SkippedUpload; onDismiss: (id: string) => void}) {
+  return <li className="grid gap-1">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+      <FileTypeBadge name={row.name}/>
+      <span className="min-w-0 flex-1 basis-40 truncate text-sm text-muted-foreground" title={row.name}>{row.name}</span>
+      <Badge variant="outline">已跳过（重复）</Badge>
+      <Button variant="ghost" size="icon-sm" aria-label={`关闭 ${row.name}`} onClick={() => onDismiss(row.id)}><Icon icon={faXmark}/></Button>
+    </div>
+    <p className="text-xs text-muted-foreground"><span className="inline-block max-w-full truncate align-bottom" title={row.twin}>与「{row.twin}」内容相同</span>，未重复添加。</p>
   </li>
 }

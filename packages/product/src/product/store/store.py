@@ -1410,6 +1410,12 @@ class AuthStore:
             validation_scopes[row["file_version_id"]] = validation.get("scope")
             if row["selection"] != "removed" and validation.get("scope") and (customer != "UAES" or validation["scope"] != {"customer_preference": "UAES", "preset_key": "U13"}):
                 raise ValueError("validation_scope_mismatch")
+        # Two files with the same content would be audited and charged twice for one result.
+        selected_ids = [row["file_version_id"] for row in files if row["selection"] == "selected"]
+        query = "SELECT sha256 FROM product.file_versions WHERE tenant_id=%s AND id=ANY(%s::uuid[]) AND sha256 IS NOT NULL"
+        digests = [row[0] for row in conn.execute(query, (principal.tenant_id, selected_ids)).fetchall()]
+        if len(digests) != len(set(digests)):
+            raise ValueError("duplicate_file_content")
         all_rules = self.list_rules(principal.tenant_id)
         from product.customers import in_type_set
         from product.store.suites import programless_suite_keys

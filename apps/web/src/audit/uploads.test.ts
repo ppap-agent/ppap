@@ -40,3 +40,14 @@ test('only a server-authorized local or Drive transfer can continue the same req
   assert.equal(canResumeUpload({...drive, busy: true}), false)
   assert.equal(canResumeUpload({...drive, removed: true}), false)
 })
+
+test('a file is a duplicate only when its content matches another file, whatever its name', async () => {
+  const {contentTwin} = await import('./uploads.ts')
+  const owners = [{id: 'v1', sha256: 'a'.repeat(64), name: '控制计划.xlsx'}, {id: 'v2', sha256: null, name: '传输中.xlsx'}]
+  assert.equal(contentTwin('a'.repeat(64), owners), '控制计划.xlsx')
+  assert.equal(contentTwin('b'.repeat(64), owners), undefined)
+  assert.equal(contentTwin(undefined, owners), undefined)
+  assert.equal(contentTwin(null, owners), undefined)
+  // A file is never a duplicate of itself.
+  assert.equal(contentTwin('a'.repeat(64), owners, 'v1'), undefined)
+})

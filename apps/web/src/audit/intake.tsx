@@ -32,8 +32,8 @@ import {clauseLabel, sameFrozenInputs, sameSnapshot, progressRegressed, reconcil
 import type {AuditNotificationAdapter} from './completion-notification'
 import {canObserveTask, useTaskObservation} from './task-observation'
 import type {TaskEvents} from './task-events'
-import {useUploads, type UploadAdapter, type UploadRow} from './uploads'
-import {TransferItem, useTransferAttach} from './transfer-list'
+import {useUploads, type ContentOwner, type UploadAdapter, type UploadRow} from './uploads'
+import {SkippedItem, TransferItem, useTransferAttach} from './transfer-list'
 import type {AuditReportAdapter} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {AuditArchive} from './archive'
@@ -281,9 +281,11 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       throw cause
     }
   }
-  const uploads = useUploads(adapter, (file, removed) => setFiles(rows => rows.some(row => row.file.id === file.id || row.selection !== 'removed' && row.file.file_id === file.file_id) ? rows : [...rows, {file, selection: removed ? 'removed' : 'selected', removal_reason: removed ? '传输期间排除，不纳入识别' : null, validation: {state: 'pending', reasons: ['文件待检查。']}, match: null}]), async rows => {await persistPreparation(rows)})
+  const contentOwners = useRef<ContentOwner[]>([])
+  const uploads = useUploads(adapter, (file, removed) => setFiles(rows => rows.some(row => row.file.id === file.id || row.selection !== 'removed' && row.file.file_id === file.file_id) ? rows : [...rows, {file, selection: removed ? 'removed' : 'selected', removal_reason: removed ? '传输期间排除，不纳入识别' : null, validation: {state: 'pending', reasons: ['文件待检查。']}, match: null}]), async rows => {await persistPreparation(rows)}, () => contentOwners.current)
   const v4Mode = ['UAES', '理想', '蔚来'].includes(customer)
   const active = files.filter(row => row.selection !== 'removed')
+  contentOwners.current = active.map(row => ({id: row.file.id, sha256: row.file.sha256, name: row.file.original_filename}))
   const valid = active.filter(row => row.validation.state === 'valid')
   const waiting = active.filter(row => row.validation.state === 'pending' || row.validation.state === 'checking')
   const exceptions = active.filter(row => row.validation.state === 'invalid' || row.validation.state === 'error')
@@ -1125,7 +1127,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
           </div>
           {transferAttach.picker}
           {neededTypes.shown.length > 0 && <p className="text-sm text-muted-foreground">该客户需要：{neededTypes.shown.map(slot => slot.label).join('、')}{neededTypes.toggle && <Button variant="link" size="sm" aria-expanded={typesOpen} onClick={() => setTypesOpen(open => !open)}>{neededTypes.toggle}</Button>}</p>}
-          {(pendingTransfers.length > 0 || addedFiles.length > 0) && <section aria-label="已添加" className="space-y-2"><div className="flex flex-wrap items-baseline justify-between gap-2"><h2 className="text-sm font-medium">已添加</h2><AuditDurationEstimate count={pendingTransfers.length + addedFiles.length}/></div><ul className="grid gap-2">{pendingTransfers.map(row => <TransferItem key={row.id} row={row} {...transferActions}/>)}{addedFiles.map(row => uploadFile(row))}</ul></section>}
+          {(pendingTransfers.length > 0 || addedFiles.length > 0 || uploads.skipped.length > 0) && <section aria-label="已添加" className="space-y-2"><div className="flex flex-wrap items-baseline justify-between gap-2"><h2 className="text-sm font-medium">已添加</h2><AuditDurationEstimate count={pendingTransfers.length + addedFiles.length}/></div><ul className="grid gap-2">{pendingTransfers.map(row => <TransferItem key={row.id} row={row} {...transferActions}/>)}{addedFiles.map(row => uploadFile(row))}{uploads.skipped.map(row => <SkippedItem key={row.id} row={row} onDismiss={uploads.dismiss}/>)}</ul></section>}
           {exceptions.length > 0 && <section aria-label="异常文件" className="space-y-2"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-medium text-destructive">异常文件 · {exceptions.length} 份</h2><Button variant="outline" size="sm" onClick={() => exceptions.forEach(row => remove(row.file.id))}>全部移除</Button></div><ul className="grid gap-2">{exceptions.map(row => uploadFile(row, false))}</ul></section>}
           {removedList}
           </fieldset>

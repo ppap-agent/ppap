@@ -11,16 +11,35 @@ export const uploadName = (input: UploadInput) => input.file.name
 export const canRetryUpload = (row: UploadRow) => !row.removed && !row.busy && (row.input.kind === 'feishu' || row.input.file instanceof File) && row.receipt.state === 'failed' && row.receipt.retry_allowed
 export const canResumeUpload = (row: UploadRow) => !row.removed && !row.busy && (row.input.kind === 'feishu' || row.input.file instanceof File) && row.receipt.state === 'uploading' && row.receipt.resume_allowed === true
 
+/** A file already in the task or the queue, known by its content. */
+export type ContentOwner = {id?: string; sha256?: string | null; name: string}
+/** A file not added because one with exactly the same content already is; the same content is audited once. */
+export type SkippedUpload = {id: string; name: string; twin: string}
+
+/** The name of another file with exactly this content, if any. Names and sizes do not decide it. */
+export function contentTwin(sha256: string | null | undefined, owners: ContentOwner[], self?: string): string | undefined {
+  return sha256 ? owners.find(owner => owner.sha256 === sha256 && (!self || owner.id !== self))?.name : undefined
+}
+
 export function originalUploadFile(original: Pick<File, 'name' | 'type'>, bytes: File): File {
   return new File([bytes], original.name, {type: original.type, lastModified: bytes.lastModified})
 }
 
 /** Receipts belong to a request and draft, never to a filename or whichever page is active. */
-export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, removed: boolean) => void, beforeWrite?: (rows: UploadRow[]) => Promise<void>) {
+export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, removed: boolean) => void, beforeWrite?: (rows: UploadRow[]) => Promise<void>, existing?: () => ContentOwner[]) {
   const current = useRef(new Map<string, UploadRow>())
   const epoch = useRef(0)
   const [rows, setRows] = useState<UploadRow[]>([])
+  const [skipped, setSkipped] = useState<SkippedUpload[]>([])
   function save(row: UploadRow) {current.current.set(row.id, row); setRows([...current.current.values()])}
+  function owners(except: string): ContentOwner[] {
+    const queued = [...current.current.values()].filter(row => row.id !== except && !row.removed)
+    return [...existing?.() ?? [], ...queued.map(row => ({id: row.receipt.file?.id, sha256: row.input.kind === 'local' ? row.input.sha256 : row.receipt.file?.sha256, name: uploadName(row.input)}))]
+  }
+  function skip(row: UploadRow, twin: string) {
+    current.current.delete(row.id); setRows([...current.current.values()])
+    setSkipped(list => [...list, {id: row.id, name: uploadName(row.input), twin}])
+  }
   async function send(rows: UploadRow[]) {
     const started = epoch.current
     try {
@@ -44,6 +63,9 @@ export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, 
         }
         if (started !== epoch.current) return
         const latest = current.current.get(row.id)
+        // Checked before anything is sent: the same content is neither uploaded nor audited twice.
+        const twin = row.input.sha256 ? undefined : contentTwin(sha256, owners(row.id))
+        if (latest && twin) {skip(latest, twin); rows.splice(index--, 1); continue}
         if (latest) {rows[index] = {...latest, input: {...row.input, sha256}}; save(rows[index])}
       }
       if (started !== epoch.current) return
@@ -72,6 +94,9 @@ export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, 
       if (!latest || latest.receipt.request_id !== row.receipt.request_id) return
       if (result.request_id !== row.receipt.request_id || result.state === 'ready' && !result.file?.id) throw new Error('upload_identity_mismatch')
       const receipt = {...result, retry_allowed: result.state === 'failed' && result.retry_allowed}
+      // A Drive file's content is known once imported; a copy of a file already added stays out.
+      const twin = latest.input.kind === 'feishu' && receipt.state === 'ready' && receipt.file ? contentTwin(receipt.file.sha256, owners(latest.id), receipt.file.id) : undefined
+      if (twin) {skip(latest, twin); return}
       save({...latest, receipt, busy: false})
       if (receipt.state === 'ready' && receipt.file) onReady(receipt.file, latest.removed)
     } catch {
@@ -83,8 +108,9 @@ export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, 
   function add(inputs: UploadInput[]) {
     const added: UploadRow[] = []
     for (const input of inputs) {
-      if (input.kind === 'feishu' && [...current.current.values()].some(row => !row.removed && row.input.kind === 'feishu' && row.input.file.token === input.file.token)) continue
       const id = crypto.randomUUID()
+      const same = input.kind === 'feishu' ? [...current.current.values()].find(row => !row.removed && row.input.kind === 'feishu' && row.input.file.token === input.file.token) : undefined
+      if (same) {setSkipped(list => [...list, {id, name: uploadName(input), twin: uploadName(same.input)}]); continue}
       const row: UploadRow = {id, input, removed: false, busy: true, receipt: {request_id: crypto.randomUUID(), state: 'uploading', file: null, reason: null, retry_allowed: false}}
       save(row); added.push(row)
     }
@@ -128,8 +154,9 @@ export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, 
     }
   }
   function remove(id: string) {const row = current.current.get(id); if (row) save({...row, removed: true})}
-  function reset() {epoch.current += 1; current.current.clear(); setRows([])}
+  function dismiss(id: string) {setSkipped(list => list.filter(row => row.id !== id))}
+  function reset() {epoch.current += 1; current.current.clear(); setRows([]); setSkipped([])}
   function snapshot() {return [...current.current.values()].map(row => row.busy ? {...row, busy: false, receipt: {...row.receipt, state: 'unknown' as const, retry_allowed: false, reason: '页面切换时尚未取得结果，请查看原传输请求。'}} : row)}
   function restore(saved: UploadRow[]) {reset(); for (const row of saved) current.current.set(row.id, row); setRows([...current.current.values()])}
-  return {rows, add, retry, read, resume, attach, remove, reset, snapshot, restore}
+  return {rows, skipped, add, retry, read, resume, attach, remove, dismiss, reset, snapshot, restore}
 }

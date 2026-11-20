@@ -95,6 +95,7 @@ const messages: Record<string,string> = {
   suite_key_mismatch: '这条规则不能写入所选检查版本。',
   model_unavailable: '服务暂时不可用，请稍后重试；如持续出现，请联系管理员。',
   model_consumption_refused: '暂时无法处理，请稍后重试。',
+  duplicate_file_content: '有两份文件内容完全相同，请只保留其中一份再识别。',
   checker_not_generated: '这条规则还没有检查程序，不能用于审核。检查程序由平台离线准备，如需准备请联系我们。',
 }
 const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined

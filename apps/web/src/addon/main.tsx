@@ -42,6 +42,7 @@ const messages: Record<string, string> = {
   feishu_writeback_failed: '写入文档没有成功，请确认你有这篇文档的编辑权限。',
   wait_timeout: '处理时间较长，可以先关闭面板，稍后回来查看。',
   validation_failed: '有文件无法读取，请检查后重试。',
+  duplicate_file_content: '有两份文件内容完全相同，请只勾选其中一份。',
 }
 const say = (cause: unknown) => cause instanceof ApiError && messages[cause.code] || (cause instanceof Error && (cause as Error & {reason?: string}).reason ? cause.message : '操作没有完成，请稍后重试。')
 

@@ -42,17 +42,19 @@ def system(auth_store_factory, core_system):
 def prepare(system, core_system, customer, entry, *, reference=False, photo=False, choose_customer=True, copies=1, last_reference=False):
     client, worker, admin, principal = system
     core_system.adopt_standard(admin, principal, f"{customer}:{entry}")
-    stream = io.BytesIO()
-    if photo:
-        Image.new("RGB", (16, 12), "white").save(stream, format="PNG")
-    else:
-        book = Workbook()
-        book.active.append(["客户", customer, "零件号", "P-1"])
-        book.save(stream)
-        book.close()
-    body = stream.getvalue()
     selected = []
     for index in range(copies):
+        # Copies are different files: two selected files with the same content are refused.
+        stream = io.BytesIO()
+        if photo:
+            Image.new("RGB", (16, 12), (255, 255, 255 - index)).save(stream, format="PNG")
+        else:
+            book = Workbook()
+            book.active.append(["客户", customer, "零件号", "P-1"])
+            book.properties.identifier = f"copy-{index}"
+            book.save(stream)
+            book.close()
+        body = stream.getvalue()
         file = client.post("/files", json={"original_filename": "原件.png" if photo else f"原件{index}.xlsx", "byte_size": len(body)}).json()
         path = f"/files/{file['file_id']}/versions/{file['id']}"
         assert client.put(path + "/blob", content=body).status_code == 200
