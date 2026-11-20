@@ -1,14 +1,26 @@
 // Checking an audit before it is accepted: what each file will be judged by, for which
 // customer, how deeply, and at what cost. Nothing here charges; only "确认并开始审核" does.
-import { Banner, Button, Collapse, Dropdown, Input, List, Select, Space, Spin, Switch, Tag, Typography } from '@douyinfe/semi-ui';
+import { Banner, Button, Collapse, Dropdown, Input, List, Radio, RadioGroup, Select, Space, Spin, Switch, Tag, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useMemo, useState } from 'react';
 import { currentTemplate, rememberedTemplate, rememberTemplate, templateName, templateOwner, templates } from './ledger';
 import type { Rule } from './ledger';
-import { checkerUnavailable, matchLabel } from './model';
-import type { Precheck, Task, TaskFile } from './model';
+import { checkerUnavailable, matchLabel, newerRuleOf, ruleName, ruleVersionChoice, withRuleVersion } from './model';
+import type { Precheck, PrecheckFinding, RuleVersionChoice, Task, TaskFile } from './model';
 import { call, newId, say, taskLink } from './ppap';
 
 const { Text, Title } = Typography;
+
+// Deep mode as the web app describes it (apps/web/src/audit/deep-mode.ts); it costs the same per file.
+const deepModeDescription = '规则范围与标准审核相同，另逐条复核每条结论，并核对同批文件之间是否一致，审核时长约增加 2 倍。';
+
+/** The precheck's overall rating, in the web app's words (apps/web/src/audit/precheck.tsx). */
+function precheckRating(result: Precheck): string {
+  if (result.conclusion === 'fail') return '不通过：存在阻断项';
+  if (result.conclusion === 'not_run') return result.files.length ? '未执行：识别尚未完成' : '未执行：没有送审文件';
+  return result.warnings.length ? `有条件通过 · 含警告 ${result.warnings.length} 项：可以进入正式审核` : '通过：可以进入正式审核';
+}
+// A warning never holds the start; a file-level block does until the file is removed; a content-level block goes to the formal audit.
+const precheckEffect = (item: PrecheckFinding) => (item.level === 'warn' ? '仍可勾选送审' : item.scope === 'file' ? '移除后才能开始审核' : '不阻止开始审核，正式审核将核对');
 type Quota = { accept_allowed?: boolean; accept_reason?: string; message?: string; remaining_trial_ai_points?: number; unavailable?: boolean; usage_charge_enabled?: boolean };
 
 /** Resubmits the task's files with one change; the server recognizes them again and nothing is accepted. */
@@ -106,17 +118,25 @@ export function Confirm({ task, rules, space, revise, refresh, onReselect }: { t
   const [quota, setQuota] = useState<Quota | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
-  const targets = task.files.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && !row.reference_only).length;
+  // How many files confirming accepts is the server's saved scope; until it is settled the count is 待确认.
+  // The one certain local fact is zero: with no selected matched file nothing can be audited.
+  const noMatches = !task.files.some(row => row.selection === 'selected' && row.match?.state === 'matched' && !row.reference_only);
+  const targetIds = task.confirmation_scope?.target_file_version_ids ?? null;
+  const targets = noMatches ? 0 : targetIds ? targetIds.length : null;
   const unmatched = task.files.filter(row => row.selection === 'selected' && row.match?.state === 'unmatched');
+  // A re-audit's rules that have a newer version since the earlier round; the newer one is used unless the person keeps the earlier.
+  const newerRules = task.predecessor_id ? [...new Set(task.files.filter(row => row.selection === 'selected').map(newerRuleOf).filter(rule => rule !== undefined).map(ruleName))] : [];
+  const versionChoice = ruleVersionChoice(task.files);
+  const chooseRuleVersion = (choice: RuleVersionChoice) => void revise(task, row => withRuleVersion(row, choice));
 
   useEffect(() => {
     call<Precheck>(`/audit-tasks/${task.id}/precheck`).then(setPrecheck, () => setPrecheck('unavailable'));
   }, [task.id, task.input_revision]);
   useEffect(() => {
     if (!targets) return setQuota(null);
-    // The server's own wording for the balance; it decides whether acceptance is allowed.
-    call<Quota>(`/integrations/feishu/usage/quota?target_count=${targets}&deep_mode=${Boolean(task.deep_mode)}`).then(setQuota, () => setQuota(null));
-  }, [targets, task.deep_mode]);
+    // The server's own wording for the balance; it decides whether acceptance is allowed. Every mode costs the same per file.
+    call<Quota>(`/integrations/feishu/usage/quota?target_count=${targets}`).then(setQuota, () => setQuota(null));
+  }, [targets]);
 
   async function act(run: () => Promise<unknown>) {
     setBusy(true);
@@ -148,15 +168,30 @@ export function Confirm({ task, rules, space, revise, refresh, onReselect }: { t
         method: 'POST',
         body: {
           expected_revision: task.input_revision,
-          removals: unmatched.map(row => ({ file_version_id: row.file.id, removal_reason: '没有可用规则' })),
+          removals: unmatched.map(row => ({ file_version_id: row.file.id, removal_reason: '未匹配到规则' })),
           unselected_file_version_ids: unauditable.map(row => row.file.id),
         },
       }),
     );
 
-  const blocks = precheck && precheck !== 'unavailable' ? precheck.blocks : [];
-  const warnings = precheck && precheck !== 'unavailable' ? precheck.warnings : [];
-  const finding = (entry: Precheck['blocks'][number], index: number) => <List.Item key={index} main={<Text><Text strong>{entry.filename}</Text>：{entry.problem}{entry.action && <Text type="tertiary">（{entry.action}）</Text>}</Text>} />;
+  const result = precheck && precheck !== 'unavailable' ? precheck : null;
+  const findings = result ? [...result.blocks, ...result.warnings] : [];
+  // Only a file-level block on a file being submitted holds the start; content-level blocks go to the formal audit.
+  const holds = result?.blocks.filter(item => item.scope === 'file' && targetIds?.includes(item.file_version_id)) ?? [];
+  const finding = (item: PrecheckFinding, index: number) => (
+    <List.Item
+      key={item.number || index}
+      main={
+        <Space spacing={6} align="start">
+          <Tag size="small" color={item.level === 'block' ? 'red' : 'orange'} type="light">{item.level === 'block' ? '阻断' : '警告'}</Tag>
+          <Text>
+            <Text strong>{item.filename}</Text> · {item.title}：{item.problem}（{precheckEffect(item)}）
+            {item.action && <Text type="tertiary"> 整改：{item.action}</Text>}
+          </Text>
+        </Space>
+      }
+    />
+  );
   // Acceptance is the server's call (trial points count too); a missing AI package alone does not block.
   const short = Boolean(quota && !quota.unavailable && quota.accept_allowed === false);
   const balance = !quota || short ? '' : quota.usage_charge_enabled === false ? '本环境不扣点' : typeof quota.remaining_trial_ai_points === 'number' && quota.remaining_trial_ai_points > 0 ? `试用额度剩余 ${quota.remaining_trial_ai_points} 点` : quota.message;
@@ -164,6 +199,23 @@ export function Confirm({ task, rules, space, revise, refresh, onReselect }: { t
   return (
     <section className="confirm" aria-label="开始审核前的核对">
       <Title heading={6}>核对识别结果后开始审核</Title>
+      {newerRules.length > 0 && (
+        <Banner
+          type="info"
+          fullMode={false}
+          closeIcon={null}
+          title="审核规则已更新"
+          description={
+            <Space vertical align="start" spacing="tight">
+              <Text>{newerRules.join('、')}在上次审核后有新版本。</Text>
+              <RadioGroup type="button" buttonSize="small" aria-label="本次使用的规则版本" value={versionChoice ?? undefined} disabled={busy} onChange={event => chooseRuleVersion(event.target.value as RuleVersionChoice)}>
+                <Radio value="newer">使用新版本</Radio>
+                <Radio value="original">沿用上次版本</Radio>
+              </RadioGroup>
+            </Space>
+          }
+        />
+      )}
       <Space wrap align="center">
         <Text type="tertiary">审核模板</Text>
         <Select
@@ -180,36 +232,39 @@ export function Confirm({ task, rules, space, revise, refresh, onReselect }: { t
           <Space align="center">
             <Switch size="small" aria-label="深度模式" checked={Boolean(task.deep_mode)} disabled={busy} onChange={on => void deep(on)} />
             <Text>深度模式</Text>
-            <Text type="tertiary" size="small">程序检查后再由模型逐条复核，用量更高</Text>
+            <Text type="tertiary" size="small">{deepModeDescription}</Text>
           </Space>
         )}
       </Space>
       <Text type="tertiary">
-        将审核 {targets} 份资料，预计用量 {task.estimated_points === null ? '无法预估' : `${task.estimated_points} 点`}
+        {targets === null ? '送审份数待确认' : `将审核 ${targets} 份资料`}，预计用量 {task.estimated_points === null ? '无法预估' : `${task.estimated_points} 点`}
         {balance && <>（{balance}）</>}。每份资料的规则见下方列表，可在每行“调整”。
       </Text>
       {short && <Banner type="warning" fullMode={false} closeIcon={null} description={quota!.accept_reason || quota!.message} />}
       {notice && <Banner type="warning" fullMode={false} closeIcon={null} description={notice} />}
       {precheck === null && <Text type="tertiary" role="status"><Spin size="small" /> 正在做数据预检…</Text>}
-      {blocks.length > 0 && <Banner type="danger" fullMode={false} closeIcon={null} title={`预检发现 ${blocks.length} 个必须先处理的问题`} description={<List size="small" split={false}>{blocks.map(finding)}</List>} />}
-      {warnings.length > 0 && (
-        <Collapse>
-          <Collapse.Panel header={`预检提醒 ${warnings.length} 条`} itemKey="warnings">
-            <List size="small" split={false}>{warnings.map(finding)}</List>
+      {precheck === 'unavailable' && <Text type="tertiary">预检结果暂时无法读取，不影响识别与审核。</Text>}
+      {result && <Text type={result.conclusion === 'fail' ? 'danger' : 'tertiary'}>预检 · {precheckRating(result)}</Text>}
+      {holds.length > 0 && <Banner type="danger" fullMode={false} closeIcon={null} description={`预检发现 ${holds.length} 项阻断（${[...new Set(holds.map(item => item.title))].join('、')}），请先处理：${holds[0].action}`} />}
+      {findings.length > 0 && (
+        <Collapse defaultActiveKey={holds.length ? ['findings'] : []}>
+          <Collapse.Panel header={`预检发现 ${findings.length} 项`} itemKey="findings">
+            <List size="small" split={false}>{findings.map(finding)}</List>
           </Collapse.Panel>
         </Collapse>
       )}
       <Space wrap>
-        {targets === 0 ? (
+        {noMatches ? (
           <Button theme="solid" type="primary" loading={busy} onClick={() => void end()}>结束，不审核</Button>
         ) : task.confirmation_basis_digest && task.input_revision !== undefined ? (
-          <Button theme="solid" type="primary" loading={busy} disabled={blocks.length > 0 || precheck === null || short} onClick={() => void confirm()}>确认并开始审核</Button>
+          <Button theme="solid" type="primary" loading={busy} disabled={holds.length > 0 || precheck === null || short || !targets} onClick={() => void confirm()}>确认并开始审核</Button>
         ) : (
           <Button theme="solid" type="primary" onClick={() => window.JSSDK.navigation.open(taskLink(task.id), '_blank')}>在 PPAP 中核对</Button>
         )}
         <Button disabled={busy} onClick={onReselect}>重新选择资料</Button>
       </Space>
-      {targets === 0 && <Text type="tertiary" size="small">没有可以审核的资料，结束后不产生审核结果，也不扣点。</Text>}
+      {noMatches && <Text type="tertiary" size="small">没有可以审核的资料，结束后不产生审核结果，也不扣点。</Text>}
+      {!noMatches && targets === 0 && <Text type="tertiary" size="small">没有可接收的待审文件。请先处理排除原因，再核对审核依据。</Text>}
     </section>
   );
 }

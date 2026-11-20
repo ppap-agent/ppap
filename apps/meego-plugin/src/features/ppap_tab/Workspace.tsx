@@ -12,16 +12,16 @@ import type { Revise } from './Confirm';
 import { PdfView } from './Evidence';
 import { Guide } from './Guide';
 import { Issue, openFacts } from './Issue';
-import { buildPackage, currentTemplate, pendingStart, rectification, rememberedTemplate, rememberStart, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
+import { buildPackage, currentTemplate, customerFullName, openTotals, pendingStart, rectification, rememberedTemplate, rememberStart, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
 import type { Doc, OpenIssue, Package } from './ledger';
-import { bucket, bucketColor, bucketLabel, byUrgency, conclusionLabel, documentTypeLabel, reviewOf, verdictLabel, when } from './model';
-import type { FactView, FileVersion, Job, Task, TaskFile } from './model';
+import { bucket, bucketColor, bucketLabel, byUrgency, conclusionLabel, documentTypeLabel, openCount, pendingNote, reviewOf, verdictLabel, when, withRuleVersion } from './model';
+import type { Choice, FactView, FileVersion, Job, Task, TaskFile } from './model';
 import { bytes, call, newId, PpapError, save, say, taskLink, waitFor } from './ppap';
 
 const { Text } = Typography;
 type Props = { item: Item; data: Data; user: string; stalled: boolean; refresh: () => Promise<void>; onWritten: (roundId: string) => void; onDisconnect: () => void };
 type Input = { file_version_id: string; validation_id: string; selection: 'selected'; removal_reason: null; preferred_rule_version_id?: string; reference_only?: boolean };
-type Carried = { file: FileVersion; validation_id?: string; validation?: { state?: string }; preferred_rule_version_id?: string; reference_only?: boolean };
+type Carried = { file: FileVersion; validation_id?: string; validation?: { state?: string }; preferred_rule_version_id?: string; reference_only?: boolean; rule_options?: Choice[] };
 
 const reportReady = (row: TaskFile) => Boolean(row.audit?.report.state === 'ready' && row.audit.report.report_id && row.audit.report.artifact && row.audit.result_attempt !== null);
 const reportPath = (task: Task, row: TaskFile) => {
@@ -46,8 +46,8 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
   const shownTemplate = chosenTemplate ?? currentTemplate(allTemplates, customer, null);
   const missing = useMemo(() => {
     const have = new Set(docs.map(doc => doc.type).filter(Boolean));
-    return requiredTypes(data.rules, customer).filter(type => !have.has(type));
-  }, [data.rules, customer, docs]);
+    return requiredTypes(data.customers, customer).filter(type => !have.has(type));
+  }, [data.customers, customer, docs]);
   const unknownDocs = docs.filter(doc => !doc.type && ['new', 'added', 'matching'].includes(doc.state)).length;
 
   const [showMissing, setShowMissing] = useState(false);
@@ -110,8 +110,9 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
   }
 
   // Every audit covers the whole chosen package. After a first round this is a re-audit of that
-  // round: files it already froze keep their version and rule, new attachments join as new files,
-  // so cross-file requirements are checked against the complete set again.
+  // round: files it already froze keep their version and rule (its newer version when the rule has
+  // one), new attachments join as new files, so cross-file requirements are checked against the
+  // complete set again.
   async function start() {
     setNotice('');
     // The same start (same package, same earlier round, same customer) retried after its reply was lost
@@ -145,7 +146,9 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
       const skipped: string[] = [];
       for (const [index, doc] of chosen.entries()) {
         setBusy(`正在准备资料 ${index + 1}/${chosen.length}…`);
-        const known = doc.row && latest?.files.includes(doc.row) ? carried.get(doc.row.file.id) : undefined;
+        // A rule with a newer version is audited with it unless the person keeps the earlier one at confirmation.
+        const found = doc.row && latest?.files.includes(doc.row) ? carried.get(doc.row.file.id) : undefined;
+        const known = found && withRuleVersion(found, 'newer');
         if (known) {
           const validation = known.validation_id && known.validation?.state === 'valid' ? known.validation_id : await validated(known.file, doc.attachment.name, skipped);
           if (validation) inputs.push({ file_version_id: known.file.id, validation_id: validation, selection: 'selected', removal_reason: null, ...(known.preferred_rule_version_id ? { preferred_rule_version_id: known.preferred_rule_version_id } : known.reference_only ? { reference_only: true } : {}) });
@@ -324,6 +327,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
   }
 
   const ngCount = view.issues.filter(issue => bucket(issue.check) === 'NG').length;
+  const totals = openTotals(latest);
   const written = latest?.round_id ? (data.written === null ? null : data.written.includes(latest.round_id)) : null;
   // Writing back and releasing speak for the round on the work item: only its creator does either.
   const writable = !flight && mine && Boolean(latest?.round_id) && ['PASS', 'NG', 'UNKNOWN'].includes(total);
@@ -371,7 +375,8 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
     latest && !mine && `${latest.creator.name || '同事'} 发起`,
     latest && when(latest.round_started_at ?? latest.created_at),
     latest && (ngCount ? `不符合 ${ngCount} 项` : ''),
-    latest && (view.issues.length ? `待处理 ${view.issues.length} 项` : ''),
+    latest && (totals.open ? `待处理 ${totals.open} 项` : ''),
+    latest && (totals.pending ? `另 ${totals.pending} 项待审核` : ''),
     latest?.round_id && written !== null && (written ? '已写回' : '尚未写回'),
   ].filter(Boolean);
   const issuesFirst = Boolean(latest && view.issues.length);
@@ -425,7 +430,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
       <DocTable uploader={uploader} docs={docs} fields={data.fields} flight={flight} revise={revise} selectable={choosing && !busy} busy={Boolean(busy)} picked={picked} onPick={setPicked} onIssues={goToIssues} onReport={setReport} onDownload={row => void download(row)} onRegenerate={row => void regenerate(row)} onRefresh={() => void refresh().catch(failure => setNotice(say(failure)))} />
       {customer && missing.length > 0 && (
         <div className="missing">
-          <Text type="tertiary">{customer} 要求的资料中，还有 {missing.length} 类没有提交。</Text>
+          <Text type="tertiary">{customerFullName(data.customers, customer)} 要求的资料中，还有 {missing.length} 类没有提交。</Text>
           <Button theme="borderless" size="small" onClick={() => setShowMissing(value => !value)}>{showMissing ? '收起' : `查看 ${missing.length} 类`}</Button>
           {showMissing && (
             <div className="missing-list">
@@ -636,11 +641,14 @@ function DocStatus({ doc, onIssues, onReport, onDownload, onRegenerate }: { doc:
     case 'removed':
       return <Unaudited state={doc.state} reason={row?.removal_reason} />;
     case 'done': {
-      const open = audit!.checks.filter(check => check.attention).length;
+      // 待审核 clauses are named once, beside the conclusion; 待处理 counts the rest that need a person.
+      const waiting = pendingNote(audit!);
+      const open = openCount(audit!);
       const conclusion = audit!.confirmed_conclusion;
       return (
         <Space wrap>
           <Tag color={bucketColor(conclusion)} type="light">{conclusion ? conclusionLabel[conclusion] : '尚有未确定项'}</Tag>
+          {waiting && <Text>{waiting}</Text>}
           {open > 0 && <Text link onClick={onIssues}>{open} 项待处理</Text>}
           {reportReady(row!) && (
             <span className="row-actions">
@@ -669,7 +677,7 @@ function Unaudited({ state, reason }: { state: string; reason?: string | null })
         <Text type="tertiary" size="small">这类文件还没有可用的检查程序</Text>
       </Space>
     );
-  return <Text type="tertiary">{state === 'reference' ? '作为参考资料，未单独审核' : state === 'unread' ? '识别失败，未审核' : '没有可用规则，未审核'}</Text>;
+  return <Text type="tertiary">{state === 'reference' ? '作为参考资料，未单独审核' : state === 'unread' ? '识别失败，未审核' : '无适配规则，未审核'}</Text>;
 }
 
 // What needs a person ------------------------------------------------------

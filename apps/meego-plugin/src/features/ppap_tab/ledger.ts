@@ -2,7 +2,7 @@
 // a round is frozen together, and cross-file requirements are checked against the others in
 // that round. So the conclusion shown here is always the latest finished round's own
 // conclusion, never a mix of rounds; this file only relates that round to today's attachments.
-import { bucket, checkerUnavailable, reviewOf } from './model';
+import { bucket, checkerUnavailable, openCount, pendingCount, pendingNote, reviewOf } from './model';
 import type { Attachment, Check, Task, TaskFile } from './model';
 
 export type DocState = 'unsupported' | 'new' | 'added' | 'matching' | 'confirm' | 'running' | 'done' | 'failed' | 'reference' | 'no_rule' | 'unavailable' | 'unread' | 'removed';
@@ -206,12 +206,29 @@ const sameCustomer = (left: string, right: string) => {
   return Boolean(a && b) && (a === b || a.startsWith(b) || b.startsWith(a));
 };
 
-/** The document types this customer's current rules cover; the customer type decides what a part must submit. */
-export function requiredTypes(rules: Rule[], customer: string | null): string[] {
-  if (!customer) return [];
-  const superseded = new Set(rules.map(rule => rule.predecessor_id).filter(Boolean));
-  const types = rules.filter(rule => !superseded.has(rule.id) && rule.type && (rule.customers || []).some(name => sameCustomer(name, customer))).map(rule => rule.type!);
-  return [...new Set(types)];
+/** A registered customer as GET /audit-customers lists it: full and short name, and its document type set. */
+export type RegisteredCustomer = { customer_id: string; name: string; full_name: string; short_name: string; coverage: { types: { code: string; rule_type: string }[] } | null };
+
+/** The registered customer a recorded value names exactly (full or short name, or its rule name); nothing is matched by prefix. */
+export const registeredCustomer = (customers: RegisteredCustomer[] | null, value: string | null) => {
+  const text = value?.trim();
+  return text ? customers?.find(customer => customer.full_name === text || customer.short_name === text || customer.name === text) : undefined;
+};
+/** The registered full name; an unregistered value is shown as recorded. */
+export const customerFullName = (customers: RegisteredCustomer[] | null, value: string | null) => registeredCustomer(customers, value)?.full_name ?? value?.trim() ?? '';
+
+/** The document types of the customer's registered type set; the customer type decides what a part must submit. */
+export function requiredTypes(customers: RegisteredCustomer[] | null, customer: string | null): string[] {
+  return [...new Set(registeredCustomer(customers, customer)?.coverage?.types.map(type => type.rule_type) ?? [])];
+}
+
+/** The round's 待处理 and 待审核 counts, said per file the way the web app says them: 待审核 clauses beside a 符合/不符合 file are not 待处理. */
+export function openTotals(task: Task | null): { open: number; pending: number } {
+  const audits = (task?.files ?? []).filter(row => row.selection === 'selected' && row.audit).map(row => row.audit!);
+  return {
+    open: audits.reduce((sum, audit) => sum + openCount(audit), 0),
+    pending: audits.reduce((sum, audit) => sum + (pendingNote(audit) ? pendingCount(audit) : 0), 0),
+  };
 }
 
 /** A plain-text list a quality engineer can send to the supplier as it is. */

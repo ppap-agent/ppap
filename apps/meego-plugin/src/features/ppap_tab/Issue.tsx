@@ -3,7 +3,7 @@
 import { Banner, Button, Input, Radio, RadioGroup, Space, Tag, TextArea, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useId, useRef, useState } from 'react';
 import { OriginalView } from './Evidence';
-import { bucket, bucketColor, bucketLabel, judgmentLabel, locationLabel, observation, resultLabel, reviewOf, when } from './model';
+import { bucket, bucketColor, bucketLabel, judgmentLabel, locationLabel, observation, programNotice, resultLabel, reviewOf, when } from './model';
 import type { Check, Citation, FactQuestion, FactView, Task, TaskFile } from './model';
 import { call, newId, PpapError, say } from './ppap';
 
@@ -48,9 +48,10 @@ export function Issue({ task, row, check, position, stale, facts, onBack, onChan
         )}
         {task.creator.mine && facts?.round_id === task.round_id && openFacts(facts, check).map(question => <FactForm key={question.file_version_id + question.field} roundId={task.round_id!} revision={facts.revision} question={question} onChanged={onChanged} />)}
 
-        <Text strong className="label">原件依据</Text>
+        {/* A checker's result without a located original says nothing here; a model's asks the person to check the original. */}
+        {(sources.length > 0 || check.verification_scope !== 'checker_execution') && <Text strong className="label">原件依据</Text>}
         {sources.length === 0 ? (
-          <Text type="tertiary">这一条没有可定位的原件位置，请对照原件核对。</Text>
+          check.verification_scope !== 'checker_execution' && <Text type="tertiary">这一条没有可定位的原件位置，请对照原件核对。</Text>
         ) : (
           <RadioGroup type="card" direction="vertical" aria-label="原件依据" value={shown} onChange={event => setShown(Number(event.target.value))}>
             {sources.map((item, index) => (
@@ -60,6 +61,7 @@ export function Issue({ task, row, check, position, stale, facts, onBack, onChan
             ))}
           </RadioGroup>
         )}
+        {programNotice(check) && <ProgramNotice text={programNotice(check)!} />}
       </div>
       <div className="issue-original">
         <OriginalView source={{ roundId: task.round_id!, file: viewed }} page={page} locator={current?.locator ?? null} />
@@ -70,6 +72,20 @@ export function Issue({ task, row, check, position, stale, facts, onBack, onChan
         </div>
       )}
     </article>
+  );
+}
+
+/** The checker's own run notes, folded behind an explicit button with the web app's name for them. */
+function ProgramNotice({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <div>
+      <Button size="small" theme="borderless" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}>
+        {open ? '收起程序执行说明' : '程序执行说明'}
+      </Button>
+      {open && <Paragraph id={id} className="pre" type="tertiary" size="small">{text}</Paragraph>}
+    </div>
   );
 }
 

@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 import '../ppap_tab/index.css';
 import { loadWorkItem, outsideText } from '../ppap_tab/data';
 import type { Data, Item } from '../ppap_tab/data';
-import { buildPackage, standing, verdict } from '../ppap_tab/ledger';
+import { buildPackage, openTotals, standing, verdict } from '../ppap_tab/ledger';
 import { bucket, bucketColor, verdictLabel, when } from '../ppap_tab/model';
 import { say, startSession } from '../ppap_tab/ppap';
 
@@ -62,6 +62,7 @@ export default function Card({ context: where, lead, hint }: Props = {}) {
   const pack = buildPackage(data.attachments, data.tasks, data.sources);
   const total = verdict(pack.latest);
   const issues = standing(pack.latest, pack.previous).issues;
+  const totals = openTotals(pack.latest);
   const ng = issues.filter(issue => bucket(issue.check) === 'NG').length;
   const written = pack.latest?.round_id && data.written?.includes(pack.latest.round_id);
   const released = pack.latest?.round_id ? data.releases[pack.latest.round_id] : undefined;
@@ -69,7 +70,7 @@ export default function Card({ context: where, lead, hint }: Props = {}) {
 
   // The one thing about the flow worth a line here; the tab says the rest.
   const note = data.aiNode?.status === 'completed' && data.aiNode.outside ? outsideText : moving ? `${moving}。` : pack.stale ? '资料在这次审核后有变化，结论针对的是变化前的资料。' : released ? `${released.by || '有人'} 人工放行了这次审核：${released.reason}` : '';
-  const facts = pack.latest ? [ng ? `不符合 ${ng} 项` : '', issues.length ? `待处理 ${issues.length} 项` : '', when(pack.latest.round_started_at ?? pack.latest.created_at), written ? '已写回' : '尚未写回'].filter(Boolean) : [];
+  const facts = pack.latest ? [ng ? `不符合 ${ng} 项` : '', totals.open ? `待处理 ${totals.open} 项` : '', totals.pending ? `另 ${totals.pending} 项待审核` : '', when(pack.latest.round_started_at ?? pack.latest.created_at), written ? '已写回' : '尚未写回'].filter(Boolean) : [];
 
   return (
     <div className="node-card">
