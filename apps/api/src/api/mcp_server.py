@@ -224,8 +224,9 @@ def install_mcp(app, product, http, session_of):
         shown = value["confirmation"].get("details") or []
         return page(
             "确认这次操作",
-            lines(value["confirmation"].get("summary", [])) + details(shown) + '<p class="notice">只确认上面这一次；内容有变化时需要重新确认。确认后回到客户端继续。</p>'
-            f'<form method="post"><input type="hidden" name="csrf" value="{escape(value["csrf"])}">'
+            lines(value["confirmation"].get("summary", []))
+            + details(shown, "只确认上面这一次；内容有变化时需要重新确认。确认后回到客户端继续。")
+            + f'<form method="post"><input type="hidden" name="csrf" value="{escape(value["csrf"])}">'
             '<button name="decision" value="deny">拒绝</button><button name="decision" value="approve">确认</button></form>',
             wide=bool(shown),
         )

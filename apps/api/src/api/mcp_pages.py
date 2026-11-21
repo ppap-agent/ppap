@@ -150,11 +150,11 @@ def _cell(value) -> str:
     return escape(text)
 
 
-def details(blocks: list[dict]) -> str:
-    """What the person is deciding on, as the Web shows it: facts, tables and quoted text.
+def details(blocks: list[dict], closing: str = "") -> str:
+    """What the person is deciding on, as the Web shows it: facts, tables and quoted text, then one notice.
 
     Blocks come from the confirmation the person approves, so they are rendered exactly as recorded and never re-read."""
-    out = []
+    out, notes = [], []
     for block in blocks:
         title = f"<h3>{escape(block['title'])}</h3>" if block.get("title") else ""
         kind = block.get("kind")
@@ -162,12 +162,18 @@ def details(blocks: list[dict]) -> str:
             rows = "".join(f"<dt>{escape(label)}</dt><dd>{_cell(value)}</dd>" for label, value in block["rows"])
             out.append(f"{title}<dl>{rows}</dl>")
         elif kind == "table" and block.get("rows"):
-            head = "".join(f"<th>{escape(column)}</th>" for column in block["head"])
-            body = "".join("<tr>" + "".join(f"<td>{_cell(value)}</td>" for value in row) + "</tr>" for row in block["rows"])
+            # A column with nothing in any row says nothing; leave it out.
+            keep = [i for i in range(len(block["head"])) if any(row[i] not in (None, "", "—") for row in block["rows"])]
+            head = "".join(f"<th>{escape(block['head'][i])}</th>" for i in keep)
+            body = "".join("<tr>" + "".join(f"<td>{_cell(row[i])}</td>" for i in keep) + "</tr>" for row in block["rows"])
             more = f'<p class="muted">另有 {block["more"]} 项未列出。</p>' if block.get("more") else ""
             out.append(f'{title}<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{more}')
         elif kind == "text" and block.get("text"):
             out.append(f'{title}<p class="quote">{escape(block["text"])}</p>')
         elif kind == "note" and block.get("text"):
-            out.append(f'<p class="notice">{escape(block["text"])}</p>')
+            notes.append(block["text"])
+    if closing:
+        notes.append(closing)
+    if notes:
+        out.append(f'<p class="notice">{"".join(escape(note) for note in notes)}</p>')
     return "".join(out)
