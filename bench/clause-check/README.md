@@ -1,77 +1,46 @@
-# clause-check：条款检查技能的长期试验
+# clause-check：条款语义审查基准
 
-用真实条款衡量 [clause-check](../../.claude/skills/clause-check/SKILL.md) 技能的实际效果：让技能从头完整分析一条条款，看报告找到了多少已知问题、漏了什么、有没有越界、白话写得怎么样，以及每条花多少时间和费用。技能每次改动前后在同一组条款上各跑一遍，比较汇总。
+用一组真实审核条款比较 clause-check 修改前后的**有效发现、误报、漏报和成本**。本基准衡量生成的客户问题是否忠实于原文，不把 JSON 结构校验通过当成语义正确。
 
-它衡量的是技能产出的报告，不证明条款本身对错，也不替产品负责人裁决任何问题。
+## 用例与判分
 
-## 用例
+cases.json 记录各条款、需要对照的真实文件、参照发现（需人工复核的已知问题）和 out_of_scope（不应报告的解释）。参照发现不是不可质疑的真值：要依据最新原文和明确的通用判定政策更新；真正需要避免的是把已经排除的错误解释重新带入问卷。
 
-[`cases.json`](cases.json)：
+模型运行后应生成 <条款序号>.review.json，使用 Skill 的 check.py 生成 <条款序号>.report.md 和 <条款序号>.report.json。基准从结构化审查原件**重新生成报告**，评分使用重生成的报告，而不直接相信会话提交的 Markdown。
 
-- `cases`：每条条款的规则文件、需要对照的真实文件（可为空），以及**参照发现**，即已知原文没说清的地方。参照来自前期复核和产品负责人的判断，只写条款字面上的问题。
-- `out_of_scope`：报告不应出现的分析，例如引入原文没有的判断栏、按行业惯例补要求、替规则选定理解。
-
-参照不是标准答案：评判列出的“新发现”由产品负责人判断，有用的补进对应条款的 `reference`，越界的补进 `out_of_scope`，用例随实践不断积累。
-
-## 运行
-
-需要本机的 `pi`（已配置好模型）、评分用的已登录 `claude` 命令行，以及技能本身的运行条件（`JAVA_HOME` 指向 Java 11 及以上）。
-
-```bash
-uv run --no-sync python bench/clause-check/bench.py list
-```
-
-```bash
-uv run --no-sync python bench/clause-check/bench.py run --name trial --case U06:3
-```
-
-```bash
-uv run --no-sync python bench/clause-check/bench.py run --name trial --jobs 3
-```
-
-每条条款启动一个无界面的 pi 会话，按技能从读条款开始完整走一遍。会话只拿到任务需要的东西：
-
-- 每条条款在用户目录之外有自己的目录 `/private/tmp/clause-check-bench/<名称>/<条款>/`，里面只有 `rules.json`（只含这一条条款）和 `files/`（要对照的真实文件）。会话在这里启动，这就是它的工作目录。
-- 技能是本次运行复制出的一份**只读**副本，会话只加载这一个技能，不读 AGENTS.md、CLAUDE.md 和项目配置，不带扩展和 MCP；pi 也没有用户记忆。
-- 读 Excel 等文件用的 Python 包装在工具环境 `/private/tmp/clause-check-bench/tools/`（第一次运行时建好）；会话的环境变量里去掉了所有指向用户目录和仓库的路径。
-- 不给真值表。
-
-pi 没有内置沙箱，所以每个会话用 macOS 的 `sandbox-exec` 包起来：
-
-- **整个用户目录**不能读写（仓库、同级仓库、git 和 GitHub 凭据、Claude Code 的会话和记忆都在里面），只能查看某个路径是否存在（程序解析路径时要逐级查看），不能读内容、不能列目录。唯一放开的是 pi 自己的配置 `~/.pi/agent/`，其中以前的会话 `sessions/` 仍然关着。
-- 其他每个条款的目录（本次运行的和以前运行的）、`/private/tmp/claude-501/` 不能读写；技能副本和工具环境只能读。
-- **网络没有限制**：沙箱没法只放行模型的地址。会话仍能访问公网，但拿不到凭据，读不到私有仓库。
-
-会话结束后，bench 找到会话对这条条款写的形式化文件，用技能脚本**重新生成报告**，评分用的是重新生成的这一份；会话自己留下的报告另存为 `session-report.md`，两者不一致就标出来。形式化文件、报告、脚本输出（`check.txt`）、会话摘要（`session.json`）和完整会话记录（`transcript.jsonl`）都在 `bench/clause-check/runs/<名称>/<条款>/`（不入库）。`run.json` 记录这次运行的提交、技能和参照的摘要、模型和思考强度。停掉 bench 时，会话启动的进程一并结束。
-
-运行结束后自动评分。评分由一个 Claude Code 会话完成：模型固定为 `claude-opus-5-5`，在空目录里启动，不加载项目说明和本机记忆，与被测的模型分开。重新评分：
-
-```bash
-uv run --no-sync python bench/clause-check/bench.py score bench/clause-check/runs/<名称> --rejudge
-```
-
-重新评分用的是当前的 `cases.json`；它和运行时的参照摘要不同时，汇总里会注明。
-
-## 指标
-
-`runs/<名称>/summary.md` 开头写明提交、技能和参照的摘要、模型、思考强度和评判模型，然后每条条款一行：
+主要指标：
 
 | 指标 | 含义 |
 |---|---|
-| 发现已确认 | 用会话最终的形式化文件重新运行技能脚本，退出码是否为 0，即报告里每处发现都由例子确认过。它不衡量形式化是否完整；不是“是”时，报告顶部写着哪些发现没确认 |
-| 报告与脚本一致 | 会话交的报告和重新生成的是否一模一样；不一致说明手改过报告，或改完形式化文件没有重跑 |
-| 找到 / 部分 / 漏掉 | 参照发现在报告里被指出、只说到一部分、没有指出（由评判会话逐条比对） |
-| 新发现 | 报告里不对应任何参照的问题，留给产品负责人判断是否有用。堆问题不会提高“找到”以外的分数，新发现要靠人判断 |
-| 越界 | 报告里属于 `out_of_scope` 的分析，应为 0 |
-| 说错 | 报告里按条款原文明显说错的结论，应为 0 |
-| 重复问题 | “需要回答的问题”里与前面某个问题问同一件事的数量，应为 0 |
-| 技术词 | 报告里的技术词汇和英文标识符（条款原文和文件名里的词除外），应为 0 |
-| 待补 | 报告里“待补白话说明”的处数，应为 0 |
-| 被沙箱拒绝 | 工具调用被沙箱拒绝的次数，从工具输出里统计，不管路径怎么写。被拒的访问不影响结果；明细里列出每次调用，看它是在找参考答案，还是全盘搜索时顺带碰到 |
-| 用时 / 输出 tokens | 技能会话的耗时和输出 token 数，不含评判；输入和缓存读取的 token 数在 `session.json` |
+| 结构校验 | 引文、问题、例子和候选读法满足脚本的输入约定，不代表语义已证明 |
+| 报告与脚本一致 | 会话报告是否与结构化审查文件重生成的报告一致 |
+| 找到 / 部分 / 漏掉 | 人工参照问题是否被覆盖 |
+| 新发现 | 参照之外的发现，需要产品负责人进一步判断 |
+| 越界 / 说错 / 重复 | 无根据的扩展、误报、重复问题，应趋近于零 |
+| 技术词 / 待补 | 客户报告不应泄漏技术模型名或未完成内容 |
+| 被沙箱拒绝 / 用时 / tokens | 执行成本与环境边界 |
 
-表下列出每条条款没找到的参照，以及全部新发现、越界、说错、重复的问题和被拒的调用。
+特别关注三个误报族：把「A 才通过」当成「A 即通过」；把局部条件通过或例外当整条通过；仅因没有充分条件就问「全部满足还不能通过吗」而没有核对已确认的业务判定政策。是否合理，必须回到条款全文判断。
 
-## 比较两种做法
+## 本地校验（仅 Python 标准库）
 
-每种做法是一个提交。分别在各自提交上运行，比较两份 `summary.md`，先看开头的技能摘要、参照摘要、模型和思考强度是否符合预期。模型有随机性，比较前在同一提交上重复几次，看波动范围。结论写进对应的 Issue 或 PR；用例和参照的变化随技能改动一起提交到 `cases.json`。
+    python3 -m unittest discover -s .claude/skills/clause-check/tests -v
+    python3 .claude/skills/clause-check/scripts/check.py .claude/skills/clause-check/examples/X01/X01-1.review.json
+
+不再需要 Java、ROBOT/HermiT 或 OWL 文件。
+
+## 运行 Agent 基准
+
+需要在 macOS 配置好 pi、已登录的 claude CLI 和 sandbox-exec。每个会话在独立受限目录中仅能读取本条规则与可选的真实文件，不读仓库中的历史报告、真值表或其他会话状态。
+
+    uv run --no-sync python bench/clause-check/bench.py list
+    uv run --no-sync python bench/clause-check/bench.py run --name trial --case U06:3
+    uv run --no-sync python bench/clause-check/bench.py run --name trial --jobs 3
+
+基准会复制只读的 Skill 副本、启动隔离会话，然后使用该 Skill 的轻量 check.py 再生报告，并由独立的 Claude Code 评判会话对照 cases.json。无界面运行日志、审查 JSON、再生报告和汇总存放在 bench/clause-check/runs/<名称>/ 下（不入库）。
+
+可重评分：
+
+    uv run --no-sync python bench/clause-check/bench.py score bench/clause-check/runs/<名称> --rejudge
+
+建议同一版本多次重复运行，记录模型随机性造成的波动，再对比不同提交。不要把「发现数量上升」当成质量提高，也不要把退出码 0 当成客户问题有效性的证据。
