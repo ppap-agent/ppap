@@ -7,7 +7,8 @@ the answers exported from there into a backfill list.
     python3 questionnaire.py close <导入文件.json> <租户编号>     > 关闭.sql
     python3 questionnaire.py answers <导出文件.json> <工作目录> [<回填清单.md>]
 
-`build` reads validated `<条款序号>.report.json` files, checking each against its `.review.json` source. Each
+`build` reads every `<条款序号>.review.json` with the `.report.json` check.py wrote for it; a missing, stale or
+hand-edited report stops the build. Each
 unanswered ambiguity, undefined case, gap or conflict is one finding, named `<条款 id>#<处>` (`CP:8#1`, `CP:8#8.1`, `CP:8#G1`,
 `CP:8#C1`). The curation file says which findings a common question covers, which were settled by an answer already
 relayed, which go back to the customer for a conclusion, and the questions about the rulebook's general notes;
@@ -25,15 +26,15 @@ decision.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
 from collections import Counter
-import hashlib
-
-from check import REPORT_SCHEMA, check_review, load_source, resolve
 from datetime import datetime
 from pathlib import Path
+
+from check import REPORT_SCHEMA, check_review, load_source, resolve
 
 NUMBERS = "一二三四五六七八九十"
 GROUPS = ("common", "conclusion", "general", "clause")
@@ -42,29 +43,28 @@ VERDICT_OPTIONS = [{"key": "PASS", "label": "通过"}, {"key": "NG", "label": "�
 
 
 def findings(directory: Path, rule_version: str) -> tuple[list[dict], dict[str, str]]:
-    """Load checked structured reports; refuse edits that made the reports stale."""
+    """Load every clause review with its checked report; a review without a valid report stops the build
+    instead of silently dropping that clause, and a report without its review is refused too."""
     items: list[dict] = []
     names: dict[str, str] = {}
-    paths = sorted(directory.glob("*.report.json"))
-    if not paths:
-        raise SystemExit("[报告] 没有 *.report.json；先运行 check.py")
-    for path in paths:
+    reviews = {path.name.removesuffix(".review.json"): path for path in directory.glob("*.review.json")}
+    reports = {path.name.removesuffix(".report.json"): path for path in directory.glob("*.report.json")}
+    if not reviews:
+        raise SystemExit("[报告] 没有 *.review.json")
+    if orphans := sorted(reports.keys() - reviews.keys()):
+        raise SystemExit("[报告] 这些报告缺审查原件：" + "、".join(f"{name}.review.json" for name in orphans))
+    if missing := sorted(reviews.keys() - reports.keys()):
+        raise SystemExit("[报告] 这些审查记录没有有效报告，先运行 check.py 到退出码为 0：" + "、".join(f"{name}.review.json" for name in missing))
+    for prefix in sorted(reviews):
+        review_path, path = reviews[prefix], reports[prefix]
         payload = json.loads(path.read_text(encoding="utf-8"))
-        review_path = path.with_name(path.name.removesuffix(".report.json") + ".review.json")
-        if not review_path.is_file():
-            raise SystemExit(f"[报告] {path.name} 缺审查原件 {review_path.name}")
         raw = review_path.read_bytes()
         review = json.loads(raw)
         clause, _ = load_source(review_path, review)
         errors, expected = check_review(review_path, review, clause)
         if errors:
             raise SystemExit(f"[报告] {path.name} 审查原件校验失败：" + "；".join(errors))
-        if (
-            payload.get("schema") != REPORT_SCHEMA
-            or payload.get("review_sha256") != hashlib.sha256(raw).hexdigest()
-            or payload.get("clause") != clause
-            or payload.get("findings") != expected
-        ):
+        if payload.get("schema") != REPORT_SCHEMA or payload.get("review_sha256") != hashlib.sha256(raw).hexdigest() or payload.get("clause") != clause or payload.get("findings") != expected:
             raise SystemExit(f"[报告] {path.name} 已过期或被手工修改；请重跑 check.py")
         for filename, digest in payload.get("policy_sha256", {}).items():
             policy_file = resolve(review_path, filename)
@@ -80,14 +80,18 @@ def findings(directory: Path, rule_version: str) -> tuple[list[dict], dict[str, 
     return items, names
 
 
+def illustrate(item: dict) -> str:
+    """The finding's concrete case, then what the clause says about it."""
+    example = item["example"].strip()
+    if not example.endswith(("。", "！", "？")):
+        example += "。"
+    tail = {"ambiguity": item.get("verdict", ""), "gap": "原文既没说通过，也没说不通过。", "conflict": "原文既说通过，又说不通过。", "open": "原文没写这种情况怎么认定。"}
+    return example + tail[item["kind"]]
+
+
 def why(item: dict) -> str:
-    if item["kind"] == "ambiguity":
-        return f"例如：{item['example']}{item['verdict']}" if item["example"] else ""
-    if item["kind"] == "gap":
-        return f"这种文件原文既没说通过，也没说不通过：{item['title']}。"
-    if item["kind"] == "conflict":
-        return f"这种文件原文既说通过，又说不通过：{item['title']}。"
-    return "原文没写这种情况怎么认定。遇到时程序只能记待审核，人工也会各判各的。"
+    text = f"例如：{illustrate(item)}"
+    return text + "遇到时程序只能记待审核，人工也会各判各的。" if item["kind"] == "open" else text
 
 
 def options(item: dict) -> list[dict]:
@@ -112,8 +116,7 @@ def expect(item: dict) -> str:
 
 
 def related(item: dict, names: dict[str, str]) -> dict:
-    example = f"{item['example']}{item['verdict']}" if item["kind"] == "ambiguity" and item["example"] else ""
-    return {"clause": names[item["clause"]], "question": item["question"], "example": example}
+    return {"clause": names[item["clause"]], "question": item["question"], "example": illustrate(item)}
 
 
 def lettered(texts: list[str]) -> list[dict]:
