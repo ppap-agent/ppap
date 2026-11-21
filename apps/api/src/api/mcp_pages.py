@@ -68,6 +68,7 @@ table{width:100%;border-collapse:collapse}
 th{text-align:left;font-weight:400;color:var(--color-muted-foreground);padding:8px 12px 8px 0;border-bottom:1px solid var(--color-border);white-space:nowrap}
 td{padding:10px 12px 10px 0;border-bottom:1px solid var(--color-border);vertical-align:top;overflow-wrap:anywhere}
 .quote{margin:0;padding:10px 12px;background:var(--color-secondary);border-radius:calc(var(--radius-control) - 2px);overflow-wrap:anywhere}
+.code{white-space:nowrap;font-variant-numeric:tabular-nums}
 .quote ol{margin:0;padding-left:20px}
 .quote ol>li{padding:2px 0;border:0}
 .quote ul{margin:4px 0;padding-left:18px;list-style:disc}
@@ -180,6 +181,8 @@ def _cell(value) -> str:
     text = "—" if value is None or value == "" else str(value)
     if text in TAGS:
         return f'<span class="tag {TAGS[text]}">{escape(text)}</span>'
+    if re.fullmatch(r"[A-Za-z0-9._-]{1,24}", text):
+        return f'<span class="code">{escape(text)}</span>'  # a part number or code reads as one word
     return escape(text)
 
 
