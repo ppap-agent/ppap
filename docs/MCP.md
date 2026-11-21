@@ -107,7 +107,7 @@
 
 设置 `PPAP_MCP_ENABLED=true` 后，API 进程提供 `/mcp`（Streamable HTTP，只有工具，没有 Resources 与 Prompts）。生产 `PPAP_PUBLIC_API_URL` 为 `https://ppap.icoastline.com/ppap` 时，服务器地址为 `https://ppap.icoastline.com/ppap/mcp`。开发环境仅允许回环地址使用 HTTP。
 
-授权服务器为 API 地址下的 `/oauth`：客户端注册、授权码与 S256 PKCE、Scope 选择、刷新和撤销。授权及令牌请求的 `resource` 必须精确等于 MCP 服务器地址。用户用飞书登录，核对客户端回调和权限；权限不足时工具在 `next.message` 说明缺哪一项以及如何重新连接。注册时未指定范围的客户端可申请全部范围，实际授予以用户勾选为准。飞书凭据始终留在服务端，读文件夹和导入都用用户自己的飞书授权。
+授权服务器为 API 地址下的 `/oauth`：客户端注册、授权码与 S256 PKCE、Scope 选择、刷新和撤销。授权及令牌请求的 `resource` 必须精确等于 MCP 服务器地址。用户用飞书登录，核对客户端回调和权限：客户端申请的权限默认全部勾选，用户可取消；开始审核、复核、发送仍逐次在浏览器确认。权限不足时工具在 `next.message` 说明缺哪一项以及如何重新连接。注册时未指定范围的客户端可申请全部范围，实际授予以用户勾选为准。飞书凭据始终留在服务端，读文件夹和导入都用用户自己的飞书授权。
 
 OAuth 发现地址按 RFC 8414 / 9728 放在域名根目录：
 

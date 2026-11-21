@@ -272,13 +272,12 @@ def register_oauth(app, provider: OAuthProvider, session_of):
         except McpError as exc:
             return page("授权请求已失效", "<p>请回到客户端重新连接。</p>", exc.status)
 
-        # Reading is pre-selected; anything that uploads, starts, reviews or sends is chosen deliberately.
+        # Everything the client asked for is pre-selected: an audit needs upload and start, and a client left read-only
+        # fails at the first file. Starting, reviewing and sending are still approved in the browser one call at a time.
         def box(s):
-            return f'<label><input type="checkbox" name="scope" value="{escape(s)}"{" checked" if s.endswith(":read") else ""}>{escape(SCOPES[s])}</label>'
+            return f'<label><input type="checkbox" name="scope" value="{escape(s)}" checked>{escape(SCOPES[s])}</label>'
 
-        reads = [s for s in view["scopes"] if s.endswith(":read")]
-        writes = [s for s in view["scopes"] if not s.endswith(":read")]
-        boxes = "".join(map(box, reads)) + (("<p><small>以下操作权限默认不勾选，需要时再勾：</small></p>" + "".join(map(box, writes))) if writes else "")
+        boxes = "".join(map(box, view["scopes"])) + "<p><small>开始审核、提交复核、发送报告时，每一次仍会请你在浏览器里确认。</small></p>"
         return page(
             "连接外部客户端",
             f"<p><strong>{escape(view['client'].get('client_name') or 'MCP client')}</strong> 请求访问你的 PPAP 数据。</p>"
