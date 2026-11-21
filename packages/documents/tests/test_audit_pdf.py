@@ -240,6 +240,24 @@ def test_long_tables_repeat_their_header_on_every_page_and_mark_continuations():
         assert all(f"R{number}·类别{number}PASS" in text for number in range(1, 61))
 
 
+def test_running_header_and_footer_share_one_embedded_face_however_many_pages():
+    # Loading the CJK face for every header and footer line held a copy per line: a thirty-page report took
+    # gigabytes and was killed in a 2 GiB worker. The faces embedded stay the same few as pages grow.
+    source = report_source()
+    base = source["audit"]["checks"][0]
+    source["audit"]["checks"] = []
+    for number in range(1, 121):
+        check = deepcopy(base)
+        check["rule_item"].update(id=f"R{number}", category=f"类别{number}")
+        source["audit"]["checks"].append(check)
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        assert len(document) > 10
+        faces = {font[0] for index in range(len(document)) for font in document.get_page_fonts(index)}
+        assert len(faces) <= 3, faces
+        last = document[-1].get_text()
+        assert f"第 {len(document)} / {len(document)} 页" in last and "PPAP 审核报告" in last
+
+
 def test_new_pdfs_carry_no_internal_identity_or_checker_sample_verification():
     identity = "1ff467a2-fa00-4a10-8abc-ff12abcd3456"
     source = report_source()

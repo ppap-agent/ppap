@@ -351,16 +351,28 @@ def render_report(*, cover: str, chapters: list[Chapter], name: str, kind: str, 
     with pymupdf.open(stream=output.getvalue(), filetype="pdf") as document, pymupdf.open(stream=contents.getvalue(), filetype="pdf") as toc:
         document.insert_pdf(toc, start_at=1)
         total = len(document)
-        margin = f"body {{font-family:{FAMILY}; font-size:8pt; color:#444}} p {{margin:0}}"
-        header = text(name if len(name) <= 50 else name[:49] + "…")
+        # The running header and footer use one loaded face for every page: loading the CJK face for each line
+        # (as an HTML box does) held a fresh copy per line and took gigabytes on a thirty-page report.
+        face = pymupdf.Font(fontbuffer=report_fonts()[0])
+        header = name if len(name) <= 50 else name[:49] + "…"
+        grey = (0.27, 0.27, 0.27)
+
+        def line(page, rect, value: str, align: int) -> None:
+            writer = pymupdf.TextWriter(page.rect)
+            writer.fill_textbox(rect, value, font=face, fontsize=8, align=align)
+            writer.write_text(page, color=grey)
+
+        for page in document:
+            page.wrap_contents()  # the body's drawing state must not carry over into the lines added below
+
         for index, page in enumerate(document):
             if index == 0:
                 continue  # the cover has no running header or footer
-            page.insert_htmlbox(pymupdf.Rect(51, 30, 420, 50), f"<p>{header}</p>", css=faces + margin, archive=archive)
-            page.insert_htmlbox(pymupdf.Rect(420, 30, 544, 50), f"<p style='text-align:right'>{escape(kind)}</p>", css=faces + margin, archive=archive)
+            line(page, pymupdf.Rect(51, 34, 420, 48), header, pymupdf.TEXT_ALIGN_LEFT)
+            line(page, pymupdf.Rect(420, 34, 544, 48), kind, pymupdf.TEXT_ALIGN_RIGHT)
             page.draw_line((51, 48), (544, 48), color=(0.6, 0.6, 0.6), width=0.5)
-            page.insert_htmlbox(pymupdf.Rect(51, 800, 300, 820), f"<p>{escape(date)}</p>", css=faces + margin, archive=archive)
-            page.insert_htmlbox(pymupdf.Rect(300, 800, 544, 820), f"<p style='text-align:right'>第 {index + 1} / {total} 页</p>", css=faces + margin, archive=archive)
+            line(page, pymupdf.Rect(51, 804, 300, 818), date, pymupdf.TEXT_ALIGN_LEFT)
+            line(page, pymupdf.Rect(300, 804, 544, 818), f"第 {index + 1} / {total} 页", pymupdf.TEXT_ALIGN_RIGHT)
         # fontTools subsets the Noto CJK faces; MuPDF's own subsetter rejects their CFF and leaves them whole.
         # The text layer is made exact before the contents lines are found by their titles.
         document.subset_fonts(fallback=True)
