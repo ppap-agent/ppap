@@ -185,6 +185,8 @@ def test_a_precheck_finding_never_blocks_the_audit():
     facts = {**checks(a="valid"), "audit": audit(audit_row("a")), "precheck": {"conclusion": "block", "blocks": [block], "warnings": []}}
     view = w.project(TASK, state, facts)
     assert view["phase"] == "ready_to_confirm" and view["issues"][0]["severity"] == "warning" and view["issues"][0]["subject"]["key"] == "t-a"
+    # A precheck finding is told, not asked: it offers nothing to decide.
+    assert view["issues"][0]["allowed_actions"] == []
 
 
 def test_a_finished_audit_asks_its_open_questions_and_then_points_at_the_results():

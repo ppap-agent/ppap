@@ -532,9 +532,9 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
             )
         precheck = facts.get("precheck") or {}
         for item in precheck.get("blocks") or []:
-            found.append(_precheck_issue(task_id, item, "warning", editable, by_version))
+            found.append(_precheck_issue(task_id, item, "warning", by_version))
         for item in precheck.get("warnings") or []:
-            found.append(_precheck_issue(task_id, item, "info", editable, by_version))
+            found.append(_precheck_issue(task_id, item, "info", by_version))
     if audit.get("state") == "completed":
         for row in audit.get("files", []):
             review = row.get("audit") or {}
@@ -609,7 +609,7 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
     return found
 
 
-def _precheck_issue(task_id: str, item: dict, severity: str, editable: bool, by_version: dict[str, str]) -> dict:
+def _precheck_issue(task_id: str, item: dict, severity: str, by_version: dict[str, str]) -> dict:
     token = by_version.get(item.get("file_version_id") or "")
     return _issue(
         task_id,
@@ -618,8 +618,8 @@ def _precheck_issue(task_id: str, item: dict, severity: str, editable: bool, by_
         severity,
         "precheck",
         f"「{item.get('filename', '')}」{item.get('problem') or item.get('title', '')}",
-        (item.get("action") or "") + " 预检不影响能否开始审核。",
-        [_EXCLUDE] if editable and token else [],
+        (item.get("action") or "") + " 预检只作提醒，不影响开始审核，也不需要处理。",
+        [],
         subject={"kind": "file", "key": token or item.get("file_version_id"), "filename": item.get("filename")},
         key=f"{item.get('file_version_id')}:{item.get('code')}:{item.get('number')}",
     )
