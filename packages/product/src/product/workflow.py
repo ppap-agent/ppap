@@ -22,7 +22,7 @@ from copy import deepcopy
 from typing import Any
 
 SCHEMA_VERSION = "1.0"
-# Feishu object types PPAP can read as an audit input. A folder inside the folder is not walked into.
+# Feishu object types PPAP can read as an audit input. Folders are walked by the runtime; one left over was too deep.
 IMPORTABLE = frozenset({"file", "sheet", "doc", "docx", "bitable"})
 SETTLED_CHECKS = frozenset({"valid", "invalid", "error"})
 
@@ -73,7 +73,7 @@ def step_id(task_id: str, name: str) -> str:
 
 
 def listing_digest(files: list[dict]) -> str:
-    return hashlib.sha256("\n".join(sorted(f"{row['token']}\t{row['type']}\t{row['name']}" for row in files)).encode()).hexdigest()
+    return hashlib.sha256("\n".join(sorted(f"{row['token']}\t{row['type']}\t{row.get('folder', '')}\t{row['name']}" for row in files)).encode()).hexdigest()
 
 
 # ---- events ------------------------------------------------------------------------------------------
@@ -87,7 +87,7 @@ def apply(state: dict, event: dict) -> dict:
         listed = {row["token"]: row for row in event["files"] if row["type"] in IMPORTABLE}
         state["skipped"] = [{**row, "reason": "subfolder" if row["type"] == "folder" else "unsupported_type"} for row in event["files"] if row["type"] not in IMPORTABLE]
         for token, row in listed.items():
-            files.setdefault(token, {"name": row["name"], "type": row["type"], "attempts": 0, "version": None, "error": None, "validation_id": None, "excluded": None})
+            files.setdefault(token, {"name": row["name"], "type": row["type"], "folder": row.get("folder", ""), "attempts": 0, "version": None, "error": None, "validation_id": None, "excluded": None})
             if files[token]["excluded"] == "removed_from_source":
                 files[token]["excluded"] = None
         for token, entry in files.items():
@@ -331,7 +331,7 @@ def issues(task_id: str, state: dict, facts: dict) -> list[dict]:
         )
     for row in state["skipped"]:
         if row["reason"] == "subfolder":
-            text, code = f"子文件夹「{row['name']}」没有读取；需要审核它时，请单独给出它的链接。", "SUBFOLDER_NOT_READ"
+            text, code = f"子文件夹「{row['name']}」层级太深，没有读取；需要审核它时，请单独给出它的链接。", "SUBFOLDER_NOT_READ"
         else:
             text, code = f"「{row['name']}」不是可以审核的文件类型，没有导入。", "UNSUPPORTED_FILE"
         found.append(
@@ -717,6 +717,8 @@ def _file_lines(state: dict, facts: dict) -> list[dict]:
         entry = state["files"][token]
         version = entry["version"] or {}
         line = {"key": token, "filename": version.get("original_filename") or entry["name"], "file_version_id": version.get("id")}
+        if entry.get("folder"):
+            line["folder"] = entry["folder"]
         if entry["excluded"]:
             line["state"] = "excluded"
         elif token in same:

@@ -20,6 +20,8 @@ from api.mcp_gateway import Reply
 
 log = logging.getLogger(__name__)
 MAX_FILES = 200
+MAX_DEPTH = 5  # subfolder levels below the folder the user gave
+MAX_FOLDERS = 100
 _TRANSIENT = {429, 502, 503, 504}
 
 
@@ -63,8 +65,11 @@ class TaskRuntime:
         return response.status_code, value
 
     async def read(self, actor, path, params=None):
-        """A fact that may not exist yet: absent, not an error."""
+        """A fact that may not exist yet: absent, not an error. A read that failed is an error, never "not yet":
+        a task that cannot be read must not look like one that is still working."""
         status, value = await self.api(actor, "GET", path, params=params)
+        if status >= 500 or status in {401, 429}:
+            raise McpError(value.get("error", "service_unavailable") if isinstance(value, dict) else "service_unavailable", 503 if status != 401 else 401)
         return value if status == 200 else None
 
     async def load(self, actor: Delegation, task_id: str) -> dict:
@@ -217,22 +222,33 @@ class TaskRuntime:
         raise McpError("unknown_effect", 500)
 
     async def listing(self, actor: Delegation, source: dict) -> list[dict]:
-        """Everything directly inside the folder, or the one file the link names. Folders inside it are listed, not entered."""
+        """Every file under the folder, through its subfolders, or the one file the link names. Each file carries the
+        folder path it sits in. A folder too deep to enter is returned as a folder row, so it is reported, not dropped."""
         if source["kind"] == "file":
             return [{"token": source["token"], "type": source["doc_type"], "name": source.get("name") or "飞书文件"}]
-        files: list[dict] = []
-        page = ""
-        for _ in range(20):
-            status, value = await self.api(actor, "GET", "/integrations/feishu/files", params={"folder_token": source["token"], "page_token": page})
-            if status != 200:
-                raise McpError(value.get("error", "feishu_folder_failed"), status)
-            files.extend(value.get("files", []))
-            page = value.get("next_page_token") or ""
-            if not page:
-                break
-        if page or sum(1 for row in files if row["type"] in workflow.IMPORTABLE) > MAX_FILES:
-            raise McpError("too_many_files", 413)
-        return files
+        found: list[dict] = []
+        pending, seen = [(source["token"], "", 0)], {source["token"]}
+        while pending:
+            token, path, depth = pending.pop(0)
+            page = ""
+            for _ in range(20):
+                status, value = await self.api(actor, "GET", "/integrations/feishu/files", params={"folder_token": token, "page_token": page})
+                if status != 200:
+                    raise McpError(value.get("error", "feishu_folder_failed"), status)
+                for row in value.get("files", []):
+                    if row["type"] != "folder":
+                        found.append({**row, "folder": path})
+                    elif row["token"] not in seen and depth < MAX_DEPTH and len(seen) < MAX_FOLDERS:
+                        seen.add(row["token"])
+                        pending.append((row["token"], f"{path}/{row['name']}" if path else row["name"], depth + 1))
+                    elif row["token"] not in seen:
+                        found.append({**row, "folder": path})
+                page = value.get("next_page_token") or ""
+                if not page:
+                    break
+            if page or sum(1 for row in found if row["type"] in workflow.IMPORTABLE) > MAX_FILES:
+                raise McpError("too_many_files", 413)
+        return found
 
     # ---- commands --------------------------------------------------------------------------------
 

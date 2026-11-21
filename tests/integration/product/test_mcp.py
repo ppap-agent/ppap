@@ -239,7 +239,7 @@ def book(*cells):
 
 
 class Drive:
-    """The user's Feishu: a folder of files (None: one that will not download) with a folder inside it, and a
+    """The user's Feishu: a folder of files (None: one that will not download) with an empty folder inside it, and a
     record of everything PPAP writes back."""
 
     def __init__(self, **files):
@@ -249,6 +249,8 @@ class Drive:
     def handler(self, request):
         path = request.url.path
         if request.method == "GET" and path.endswith("/drive/v1/files"):
+            if request.url.params.get("folder_token") == "fldOld":
+                return httpx.Response(200, json={"code": 0, "data": {"files": [], "has_more": False}})
             listed = [{"token": token, "name": name, "type": "file"} for token, (name, _) in self.files.items()]
             return httpx.Response(200, json={"code": 0, "data": {"files": [*listed, {"token": "fldOld", "name": "旧版", "type": "folder"}], "has_more": False}})
         if request.method == "POST" and path.endswith("/drive/v1/metas/batch_query"):
@@ -349,7 +351,6 @@ def test_a_feishu_folder_is_prepared_confirmed_and_audited_and_an_interruption_c
         # One file failed: it is an issue with its own choices; the other is recognised, prechecked and waiting.
         blocking = [issue for issue in seen["issues"] if issue["blocking"]]
         assert [(issue["code"], issue["subject"]["filename"]) for issue in blocking] == [("IMPORT_FAILED", "broken.xlsx")]
-        assert {issue["code"] for issue in seen["issues"]} >= {"IMPORT_FAILED", "SUBFOLDER_NOT_READ"}
         assert seen["next"] == {"kind": "user_action", "issue_id": blocking[0]["id"], "prompt": blocking[0]["message"], "resolve_with": "resolve_issue"}
         ingest = next(stage for stage in seen["result"]["stages"] if stage["stage"] == "ingest")
         assert (ingest["state"], ingest["imported"], ingest["failed"]) == ("partial", 1, 1)

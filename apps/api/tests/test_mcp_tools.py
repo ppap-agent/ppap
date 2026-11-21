@@ -38,6 +38,7 @@ class Product:
     def __init__(self, *names, failing=()):
         self.folder = [{"token": "tok-" + name, "name": name, "type": "file"} for name in names]
         self.failing = set(failing)
+        self.inside = {}  # a subfolder's token -> what it holds
         self.audit = None
         self.imports = 0
         self.approved = False
@@ -48,7 +49,7 @@ class Product:
 
     async def request(self, actor, method, path, *, body=None, params=None, **_):
         if (method, path) == ("GET", "/integrations/feishu/files"):
-            return response(200, {"files": self.folder})
+            return response(200, {"files": self.inside.get(params["folder_token"], self.folder)})
         if path == "/integrations/feishu/files/import":
             name = body["file_token"].removeprefix("tok-")
             if name in self.failing:
@@ -246,3 +247,36 @@ def test_what_is_not_a_feishu_link_or_not_permitted_is_said_in_words_the_user_ca
     limited = World("a.xlsx", scopes=frozenset({"audits:read", "files:read"})).call("prepare_audit", request_id=str(uuid4()), source="fld1")
     assert limited["next"]["error_code"] == "insufficient_scope" and "重新连接" in limited["next"]["message"]
     assert world.call("get_task", task_id=str(uuid4()))["next"]["error_code"] == "task_not_found"
+
+
+def test_a_submission_is_read_through_its_subfolders_as_one_audit():
+    world = World()
+    world.product.folder = [{"token": "fld-all", "name": "测试文件", "type": "folder"}]
+    world.product.inside = {
+        "fld-all": [{"token": "fld-cp", "name": "10 控制计划", "type": "folder"}, {"token": "fld-msa", "name": "06 测量系统分析评价", "type": "folder"}],
+        "fld-cp": [{"token": "tok-cp.pdf", "name": "cp.pdf", "type": "file"}],
+        "fld-msa": [{"token": "tok-msa.xls", "name": "msa.xls", "type": "file"}, {"token": "tok-kappa.xlsx", "name": "kappa.xlsx", "type": "file"}],
+    }
+    out = world.call("prepare_audit", request_id=str(uuid4()), source="fld-root")
+    assert out["result"]["phase"] == "ready_to_confirm" and out["issues"] == [] and out["result"]["quote"]["files_to_audit"] == 3
+    assert {row["filename"]: row["folder"] for row in out["result"]["files"]["items"]} == {
+        "cp.pdf": "测试文件/10 控制计划",
+        "msa.xls": "测试文件/06 测量系统分析评价",
+        "kappa.xlsx": "测试文件/06 测量系统分析评价",
+    }
+
+
+def test_a_task_that_cannot_be_read_is_an_error_not_a_wait():
+    world = World("a.xlsx")
+    task = str(uuid4())
+    assert world.call("prepare_audit", request_id=task, source="fld1")["result"]["phase"] == "ready_to_confirm"
+    original = world.product.request
+
+    async def broken(actor, method, path, **more):
+        if method == "GET" and path == "/audit-tasks/" + task:
+            return response(500, {"error": "internal_error"})
+        return await original(actor, method, path, **more)
+
+    world.product.request = broken
+    seen = world.call("get_task", task_id=task)
+    assert seen["result"] is None and seen["next"]["kind"] == "recover" and seen["next"]["reason"] == "internal_error"
