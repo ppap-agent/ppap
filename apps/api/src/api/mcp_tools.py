@@ -55,7 +55,7 @@ def failure(exc: Exception, *, task_id: str | None = None, request_id: str | Non
         if exc.status in {429, 503}:
             return Outcome(task_id=task_id, request_id=request_id, next={"kind": "recover", "strategy": "repeat_same_request", "check_after_ms": 5000, "reason": exc.code})
         if exc.code == "insufficient_scope":
-            missing = getattr(exc, "missing_scope", None)
+            missing = exc.missing_scope
             what = f"「{SCOPES[missing]}」" if missing in SCOPES else "所需"
             return blocked(exc.code, task_id=task_id, request_id=request_id, message=f"这个连接没有{what}权限。请用户在 PPAP 的连接管理页撤销此连接后重新连接，并在授权页勾选该权限。")
         return blocked(exc.code, task_id=task_id, request_id=request_id)

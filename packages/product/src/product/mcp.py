@@ -30,10 +30,11 @@ MAX_RESULT_BYTES = 96 * 1024
 
 
 class McpError(ValueError):
-    def __init__(self, code: str, status: int = 400):
+    def __init__(self, code: str, status: int = 400, missing_scope: str | None = None):
         super().__init__(code)
         self.code = code
         self.status = status
+        self.missing_scope = missing_scope
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,7 @@ class Delegation:
 
     def require(self, scope: str) -> None:
         if scope not in self.scopes:
-            raise McpError("insufficient_scope", 403)
+            raise McpError("insufficient_scope", 403, missing_scope=scope)
 
 
 @dataclass(frozen=True)

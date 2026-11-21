@@ -154,7 +154,7 @@ class World:
     def call(self, tool, **arguments):
         def require(scope):
             if scope not in self.scopes:
-                raise McpError("insufficient_scope", 403)
+                raise McpError("insufficient_scope", 403, missing_scope=scope)
 
         actor = SimpleNamespace(session=SimpleNamespace(principal=SimpleNamespace(user_id="u", tenant_id="t")), scopes=self.scopes, require=require)
 
@@ -245,7 +245,7 @@ def test_what_is_not_a_feishu_link_or_not_permitted_is_said_in_words_the_user_ca
     refused = world.call("prepare_audit", request_id=str(uuid4()), source="/Users/me/ppap.xlsx")
     assert refused["next"]["error_code"] == "not_a_feishu_link" and "飞书" in refused["next"]["message"]
     limited = World("a.xlsx", scopes=frozenset({"audits:read", "files:read"})).call("prepare_audit", request_id=str(uuid4()), source="fld1")
-    assert limited["next"]["error_code"] == "insufficient_scope" and "重新连接" in limited["next"]["message"]
+    assert limited["next"]["error_code"] == "insufficient_scope" and "「从飞书导入文件」" in limited["next"]["message"] and "重新连接" in limited["next"]["message"]
     assert world.call("get_task", task_id=str(uuid4()))["next"]["error_code"] == "task_not_found"
 
 
