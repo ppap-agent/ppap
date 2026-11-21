@@ -87,6 +87,9 @@ def receipt(reply: Reply, tool: str, arguments: dict, *, task_id: str | None) ->
     return blocked("denied_by_user" if reply.status == "denied" else reply.error or "business_request_failed", task_id=task_id, request_id=rid)
 
 
+MACHINE = {"PASS": "符合", "NG": "不符合", "UNABLE": "证据不足以判定", "NA": "不适用", "ERR": "没有检查完"}
+
+
 def _short(text, limit: int = 300):
     return text if not isinstance(text, str) or len(text) <= limit else text[:limit] + "…"
 
@@ -340,7 +343,15 @@ def register_tools(mcp, gateway, authority, runtime):
             if citations:
                 body["citations"] = citations
             source = await gateway.get(actor, "audits:read", path)
-            snapshot = {"operation": "record_review", "summary": [f"保存人工复核：{judgment}", f"理由：{rationale}", f"下一步：{next_step}"], "request": body, "sources": [source]}
+            # Say which finding this is about, so the person approves a judgment on something they can name.
+            row: dict[str, Any] = next((f for f in source.get("findings", []) if f["item_key"] == item_key), {})
+            subject = [
+                f"对「{(row.get('locator') or {}).get('filename') or '这份文件'}」的一条检查项记录人工复核。",
+                f"检查项：{_short(row.get('item'), 120)}",
+                f"机器结论：{MACHINE.get(str(row.get('status')), str(row.get('status') or '—'))}（保持不变，复核与它并列保存）",
+            ]
+            said = [f"你的判定：{judgment}", f"理由：{rationale}"] + ([f"下一步：{next_step}"] if next_step else [])
+            snapshot = {"operation": "record_review", "summary": subject + said, "request": body, "sources": [source]}
             reply = await gateway.write(actor, "reviews:write", "record_review", rid, "PUT", path + "/reviews", body, probes=[path], confirmation=snapshot)
             arguments = {"task_id": tid, "request_id": rid, "item_key": item_key, "judgment": judgment, "rationale": rationale, "next_step": next_step, "citations": citations}
             return receipt(reply, "record_review", arguments, task_id=tid) or Outcome(task_id=tid, request_id=rid, result={"item_key": item_key, "saved": True}, next=DONE)
