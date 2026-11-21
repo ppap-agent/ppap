@@ -72,6 +72,12 @@ def step_id(task_id: str, name: str) -> str:
     return str(uuid.uuid5(uuid.UUID(task_id), name))
 
 
+def task_id_for(user_id: str, request_id: str) -> str:
+    """The task a person's request creates. A client picks the request ID, so the same ID from two people (or a
+    made-up one) must not name the same task; the person is part of the name."""
+    return str(uuid.uuid5(uuid.UUID(request_id), "task:" + user_id))
+
+
 def listing_digest(files: list[dict]) -> str:
     return hashlib.sha256("\n".join(sorted(f"{row['token']}\t{row['type']}\t{row.get('folder', '')}\t{row['name']}" for row in files)).encode()).hexdigest()
 

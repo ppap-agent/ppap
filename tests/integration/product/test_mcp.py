@@ -307,8 +307,10 @@ def until(client, token, task, *phases):
 
 def prepared_folder(client, store, token, core_system, worker, *, adopt=True):
     """prepare_audit on the folder, with the worker doing the checking and recognising it asks for."""
-    task = str(uuid4())
-    seen = call(client, token, "prepare_audit", request_id=task, source=FOLDER)
+    ask = str(uuid4())
+    seen = call(client, token, "prepare_audit", request_id=ask, source=FOLDER)
+    task = seen["task_id"]
+    assert task != ask  # the task is named for this person, not by the client's request ID alone
     for _ in range(100):
         versions = [row["file_version_id"] for row in seen["result"]["files"]["items"] if row["file_version_id"]]
         if versions:
@@ -319,7 +321,7 @@ def prepared_folder(client, store, token, core_system, worker, *, adopt=True):
     operator_rule(store, core_system, versions[0], adopt=adopt)
     work(worker, "mcp-check")
     work(worker, "mcp-match", rule_ai=MetadataAI())
-    return task, versions[0]
+    return task, ask, versions[0]
 
 
 def confirmed(client, token, task, quote_id):
@@ -331,7 +333,7 @@ def confirmed(client, token, task, quote_id):
 def audited_folder(client, store, token, core_system):
     """A folder audited to the end, with a finding to read and review."""
     worker = build_product_store(store.settings, objects=store.objects, role="worker")
-    task, _ = prepared_folder(client, store, token, core_system, worker)
+    task, _, _ = prepared_folder(client, store, token, core_system, worker)
     ready = until(client, token, task, "ready_to_confirm")
     confirmed(client, token, task, ready["result"]["quote"]["quote_id"])
     work(worker, "mcp-audit")
@@ -346,7 +348,7 @@ def test_a_feishu_folder_is_prepared_confirmed_and_audited_and_an_interruption_c
     worker = build_product_store(store.settings, objects=store.objects, role="worker")
     drive = Drive(plan=("control-plan.xlsx", book("控制计划", "测试客户", "零件号 P-1")), broken=("broken.xlsx", None))
     with folder_client(store, drive) as (_, client, token, _):
-        task, version = prepared_folder(client, store, token, core_system, worker, adopt=False)
+        task, ask, version = prepared_folder(client, store, token, core_system, worker, adopt=False)
         seen = until(client, token, task, "awaiting_decision")
         # One file failed: it is an issue with its own choices; the other is recognised, prechecked and waiting.
         blocking = [issue for issue in seen["issues"] if issue["blocking"]]
@@ -363,7 +365,8 @@ def test_a_feishu_folder_is_prepared_confirmed_and_audited_and_an_interruption_c
         assert quote["files_to_audit"] == 1 and quote["mode"] == "standard"
         assert ready["next"]["then"] == {"tool": "confirm_audit", "arguments": {"task_id": task, "quote_id": quote["quote_id"]}}
         # prepare_audit again is the same task: nothing is imported or created a second time.
-        assert call(client, token, "prepare_audit", request_id=task, source=FOLDER)["result"]["phase"] == "ready_to_confirm"
+        again = call(client, token, "prepare_audit", request_id=ask, source=FOLDER)
+        assert again["task_id"] == task and again["result"]["phase"] == "ready_to_confirm"
         assert client.get("/audit-tasks").json()["tasks"][0]["id"] == task and len(client.get("/audit-tasks").json()["tasks"]) == 1
     # A new API process, with no memory of the calls above, reads the same task from what was saved.
     restarted = build_product_store(store.settings, objects=store.objects, role="api")

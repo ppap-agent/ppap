@@ -38,6 +38,7 @@ _SAY = {
     "feishu_user_token_missing": "当前连接没有飞书授权。请用户重新连接 PPAP 并用飞书登录。",
     "provider_reauthorization_required": "飞书授权已失效。请用户重新登录飞书并重新连接 PPAP。",
     "denied_by_user": "用户在确认页拒绝了这次操作。",
+    "request_conflict": "这个 request_id 已经用于另一次不同的请求。请为新的请求生成一个新的随机 UUID。",
     "round_has_errors": "这次审核有检查项没有检查完，不能生成飞书报告。可以对同一份资料复审，结论确定后再交付。",
 }
 
@@ -174,18 +175,20 @@ def register_tools(mcp, gateway, authority, runtime):
         follows_task_id: UUID | None = Field(default=None, description="The earlier audit this resubmission follows; history stays linked and nothing is overwritten."),
     ) -> Outcome:
         """Start an audit from a Feishu folder. PPAP reads the folder, imports and freezes the files, recognises them, runs the precheck
-        and prices the audit on its own; nothing is charged. The request_id becomes the task_id. Then follow `next`."""
+        and prices the audit on its own; nothing is charged. Use the task_id of the reply for every later call. Then follow `next`."""
         rid = str(request_id)
+        tid = rid
         try:
             actor = await authority()
             for scope in ("files:read", "files:write", "audits:write"):
                 actor.require(scope)
+            tid = workflow.task_id_for(actor.session.principal.user_id, rid)
             options = {"customer": customer, "deep_mode": deep_mode, "follows_task_id": str(follows_task_id) if follows_task_id else None}
-            await runtime.prepare(actor, rid, workflow.parse_source(source), options)
-            await runtime.settle(actor, rid)
-            return await task_outcome(actor, rid, request_id=rid)
+            await runtime.prepare(actor, tid, workflow.parse_source(source), options)
+            await runtime.settle(actor, tid)
+            return await task_outcome(actor, tid, request_id=rid)
         except Exception as exc:
-            return failure(exc, task_id=rid, request_id=rid)
+            return failure(exc, task_id=tid, request_id=rid)
 
     @mcp.tool(annotations=READ)
     async def get_task(task_id: UUID, files_offset: Offset = 0, files_limit: Limit = 50) -> Outcome:
