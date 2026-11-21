@@ -7,8 +7,8 @@ the answers exported from there into a backfill list.
     python3 questionnaire.py close <导入文件.json> <租户编号>     > 关闭.sql
     python3 questionnaire.py answers <导出文件.json> <工作目录> [<回填清单.md>]
 
-`build` reads every `<条款序号>.report.md` in the work directory: each unanswered ambiguity, undefined case, file
-without a conclusion and conflicting file is one finding, named `<条款 id>#<处>` (`CP:8#1`, `CP:8#8.1`, `CP:8#G1`,
+`build` reads validated `<条款序号>.report.json` files, checking each against its `.review.json` source. Each
+unanswered ambiguity, undefined case, gap or conflict is one finding, named `<条款 id>#<处>` (`CP:8#1`, `CP:8#8.1`, `CP:8#G1`,
 `CP:8#C1`). The curation file says which findings a common question covers, which were settled by an answer already
 relayed, which go back to the customer for a conclusion, and the questions about the rulebook's general notes;
 every other finding becomes a card of its own.
@@ -19,7 +19,7 @@ cards in one transaction and refuses a second load of the same version; `export`
 of every card as one JSON value (`psql -At`); `close` makes it read only.
 
 `answers` reads that export and lists, per clause file, every answer to every finding with its answerer and time,
-and where answers differ. It never writes `.ofn` files: choosing among different answers is not the script's
+and where answers differ. It never writes `.review.json` files: choosing among different answers is not the script's
 decision.
 """
 
@@ -29,6 +29,9 @@ import json
 import re
 import sys
 from collections import Counter
+import hashlib
+
+from check import REPORT_SCHEMA, check_review, load_source, resolve
 from datetime import datetime
 from pathlib import Path
 
@@ -38,75 +41,42 @@ RELAYED = "relayed"  # the choice that confirms the answer already relayed on a 
 VERDICT_OPTIONS = [{"key": "PASS", "label": "通过"}, {"key": "NG", "label": "不通过"}, {"key": "UNABLE", "label": "待审核（交人工）"}]
 
 
-def section(text: str, name: str) -> str:
-    match = re.search(r"^## " + re.escape(name) + r"\n(.*?)(?=^## |\Z)", text, re.S | re.M)
-    return match.group(1) if match else ""
-
-
-def answered(block: str) -> bool:
-    return bool(re.search(r"^\s*(?:你的)?答复：「", block, re.M))
-
-
-def clause_name(report: str, rule_version: str) -> tuple[str, str]:
-    """The clause id and its business name: the rule file's title without the rulebook's own name, then the rule number."""
-    match = re.search(r"^- \*\*规则文件\*\*：(.*)：.*（([^（）]+)）$", report, re.M)
-    if not match:
-        raise SystemExit("[报告] 没有“规则文件”一行")
-    title, clause = match.group(1), match.group(2)
-    title = re.sub(r"（[^（）]*" + re.escape(rule_version) + r"[^（）]*）$", "", title).strip()
-    number = clause.split(":", 1)[-1]
-    return clause, f"{title}{'' if title.endswith('）') else ' '}规则 {number}"
-
-
 def findings(directory: Path, rule_version: str) -> tuple[list[dict], dict[str, str]]:
+    """Load checked structured reports; refuse edits that made the reports stale."""
     items: list[dict] = []
     names: dict[str, str] = {}
-    for path in sorted(directory.glob("*.report.md")):
-        text = path.read_text(encoding="utf-8")
-        if text.startswith("# ") and "有发现还没确认" in text.split("##", 1)[0]:
-            raise SystemExit(f"[报告] {path.name} 还有没确认的发现，先把它跑到退出码为 0")
-        clause, name = clause_name(text, rule_version)
-        names[clause] = name
-        asked = re.findall(r"^\d+\. (.*)$", section(text, "需要回答的问题") or next((section(text, title) for title in re.findall(r"^## (还需要回答的问题.*)$", text, re.M)), ""), re.M)
-        parts = re.split(r"^### (\d+)\. (.*)$", section(text, "原文没说清的地方"), flags=re.M)
-        ambiguous, undefined = [], []
-        for index in range(1, len(parts), 3):
-            number, title, block = parts[index], parts[index + 1].strip(), parts[index + 2]
-            if "原文没有说：" in block:
-                lines = block.split("原文没有说：", 1)[1].splitlines()
-                bullets = [at for at, line in enumerate(lines) if line.startswith("- ")]
-                for k, at in enumerate(bullets, 1):
-                    if not answered(lines[at + 1] if at + 1 < len(lines) else ""):
-                        undefined.append({"id": f"{clause}#{number}.{k}", "clause": clause, "kind": "open", "title": title, "question": lines[at][2:].strip()})
-                continue
-            if answered(block):
-                continue
-            readings = re.findall(r"^- 理解(.)（(.*?)）[^：]*：(.*)$", block, re.M)
-            example = re.search(r"^例如(?:（(.*?)）)?：(.*)$", block, re.M)
-            verdict = re.search(r"^(这份文件按.*)$", block, re.M)
-            assumed = ""
-            if example and example.group(1):
-                assumed = "（假定" + re.sub(r"第 ?\d+ ?处", "本条另一处问题", example.group(1).removeprefix("当")).replace("理解时", "理解") + "）"
-            ambiguous.append(
-                {
-                    "id": f"{clause}#{number}",
-                    "clause": clause,
-                    "kind": "ambiguity",
-                    "title": title,
-                    "readings": [{"ordinal": ordinal, "label": label, "says": says} for ordinal, label, says in readings],
-                    "example": assumed + example.group(2) if example else "",
-                    "verdict": verdict.group(1) if verdict else "",
-                }
-            )
-        if len(asked) != len(ambiguous) + len(undefined) or [item["question"] for item in undefined] != asked[len(ambiguous) :]:
-            raise SystemExit(f"[报告] {path.name} 的“需要回答的问题”和正文对不上")
-        for item, question in zip(ambiguous, asked):
-            item["question"] = question
-        items += ambiguous + undefined
-        for kind, heading, tail in (("gap", "原文没有给出结论的文件", "，原文既没说"), ("conflict", "原文同时给出通过和不通过的文件", "，原文既说")):
-            for k, line in enumerate(re.findall(r"^- (.*)$", section(text, heading), re.M), 1):
-                situation = line.split(tail)[0]
-                items.append({"id": f"{clause}#{'G' if kind == 'gap' else 'C'}{k}", "clause": clause, "kind": kind, "title": situation, "question": f"{situation}，判什么？"})
+    paths = sorted(directory.glob("*.report.json"))
+    if not paths:
+        raise SystemExit("[报告] 没有 *.report.json；先运行 check.py")
+    for path in paths:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        review_path = path.with_name(path.name.removesuffix(".report.json") + ".review.json")
+        if not review_path.is_file():
+            raise SystemExit(f"[报告] {path.name} 缺审查原件 {review_path.name}")
+        raw = review_path.read_bytes()
+        review = json.loads(raw)
+        clause, _ = load_source(review_path, review)
+        errors, expected = check_review(review_path, review, clause)
+        if errors:
+            raise SystemExit(f"[报告] {path.name} 审查原件校验失败：" + "；".join(errors))
+        if (
+            payload.get("schema") != REPORT_SCHEMA
+            or payload.get("review_sha256") != hashlib.sha256(raw).hexdigest()
+            or payload.get("clause") != clause
+            or payload.get("findings") != expected
+        ):
+            raise SystemExit(f"[报告] {path.name} 已过期或被手工修改；请重跑 check.py")
+        for filename, digest in payload.get("policy_sha256", {}).items():
+            policy_file = resolve(review_path, filename)
+            if not policy_file or hashlib.sha256(policy_file.read_bytes()).hexdigest() != digest:
+                raise SystemExit(f"[报告] {path.name} 引用政策已变化；请重新审查并重跑 check.py")
+        rule_id = clause["id"]
+        title = re.sub(r"（[^（）]*" + re.escape(rule_version) + r"[^（）]*）$", "", clause["title"]).strip()
+        name = f"{title}{'' if title.endswith('）') else ' '}规则 {rule_id.split(':', 1)[-1]}"
+        if rule_id in names:
+            raise SystemExit(f"[报告] 同一条款重复：{rule_id}")
+        names[rule_id] = name
+        items.extend(item for item in expected if not item.get("resolution"))
     return items, names
 
 
@@ -357,7 +327,7 @@ SELECT r.closed_at FROM product.rule_questionnaires r WHERE {target(questionnair
 
 def where(item_id: str) -> tuple[str, str]:
     clause, _, place = item_id.partition("#")
-    file = clause.replace(":", "-", 1) + ".ofn"
+    file = clause.replace(":", "-", 1) + ".review.json"
     if place.startswith("G"):
         return file, f"原文没有给出结论的文件 {place[1:]}"
     if place.startswith("C"):
@@ -414,7 +384,7 @@ def answers(export_path: Path, directory: Path, out: Path) -> None:
             source = "本条问题" if card["group"] == "clause" else f"共性问题「{card['key'].split(':', 1)[1]}」" if card["group"] == "common" else f"交客户补结论「{card['question']}」"
             per_file.setdefault(file, []).append("\n".join([f"### {place}", f"来源：{source}", *lines, ""]))
     title = f"# {export['title']} · 问卷答复回填清单\n\n导出时间：{local_time(export['exported_at'])}" + ("（问卷已关闭）" if export.get("closed_at") else "（问卷仍开放，之后可能还有答复）")
-    body = [title, "", "回填时 `:answered` 记原话、答复人和时间，如：`原话（答复人，2026-11-21，规则确认页）`。答复不一致的不回填，交产品负责人决定。", ""]
+    body = [title, "", "回填时在 .review.json 中记录 resolution.answer（客户原话）和 resolution.source（答复人、时间与渠道），答复不一致的不回填，交产品负责人决定。", ""]
     for file in sorted(per_file):
         body += [f"## {file}", "", *per_file[file]]
     if general:
