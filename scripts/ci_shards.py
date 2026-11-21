@@ -40,7 +40,7 @@ def discover_modules() -> list[Target]:
     for tests in sorted((ROOT / "packages").glob("*/tests")):
         if any(tests.rglob("test_*.py")):
             targets.append(Target(tests.parent.name, False, tests.relative_to(ROOT).as_posix()))
-    for name in ("api", "worker", "mcp-client"):
+    for name in ("api", "worker"):
         tests = ROOT / "apps" / name / "tests"
         if any(tests.rglob("test_*.py")):
             targets.append(Target(name, name in {"api", "worker"}, tests.relative_to(ROOT).as_posix()))

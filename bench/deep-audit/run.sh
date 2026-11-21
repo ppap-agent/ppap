@@ -27,7 +27,7 @@ done
 cd "$ROOT"
 # The image and the corpus must be the same revision: a dirty tree would evaluate code that no
 # commit holds. Only what the deep image or the corpus reads counts (the web app does not).
-if [[ -n "$(git status --porcelain --untracked-files=no -- packages apps/api apps/worker apps/mcp-client deploy assets tests/corpus pyproject.toml uv.lock)" ]]; then
+if [[ -n "$(git status --porcelain --untracked-files=no -- packages apps/api apps/worker deploy assets tests/corpus pyproject.toml uv.lock)" ]]; then
   echo "commit or stash changes the deep image or the corpus reads first" >&2
   exit 2
 fi

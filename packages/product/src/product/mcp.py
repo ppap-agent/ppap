@@ -13,14 +13,14 @@ from product.identity import Session
 
 SCOPES = {
     "identity:read": "读取当前身份与服务能力",
-    "files:read": "读取已授权文件、原件及证据",
-    "files:write": "上传或导入文件",
+    "files:read": "读取飞书文件夹与已授权文件",
+    "files:write": "从飞书导入文件",
     "audits:read": "读取审核任务、结果与历史",
-    "audits:write": "准备审核、调整文件、回答审核提问",
+    "audits:write": "准备审核、处理准备中的问题",
     "audits:execute": "开始审核或重审；须逐次确认",
-    "reviews:write": "提交人工复核；须本人逐次确认",
-    "reports:read": "读取和下载已授权报告",
-    "reports:write": "重新生成或打包报告",
+    "reviews:write": "提交人工复核、确认原件事实；须本人逐次确认",
+    "reports:read": "读取已授权报告",
+    "reports:write": "重新生成报告",
     "reports:send": "向飞书写回或发送报告；须逐次确认",
     "usage:read": "读取额度与费用记录",
 }

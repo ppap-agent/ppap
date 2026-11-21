@@ -9,19 +9,19 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any, Generic, Literal, TypeVar
-from urllib.parse import urlencode
 
 import httpx
 from product.logs import REQUEST_ID, emit
 from product.mcp import MAX_RESULT_BYTES, ApprovedCall, Delegation, McpError, fingerprint
 from product.store.mcp import McpStore
 from pydantic import BaseModel, Field
-from starlette.responses import Response
 
 T = TypeVar("T")
 
 
 class Reply(BaseModel, Generic[T]):
+    """The receipt of one write, as the gateway knows it."""
+
     status: Literal["ok", "error", "confirmation_required", "running", "unknown", "denied"]
     data: T | None = None
     error: str | None = None
@@ -29,6 +29,19 @@ class Reply(BaseModel, Generic[T]):
     confirmation_url: str | None = None
     retry_after_seconds: int | None = None
     provenance: dict | None = None
+
+
+class Outcome(BaseModel):
+    """What every tool returns: the confirmed result, what is open, and the one thing to do next."""
+
+    schema_version: str = "1.0"
+    task_id: str | None = None
+    task_revision: int | None = Field(default=None, description="Pass back as expected_revision when deciding an issue.")
+    result: Any = None
+    issues: list[dict] = Field(default_factory=list, description="Open problems and decisions. Each lists the only actions it accepts.")
+    next: dict = Field(description="call_tool, user_action, wait, recover, done or blocked. Advice from the task's state, never permission to charge or send.")
+    available_actions: list[dict] = Field(default_factory=list)
+    request_id: str | None = None
 
 
 class PageRequest(BaseModel):
@@ -71,38 +84,6 @@ def page_result(value: Any, page: PageRequest) -> DataPage:
 class BusinessGateway:
     def __init__(self, app, store: McpStore):
         self.app, self.store = app, store
-
-    def transfer_response(self, delegation: Delegation, entry: dict) -> Response:
-        """Forward ASGI byte streams; the native file owner retains its size cap.
-
-        There is no extra 200 MiB MCP buffer or httpx response aggregation.
-        Stored parameters bind the artifact; query arguments on the transfer URL
-        cannot select another file, report, or result attempt.
-        """
-        app = self.app
-
-        class TransferResponse(Response):
-            async def __call__(self, scope, receive, send):
-                path = entry["path"]
-                delegated = {
-                    **scope,
-                    "path": path,
-                    "raw_path": path.encode("ascii"),
-                    "root_path": "",
-                    "query_string": urlencode(entry["parameters"]).encode("ascii"),
-                    "headers": [(k, v) for k, v in scope["headers"] if k.lower() in {b"content-type", b"content-length", b"x-request-id"}],
-                    "ppap.delegation": delegation,
-                }
-
-                async def forward(message):
-                    if message["type"] == "http.response.start":
-                        headers = [(k, v) for k, v in message["headers"] if k.lower() in {b"content-type", b"content-length", b"content-disposition", b"x-content-sha256"}]
-                        message = {**message, "headers": [*headers, (b"cache-control", b"no-store")]}
-                    await send(message)
-
-                await app(delegated, receive, forward)
-
-        return TransferResponse()
 
     async def request(self, delegation: Delegation, method: str, path: str, *, body=None, params=None, content=None, operation_id=None, approval=None) -> httpx.Response:
         if not path.startswith("/") or "?" in path or "#" in path:

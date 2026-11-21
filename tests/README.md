@@ -4,7 +4,7 @@
 
 ## Ownership
 
-单一模块的测试放在对应的 `packages/*/tests`、`apps/api/tests`、`apps/worker/tests` 或 `apps/mcp-client/tests`。根目录 `tests/` 只放系统测试：
+单一模块的测试放在对应的 `packages/*/tests`、`apps/api/tests`或 `apps/worker/tests`。根目录 `tests/` 只放系统测试：
 
 - `repository`: repository/build/config/tooling contracts
 - `schema`: real PostgreSQL contracts
@@ -24,9 +24,9 @@ Repository contract:
 ```sh
 uv sync --locked
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
-uv run --no-sync python -m compileall -q packages apps/api apps/worker apps/mcp-client tests scripts
-uv run --no-sync ruff check packages apps/api apps/worker apps/mcp-client tests scripts
-uv run --no-sync ruff format --check packages apps/api apps/worker apps/mcp-client tests scripts
+uv run --no-sync python -m compileall -q packages apps/api apps/worker tests scripts
+uv run --no-sync ruff check packages apps/api apps/worker tests scripts
+uv run --no-sync ruff format --check packages apps/api apps/worker tests scripts
 uv run --no-sync mypy --no-incremental
 docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
@@ -46,7 +46,7 @@ python3 scripts/validate_distribution.py --member audit
 Python module groups:
 
 ```sh
-# One pytest process per physical owner. CI discovers every packages/*/tests and apps/api/tests, apps/worker/tests, and apps/mcp-client/tests.
+# One pytest process per physical owner. CI discovers every packages/*/tests and apps/api/tests, apps/worker/tests, and/tests.
 uv run --no-sync pytest packages/product/tests
 uv run --no-sync pytest tests/corpus/contracts/tests
 uv run --no-sync pytest packages/agent/tests

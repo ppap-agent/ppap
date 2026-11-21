@@ -1,139 +1,134 @@
 # PPAP MCP
 
-本文说明 MCP 服务合同；工具与参数形状以服务端注册为准，不代替真实客户端验收。
+用户给出一个飞书文件夹，PPAP 在服务端把它准备成一次可以确认的审核；遇到只有人能决定的事才问人，决定后自己接着做。本文是这份合同；工具与参数形状以服务端注册为准，真实客户端的联调不由它代替。
 
-## 一次审核的五步
+## 模型
 
-`/mcp` 是唯一客户端入口，由锁定的 FastMCP / MCP SDK 提供 Streamable HTTP 和工具。工具按审核步骤组织，每一步读到的就是网页同一步看到的内容：
+**审核任务（Task）是中心。** 它是一个持久的状态机：记着资料从哪来、每份文件导入得怎样、用户做过哪些决定。工具只是对它下命令或读它的状态。
 
-1. 拿到文件：`begin_upload` → 传字节 → `finish_upload`，或 `import_feishu_file`。两者都会顺带检查文件能否读取；`get_upload` 读回状态。
-2. 开始：`start_audit`（新任务、修改未确认的任务、或用 `reaudit_round_id` 重审；需要写回飞书文档时同时给出 `writeback_target`）。
-3. 核对：`get_audit` 默认是精简视图：任务状态、白话的下一步（例如缺客户时提示补上）、每份文件一行（类型、规则、预检问题、结论、报告引用）、深度模式、点数与耗时；`detail=true` 返回完整任务与预检。`set_deep_mode` 切换深度模式。
-4. 确认：`confirm_audit`，由用户在浏览器确认一次后执行。
-5. 结果与交付：`get_result` 默认分页返回发现项（状态、条款、问题、建议、人工复核，可按文件筛选）、各状态计数、待答的深度审核提问和飞书报告；`detail=true` 返回含证据的完整轮次，`answer_question`、`review`、`respond_hint`；`download`、`regenerate_report`、`package_reports`、`find_recipients`、`share_reports`、`get_share`、`retry_share`、`send_to_feishu`。
+```
+事件 + 任务状态 → 新状态          product.workflow.apply
+任务状态 + 事实 → 要做的事        product.workflow.effects
+任务状态 + 事实 → 客户端看到的    product.workflow.project（阶段、问题、下一步）
+```
 
-此外：`get_account`（身份、功能、可选客户）、`list_audits`、`find_history`、`get_usage`、`list_templates`、`find_feishu_files`、`preview_file`、`get_operation`。规则与检查程序只由平台运营在网页维护，MCP 不提供它们的读写。
+这三个函数不做任何读写。读飞书、导入、排检查、建审核任务这些有副作用的事由 `api.mcp_runtime` 执行，全部经过网页同样使用的 Product API，每一步的请求编号由任务编号推导，所以中途断在哪里，再做一遍都不会重复。任务状态存在 `product.audit_workflows`，按修订号比较后写入；审核任务、轮次、预检、报告仍由各自的拥有者保存，任务只引用它们。
 
-每个面向用户的 API 路由，要么由某个工具到达，要么在 `apps/api/tests/test_mcp_coverage.py` 写明为何留给网页；新增路由没有归类时测试失败。真实第三方客户端联调不由本地协议测试替代。
+- **文件之间互不依赖，结果累积。** 每份文件要么成为一份导入好的版本，要么成为一个问题。20 份里 2 份失败，得到 18 份结果和 2 个问题，不是第一个错误。
+- **阶段之间有依赖，后一个只用前一个的产出。** 读文件夹 → 导入并检查能否读取 → 固定文件版本 → 识别与匹配要求 → 预检 → 报价。一个问题只挡住依赖它的部分。
+- **中断是常态。** 进程重启、客户端离开、会话结束、需要人决定，对任务是同一件事：停在某处。任何人任何时候读它，得到同样的问题和下一步。
+
+## 工具
+
+| 工具 | 类型 | 作用 |
+| --- | --- | --- |
+| `find_submissions` | 读 | 浏览用户的飞书云盘，找到供应商提交的文件夹，以及从它准备过的审核 |
+| `prepare_audit` | 写 | 从飞书文件夹（或单个飞书文件）准备一次审核；`request_id` 即任务编号 |
+| `get_task` | 读 | 任务的阶段、各步进度、逐文件一行、问题和下一步；读它也让中断的任务继续 |
+| `get_issue` | 读 | 一个问题的全部内容和它接受的选项 |
+| `resolve_issue` | 写 | 提交用户对一个问题的决定 |
+| `confirm_audit` | 写 | 按用户同意的报价开始审核 |
+| `get_results` | 读 | 审核结论与检查项，分页 |
+| `get_finding` | 读 | 一个检查项的条款、证据与原件位置 |
+| `record_review` | 写 | 记录人工复核，机器结论不被覆盖 |
+| `publish_report` | 写 | 把审核结果交付为飞书报告文档 |
+| `find_audits` | 读 | 用户的全部审核，不论从哪里发起 |
+| `get_operation` | 读 | 按 `request_id` 读回一次写操作的回执 |
+| `get_account` | 读 | 当前用户、可选客户、剩余点数 |
+
+文件只来自飞书，结果只回到飞书：MCP 不上传、不下载字节，也没有本地适配器。规则与检查程序只由平台运营在网页维护。每个面向用户的 API 路由，要么由这些工具到达，要么在 `apps/api/tests/test_mcp_coverage.py` 写明为何留给网页。
+
+网页或飞书插件发起的审核同样是任务：`get_task`、`get_results`、`record_review`、`publish_report` 对它一样可用，只是没有文件夹可供重新准备。
+
+## 每次返回
+
+```json
+{
+  "schema_version": "1.0",
+  "task_id": "…",
+  "task_revision": 8,
+  "result": { "phase": "awaiting_decision", "stages": [], "files": {}, "quote": {} },
+  "issues": [],
+  "next": { "kind": "user_action", "issue_id": "iss_…" },
+  "available_actions": []
+}
+```
+
+`result` 是已经确定的事。`phase` 取 `preparing`、`awaiting_decision`、`ready_to_confirm`、`auditing`、`completed`、`closed`；导入、识别、预检、报价、审核、报告各有自己的状态，不挤进一个枚举，所以“审核结论 NG，同时报告生成失败”可以如实表达。
+
+`next` 是此刻该做的一件事，由服务端从任务状态算出：
+
+| `kind` | 客户端做什么 |
+| --- | --- |
+| `wait` | 不重复发起；`check_after_ms` 之后再读 `observe_with` 指的工具 |
+| `user_action` | 把问题交给用户。带 `issue_id` 的用 `resolve_issue` 提交选择；带 `url` 的请用户在浏览器确认，再按 `then` 用同一个 `request_id` 调用 |
+| `call_tool` | 在用户意图允许时调用所指工具；带 `reason` 时表示任务已变化，先重新读 |
+| `recover` | 用同一个 `request_id` 重复原调用或读回执，绝不换新编号 |
+| `done` | 这一步的目标已达到，如实转述业务结论 |
+| `blocked` | 说明原因；`message` 是给用户的话，原样转述 |
+
+`next` 是建议，不是授权。`confirm_audit`、`record_review`、`publish_report` 只在用户明确要求时调用，并且仍要用户本人在浏览器确认。`next` 里没有任何来自被审文件的内容。
+
+## 问题与决定
+
+问题（Issue）是流程里需要处理的事，不是审核结论。它由任务状态推导，起因消失问题即消失；每个问题带着服务端给出的 `allowed_actions`，`resolve_issue` 只接受其中之一，提交时带上决定所依据的 `task_revision`。过期的修订、已关闭的问题、不在列表里的动作一律拒绝并指回 `get_task`。
+
+| 类别 | 例子 | 可选动作 |
+| --- | --- | --- |
+| `access` | 读不到文件夹 | 再读一次 |
+| `import` | 某份文件导入失败、读不出内容；子文件夹未读取、类型不支持、内容重复（后三者仅告知） | 再导入、不审这份、重新读取文件夹 |
+| `source_changed` | 确认前发现文件夹有增删 | 按现在的文件夹重新准备、按原来的资料审核 |
+| `rule_conflict` | 没指定客户导致找不到要求；复审时要求有新版本 | 选客户、选版本 |
+| `missing_evidence` | 没有一份文件对得上要求；预检发现的问题（不阻止审核） | 补件后重新读取、结束、不审这份 |
+| `quote_changed` | 深度模式不可用 | 改用标准模式 |
+| `fact_confirmation` | 审核后需要人确认的原件事实 | 回答 |
+| `review` | 结论与之前不同，建议复核 | 接受、忽略 |
+| `delivery` | 报告生成失败（结论不受影响） | 重新生成 |
+
+一个决定只重做依赖它的部分：排除一份文件只改送审范围并重新报价，换客户才重新匹配全部要求。哪些要重做由服务端决定，客户端不推断。
+
+文件夹只读当前一层，最多 200 份；子文件夹列为问题，需要时单独给出它的链接。内容相同的文件只审一次。来源变化按文件的增删和改名判断。
+
+## 报价与确认
+
+报价（`result.quote`）是确认将启动的内容：送审与参考文件数、标准或深度模式、预计点数与耗时。`quote_id` 随文件、要求版本、模式或计费依据的任何变化而变化。`confirm_audit` 带上用户同意的 `quote_id`；它与当前报价不符、文件夹在准备之后变了、或任务不在待确认状态时，不会开始，并指回 `get_task`。
+
+开始审核、人工复核、回答原件事实、重新生成报告和交付报告，都由用户在浏览器确认页确认一次。页面由服务端生成、不加载脚本，用白话写出这次会发生什么，不显示内部编号。确认后，客户端用同一个 `request_id` 再调用一次。已确认的内容在执行前变了，返回 `confirmation_content_changed`，需要重新确认。人工复核与原件事实的回执和写入在同一事务保存；机器结论与人的判断分开保存。
+
+## 写操作与恢复
+
+每个写操作带一个新的 UUID `request_id` 并一直沿用。同一编号、同一参数再次调用，读回原结果；同一编号换了参数，拒绝。结果未知时不换新编号：重复原调用，或用 `get_operation` 读回执。交付到飞书的回复丢失时保持未知，不再发送。一次调用被取消，不表示已受理的审核被取消。
+
+外部服务暂时失败由服务端自己重试；只有需要人参与时，客户端才会看到问题或 `recover`。未知、空结果或执行错误不会变成 PASS；NG 是结论，UNABLE 是证据不足以判定，ERR 是检查本身失败。
+
+复审（供应商补件后）：`prepare_audit` 带上 `follows_task_id`。新资料成为新的任务和新的轮次，与上一次关联，历史结果不被覆盖；同一份飞书文件再次送审时，可以沿用上次审核的要求版本，默认用较新的版本。
 
 ## 服务与授权
 
-设置 `PPAP_MCP_ENABLED=true` 后，现有 API 进程提供 `/mcp`。生产 `PPAP_PUBLIC_API_URL` 为 `https://ppap.icoastline.com/ppap` 时，客户端服务器地址为 `https://ppap.icoastline.com/ppap/mcp`。开发环境仅允许回环地址使用 HTTP。
+设置 `PPAP_MCP_ENABLED=true` 后，API 进程提供 `/mcp`（Streamable HTTP，只有工具，没有 Resources 与 Prompts）。生产 `PPAP_PUBLIC_API_URL` 为 `https://ppap.icoastline.com/ppap` 时，服务器地址为 `https://ppap.icoastline.com/ppap/mcp`。开发环境仅允许回环地址使用 HTTP。
 
-客户端使用远程 Streamable HTTP 和 OAuth。授权服务器为 API 地址下的 `/oauth`，支持客户端注册、授权码与 S256 PKCE、Scope 选择、刷新和撤销。授权及令牌请求的 `resource` 必须精确等于 MCP 服务器地址。通过飞书登录后，用户核对客户端回调和权限：读取权限默认勾选，上传、开始审核、复核、发送等操作权限默认不勾，需要时由用户勾选。注册时未指定范围的客户端（如 ChatGPT）可申请全部范围，实际授予以用户勾选为准；已下线的 `rules:read`、`rules:write` 在申请和刷新时被忽略。服务端只提供工具，不提供 Resources 与 Prompts。飞书凭据始终留在服务端。
+授权服务器为 API 地址下的 `/oauth`：客户端注册、授权码与 S256 PKCE、Scope 选择、刷新和撤销。授权及令牌请求的 `resource` 必须精确等于 MCP 服务器地址。用户用飞书登录，核对客户端回调和权限；权限不足时工具在 `next.message` 说明缺哪一项以及如何重新连接。注册时未指定范围的客户端可申请全部范围，实际授予以用户勾选为准。飞书凭据始终留在服务端，读文件夹和导入都用用户自己的飞书授权。
 
-批准或拒绝后，浏览器会自动返回已注册的客户端回调。若没有自动返回，可点击完成页上的“返回客户端”；不要重复提交授权表单。
-
-原生客户端不依赖浏览器 CORS。需要直接从其它网页调用 MCP 时，将该网页的完整 HTTPS Origin 加入 `PPAP_MCP_ALLOWED_ORIGINS` 的 JSON 数组；不能使用通配符。OAuth 发现及令牌接口公开支持 CORS，MCP 与字节接口只允许明确配置的 Origin，均不把浏览器 Cookie 当作 Bearer。
-
-OAuth 发现地址按 RFC 8414 / 9728 放在域名根目录，资源路径是其后缀。例如：
+OAuth 发现地址按 RFC 8414 / 9728 放在域名根目录：
 
 - `https://ppap.icoastline.com/.well-known/oauth-authorization-server/ppap/oauth`
 - `https://ppap.icoastline.com/.well-known/oauth-protected-resource/ppap/mcp`
 
-部署代理必须将这两个地址交给当前 API，不能按版本 Cookie 转发到网页。`deploy/tke/edition-proxy.conf` 保留这一边界。
+部署代理必须把这两个地址交给 API，不能按版本 Cookie 转发到网页；`deploy/tke/edition-proxy.conf` 保留这一边界。需要从其它网页直接调用时，把该网页的完整 HTTPS Origin 加入 `PPAP_MCP_ALLOWED_ORIGINS`，不能用通配符；浏览器 Cookie 不能当作 Bearer。
 
-用户可在 `https://ppap.icoastline.com/ppap/mcp/connections` 撤销连接。撤销后，旧 Bearer、刷新令牌及该连接的传输入口不能再使用。已经受理的审核继续按原任务执行。
+用户可在 `/mcp/connections` 撤销连接。撤销后旧 Bearer 与刷新令牌立即失效，准备中的任务停止推进；已经受理的审核继续按原任务执行。
 
-飞书凭据由浏览器和已确认的 MCP 委托共同引用，服务端串行续期。`provider_refresh_in_progress` 与 `provider_temporarily_unavailable` 带 5 秒重查提示；只重查原操作，不改请求 ID。`provider_reauthorization_required` 表示凭据失效或无法确认刷新结果：用户需重新登录飞书并在客户端重新授权 PPAP。新登录不会自动扩大或替换旧客户端的委托。撤销一个连接不影响其它连接；MCP OAuth 刷新令牌与飞书刷新令牌是两个独立层次，不能互换。
+飞书凭据由浏览器会话和 MCP 委托共同引用，服务端串行续期。`provider_refresh_in_progress` 与 `provider_temporarily_unavailable` 以 `recover` 返回，稍后重复原调用；`provider_reauthorization_required` 表示凭据失效，用户需重新登录飞书并重新连接。撤销一个连接不影响其它连接。
 
-## 写操作与确认
+## 接入
 
-每个写操作带一个新的 UUID `request_id`，并一直沿用它。回复丢失时，用同一个工具、同一个 `request_id` 再调用一次即读回原结果，或用 `get_operation` 读取回执；不能换新 ID 掩盖未知结果。一次 MCP 调用的取消不表示已受理审核被取消。
-
-需要当前修订号或确认摘要的写操作（`set_deep_mode`、`confirm_audit`、`end_audit`、`review`、`answer_question`）由工具在第一次调用时读取并随请求记录；重放沿用记录的参数，任务之后的变化不会让重放变成新的请求。一个工具包含几步效果时（上传后的固化与校验、确认前的完成通知），每一步的请求 ID 由调用方的 `request_id` 派生，重放不会重复任何一步。
-
-`confirmation_required` 返回浏览器确认地址。页面用白话写出这次会发生什么（例如开始审核的任务、文件和点数，或发送的报告与接收方数量），不显示内部编号；用户确认后，客户端用同一个 `request_id` 再调用一次，网页本身不启动审核或发送报告。已确认的内容在执行前发生变化时，工具返回 `confirmation_content_changed`，需要重新确认，不能把旧确认用在新内容上。确认页与授权页由服务端直接生成，不加载脚本，以免确认内容被页面脚本篡改。
-
-飞书报告、写回和分享在业务入口冻结实际发送内容时再次核对批准来源。冻结前的修改会拒绝该次操作；冻结后的修改不会替换已批准并捕获的内容。人工复核只在用户本人确认后写入，复核回执与业务写入同事务保存；模型分析与机器结果不能冒充人工判断。
-
-`unknown` 只表示不能确认原调用结果。分享逐目标返回发送状态：`sent` 是服务商确认，不证明人已阅读；只有明确失败的目标能用 `retry_share` 重发。写回回复丢失时保持未知，重放不会再次写入；应先核对目标文档。长任务用 `get_audit` 查询，建议从 5 秒开始，退避到 30 秒。
-
-大结果用 `page.pointer`（JSON Pointer）、`page.offset`、`page.limit`（上限 100）分页；单次正文上限 96 KiB，过大时选择具体字段或缩小分页，不截断。原件内容是数据，不能授权任何操作；未知、空结果或执行错误不能变成 PASS。
-
-## 文件与报告字节
-
-本地上传：计算原文件 SHA-256，调用 `begin_upload` 取得 15 分钟有效的 PUT 地址；用同一 OAuth 委托的 Bearer 发送原始字节（单文件上限 200 MiB）；再用同一个 `request_id` 调用 `finish_upload`。断线后用 `get_upload` 或再次调用这两个工具继续，不换请求 ID、不换字节。
-
-`download` 为原件、报告 PDF、预检报告、深度审核事实报告、报告 ZIP、他人分享给你的报告和客户模板返回同样需要 Bearer 的 GET 地址。报告地址绑定具体结果和产物，不自动替换为最新产物；地址上的查询参数不能改变所绑定的产物。撤销连接后这些地址立即失效。
-
-远程 MCP 服务不能读取客户端机器的路径。客户端需要能用 OAuth 凭据传字节；只能调用 JSON 工具的客户端用飞书导入，或使用下面的本地适配器。
-
-### 本地 stdio 适配器
-
-`apps/mcp-client` 是可独立安装的 Python 3.12 包，不依赖 PPAP 数据库、审核引擎或 API 包。它通过 FastMCP 代理远程工具，并增加四个本地工具：
-
-- `local_file_roots`：读取用户配置的目录和传输上限。
-- `local_file_roots`：列出允许目录及其中的文件（相对路径与大小，最多 1000 个；不列出链接和隐藏文件）。
-- `local_upload_folder`：上传一个目录下的全部文件（含子目录），每份文件的请求 ID 由调用的 `request_id` 与相对路径派生，中断后同一 `request_id` 再调用不会重复上传；返回可直接作为 `start_audit` 的 `files` 的 `audit_files`。
-- `local_upload_file`：读取允许目录中的文件，固定字节快照和 SHA-256，经 `begin_upload` / `finish_upload` 上传、固化并检查能否读取。
-- `local_download_file`：把当前连接取得的传输 URL 写入允许目录中的新文件，检查长度和摘要，不覆盖已有文件。
-
-从已核对的仓库版本安装。以下命令在仓库根目录执行，约束文件从同一版本的 `uv.lock` 导出：
-
-```sh
-uv export --locked --package mcp-client --no-dev --no-emit-workspace --no-hashes --output-file /tmp/mcp-client-constraints.txt
-uv tool install --python 3.12 --constraints /tmp/mcp-client-constraints.txt ./apps/mcp-client
-mcp-client --help
-```
-
-在支持 stdio 的 MCP 客户端中，将启动命令设为已安装的 `mcp-client` 的绝对路径。已有安装仍从 `ppap-mcp-client` 数据目录读取加密凭据。参数示例：
-
-```json
-{
-  "command": "/absolute/path/to/mcp-client",
-  "args": [
-    "--server", "https://ppap.icoastline.com/ppap/mcp",
-    "--directory", "/absolute/path/to/PPAP-files"
-  ]
-}
-```
-
-`--directory` 可重复；目录必须预先存在。该版本的本地文件访问要求 macOS/Linux 的目录描述符及 `O_NOFOLLOW` 支持；Windows 会明确拒绝启动，不宣称已经支持。目录外文件、路径穿越、符号链接和特殊文件被拒绝。上传上限为 200 MiB，快照占用本地临时磁盘空间。下载默认上限为 2 GiB，可用 `--max-download-mib` 设置；不自动创建父目录。异常中断不会将未完整下载的字节提交为目标文件。进程被强制结束后可能留下 `.ppap-download-*` 临时文件；确认对应适配器已退出后可删除。
-
-首次使用会打开浏览器，由用户登录并选择 Scope。系统钥匙串保存加密密钥，磁盘仅保存加密的 OAuth 凭据；macOS 使用 Keychain，Linux 使用 Secret Service，不回退到明文。`native_credential_store_unavailable` 表示系统凭据服务不可用，应恢复该服务后重新连接。`credential_key_missing` 表示已有密文的密钥不可用，不能自动覆盖；先在服务端撤销旧连接，再使用新的 `--profile` 重新授权。不同账号或权限组合应使用不同 profile。
-
-同一 profile 的进程串行刷新，并在发送前保存刷新标记。响应丢失后，如果新令牌已经保存则继续使用；否则重新打开授权流程，不重用可能已消耗的刷新令牌。OAuth 回调端口沿用已注册地址；重启不能随意改端口后复用旧注册。系统端口被其它进程占用时，恢复端口后重连，或撤销旧连接并使用新 profile。
-
-用户只需把本地路径交给 `local_upload_file`，无需把文件内容或 Bearer 交给模型。断线后保留同一 `request_id` 和原始文件；再次调用会核对原上传回执。换用新版本时提供 `file_id` 和新的请求 ID。下载 URL 必须由这个适配器代理的远程工具取得，另一个远程 MCP 连接的 URL 不能借用。更换授权委托后，应重新获取 URL。
-
-上述启动参数不表示客户端已完成兼容性验收。
-
-### Codex 配置
-
-以下参数已核对 Codex CLI 0.163.0 的实际命令帮助。需要本地文件上传和下载时，先按上节安装适配器，再配置 stdio 服务；将示例中的程序和文件目录改为实际绝对路径：
-
-```sh
-codex mcp add ppap-files -- /absolute/path/to/mcp-client \
-  --server https://ppap.icoastline.com/ppap/mcp \
-  --directory /absolute/path/to/PPAP-files \
-  --profile codex
-codex mcp get ppap-files
-```
-
-此连接的 OAuth 由适配器管理，首次连接时打开授权页；不对 stdio 服务执行 `codex mcp login`。在 Codex 中先调用 `get_account` 核对用户和企业，再调用 `local_file_roots` 取得允许目录的规范路径，之后使用该目录内的绝对路径上传。`mcp get` 只显示配置；成功调用工具才证明已连接。开始审核、人工复核和发送仍须完成浏览器确认。
-
-只使用远程工具和飞书导入时，也可直接配置原生 HTTP 连接：
+任何支持 Streamable HTTP 与 OAuth 的 MCP 客户端都可直接连接服务器地址，例如：
 
 ```sh
 codex mcp add ppap --url https://ppap.icoastline.com/ppap/mcp
 codex mcp login ppap --oauth-client-registration dcr
 ```
 
-如果添加服务时已完成登录，无须重复执行登录命令。原生 HTTP 连接不会获得适配器的本地文件工具。两种连接各自取得委托，不共享传输 URL；通常选择符合文件输入方式的一种即可。授权页只勾选此次工作需要的范围。
+豆包工作在管理后台新建 MCP 连接器：认证类型 MCP OAuth 2.1，传输类型 streamableHttp，地址同上，请求头 `Authorization: Bearer ${access_token}`；再把 [`deploy/doubao/ppap-audit`](../deploy/doubao/ppap-audit/SKILL.md) 打包上传为技能并关联。客户端是否按要求发送 `resource`，以真实联调为准，不为迁就客户端放宽校验。
 
-停止使用时，先在 PPAP 连接管理页撤销对应委托。原生 HTTP 连接随后可执行 `codex mcp logout ppap` 清除 Codex 保存的凭据；适配器的凭据由其独立 profile 管理。仅退出客户端或删除配置不会撤销服务端委托。续期或访问失败时，先读取错误与原业务回执，按上节恢复步骤处理，不改变原请求 ID。
-
-### 豆包工作配置
-
-豆包工作通过 MCP 连接器接入，形态与本服务一致：Streamable HTTP 加 MCP OAuth 2.1，并用飞书登录。管理员在豆包工作管理后台新建连接器：
-
-| 配置项 | 值 |
-| --- | --- |
-| 连接器类型 | MCP 连接器 |
-| 认证类型 | MCP OAuth 2.1 |
-| 传输类型 | streamableHttp |
-| MCP Server URL | `https://ppap.icoastline.com/ppap/mcp` |
-| 请求头 | `Authorization: Bearer ${access_token}` |
-
-再把 [`deploy/doubao/ppap-audit`](../deploy/doubao/ppap-audit/SKILL.md) 打包成 zip 上传为技能，并在连接器中关联。用户在豆包里点“连接”后，按本页“服务与授权”完成飞书登录和授权。授权和令牌请求中的 `resource` 必须精确等于 MCP 地址；豆包工作是否按此发送，以真实联调读回为准，不为迁就客户端放宽校验。开始审核、人工复核和发送仍要在浏览器确认页完成。
+停止使用时，先在 PPAP 连接管理页撤销委托，再清除客户端保存的凭据；只删除客户端配置不会撤销服务端委托。

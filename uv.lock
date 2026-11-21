@@ -14,7 +14,6 @@ members = [
     "audit",
     "corpus-contracts",
     "documents",
-    "mcp-client",
     "ppap",
     "product",
     "worker",
@@ -1057,35 +1056,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mcp-client"
-version = "0.1.0"
-source = { editable = "apps/mcp-client" }
-dependencies = [
-    { name = "anyio" },
-    { name = "cryptography" },
-    { name = "fastmcp" },
-    { name = "filelock" },
-    { name = "httpx" },
-    { name = "keyring" },
-    { name = "mcp" },
-    { name = "platformdirs" },
-    { name = "py-key-value-aio", extra = ["filetree"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anyio", specifier = ">=4,<5" },
-    { name = "cryptography", specifier = ">=43" },
-    { name = "fastmcp", specifier = ">=3.4,<3.5" },
-    { name = "filelock", specifier = ">=3.20,<4" },
-    { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "keyring", specifier = ">=25,<26" },
-    { name = "mcp", specifier = ">=1.30,<2" },
-    { name = "platformdirs", specifier = ">=4,<5" },
-    { name = "py-key-value-aio", extras = ["filetree"], specifier = ">=0.4,<0.5" },
-]
-
-[[package]]
 name = "mdurl"
 version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1333,7 +1303,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "corpus-contracts" },
-    { name = "mcp-client" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -1355,7 +1324,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "corpus-contracts", editable = "tests/corpus/contracts" },
-    { name = "mcp-client", editable = "apps/mcp-client" },
     { name = "mypy", specifier = ">=1.7.1" },
     { name = "pre-commit", specifier = ">=4.7.0" },
     { name = "pytest", specifier = "==7.4.3" },

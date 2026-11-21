@@ -99,7 +99,6 @@ FROM ${PPAP_APP_BASE} AS app
 COPY packages /app/packages
 COPY apps/api /app/apps/api
 COPY apps/worker /app/apps/worker
-COPY apps/mcp-client /app/apps/mcp-client
 COPY deploy/app/entrypoint.sh /app/entrypoint.sh
 # Workspace packages install editable: the venv points at /app/packages instead of carrying a second,
 # byte-compiled copy, so a release pushes the source once (a few MB), not a ~15 MB install layer.

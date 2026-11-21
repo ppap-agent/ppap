@@ -397,22 +397,3 @@ class McpStore:
             conn.execute(
                 "UPDATE product.mcp_operations SET state=%s,confirmed_by=%s,confirmed_at=now(),updated_at=now() WHERE id=%s", ("ready" if approve else "denied", principal.user_id, operation_id)
             )
-
-    def create_transfer(self, delegation: Delegation, method: str, path: str, scope: str, parameters: dict | None = None) -> str:
-        delegation.require(scope)
-        with self.connection() as conn:
-            self._delegation(conn, delegation.id).require(scope)
-            row = conn.execute(
-                "INSERT INTO product.mcp_transfers(grant_id,method,path,required_scope,parameters,expires_at) VALUES (%s,%s,%s,%s,%s,now()+interval '15 minutes') RETURNING id",
-                (delegation.id, method, path, scope, Jsonb(parameters or {})),
-            ).fetchone()
-        return str(row["id"])
-
-    def transfer(self, delegation: Delegation, ident: str, method: str) -> dict:
-        with self.connection() as conn:
-            current = self._delegation(conn, delegation.id)
-            row = conn.execute("SELECT * FROM product.mcp_transfers WHERE id=%s AND grant_id=%s AND method=%s AND expires_at>now()", (ident, delegation.id, method)).fetchone()
-            if not row:
-                raise McpError("transfer_not_found", 404)
-            current.require(row["required_scope"])
-        return row

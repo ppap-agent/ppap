@@ -14,7 +14,6 @@ dev = [
     "pytest-asyncio==0.21.1",
     "pyyaml==6.0.3",
     "corpus-contracts",
-    "mcp-client",
     "ruff>=0.14.13,<0.15.0",
     "mypy>=1.7.1",
     "pre-commit>=4.7.0",
@@ -35,7 +34,6 @@ members = [
     "packages/documents",
     "apps/api",
     "apps/worker",
-    "apps/mcp-client",
     "tests/corpus/contracts",
 ]
 
@@ -47,7 +45,6 @@ documents = { workspace = true }
 api = { workspace = true }
 worker = { workspace = true }
 corpus-contracts = { workspace = true }
-mcp-client = { workspace = true }
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
@@ -79,7 +76,7 @@ python_version = "3.12"
 explicit_package_bases = true
 ignore_missing_imports = true
 warn_unused_configs = true
-files = ["packages", "apps/api", "apps/worker", "apps/mcp-client", "tests/corpus/contracts/src"]
+files = ["packages", "apps/api", "apps/worker", "tests/corpus/contracts/src"]
 exclude = ["tests/(?!corpus/contracts/src)", "migrations/", "__pycache__/"]
 mypy_path = [
     "packages/product/src",
@@ -89,5 +86,4 @@ mypy_path = [
     "packages/documents/src",
     "apps/api/src",
     "apps/worker/src",
-    "apps/mcp-client/src",
 ]
