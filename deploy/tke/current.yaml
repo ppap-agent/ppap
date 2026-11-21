@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: b68987000ab1d7d4ca3b2d6a20eaca97fecafc3b
+  PPAP_BUILD_SHA: 8f1e731e660701fb316fb2b09535852779eb1e85
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_ONLYOFFICE_URL: https://ppap.icoastline.com/office
@@ -34,6 +34,8 @@ data:
   FEISHU_APP_ID: cli_a961a27719b81cc9
   FEISHU_AI_ITEM_ID: OpenApp_Lcoastline_PPAPAuditAgent
   FEISHU_FREE_TRIAL_QUOTA_POINTS: "10000"
+  # Task notifications (待确认 / 开始审核 / 审核完成) go out from the API; the queued backlog is sent too (decided 2026-11-21).
+  PPAP_FEISHU_NOTIFICATIONS_ENABLED: "true"
   # 海岸线 (PPAP's own developer tenant) gets a larger trial for acceptance runs with charging on.
   FEISHU_TRIAL_QUOTA_OVERRIDES: '{"2caeb428f08e175d": 200000}'
   PPAP_CURRENT_TENANT_ALLOWLIST: 2caeb428f08e175d,16e7179eb1abd75d,16fad24b7282175e,175b8362d5ce575f
@@ -418,7 +420,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:dc2b0ad8bc2d32b5c70af8152bc59f402465501f37b1042440d17c09dc64d182
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:733dd9bde3f984ca2be77ebfeef85d6a92f067c6c2def6e8a5cb0df8484af135
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -574,7 +576,7 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-deep@sha256:01a5818bcf53eefb6d4e68bb9946fb23a7385294c69b24cf0409cc1af53a944b
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-deep@sha256:f10c3afc6d127798ab10d218c6e7b0926adf46ca6c8f4966b42f01a9d1452507
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -651,7 +653,7 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
         - name: worker
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:dc2b0ad8bc2d32b5c70af8152bc59f402465501f37b1042440d17c09dc64d182
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:733dd9bde3f984ca2be77ebfeef85d6a92f067c6c2def6e8a5cb0df8484af135
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -759,7 +761,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-web@sha256:4b668e0578603252afe4cea02e9aa11492e9c4be475a139206e83edc1b28759d
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-web@sha256:2e8ce347b7073410fa2425a674df75ba672b09b258037742213995ea00c31680
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 4173
@@ -816,7 +818,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: sync
-              image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:dc2b0ad8bc2d32b5c70af8152bc59f402465501f37b1042440d17c09dc64d182
+              image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:733dd9bde3f984ca2be77ebfeef85d6a92f067c6c2def6e8a5cb0df8484af135
               imagePullPolicy: IfNotPresent
               command: ["python", "/sync/legacy-ticket-sync.py"]
               envFrom:
