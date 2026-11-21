@@ -40,6 +40,7 @@ class Product:
         self.folder = [{"token": "tok-" + name, "name": name, "type": "file"} for name in names]
         self.failing = set(failing)
         self.inside = {}  # a subfolder's token -> what it holds
+        self.round = {"id": "round-1", "findings": [{"item_key": "k1", "status": "NG", "item": "须有零件号", "suggestions": "缺零件号", "locator": {"filename": "a.xlsx"}}]}
         self.audit = None
         self.imports = 0
         self.approved = False
@@ -91,6 +92,8 @@ class Product:
             return response(202, self.audit)
         if method == "GET" and self.audit and path == "/audit-tasks/" + self.audit["id"]:
             return response(200, self.audit)
+        if method == "GET" and path == "/rounds/round-1":
+            return response(200, self.round)
         return response(404, {"error": "missing"})
 
     async def get(self, actor, scope, path, *, params=None):
@@ -100,7 +103,8 @@ class Product:
         return found.json()
 
     async def write(self, actor, scope, tool, rid, method, path, body, *, probes, confirmation=None, result_path=None):
-        recorded = self.operations.setdefault(rid, {"tool": tool, "state": "ready", "arguments": {"body": body}, "confirmation": confirmation})
+        arguments = {"method": method, "path": path, "body": body, "probes": probes}
+        recorded = self.operations.setdefault(rid, {"tool": tool, "state": "ready", "arguments": arguments, "confirmation": confirmation, "required_scope": scope})
         if fingerprint(recorded["confirmation"]) != fingerprint(confirmation):
             raise McpError("confirmation_content_changed", 409)
         if confirmation is not None and not self.approved:
@@ -365,3 +369,18 @@ def test_finding_audits_lists_what_a_person_scans_for_not_whole_tasks():
         "created_at": "2026-11-21",
         "mine": True,
     }
+
+
+def test_an_approved_review_is_saved_as_approved_though_the_round_moved_on_meanwhile():
+    world = World("a.xlsx")
+    ask = str(uuid4())
+    task = task_id_for("u", ask)
+    world.call("prepare_audit", request_id=ask, source="fld1")
+    world.product.audit.update(state="completed", round_id="round-1", conclusion="NG")
+    review = {"task_id": task, "request_id": str(uuid4()), "item_key": "k1", "judgment": "确认机器结果", "rationale": "已核对原件", "next_step": ""}
+    asked = world.call("record_review", **review)
+    assert asked["next"]["action_id"] == "approve_in_browser"
+    world.product.approved = True
+    world.product.operations[review["request_id"]]["state"] = "ready"
+    world.product.round["findings"].append({"item_key": "k2", "status": "PASS"})  # another review or a report landed
+    assert world.call("record_review", **review)["result"] == {"item_key": "k1", "saved": True}

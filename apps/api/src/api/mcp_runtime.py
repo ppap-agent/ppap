@@ -263,6 +263,17 @@ class TaskRuntime:
                 raise
             return None
 
+    async def replay(self, actor: Delegation, request_id: str, tool: str) -> Reply | None:
+        """An approval-bound write called again carries what the person approved, as it was recorded. Values the
+        tool reads (a task, a round, a revision) move on their own; re-reading them would void every approval.
+        Whether the approved content still holds is checked where it takes effect: the quote by the audit task,
+        reviews, answers and reports against their approved sources. None: nothing recorded to replay."""
+        prior = await self.recorded(actor, request_id)
+        if prior is None or prior["tool"] != tool or prior["confirmation"] is None or prior["state"] not in {"confirmation_required", "ready"}:
+            return None
+        a = prior["arguments"]
+        return await self.gateway.write(actor, prior["required_scope"], tool, request_id, a["method"], a["path"], a["body"], probes=a["probes"], confirmation=prior["confirmation"])
+
     async def source_changed(self, actor: Delegation, task_id: str, state: dict) -> bool:
         """The folder as it is now against the folder as prepared. A difference is the user's decision, not ours."""
         if state.get("external") or state["source"]["kind"] != "folder" or state["manifest"] is None:
@@ -278,14 +289,9 @@ class TaskRuntime:
 
     async def confirm(self, actor: Delegation, task_id: str, quote_id: str, request_id: str, notify_when_done: bool | None) -> Reply:
         path = f"/audit-tasks/{task_id}"
-        prior = await self.recorded(actor, request_id)
-        if prior is not None and prior["tool"] == "confirm_audit" and prior["confirmation"] is not None:
-            # A replay carries what the person approved, as it was. Whether that still holds is the quote's to say:
-            # the audit task refuses a confirmation whose basis changed, while fields that move on their own (times,
-            # estimates) never void an approval.
-            return await self.gateway.write(
-                actor, "audits:execute", "confirm_audit", request_id, "POST", path + "/confirm", prior["arguments"]["body"], probes=[path], confirmation=prior["confirmation"]
-            )
+        replayed = await self.replay(actor, request_id, "confirm_audit")
+        if replayed is not None:
+            return replayed
         else:
             row, facts, view = await self.view(actor, task_id)
             if view["phase"] != "ready_to_confirm":
@@ -316,6 +322,9 @@ class TaskRuntime:
         prior = await self.recorded(actor, request_id)
         if prior is not None and prior["state"] not in {"confirmation_required", "ready"}:
             return await self.gateway.operation_reply(actor, prior)
+        replayed = await self.replay(actor, request_id, "resolve_issue")
+        if replayed is not None:
+            return replayed
         if not row["mine"]:
             raise McpError("access_denied", 403)
         if expected_revision != row["revision"]:

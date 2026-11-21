@@ -359,6 +359,10 @@ def register_tools(mcp, gateway, authority, runtime):
         try:
             actor = await authority()
             actor.require("reviews:write")
+            replayed = await runtime.replay(actor, rid, "record_review")
+            if replayed is not None:
+                arguments = {"task_id": tid, "request_id": rid, "item_key": item_key, "judgment": judgment, "rationale": rationale, "next_step": next_step, "citations": citations}
+                return receipt(replayed, "record_review", arguments, task_id=tid) or Outcome(task_id=tid, request_id=rid, result={"item_key": item_key, "saved": True}, next=DONE)
             _audit, round_id = await audit_round(actor, tid)
             path = f"/rounds/{round_id}"
             prior = await runtime.recorded(actor, rid)
@@ -387,6 +391,10 @@ def register_tools(mcp, gateway, authority, runtime):
         try:
             actor = await authority()
             actor.require("reports:send")
+            replayed = await runtime.replay(actor, rid, "publish_report")
+            if replayed is not None:
+                pending = receipt(replayed, "publish_report", {"task_id": tid, "request_id": rid}, task_id=tid)
+                return pending or Outcome(task_id=tid, request_id=rid, result={"delivery": replayed.data}, next=DONE)
             audit, round_id = await audit_round(actor, tid)
             if audit.get("conclusion") == "ERROR" and await runtime.recorded(actor, rid) is None:
                 # Say so before asking the user to approve something that cannot happen.
