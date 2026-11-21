@@ -4702,6 +4702,8 @@ export interface components {
             /** Related */
             related: components["schemas"]["RuleQuestionRelated"][];
             relayed: components["schemas"]["RuleQuestionRelayed"] | null;
+            /** Sources */
+            sources: components["schemas"]["RuleQuestionSource"][];
             /** Why */
             why: string;
         };
@@ -4811,6 +4813,18 @@ export interface components {
             date: string;
             /** Source */
             source: string;
+        };
+        /**
+         * RuleQuestionSource
+         * @description The full rule text a card is about, with the passages its question turns on.
+         */
+        RuleQuestionSource: {
+            /** Clause */
+            clause: string;
+            /** Quotes */
+            quotes: string[];
+            /** Text */
+            text: string;
         };
         /** RulesList */
         RulesList: {

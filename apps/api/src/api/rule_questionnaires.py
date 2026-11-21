@@ -48,6 +48,14 @@ class RuleQuestionRelated(BaseModel):
     example: str
 
 
+class RuleQuestionSource(BaseModel):
+    """The full rule text a card is about, with the passages its question turns on."""
+
+    clause: str
+    text: str
+    quotes: list[str]
+
+
 class RuleQuestionRelayed(BaseModel):
     answer: str
     applied: str
@@ -79,6 +87,7 @@ class RuleQuestion(BaseModel):
     options: list[RuleQuestionOption]
     expect: str
     related: list[RuleQuestionRelated]
+    sources: list[RuleQuestionSource]
     items: list[str]
     relayed: RuleQuestionRelayed | None
     answers: list[RuleQuestionAnswer]

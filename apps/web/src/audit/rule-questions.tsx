@@ -112,6 +112,21 @@ function AnswerRow({question, answer}: {question: Question; answer: QuestionAnsw
   </li>
 }
 
+/** The rule text as written, with the passages the question turns on marked. */
+function SourceText({text, quotes}: {text: string; quotes: string[]}) {
+  const marks = quotes.filter(quote => quote && text.includes(quote))
+  if (!marks.length) return <>{text}</>
+  const pattern = new RegExp(`(${marks.map(quote => quote.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`)
+  return <>{text.split(pattern).map((part, index) => marks.includes(part) ? <mark key={index} className="rounded-sm bg-primary-soft px-0.5 text-foreground">{part}</mark> : part)}</>
+}
+
+function Source({source, label = '规则原文'}: {source: Question['sources'][number]; label?: string}) {
+  return <blockquote className="grid gap-1 rounded-r-md border-l-4 bg-background px-3 py-2">
+    <span className="font-semibold text-muted-foreground">{label}</span>
+    <p className="whitespace-pre-wrap"><SourceText text={source.text} quotes={source.quotes}/></p>
+  </blockquote>
+}
+
 const OWN = 'own'
 
 function QuestionCard({question, questionnaireId, closed, onSaved, onConflict}: {question: Question; questionnaireId: string; closed: boolean; onSaved: (receipt: AnswerReceipt) => void; onConflict: () => Promise<void>}) {
@@ -158,9 +173,14 @@ function QuestionCard({question, questionnaireId, closed, onSaved, onConflict}: 
     <div className="grid min-w-0 content-start gap-4 text-sm">
       {question.clauses.length > 0 && <p>{question.clauses.join('、')}</p>}
       <h3 id={`${id}-question`} className="text-base font-semibold">{question.question}</h3>
+      {question.sources.length === 1 && !question.related.length && <Source source={question.sources[0]}/>}
       {question.why && <div className="grid gap-1"><p className="font-semibold text-muted-foreground">为什么要问</p><p className="whitespace-pre-wrap">{question.why}</p></div>}
+      {question.sources.length > 1 && !question.related.length && question.sources.map(source => <Source key={source.clause} source={source} label={`${source.clause} 原文`}/>)}
       {question.related.length > 0 && <div className="grid gap-2"><h4 className="font-semibold">涉及的条款（{question.related.length}）</h4>
-        <ul className="grid gap-3">{question.related.map((row, index) => <li key={index} className="grid gap-1 border-l-2 pl-3"><p className="font-semibold">{row.clause}</p><p>{row.question}</p>{row.example && <p>例：{row.example}</p>}</li>)}</ul>
+        <ul className="grid gap-4">{question.related.map((row, index) => {
+          const source = question.sources.find(item => item.clause === row.clause)
+          return <li key={index} className="grid gap-2"><p className="font-semibold">{row.clause}</p>{source && <Source source={source} label="原文"/>}<p>{row.question}</p>{row.example && <p>例：{row.example}</p>}</li>
+        })}</ul>
       </div>}
       {question.relayed && <div className="grid gap-1 rounded-md bg-secondary px-4 py-3">
         {question.relayed.applied ? <><p>按共性答复处理为：{question.relayed.applied}。请确认。</p><p>依据的共性答复：{question.relayed.answer}</p></> : <p>已转达的答复：{question.relayed.answer}</p>}

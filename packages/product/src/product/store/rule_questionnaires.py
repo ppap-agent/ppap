@@ -100,7 +100,7 @@ def _answers(store, conn, principal, questionnaire_id: str) -> dict[str, list[di
 
 
 # A loaded card may leave out what it does not have; the page always gets every field.
-CARD_DEFAULTS: dict = {"clauses": [], "why": "", "options": [], "expect": "", "related": [], "items": [], "relayed": None}
+CARD_DEFAULTS: dict = {"clauses": [], "why": "", "options": [], "expect": "", "related": [], "sources": [], "items": [], "relayed": None}
 
 
 def _cards(conn, questionnaire_id: str) -> list[dict]:

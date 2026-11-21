@@ -42,11 +42,12 @@ RELAYED = "relayed"  # the choice that confirms the answer already relayed on a 
 VERDICT_OPTIONS = [{"key": "PASS", "label": "通过"}, {"key": "NG", "label": "不通过"}, {"key": "UNABLE", "label": "待审核（交人工）"}]
 
 
-def findings(directory: Path, rule_version: str) -> tuple[list[dict], dict[str, str]]:
+def findings(directory: Path, rule_version: str) -> tuple[list[dict], dict[str, str], dict[str, str]]:
     """Load every clause review with its checked report; a review without a valid report stops the build
     instead of silently dropping that clause, and a report without its review is refused too."""
     items: list[dict] = []
     names: dict[str, str] = {}
+    texts: dict[str, str] = {}
     reviews = {path.name.removesuffix(".review.json"): path for path in directory.glob("*.review.json")}
     reports = {path.name.removesuffix(".report.json"): path for path in directory.glob("*.report.json")}
     if not reviews:
@@ -76,8 +77,9 @@ def findings(directory: Path, rule_version: str) -> tuple[list[dict], dict[str, 
         if rule_id in names:
             raise SystemExit(f"[报告] 同一条款重复：{rule_id}")
         names[rule_id] = name
+        texts[rule_id] = clause["text"]
         items.extend(item for item in expected if not item.get("resolution"))
-    return items, names
+    return items, names, texts
 
 
 def illustrate(item: dict) -> str:
@@ -125,7 +127,16 @@ def lettered(texts: list[str]) -> list[dict]:
 
 def build(directory: Path, plan_path: Path, out: Path) -> None:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    items, names = findings(directory, plan["rule_version"])
+    items, names, texts = findings(directory, plan["rule_version"])
+
+    def sources(rows: list[dict]) -> list[dict]:
+        """The full rule text of each clause the card is about, with the passages its questions turn on."""
+        result: dict[str, dict] = {}
+        for row in rows:
+            entry = result.setdefault(row["clause"], {"clause": names[row["clause"]], "text": texts[row["clause"]], "quotes": []})
+            entry["quotes"] += [quote for quote in row.get("quote", []) if quote not in entry["quotes"]]
+        return list(result.values())
+
     by_id = {item["id"]: item for item in items}
     relayed = plan.get("relayed", {})
     applied = plan.get("applied", {})
@@ -150,6 +161,7 @@ def build(directory: Path, plan_path: Path, out: Path) -> None:
                 "options": lettered(card["options"]) if card.get("options") else [],
                 "expect": card.get("expect") or ("选一个，或写出你的说法。" if card.get("options") else ""),
                 "related": [related(row, names) for row in rows],
+                "sources": sources(rows),
                 "items": card["items"],
             }
         )
@@ -164,6 +176,7 @@ def build(directory: Path, plan_path: Path, out: Path) -> None:
                 "why": card.get("why") or conclusion.get("why", ""),
                 "options": lettered(conclusion.get("options", [])),
                 "expect": conclusion.get("expect", ""),
+                "sources": sources(rows),
                 "items": card.get("items", []),
             }
         )
@@ -193,6 +206,7 @@ def build(directory: Path, plan_path: Path, out: Path) -> None:
             "why": why(item),
             "options": options(item),
             "expect": expect(item),
+            "sources": sources([item]),
             "items": [item["id"]],
         }
         if item["id"] in applied:
@@ -207,7 +221,9 @@ def build(directory: Path, plan_path: Path, out: Path) -> None:
         f"发现 {len(items)} 处；卡片 {len(cards)} 张：共性问题 {counts['common']}（管 {sum(len(c['items']) for c in plan.get('common', []))} 处）、"
         f"交客户补结论 {counts['conclusion']}、通用判定说明 {counts['general']}、逐条问题 {counts['clause']}（其中按转达答复处理 {len(applied)}）"
     )
-    leaked = [word for word in ("OWL", "本体", "公理", "推理", "ofn", "__") if word in json.dumps([{k: v for k, v in c.items() if k not in ("key", "items")} for c in cards], ensure_ascii=False)]
+    leaked = [
+        word for word in ("OWL", "本体", "公理", "推理", "ofn", "__") if word in json.dumps([{k: v for k, v in c.items() if k not in ("key", "items", "sources")} for c in cards], ensure_ascii=False)
+    ]
     if leaked:
         raise SystemExit(f"[白话] 卡片里有技术词：{'、'.join(leaked)}")
 

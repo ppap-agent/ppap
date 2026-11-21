@@ -32,6 +32,7 @@ CARDS = [
         "group": "clause",
         "clauses": ["包装方案 规则 1"],
         "question": "签署栏没盖章时，通过还是不通过？",
+        "sources": [{"clause": "包装方案 规则 1", "text": "以上七项全部满足才通过，否则不通过。签字与印章任一缺失，不通过。", "quotes": ["签字与印章任一缺失，不通过"]}],
         "items": ["PKG:1#1"],
         "relayed": {"answer": "只写了「须……」的条款，全部满足即通过。", "applied": "签署也是通过的前提，缺章不通过", "source": "经产品负责人转达", "date": "2026-11-20"},
     },
@@ -97,9 +98,10 @@ def test_members_answer_each_their_own_answers_keep_history_and_other_enterprise
     view = zhang.get(f"/rule-questionnaires/{qid}").json()
     assert [card["key"] for card in view["questions"]] == [card["key"] for card in CARDS]
     assert view["questions"][1]["relayed"]["source"] == "经产品负责人转达" and view["questions"][1]["relayed"]["date"] == "2026-11-20"
+    assert view["questions"][1]["sources"] == CARDS[1]["sources"]
     # A card loaded without the fields it does not have still reads with every field.
     bare = view["questions"][2]
-    assert (bare["related"], bare["options"], bare["relayed"], bare["why"]) == ([], [], None, "")
+    assert (bare["related"], bare["sources"], bare["options"], bare["relayed"], bare["why"]) == ([], [], [], None, "")
 
     # Two members answer the same card: both answers are kept, each with its answerer.
     first = answer(zhang, qid, "common:模板", choice="A", note="按我们的模板")
