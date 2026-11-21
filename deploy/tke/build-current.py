@@ -190,8 +190,10 @@ def yunxiao(sha: str, attempt: Path, resume_run: int | None, mode: str = "releas
         require(page["last"] > offset, "Flow log pagination did not advance")
         offset = page["last"]
     if mode == "bases":
-        require(source_seen and set(refs) == set(BASES), "Flow did not report all three base levels")
-        require(all(re.fullmatch(re.escape(PREFIXES["yunxiao"] + name) + r"@sha256:[0-9a-f]{64}", refs[name]["image"]) for name in BASES), "Flow reported an unexpected base repository")
+        # Yunxiao truncates a long step log (a slow push floods it with progress lines), so a level may be missing
+        # here; build_bases then reads it from the registry by its inputs tag.
+        require(source_seen and set(refs) <= set(BASES), "Flow did not report its base source")
+        require(all(re.fullmatch(re.escape(PREFIXES["yunxiao"] + name) + r"@sha256:[0-9a-f]{64}", refs[name]["image"]) for name in refs), "Flow reported an unexpected base repository")
         return refs
     require(source_seen and set(refs) == set(COMPONENTS), "Flow did not report all fixed-source images")
     require(all(re.fullmatch(re.escape(PREFIXES["yunxiao"] + c) + r"@sha256:[0-9a-f]{64}", refs[c]) for c in COMPONENTS), "Flow reported an unexpected image repository")
@@ -215,6 +217,40 @@ def registry_get(url: str, headers: dict):
         return error.code, error.headers, b""
     except OSError:
         raise RuntimeError("registry transport failed; image identity is unverified") from None
+
+
+def registry_bearer(host: str, path: str, auth: str, challenge_header: str) -> str:
+    challenge = dict(re.findall(r'(realm|service)="([^"]+)"', challenge_header))
+    realm = challenge.get("realm", "")
+    require(urllib.parse.urlsplit(realm).scheme == "https" and urllib.parse.urlsplit(realm).hostname == host, "untrusted registry authentication realm")
+    tokenurl = realm + "?" + urllib.parse.urlencode({"service": challenge["service"], "scope": "repository:" + path + ":pull"})
+    tokenurl += "&" + urllib.parse.urlencode({"account": base64.b64decode(auth).decode().split(":", 1)[0]})
+    token_code, _, body = registry_get(tokenurl, {"Authorization": "Basic " + auth, "Cache-Control": "no-cache"})
+    require(token_code == 200, "TCR authentication failed")
+    bearer = json.loads(body)
+    return bearer.get("token") or bearer["access_token"]
+
+
+def tcr_auth() -> str:
+    secret = json.loads(kube("get", "secret", tcr_pull_secret(), "-o", "json"))
+    cred = json.loads(base64.b64decode(secret["data"][".dockerconfigjson"]))["auths"]["icoastline.tencentcloudcr.com"]
+    return cred.get("auth") or base64.b64encode((cred["username"] + ":" + cred["password"]).encode()).decode()
+
+
+def tagged_base(level: str, inputs: str) -> str:
+    """The pinned image the Flow pushed for this level, read from the registry by its inputs tag."""
+    repository = PREFIXES["yunxiao"] + level
+    host, path = repository.split("/", 1)
+    url = f"https://{host}/v2/{path}/manifests/{inputs}"
+    headers = {"Accept": "application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"}
+    code, response_headers, _ = registry_get(url, headers)
+    require(code == 401, "TCR registry did not provide an authentication challenge")
+    headers["Authorization"] = "Bearer " + registry_bearer(host, path, tcr_auth(), response_headers.get("WWW-Authenticate", ""))
+    code, response_headers, raw = registry_get(url, headers)
+    require(code == 200, "base image for these inputs is absent: " + level)
+    manifest_digest = digest(raw)
+    require(response_headers.get("Docker-Content-Digest") == manifest_digest, "registry manifest identity mismatch")
+    return repository + "@" + manifest_digest
 
 
 def tcr_pull_secret() -> str:
@@ -366,6 +402,9 @@ def build_bases(sha: str, attempt: Path, run_id: int | None) -> None:
         return
     refs = yunxiao(sha, attempt, run_id, mode="bases")
     inputs = base_inputs(sha)
+    for level in BASES:
+        if level not in refs:
+            refs[level] = {"inputs": inputs[level], "image": tagged_base(level, inputs[level])}
     require(all(refs[level]["inputs"] == inputs[level] for level in BASES), "Flow built base images from different inputs")
     (ROOT / BASE_RECORD).write_text(json.dumps({level: refs[level] for level in BASES}, indent=2) + "\n")
     print("Recorded base images. Commit deploy/tke/base-images.json, then release a commit that contains it.", flush=True)
