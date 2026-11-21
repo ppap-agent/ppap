@@ -128,6 +128,7 @@ jobs:
           )
           git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
           uv run --no-sync python -m compileall -q packages apps/api apps/worker tests scripts
+          python3 -m unittest discover -s .claude/skills/clause-check/tests -v
           uv run --no-sync ruff check packages apps/api apps/worker tests scripts
           if ! uv run --no-sync ruff format --check packages apps/api apps/worker tests scripts; then
             uv run --no-sync ruff format --diff packages apps/api apps/worker tests scripts
