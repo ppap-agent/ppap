@@ -104,7 +104,7 @@ class Product:
 
     async def write(self, actor, scope, tool, rid, method, path, body, *, probes, confirmation=None, result_path=None):
         arguments = {"method": method, "path": path, "body": body, "probes": probes}
-        recorded = self.operations.setdefault(rid, {"tool": tool, "state": "ready", "arguments": arguments, "confirmation": confirmation, "required_scope": scope})
+        recorded = self.operations.setdefault(rid, {"tool": tool, "state": "ready", "arguments": arguments, "confirmation": confirmation, "required_scope": scope, "request_id": rid})
         if fingerprint(recorded["confirmation"]) != fingerprint(confirmation):
             raise McpError("confirmation_content_changed", 409)
         if confirmation is not None and not self.approved:
@@ -113,11 +113,17 @@ class Product:
         if tool == "confirm_audit":
             # The audit task itself refuses a confirmation whose basis has changed since the user agreed.
             if body["expected_confirmation_basis_digest"] != self.audit["confirmation_basis_digest"]:
-                recorded["state"] = "failed"
+                recorded.update(state="failed", error="task_confirmation_changed")
                 return Reply(status="error", error="task_confirmation_changed", request_id=rid)
             self.audit["state"] = "reviewing"
         recorded["state"] = "succeeded"
         return Reply(status="ok", data={}, request_id=rid)
+
+    async def operation_reply(self, actor, operation):
+        """What a settled write did, read back without doing it again."""
+        if operation["state"] == "succeeded":
+            return Reply(status="ok", data={}, request_id=operation["request_id"])
+        return Reply(status="error", error=operation["error"], request_id=operation["request_id"])
 
     @property
     def store(self):
@@ -314,6 +320,8 @@ def test_an_approval_survives_fields_that_move_on_their_own_and_a_changed_quote_
     assert pending["next"]["kind"] == "call_tool" and pending["next"]["tool"] == "confirm_audit" and pending["next"]["reason"] == "approved_not_started"
     world.product.audit["updated_at"] = "later"  # the task moved on without changing what was agreed
     assert world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)["result"]["phase"] == "auditing"
+    # Called again once it ran: the same receipt, not a fresh judgment of a task that is no longer waiting.
+    assert world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)["result"]["phase"] == "auditing"
 
     other = World("a.xlsx")
     ask = str(uuid4())
@@ -325,6 +333,7 @@ def test_an_approval_survives_fields_that_move_on_their_own_and_a_changed_quote_
     other.product.audit["confirmation_basis_digest"] = "a-new-quote"  # what confirming would start has changed
     changed = other.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
     assert changed["next"] == {"kind": "call_tool", "tool": "get_task", "arguments": {"task_id": task}, "reason": "quote_changed"}
+    assert other.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)["next"] == changed["next"]
     assert other.product.audit["state"] == "pending_confirm"
 
 

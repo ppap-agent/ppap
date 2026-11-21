@@ -425,13 +425,15 @@ def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_
         current = client.get(f"/rounds/{round_id}").json()["findings"][0]
         # The machine's conclusion is as it was; the person's judgment is beside it.
         assert current["status"] == listed["status"] and current["review"]["version"] == 1
+        monkeypatch.setattr(app.state.mcp_gateway, "request", original)
         next_args = {**args, "request_id": str(uuid4()), "rationale": "第二次核对"}
         approve(client, call(client, token, "record_review", **next_args))
         # A concurrent Web edit wins before the delegated write. The old
-        # confirmation cannot authorize overriding that newer human judgment.
+        # confirmation cannot authorize overriding that newer human judgment:
+        # the review it approved was written against version 1, and the round refuses it.
         web = {"item_key": listed["item_key"], "judgment": "需修改", "rationale": "网页复核已修订", "next_step": "", "version": 1}
         assert client.put(f"/rounds/{round_id}/reviews", json=web).status_code == 200
-        assert call(client, token, "record_review", **next_args)["next"]["error_code"] == "confirmation_content_changed"
+        assert call(client, token, "record_review", **next_args)["next"]["error_code"] == "review_conflict"
         assert client.get(f"/rounds/{round_id}").json()["findings"][0]["review"]["version"] == 2
 
 

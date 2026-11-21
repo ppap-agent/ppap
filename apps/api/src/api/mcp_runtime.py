@@ -271,10 +271,13 @@ class TaskRuntime:
         """An approval-bound write called again carries what the person approved, as it was recorded. Values the
         tool reads (a task, a round, a revision) move on their own; re-reading them would void every approval.
         Whether the approved content still holds is checked where it takes effect: the quote by the audit task,
-        reviews, answers and reports against their approved sources. None: nothing recorded to replay."""
+        reviews, answers and reports against their approved sources. One that already ran returns what it did.
+        None: nothing recorded to replay."""
         prior = await self.recorded(actor, request_id)
-        if prior is None or prior["tool"] != tool or prior["confirmation"] is None or prior["state"] not in {"confirmation_required", "ready"}:
+        if prior is None or prior["tool"] != tool or prior["confirmation"] is None:
             return None
+        if prior["state"] not in {"confirmation_required", "ready"}:
+            return await self.gateway.operation_reply(actor, prior)
         a = prior["arguments"]
         return await self.gateway.write(actor, prior["required_scope"], tool, request_id, a["method"], a["path"], a["body"], probes=a["probes"], confirmation=prior["confirmation"])
 
