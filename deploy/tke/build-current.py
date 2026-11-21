@@ -75,11 +75,16 @@ def cloud(method: str, path: str, body=None, query=None):
     if query:
         url += "?" + urllib.parse.urlencode(query)
     req = urllib.request.Request(url, method=method, data=json.dumps(body).encode() if body is not None else None, headers={"x-yunxiao-token": token, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            return json.load(response)
-    except (OSError, ValueError):
-        raise RuntimeError(f"Yunxiao {method} failed; read back before any repeated write") from None
+    # A read changes nothing, so a dropped one is simply read again; a write is never repeated blindly.
+    for attempt in range(5 if method == "GET" else 1):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                return json.load(response)
+        except (OSError, ValueError):
+            if method == "GET" and attempt < 4:
+                time.sleep(5 * (attempt + 1))
+                continue
+            raise RuntimeError(f"Yunxiao {method} failed; read back before any repeated write") from None
 
 
 def source_branch(sha: str, attempt: Path) -> str:
