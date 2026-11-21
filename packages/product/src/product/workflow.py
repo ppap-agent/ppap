@@ -532,9 +532,9 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
             )
         precheck = facts.get("precheck") or {}
         for item in precheck.get("blocks") or []:
-            found.append(_precheck_issue(task_id, item, "warning", by_version))
+            found.append(_precheck_issue(task_id, item, by_version, editable))
         for item in precheck.get("warnings") or []:
-            found.append(_precheck_issue(task_id, item, "info", by_version))
+            found.append(_precheck_issue(task_id, item, by_version, editable))
     if audit.get("state") == "completed":
         for row in audit.get("files", []):
             review = row.get("audit") or {}
@@ -609,8 +609,17 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
     return found
 
 
-def _precheck_issue(task_id: str, item: dict, severity: str, by_version: dict[str, str]) -> dict:
+def _precheck_issue(task_id: str, item: dict, by_version: dict[str, str], editable: bool) -> dict:
+    """A precheck finding as what it does to starting (the Web's rule): only a file-level block holds the start, until
+    the file is left out; a content-level block goes to the formal audit; a warning holds nothing."""
     token = by_version.get(item.get("file_version_id") or "")
+    holds = item.get("level") == "block" and item.get("scope") == "file"
+    if holds:
+        severity, impact, actions = "blocking", "这份文件不移除就不能开始审核。", [_EXCLUDE] if editable and token else []
+    elif item.get("level") == "block":
+        severity, impact, actions = "warning", "不阻止开始审核，正式审核会按规则核对这一点。", []
+    else:
+        severity, impact, actions = "info", "不影响开始审核。", []
     return _issue(
         task_id,
         "PRECHECK_" + str(item.get("code", "")),
@@ -618,8 +627,8 @@ def _precheck_issue(task_id: str, item: dict, severity: str, by_version: dict[st
         severity,
         "precheck",
         f"「{item.get('filename', '')}」{item.get('problem') or item.get('title', '')}",
-        (item.get("action") or "") + " 预检只作提醒，不影响开始审核，也不需要处理。",
-        [],
+        impact + (" 整改：" + item["action"] if item.get("action") else ""),
+        actions,
         subject={"kind": "file", "key": token or item.get("file_version_id"), "filename": item.get("filename")},
         key=f"{item.get('file_version_id')}:{item.get('code')}:{item.get('number')}",
     )

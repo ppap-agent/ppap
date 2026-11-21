@@ -19,15 +19,22 @@ def _rows(rows: list[list[Any]]) -> dict:
     return {"rows": rows[:MAX_ROWS], "more": max(0, len(rows) - MAX_ROWS)}
 
 
+def effect(item: dict) -> str:
+    """What a precheck finding does to starting, as the Web says it. Only a file-level block holds the start."""
+    if item.get("level") != "block":
+        return "警告"
+    return "阻断" if item.get("scope") == "file" else "待正式审核核对"
+
+
 def _precheck_rating(precheck: dict | None) -> str:
     if not precheck:
         return "未执行"
-    blocks, warnings = precheck.get("blocks") or [], precheck.get("warnings") or []
-    if blocks:
-        return f"不通过：存在阻断项 {len(blocks)} 项"
-    if warnings:
-        return f"有条件通过 · 含警告 {len(warnings)} 项"
-    return "通过"
+    items = (precheck.get("blocks") or []) + (precheck.get("warnings") or [])
+    kinds = [effect(item) for item in items]
+    if "阻断" in kinds:
+        return f"不通过：{kinds.count('阻断')} 项阻断，移除对应文件后才能开始审核"
+    parts = [f"{kinds.count(k)} 项{k}" for k in ("待正式审核核对", "警告") if k in kinds]
+    return ("有条件通过 · " + "、".join(parts) + "：可以开始审核") if parts else "通过：可以开始审核"
 
 
 def audit_start(task: dict, precheck: dict | None, folders: dict[str, str]) -> tuple[list[str], list[dict]]:
@@ -43,10 +50,8 @@ def audit_start(task: dict, precheck: dict | None, folders: dict[str, str]) -> t
     references = set(scope.get("reference_file_version_ids") or [])
     excluded = {row["file_version_id"]: row.get("reason") for row in scope.get("excluded_files") or []}
     flagged: dict[str, list[str]] = {}
-    for item in (precheck or {}).get("blocks") or []:
-        flagged.setdefault(item.get("file_version_id"), []).append("阻断")
-    for item in (precheck or {}).get("warnings") or []:
-        flagged.setdefault(item.get("file_version_id"), []).append("警告")
+    for item in ((precheck or {}).get("blocks") or []) + ((precheck or {}).get("warnings") or []):
+        flagged.setdefault(item.get("file_version_id"), []).append(effect(item))
 
     sent, skipped = [], []
     for row in task.get("files", []):
@@ -56,7 +61,7 @@ def audit_start(task: dict, precheck: dict | None, folders: dict[str, str]) -> t
         metadata = match.get("metadata") or {}
         if version in targets or version in references:
             levels = flagged.get(version) or []
-            note = "需要处理" if "阻断" in levels else (f"警告 {levels.count('警告')} 项" if levels else "通过")
+            note = "阻断" if "阻断" in levels else "，".join(f"{k} {levels.count(k)} 项" for k in ("待正式审核核对", "警告") if k in levels) or "通过"
             sent.append(
                 [
                     name,
@@ -73,8 +78,7 @@ def audit_start(task: dict, precheck: dict | None, folders: dict[str, str]) -> t
             skipped.append([name, folders.get(version), reason])
 
     findings = [
-        [item.get("filename"), "阻断" if item in ((precheck or {}).get("blocks") or []) else "提醒", item.get("problem") or item.get("title"), item.get("action")]
-        for item in ((precheck or {}).get("blocks") or []) + ((precheck or {}).get("warnings") or [])
+        [item.get("filename"), effect(item), item.get("problem") or item.get("title"), item.get("action")] for item in ((precheck or {}).get("blocks") or []) + ((precheck or {}).get("warnings") or [])
     ]
     mode = "深度模式（逐条复核每条结论，审核时长约增加 2 倍）" if task.get("deep_mode") else "标准模式"
     points = task.get("estimated_points")
@@ -91,7 +95,7 @@ def audit_start(task: dict, precheck: dict | None, folders: dict[str, str]) -> t
     details.append({"kind": "table", "title": f"送审的文件 · {len(sent)} 份", "head": ["文件", "所在文件夹", "文件类型", "零件号", "零件名称", "审核规则", "预检"], **_rows(sent)})
     details.append({"kind": "table", "title": f"预检发现 · {len(findings)} 项", "head": ["文件", "级别", "问题", "整改"], **_rows(findings)})
     details.append({"kind": "table", "title": f"不送审的文件 · {len(skipped)} 份", "head": ["文件", "所在文件夹", "原因"], **_rows(skipped)})
-    details.append({"kind": "note", "text": "上面的文件都可以开始审核，预检发现的问题由正式审核再核对。确认后审核在后台进行，进度和结果回到客户端查看；不送审的文件不计费。"})
+    details.append({"kind": "note", "text": "警告不影响开始审核；“待正式审核核对”的问题由正式审核按规则判定。确认后审核在后台进行，进度和结果回到客户端查看；不送审的文件不计费。"})
     return summary, details
 
 

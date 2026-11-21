@@ -180,14 +180,18 @@ def test_the_quote_is_what_confirming_starts_and_next_never_confirms_by_itself()
     assert view["result"]["summary"] == "已准备好：标准模式审核 1 份文件，预计扣 2 点。你同意后才会开始。"
 
 
-def test_a_precheck_finding_never_blocks_the_audit():
-    state = w.apply(prepared("a"), {"type": "audit_created"})
-    block = {"code": "B01", "title": "缺项", "problem": "缺少控制计划", "action": "补交", "filename": "a", "file_version_id": "v-a", "number": "B-01"}
-    facts = {**checks(a="valid"), "audit": audit(audit_row("a")), "precheck": {"conclusion": "block", "blocks": [block], "warnings": []}}
-    view = w.project(TASK, state, facts)
-    assert view["phase"] == "ready_to_confirm" and view["issues"][0]["severity"] == "warning" and view["issues"][0]["subject"]["key"] == "t-a"
-    # A precheck finding is told, not asked: it offers nothing to decide.
-    assert view["issues"][0]["allowed_actions"] == []
+def test_a_precheck_finding_holds_the_start_only_when_the_file_itself_is_blocked():
+    state = w.apply(prepared("a", "b"), {"type": "audit_created"})
+    content = {"code": "B05", "level": "block", "scope": "content", "problem": "缺字段", "action": "补齐", "filename": "a", "file_version_id": "v-a", "number": "B-01"}
+    warning = {"code": "W01", "level": "warn", "scope": "file", "problem": "缺少同零件文件", "filename": "b", "file_version_id": "v-b", "number": "W-01"}
+    facts = {**checks(a="valid", b="valid"), "audit": audit(audit_row("a"), audit_row("b"))}
+    told = w.project(TASK, state, {**facts, "precheck": {"blocks": [content], "warnings": [warning]}})
+    # Neither holds the start, so neither is called a block or asks anything.
+    assert told["phase"] == "ready_to_confirm" and [(i["severity"], i["allowed_actions"]) for i in told["issues"]] == [("warning", []), ("info", [])]
+    assert "正式审核" in told["issues"][0]["impact"]
+    held = w.project(TASK, state, {**facts, "precheck": {"blocks": [{**content, "scope": "file"}], "warnings": []}})
+    (issue,) = held["issues"]
+    assert held["phase"] == "awaiting_decision" and issue["blocking"] and [a["id"] for a in issue["allowed_actions"]] == ["exclude"] and issue["subject"]["key"] == "t-a"
 
 
 def test_a_finished_audit_asks_its_open_questions_and_then_points_at_the_results():

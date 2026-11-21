@@ -98,6 +98,16 @@ def test_an_approval_page_shows_what_the_web_shows_at_the_same_decision():
         "修正公式",
         "不送审的文件 · 1 份",
         "&lt;说明&gt;.docx",
-        "有条件通过 · 含警告 1 项",
+        "有条件通过 · 1 项警告：可以开始审核",
     ):
         assert shown in html, shown
+
+
+def test_long_clauses_and_reasons_are_set_as_points_and_lists_without_changing_a_word():
+    from api.mcp_pages import prose
+
+    clause = "须有关键工序标记；须有图例<b>；如果无法辨识则不通过"
+    assert prose(clause) == "<ol><li>须有关键工序标记；</li><li>须有图例&lt;b&gt;；</li><li>如果无法辨识则不通过</li></ol>"
+    reason = "13 个工序的生产资源为空：压盖入库、原材料入库、存储材料等。"
+    assert prose(reason) == "13 个工序的生产资源为空：<ul><li>压盖入库</li><li>原材料入库</li><li>存储材料</li></ul><span class=muted>等。</span>"
+    assert prose("一句话") == "一句话"

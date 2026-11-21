@@ -9,6 +9,7 @@ one commitment, quiet text for everything else, and the same in dark mode.
 from __future__ import annotations
 
 import json
+import re
 from functools import cache
 from html import escape
 from pathlib import Path
@@ -66,7 +67,11 @@ dd{margin:0;overflow-wrap:anywhere}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;font-weight:400;color:var(--color-muted-foreground);padding:8px 12px 8px 0;border-bottom:1px solid var(--color-border);white-space:nowrap}
 td{padding:10px 12px 10px 0;border-bottom:1px solid var(--color-border);vertical-align:top;overflow-wrap:anywhere}
-.quote{margin:0;padding:8px 12px;background:var(--color-secondary);border-radius:calc(var(--radius-control) - 2px);white-space:pre-wrap;overflow-wrap:anywhere}
+.quote{margin:0;padding:10px 12px;background:var(--color-secondary);border-radius:calc(var(--radius-control) - 2px);overflow-wrap:anywhere}
+.quote ol{margin:0;padding-left:20px}
+.quote ol>li{padding:2px 0;border:0}
+.quote ul{margin:4px 0;padding-left:18px;list-style:disc}
+.quote ul>li{padding:1px 0;border:0}
 .tag{display:inline-block;padding:0 6px;border-radius:calc(var(--radius-control) - 4px);font-size:var(--text-xs);line-height:20px;
 background:var(--color-secondary);color:var(--color-muted-foreground);white-space:nowrap}
 .tag.ng{color:var(--color-destructive);background:color-mix(in srgb,var(--color-destructive) 10%,transparent)}
@@ -139,7 +144,35 @@ def lines(summary: list[str]) -> str:
     return "".join(out)
 
 
-TAGS = {"阻断": "ng", "符合": "pass", "不符合": "ng", "待审核": "warn", "证据不足以判定": "warn", "没有检查完": "warn", "需要处理": "warn", "提醒": "warn"}
+_CLAUSES = re.compile(r"(?<=[；;])\s*|\n+")
+_ITEMS = re.compile(r"[、]")
+
+
+def prose(text: str) -> str:
+    """A clause or a reason as the Web would set it: one point per line, and a long enumeration as a list.
+
+    Clauses split at line breaks and semicolons; a point that introduces three or more items ("…：A、B、C") shows
+    them as a list under it. Only the layout changes: every word stays as written."""
+    points = [part.strip() for part in _CLAUSES.split(text.strip()) if part and part.strip()]
+    rendered = []
+    for point in points:
+        lead, colon, rest = point.partition("：")
+        items = [item.strip() for item in _ITEMS.split(rest)] if colon else []
+        if len(items) >= 3:
+            tail = ""
+            if items[-1].endswith(("等。", "等")):
+                tail = "等" if items[-1].endswith("等") else "等。"
+                items[-1] = items[-1][: -len(tail)]
+            body = "".join(f"<li>{escape(item)}</li>" for item in items if item)
+            rendered.append(f"{escape(lead)}：<ul>{body}</ul>" + (f"<span class=muted>{escape(tail)}</span>" if tail else ""))
+        else:
+            rendered.append(escape(point))
+    if len(rendered) == 1:
+        return rendered[0]
+    return "<ol>" + "".join(f"<li>{item}</li>" for item in rendered) + "</ol>"
+
+
+TAGS = {"阻断": "ng", "警告": "warn", "待正式审核核对": "warn", "符合": "pass", "不符合": "ng", "待审核": "warn", "证据不足以判定": "warn", "没有检查完": "warn", "需要处理": "warn", "提醒": "warn"}
 
 
 def _cell(value) -> str:
@@ -169,7 +202,7 @@ def details(blocks: list[dict], closing: str = "") -> str:
             more = f'<p class="muted">另有 {block["more"]} 项未列出。</p>' if block.get("more") else ""
             out.append(f'{title}<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{more}')
         elif kind == "text" and block.get("text"):
-            out.append(f'{title}<p class="quote">{escape(block["text"])}</p>')
+            out.append(f'{title}<div class="quote">{prose(block["text"])}</div>')
         elif kind == "note" and block.get("text"):
             notes.append(block["text"])
     if closing:
