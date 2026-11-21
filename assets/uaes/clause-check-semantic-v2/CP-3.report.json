@@ -1,0 +1,17 @@
+{
+  "schema": "clause-check-report-v1",
+  "clause": {
+    "id": "CP:3",
+    "title": "控制计划（CP）（UAES 审核规则库 规范性条款 v1.0）",
+    "category": "UAES-CP-量产受控-受控章",
+    "text": "控制计划文件的类型必须为“量产”或“SOP”，且文件中必须存在受控章；任一条件不满足即不通过。",
+    "source": "rules/CP.json#CP:3",
+    "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
+  },
+  "review_sha256": "6a79d99d5c58ac76d434c490d185e51fe4ba42c16d7f8fdbc4c55e3f33de1ba6",
+  "findings": [],
+  "excluded": [],
+  "policy_sha256": {
+    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
+  }
+}
