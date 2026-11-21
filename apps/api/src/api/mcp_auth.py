@@ -7,7 +7,7 @@ from html import escape
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from fastapi import Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastmcp.server.auth import AccessToken, TokenVerifier
 from mcp.server.auth.middleware.client_auth import AuthenticationError, ClientAuthenticator
 from mcp.server.auth.provider import AuthorizationCode, AuthorizeError, RefreshToken, RegistrationError, TokenError
@@ -23,6 +23,8 @@ from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 from starlette.routing import Mount, Route
 from starlette.types import ASGIApp
+
+from api.mcp_pages import page
 
 
 class OAuthProvider(TokenVerifier):
@@ -159,24 +161,6 @@ class OAuthProvider(TokenVerifier):
 
     async def revoke_token(self, token):
         await asyncio.to_thread(self.store.revoke, token.token, token.client_id)
-
-
-def page(title: str, body: str, status: int = 200):
-    # No remote fonts, images, scripts or client-provided HTML on the consent origin.
-    return HTMLResponse(
-        '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"<title>{escape(title)} · PPAP</title><style>body{{font:16px/1.6 system-ui;margin:40px auto;padding:0 24px;max-width:680px;color:#17212b}}"
-        "label{display:block;padding:8px 0}input{margin-right:10px}button{font:inherit;padding:10px 20px;margin:16px 12px 0 0;cursor:pointer}"
-        "pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#174ea6}small{color:#52606d}h1{font-size:26px}</style>"
-        f"<main><p>PPAP</p><h1>{escape(title)}</h1>{body}</main></html>",
-        status_code=status,
-        headers={
-            "Cache-Control": "no-store",
-            "Referrer-Policy": "no-referrer",
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-        },
-    )
 
 
 class OAuthGuard:

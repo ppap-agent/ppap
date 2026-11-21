@@ -22,8 +22,9 @@ from product.store.workflows import WorkflowStore
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 
-from api.mcp_auth import OAuthProvider, page, register_oauth
+from api.mcp_auth import OAuthProvider, register_oauth
 from api.mcp_gateway import BusinessGateway
+from api.mcp_pages import lines, page
 from api.mcp_runtime import TaskRuntime
 
 
@@ -182,12 +183,15 @@ def install_mcp(app, product, http, session_of):
                 else (
                     f'<form method="post" action="{escape(provider.base)}/mcp/connections/{ident}/revoke">'
                     f'<input type="hidden" name="csrf" value="{revocation_csrf(browser, ident)}">'
-                    '<button type="submit">撤销此连接</button></form>'
+                    '<button type="submit">撤销连接</button></form>'
                 )
             )
             scopes = "；".join(SCOPES[s] for s in entry["scopes"] if s in SCOPES)
-            rows.append(f"<section><h2>{escape(entry['client_name'] or 'MCP client')}</h2><p>{escape(status)}</p><p>{escape(scopes)}</p>{form}</section>")
-        return page("已授权客户端", "<p>撤销后，此连接不能发起新操作或继续读取。已受理的审核仍按原任务执行。</p>" + ("".join(rows) or "<p>没有已授权客户端。</p>"))
+            rows.append(f'<section><h2>{escape(entry["client_name"] or "MCP 客户端")}</h2><p class="muted">{escape(status)}</p><p class="muted">{escape(scopes)}</p>{form}</section>')
+        return page(
+            "已连接的客户端",
+            ("".join(rows) or '<p class="muted">还没有连接过客户端。</p>') + '<p class="notice">撤销后，这个客户端不能再读取或发起新操作；已经开始的审核照常完成。</p>',
+        )
 
     @app.post("/mcp/connections/{grant_id}/revoke", include_in_schema=False)
     async def connections_revoke(grant_id: UUID, request: Request):
@@ -217,12 +221,11 @@ def install_mcp(app, product, http, session_of):
         except McpError as exc:
             return page("操作不可确认", "<p>此请求已处理、已过期，或当前账号没有权限。</p>", exc.status)
         # What will happen, in the user's words; the exact request stays bound to the approval, not on the page.
-        lines = "".join(f"<p>{escape(line)}</p>" for line in value["confirmation"].get("summary", []))
         return page(
             "确认这次操作",
-            lines + "<p><small>只确认上面这一次；内容有变化时需要重新确认。</small></p>"
+            lines(value["confirmation"].get("summary", [])) + '<p class="notice">只确认上面这一次；内容有变化时需要重新确认。确认后回到客户端继续。</p>'
             f'<form method="post"><input type="hidden" name="csrf" value="{escape(value["csrf"])}">'
-            '<button name="decision" value="approve">确认</button><button name="decision" value="deny">拒绝</button></form>',
+            '<button name="decision" value="deny">拒绝</button><button name="decision" value="approve">确认</button></form>',
         )
 
     @app.post("/mcp/confirm/{operation_id}", include_in_schema=False)
@@ -239,7 +242,9 @@ def install_mcp(app, product, http, session_of):
             )
         except McpError as exc:
             return page("确认未保存", "<p>请求已失效或校验未通过。请回到客户端核对原请求。</p>", exc.status)
-        return page("决定已保存", "<p>请回到客户端继续原请求。此页面不会自行执行审核或发送报告。</p>")
+        if form.get("decision") == "approve":
+            return page("已确认", '<p>请回到客户端，让它继续刚才的操作。</p><p class="notice">这个页面不会自己开始审核或发送报告。</p>')
+        return page("已拒绝", "<p>这次操作不会执行。可以回到客户端关闭这个页面。</p>")
 
     app.state.mcp_provider = provider
     app.state.mcp_store = store
