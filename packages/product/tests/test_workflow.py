@@ -177,6 +177,7 @@ def test_the_quote_is_what_confirming_starts_and_next_never_confirms_by_itself()
     assert view["phase"] == "ready_to_confirm"
     assert view["result"]["quote"] == {"quote_id": "q1", "points": 2, "mode": "standard", "files_to_audit": 1, "reference_files": 0, "estimated_time": None}
     assert view["next"]["kind"] == "user_action" and view["next"]["then"] == {"tool": "confirm_audit", "arguments": {"task_id": TASK, "quote_id": "q1"}}
+    assert view["result"]["summary"] == "已准备好：标准模式审核 1 份文件，预计扣 2 点。你同意后才会开始。"
 
 
 def test_a_precheck_finding_never_blocks_the_audit():

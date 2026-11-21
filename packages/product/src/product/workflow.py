@@ -716,7 +716,42 @@ def project(task_id: str, state: dict, facts: dict) -> dict:
         }
     if price:
         result["quote"] = price
+    result["summary"] = summary(phase, result, found)
     return {"phase": phase, "result": result, "issues": found, "next": next_action(task_id, phase, found, price, facts), "available_actions": available_actions(task_id, phase, state, facts)}
+
+
+CONCLUSIONS = {"PASS": "符合", "NG": "不符合", "UNKNOWN": "有待人工审核的项", "ERROR": "未完成（有检查项没有检查完）"}
+
+
+def summary(phase: str, result: dict, found: list[dict]) -> str:
+    """Where the task stands, in the user's words, to be said as it is: no IDs, codes or field names."""
+    files = result["files"]
+    kept = [line for line in files if line["state"] not in {"excluded", "duplicate"}]
+    blocking = sum(1 for issue in found if issue["blocking"])
+    notes = sum(1 for issue in found if not issue["blocking"])
+    tail = f"另有 {notes} 条提醒。" if notes else ""
+    if phase == "closed":
+        return "这次审核已结束，没有开始审核，也没有扣点。"
+    if phase == "preparing":
+        ready = sum(1 for line in kept if line["state"] in {"ready", "checking"})
+        if not kept:
+            return "正在读取飞书文件夹。"
+        return f"正在准备：已导入 {ready}/{len(kept)} 份文件，正在检查和识别。"
+    if phase == "awaiting_decision":
+        return f"准备中有 {blocking} 个问题需要你决定。" + tail
+    if phase == "ready_to_confirm":
+        quote = result["quote"]
+        mode = "深度模式" if quote["mode"] == "deep" else "标准模式"
+        reference = f"，另有 {quote['reference_files']} 份作参考" if quote.get("reference_files") else ""
+        points = f"，预计扣 {quote['points']} 点" if quote.get("points") is not None else ""
+        return f"已准备好：{mode}审核 {quote['files_to_audit']} 份文件{reference}{points}。你同意后才会开始。" + tail
+    audit = result.get("audit") or {}
+    progress = audit.get("progress") or {}
+    if phase == "auditing":
+        return f"正在审核：已完成 {progress.get('completed', 0)}/{progress.get('total', len(kept))} 份。"
+    reports = sum(1 for line in files if line.get("report") == "ready")
+    conclusion = CONCLUSIONS.get(audit.get("conclusion") or "", "尚无结论")
+    return f"审核已结束，结论：{conclusion}。{reports} 份报告已生成。" + tail
 
 
 def _file_lines(state: dict, facts: dict) -> list[dict]:

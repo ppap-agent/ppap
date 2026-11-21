@@ -37,7 +37,7 @@ class Outcome(BaseModel):
     schema_version: str = "1.0"
     task_id: str | None = None
     task_revision: int | None = Field(default=None, description="Pass back as expected_revision when deciding an issue.")
-    result: Any = None
+    result: Any = Field(default=None, description="What is confirmed. result.summary says it in the user's words; tell them that, not the fields.")
     issues: list[dict] = Field(default_factory=list, description="Open problems and decisions. Each lists the only actions it accepts.")
     next: dict = Field(description="call_tool, user_action, wait, recover, done or blocked. Advice from the task's state, never permission to charge or send.")
     available_actions: list[dict] = Field(default_factory=list)
