@@ -829,6 +829,8 @@ def available_actions(task_id: str, phase: str, state: dict, facts: dict) -> lis
     if phase == "completed":
         actions.append({"tool": "get_results", "arguments": {"task_id": task_id}, "summary": "读取审核结论和检查项。"})
         actions.append({"tool": "record_review", "summary": "记录人工复核，机器结论不被覆盖。"})
-        actions.append({"tool": "publish_report", "arguments": {"task_id": task_id}, "summary": "把审核结果交付到飞书；需要用户同意。"})
+        if (facts.get("audit") or {}).get("conclusion") != "ERROR":
+            # A round with unfinished checks has no report to deliver.
+            actions.append({"tool": "publish_report", "arguments": {"task_id": task_id}, "summary": "把审核结果交付到飞书；需要用户同意。"})
         actions.append({"tool": "prepare_audit", "arguments": {"follows_task_id": task_id}, "summary": "供应商补件后，对新的资料复审并关联这一次。"})
     return actions

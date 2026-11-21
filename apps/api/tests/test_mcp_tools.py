@@ -312,3 +312,15 @@ def test_an_approval_survives_fields_that_move_on_their_own_and_a_changed_quote_
     changed = other.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
     assert changed["next"] == {"kind": "call_tool", "tool": "get_task", "arguments": {"task_id": task}, "reason": "quote_changed"}
     assert other.product.audit["state"] == "pending_confirm"
+
+
+def test_an_unfinished_audit_offers_no_delivery_and_says_why_before_any_approval():
+    world = World("a.xlsx")
+    task = str(uuid4())
+    world.call("prepare_audit", request_id=task, source="fld1")
+    world.product.audit.update(state="completed", round_id="round-1", conclusion="ERROR")
+    seen = world.call("get_task", task_id=task)
+    assert seen["result"]["phase"] == "completed" and "publish_report" not in {action["tool"] for action in seen["available_actions"]}
+    refused = world.call("publish_report", task_id=task, request_id=str(uuid4()))
+    assert refused["next"]["error_code"] == "round_has_errors" and "复审" in refused["next"]["message"]
+    assert world.product.operations == {}  # nothing was put to the user to approve

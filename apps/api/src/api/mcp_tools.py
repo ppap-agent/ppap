@@ -37,6 +37,7 @@ _SAY = {
     "feishu_user_token_missing": "当前连接没有飞书授权。请用户重新连接 PPAP 并用飞书登录。",
     "provider_reauthorization_required": "飞书授权已失效。请用户重新登录飞书并重新连接 PPAP。",
     "denied_by_user": "用户在确认页拒绝了这次操作。",
+    "round_has_errors": "这次审核有检查项没有检查完，不能生成飞书报告。可以对同一份资料复审，结论确定后再交付。",
 }
 
 
@@ -286,8 +287,9 @@ def register_tools(mcp, gateway, authority, runtime):
             actions: list[dict[str, Any]] = [
                 {"tool": "get_finding", "summary": "一个检查项的条款、证据和原件位置。"},
                 {"tool": "record_review", "summary": "记录人工复核，机器结论不被覆盖。"},
-                {"tool": "publish_report", "arguments": {"task_id": tid}, "summary": "把审核结果交付到飞书；需要用户同意。"},
             ]
+            if audit.get("conclusion") != "ERROR":
+                actions.append({"tool": "publish_report", "arguments": {"task_id": tid}, "summary": "把审核结果交付到飞书；需要用户同意。"})
             return Outcome(task_id=tid, result=result, next=DONE, available_actions=actions)
         except Exception as exc:
             return failure(exc, task_id=tid)
@@ -353,7 +355,10 @@ def register_tools(mcp, gateway, authority, runtime):
         try:
             actor = await authority()
             actor.require("reports:send")
-            _audit, round_id = await audit_round(actor, tid)
+            audit, round_id = await audit_round(actor, tid)
+            if audit.get("conclusion") == "ERROR" and await runtime.recorded(actor, rid) is None:
+                # Say so before asking the user to approve something that cannot happen.
+                raise workflow.Rejected("round_has_errors")
             probe = f"/rounds/{round_id}"
             source = await gateway.get(actor, "audits:read", probe)
             snapshot = {"operation": "publish_report", "summary": ["生成飞书审核报告文档。"], "request": None, "sources": [source]}
