@@ -51,6 +51,9 @@ def failure(exc: Exception, *, task_id: str | None = None, request_id: str | Non
     """Why a call did nothing, as the next thing to do about it."""
     if isinstance(exc, workflow.Rejected):
         code = str(exc)
+        if code == "results_not_ready" and task_id:
+            # The audit is still running: wait on the task, don't keep asking for results.
+            return Outcome(task_id=task_id, request_id=request_id, next={"kind": "wait", "observe_with": "get_task", "arguments": {"task_id": task_id}, "check_after_ms": 15000, "reason": code})
         if code in _READ_AGAIN and task_id:
             return Outcome(task_id=task_id, request_id=request_id, next={"kind": "call_tool", "tool": "get_task", "arguments": {"task_id": task_id}, "reason": code})
         return blocked(code, task_id=task_id, request_id=request_id)

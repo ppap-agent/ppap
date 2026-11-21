@@ -235,7 +235,8 @@ def test_confirming_takes_the_agreed_quote_and_the_users_own_approval():
     world.product.approved = True
     started = world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
     assert started["result"]["phase"] == "auditing" and started["next"]["kind"] == "wait"
-    assert world.call("get_results", task_id=task)["next"]["reason"] == "results_not_ready"
+    early = world.call("get_results", task_id=task)["next"]
+    assert early["kind"] == "wait" and early["observe_with"] == "get_task" and early["reason"] == "results_not_ready"
 
 
 def test_a_folder_changed_since_it_was_prepared_is_put_to_the_user_before_anything_starts():
