@@ -219,3 +219,13 @@ def test_an_audit_started_elsewhere_is_read_as_a_task_without_a_folder():
     view = w.project(TASK, state, {"audit": audit(audit_row("a"), state="reviewing")})
     assert view["phase"] == "auditing" and view["result"]["stages"] == [] and view["result"]["files"][0]["filename"] == "a"
     assert w.effects(state, {"audit": audit(audit_row("a"))}) == []
+
+
+def test_checks_that_did_not_run_are_said_to_be_unfinished_never_passed():
+    state = w.apply(prepared("a", "b"), {"type": "audit_created"})
+    failed = audit_row("a", audit={"execution": "review_failed", "conclusion": "UNKNOWN", "counts": {"error_count": 4}, "report": {"state": "not_eligible"}})
+    done = audit_row("b", audit={"execution": "completed", "conclusion": "NG", "counts": {"error_count": 0}, "report": {"state": "ready"}})
+    view = w.project(TASK, state, {"audit": audit(failed, done, state="completed", conclusion="ERROR", round_id="round")})
+    (issue,) = view["issues"]
+    assert issue["code"] == "CHECK_NOT_COMPLETED" and issue["subject"]["filename"] == "a" and "4 个检查项" in issue["message"] and not issue["blocking"]
+    assert view["result"]["audit"]["conclusion"] == "ERROR"

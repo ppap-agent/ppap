@@ -536,6 +536,26 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
         for item in precheck.get("warnings") or []:
             found.append(_precheck_issue(task_id, item, "info", editable, by_version))
     if audit.get("state") == "completed":
+        for row in audit.get("files", []):
+            review = row.get("audit") or {}
+            errors = (review.get("counts") or {}).get("error_count") or 0
+            if review.get("execution") != "review_failed" and not errors:
+                continue
+            name = row["file"]["original_filename"]
+            found.append(
+                _issue(
+                    task_id,
+                    "CHECK_NOT_COMPLETED",
+                    "execution",
+                    "warning",
+                    "audit",
+                    f"「{name}」有 {errors} 个检查项因技术原因没有检查完。" if errors else f"「{name}」的审核没有完成。",
+                    "这些检查项不算通过，也不算不通过；这份文件没有确定的结论，也不生成报告。可以稍后对同一资料复审。",
+                    [],
+                    subject=subject(row),
+                    key=row["file"]["id"] + ":" + str(review.get("result_attempt")),
+                )
+            )
         for question in (facts.get("questions") or {}).get("questions", []):
             if question.get("answered"):
                 continue

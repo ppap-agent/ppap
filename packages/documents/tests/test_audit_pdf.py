@@ -79,6 +79,24 @@ def test_pdf_table_cell_report_keeps_the_original_pdf_page_and_coordinates():
         assert "!A2" not in text
 
 
+def test_a_finding_located_on_a_pdf_page_names_that_page():
+    # A PDF checker cites the page it read, often with a region; the report says which page, not the region.
+    source = report_source()
+    source["filename"] = source["originals"]["version-one"] = "控制计划.pdf"
+    source["audit"]["checks"][0]["evidence"][0]["locator"] = {"kind": "pdf_page", "page": 2, "region": [10, 20, 300, 400]}
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        text = "".join("".join(page.get_text().split()) for page in document)
+        assert "控制计划.pdf·第2页" in text and "300" not in text
+
+
+@pytest.mark.parametrize("page", [None, True, "1", 0])
+def test_a_pdf_page_that_is_not_a_page_number_is_refused(page):
+    source = report_source()
+    source["audit"]["checks"][0]["evidence"][0]["locator"] = {"kind": "pdf_page", "page": page}
+    with pytest.raises(ValueError, match="report_locator_unavailable"):
+        render_audit_pdf(source)
+
+
 @pytest.mark.parametrize("field", ["page", "row", "column"])
 @pytest.mark.parametrize("value", [None, True, "1", 1.5, 0, -1])
 def test_pdf_table_cell_report_rejects_invalid_coordinates(field, value):

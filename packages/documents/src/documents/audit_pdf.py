@@ -48,6 +48,8 @@ def _location(locator: dict) -> str:
         return f"{locator['sheet']}!{locator['start']}:{locator['end']}"
     if kind == "pdf_block":
         return f"第 {locator['page']} 页，第 {locator['block']} 块"
+    if kind == "pdf_page" and type(locator.get("page")) is int and locator["page"] >= 1:
+        return f"第 {locator['page']} 页"
     if kind == "pdf_cell":
         if set(locator) != {"kind", "page", "row", "column"} or any(type(locator.get(field)) is not int or locator[field] < 1 for field in ("page", "row", "column")):
             raise ValueError("report_locator_unavailable")
