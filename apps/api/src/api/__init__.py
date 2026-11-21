@@ -966,6 +966,9 @@ def create_app(
     from api.fact_answers import register_fact_answer_routes
 
     register_fact_answer_routes(app, store, principal_of)
+    from api.rule_questionnaires import register_rule_questionnaire_routes
+
+    register_rule_questionnaire_routes(app, store, principal_of)
     register_rule_routes(app, store, principal_of, require_file_read)
     register_suite_routes(app, store, principal_of)
     register_support_routes(app, principal_of, settings)

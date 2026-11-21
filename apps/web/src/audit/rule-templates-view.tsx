@@ -1,6 +1,6 @@
 // Stitch: projects/13261964020862199279/screens/cf4afdece8974624b77ad36da11cf669 (templates),
 // 4c5d072e721f4760b801c13e4d63b3fa (template detail) and 6ab6498d58c94a1497dabd5309ede5b3 (rule detail).
-import {Fragment, useEffect, useState, type MouseEvent} from 'react'
+import {Fragment, useEffect, useState, type MouseEvent, type ReactNode} from 'react'
 import {iconChevronRight, iconCircleExclamation, iconMagnifyingGlass} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import {request} from '../api'
@@ -23,7 +23,7 @@ export function rulesAddress(params: Record<string, string>): string {
   return `${url.pathname}${url.search}${url.hash}`
 }
 
-function followRulesLink(event: MouseEvent<HTMLAnchorElement>, href: string) {
+export function followRulesLink(event: MouseEvent<HTMLAnchorElement>, href: string) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   event.preventDefault()
   writeAuditAddress(href, 'push')
@@ -40,7 +40,7 @@ export function RulesTrail({items}: {items: {label: string; href?: string}[]}) {
 const matches = (needle: string, ...values: string[]) => values.some(value => value.toLocaleLowerCase().includes(needle))
 
 /** Registered customers on the left (short names), the chosen one's file types and current rules on the right; without a choice the first one is shown. */
-export function CustomerRulesBrowser({entries, selectedId, loading}: {entries: CustomerRules[]; selectedId: string; loading: boolean}) {
+export function CustomerRulesBrowser({entries, selectedId, loading, questions}: {entries: CustomerRules[]; selectedId: string; loading: boolean; questions?: (customerId: string) => ReactNode}) {
   const [query, setQuery] = useState('')
   const needle = query.trim().toLocaleLowerCase()
   if (loading) return <div className="flex min-h-0 flex-1 flex-col"><ReadSkeleton label="正在读取客户规则…" kind="list" rows={5}/></div>
@@ -64,7 +64,7 @@ export function CustomerRulesBrowser({entries, selectedId, loading}: {entries: C
       </ul>
     </aside>
     <div className="flex min-h-0 min-w-0 flex-col">
-      {entry && <CustomerRulesDetail key={`${entry.customer.customer_id}:${focus}`} entry={entry} focus={focus}/>}
+      {entry && <CustomerRulesDetail key={`${entry.customer.customer_id}:${focus}`} entry={entry} focus={focus} questions={questions?.(entry.customer.customer_id)}/>}
     </div>
   </div>
 }
@@ -74,7 +74,7 @@ const day = (value: string) => {
   return value && Number.isFinite(date.getTime()) ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` : ''
 }
 
-function CustomerRulesDetail({entry, focus}: {entry: CustomerRules; focus: string}) {
+function CustomerRulesDetail({entry, focus, questions}: {entry: CustomerRules; focus: string; questions?: ReactNode}) {
   const {customer} = entry
   const types = (entry.types ?? []).flatMap(type => {
     if (!focus || matches(focus, type.label)) return [type]
@@ -84,6 +84,7 @@ function CustomerRulesDetail({entry, focus}: {entry: CustomerRules; focus: strin
   const rows = types.flatMap((type): {type: TypeRules; rule: RuleRow | null; first: boolean}[] => type.rules.length ? type.rules.map((rule, index) => ({type, rule, first: index === 0})) : [{type, rule: null, first: true}])
   return <section aria-label={`${customer.short_name} 的规则`} className="flex min-h-0 flex-1 flex-col">
     <h2 className="sr-only">{customer.short_name}</h2>
+    {questions}
     {entry.types === null ? <Alert className="m-4 w-auto"><Icon icon={iconCircleExclamation} aria-hidden="true"/><AlertTitle>这个客户的文件类型范围尚未配置</AlertTitle><AlertDescription>暂不显示规则覆盖。请联系我们配置后再查看。</AlertDescription></Alert> : <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {rows.length ? <Table aria-label={`${customer.short_name} 的规则列表`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>文件类型</TableHead><TableHead>规则</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead></TableRow></TableHeader><TableBody>{rows.map(({type, rule, first}) => {
         const href = rule && rulesAddress({systemRule: rule.id}), updated = rule ? day(rule.updatedAt) : ''

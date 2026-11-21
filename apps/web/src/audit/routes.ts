@@ -10,7 +10,7 @@ export const auditAddressChanged = 'ppap-audit-address-changed'
 /** The rules page moved between its list and a rule's page; only the page header follows it. */
 export const ruleAddressChanged = 'ppap-rule-address-changed'
 /** The rules page's own address keys; they never follow the person to another page. */
-export const rulesAddressKeys = ['template', 'systemRule']
+export const rulesAddressKeys = ['template', 'systemRule', 'ruleQuestions']
 
 /** Observe local address edits without treating them as browser back/forward or rereading a task. */
 export function writeAuditAddress(url: URL | string, mode: 'push' | 'replace' = 'replace', state: unknown = history.state) {

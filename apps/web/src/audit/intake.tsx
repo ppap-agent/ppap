@@ -166,7 +166,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [rulesOpened, setRulesOpened] = useState(surface === 'requirements')
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
-  const ruleDetail = () => {const params = new URL(location.href).searchParams; return params.has('systemRule')}
+  const ruleDetail = () => {const params = new URL(location.href).searchParams; return params.has('systemRule') || params.has('ruleQuestions')}
   const [ruleDetailOpen, setRuleDetailOpen] = useState(ruleDetail)
   const [pageActions, setPageActions] = useState<HTMLDivElement | null>(null)
   const [pageTitle, setPageTitle] = useState<HTMLElement | null>(null)

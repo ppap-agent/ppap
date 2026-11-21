@@ -1,0 +1,308 @@
+"""Turn clause-check reports into a rule-confirmation questionnaire, and its exported answers into a backfill list.
+
+    python3 questionnaire.py build <工作目录> <整理文件.json> <导入文件.json>
+    python3 questionnaire.py answers <导出文件.json> <工作目录> [<回填清单.md>]
+
+`build` reads every `<条款序号>.report.md` in the work directory: each unanswered ambiguity, undefined case, file
+without a conclusion and conflicting file is one finding, named `<条款 id>#<处>` (`CP:8#1`, `CP:8#8.1`, `CP:8#G1`,
+`CP:8#C1`). The curation file says which findings a common question covers, which were settled by an answer already
+relayed, which go back to the customer for a conclusion, and the questions about the rulebook's general notes;
+every other finding becomes a card of its own. The output is what a platform operator imports on the rules page.
+
+`answers` reads the operator's export and lists, per clause file, every answer to every finding with its answerer
+and time, and where answers differ. It never writes `.ofn` files: choosing among different answers is not the
+script's decision.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+
+NUMBERS = "一二三四五六七八九十"
+VERDICT_OPTIONS = [{"key": "PASS", "label": "通过"}, {"key": "NG", "label": "不通过"}, {"key": "UNABLE", "label": "待审核（交人工）"}]
+
+
+def section(text: str, name: str) -> str:
+    match = re.search(r"^## " + re.escape(name) + r"\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+    return match.group(1) if match else ""
+
+
+def answered(block: str) -> bool:
+    return bool(re.search(r"^\s*(?:你的)?答复：「", block, re.M))
+
+
+def clause_name(report: str, rule_version: str) -> tuple[str, str]:
+    """The clause id and its business name: the rule file's title without the rulebook's own name, then the rule number."""
+    match = re.search(r"^- \*\*规则文件\*\*：(.*)：.*（([^（）]+)）$", report, re.M)
+    if not match:
+        raise SystemExit("[报告] 没有“规则文件”一行")
+    title, clause = match.group(1), match.group(2)
+    title = re.sub(r"（[^（）]*" + re.escape(rule_version) + r"[^（）]*）$", "", title).strip()
+    number = clause.split(":", 1)[-1]
+    return clause, f"{title}{'' if title.endswith('）') else ' '}规则 {number}"
+
+
+def findings(directory: Path, rule_version: str) -> tuple[list[dict], dict[str, str]]:
+    items: list[dict] = []
+    names: dict[str, str] = {}
+    for path in sorted(directory.glob("*.report.md")):
+        text = path.read_text(encoding="utf-8")
+        if text.startswith("# ") and "有发现还没确认" in text.split("##", 1)[0]:
+            raise SystemExit(f"[报告] {path.name} 还有没确认的发现，先把它跑到退出码为 0")
+        clause, name = clause_name(text, rule_version)
+        names[clause] = name
+        asked = re.findall(r"^\d+\. (.*)$", section(text, "需要回答的问题") or next((section(text, title) for title in re.findall(r"^## (还需要回答的问题.*)$", text, re.M)), ""), re.M)
+        parts = re.split(r"^### (\d+)\. (.*)$", section(text, "原文没说清的地方"), flags=re.M)
+        ambiguous, undefined = [], []
+        for index in range(1, len(parts), 3):
+            number, title, block = parts[index], parts[index + 1].strip(), parts[index + 2]
+            if "原文没有说：" in block:
+                lines = block.split("原文没有说：", 1)[1].splitlines()
+                bullets = [at for at, line in enumerate(lines) if line.startswith("- ")]
+                for k, at in enumerate(bullets, 1):
+                    if not answered(lines[at + 1] if at + 1 < len(lines) else ""):
+                        undefined.append({"id": f"{clause}#{number}.{k}", "clause": clause, "kind": "open", "title": title, "question": lines[at][2:].strip()})
+                continue
+            if answered(block):
+                continue
+            readings = re.findall(r"^- 理解(.)（(.*?)）[^：]*：(.*)$", block, re.M)
+            example = re.search(r"^例如(?:（(.*?)）)?：(.*)$", block, re.M)
+            verdict = re.search(r"^(这份文件按.*)$", block, re.M)
+            assumed = ""
+            if example and example.group(1):
+                assumed = "（假定" + re.sub(r"第 ?\d+ ?处", "本条另一处问题", example.group(1).removeprefix("当")).replace("理解时", "理解") + "）"
+            ambiguous.append(
+                {
+                    "id": f"{clause}#{number}",
+                    "clause": clause,
+                    "kind": "ambiguity",
+                    "title": title,
+                    "readings": [{"ordinal": ordinal, "label": label, "says": says} for ordinal, label, says in readings],
+                    "example": assumed + example.group(2) if example else "",
+                    "verdict": verdict.group(1) if verdict else "",
+                }
+            )
+        if len(asked) != len(ambiguous) + len(undefined) or [item["question"] for item in undefined] != asked[len(ambiguous) :]:
+            raise SystemExit(f"[报告] {path.name} 的“需要回答的问题”和正文对不上")
+        for item, question in zip(ambiguous, asked):
+            item["question"] = question
+        items += ambiguous + undefined
+        for kind, heading, tail in (("gap", "原文没有给出结论的文件", "，原文既没说"), ("conflict", "原文同时给出通过和不通过的文件", "，原文既说")):
+            for k, line in enumerate(re.findall(r"^- (.*)$", section(text, heading), re.M), 1):
+                situation = line.split(tail)[0]
+                items.append({"id": f"{clause}#{'G' if kind == 'gap' else 'C'}{k}", "clause": clause, "kind": kind, "title": situation, "question": f"{situation}，判什么？"})
+    return items, names
+
+
+def why(item: dict) -> str:
+    if item["kind"] == "ambiguity":
+        return f"例如：{item['example']}{item['verdict']}" if item["example"] else ""
+    if item["kind"] == "gap":
+        return f"这种文件原文既没说通过，也没说不通过：{item['title']}。"
+    if item["kind"] == "conflict":
+        return f"这种文件原文既说通过，又说不通过：{item['title']}。"
+    return "原文没写这种情况怎么认定。遇到时程序只能记待审核，人工也会各判各的。"
+
+
+def options(item: dict) -> list[dict]:
+    if item["kind"] == "ambiguity":
+        return [{"key": "ABCDEFGHIJ"[index], "label": f"理解{reading['ordinal']}：{reading['label']}", "detail": reading["says"]} for index, reading in enumerate(item["readings"])]
+    if item["kind"] in ("gap", "conflict"):
+        return [dict(option, detail="") for option in VERDICT_OPTIONS]
+    return []
+
+
+def expect(item: dict) -> str:
+    if item["kind"] == "ambiguity":
+        return "选一种理解，或写出你的说法。"
+    if item["kind"] in ("gap", "conflict"):
+        return "选一个结论，或写出你的说法。"
+    question = item["question"]
+    if re.search(r"几分|多少|几", question):
+        return "给出具体的数值或界限。"
+    if re.search(r"哪些|哪一|什么|凭什么|怎样|怎么|指哪", question):
+        return "给出认定标准，或列出包括哪些。"
+    return "是或否；如有条件，写明条件。"
+
+
+def related(item: dict, names: dict[str, str]) -> dict:
+    example = f"{item['example']}{item['verdict']}" if item["kind"] == "ambiguity" and item["example"] else ""
+    return {"clause": names[item["clause"]], "question": item["question"], "example": example}
+
+
+def lettered(texts: list[str]) -> list[dict]:
+    return [{"key": "ABCDEFGHIJ"[index], "label": text, "detail": ""} for index, text in enumerate(texts)]
+
+
+def build(directory: Path, plan_path: Path, out: Path) -> None:
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    items, names = findings(directory, plan["rule_version"])
+    by_id = {item["id"]: item for item in items}
+    relayed = plan.get("relayed", {})
+    applied = plan.get("applied", {})
+    conclusion = plan.get("conclusion") or {"cards": []}
+    general = plan.get("general") or {"points": []}
+    used = Counter([*applied, *(i for card in plan.get("common", []) for i in card["items"]), *(i for card in conclusion["cards"] for i in card.get("items", []))])
+    problems = [f"没有这处发现：{i}" for i in used if i not in by_id] + [f"用了不止一次：{i}" for i, n in used.items() if n > 1]
+    problems += [f"没有这条转达的答复：{rule['relayed']}" for rule in applied.values() if rule["relayed"] not in relayed]
+    if problems:
+        raise SystemExit("[整理] " + "；".join(problems))
+
+    cards: list[dict] = []
+    for card in plan.get("common", []):
+        rows = [by_id[i] for i in card["items"]]
+        cards.append(
+            {
+                "key": f"common:{card['title']}",
+                "group": "common",
+                "clauses": list(dict.fromkeys(names[row["clause"]] for row in rows)),
+                "question": card["question"],
+                "why": card["why"],
+                "options": lettered(card["options"]) if card.get("options") else [],
+                "expect": card.get("expect") or ("选一个，或写出你的说法。" if card.get("options") else ""),
+                "related": [related(row, names) for row in rows],
+                "items": card["items"],
+            }
+        )
+    for number, card in enumerate(conclusion["cards"], 1):
+        rows = [by_id[i] for i in card.get("items", [])]
+        cards.append(
+            {
+                "key": f"conclusion:{number}",
+                "group": "conclusion",
+                "clauses": card.get("clauses") or list(dict.fromkeys(names[row["clause"]] for row in rows)),
+                "question": card.get("question") or rows[0]["question"],
+                "why": card.get("why") or conclusion.get("why", ""),
+                "options": lettered(conclusion.get("options", [])),
+                "expect": conclusion.get("expect", ""),
+                "items": card.get("items", []),
+            }
+        )
+    for number, point in enumerate(general["points"], 1):
+        cards.append(
+            {
+                "key": f"general:{number}",
+                "group": "general",
+                "question": point,
+                "why": general.get("why", ""),
+                "options": lettered(general.get("options", [])),
+                "expect": general.get("expect", ""),
+            }
+        )
+    order = plan.get("clause_order") or []
+
+    def position(item: dict) -> tuple:
+        prefix, _, number = item["clause"].partition(":")
+        return (order.index(prefix) if prefix in order else len(order), prefix, int(number) if number.isdigit() else 0)
+
+    for item in sorted((item for item in items if item["id"] not in used or item["id"] in applied), key=position):
+        card = {
+            "key": item["id"],
+            "group": "clause",
+            "clauses": [names[item["clause"]]],
+            "question": item["question"],
+            "why": why(item),
+            "options": options(item),
+            "expect": expect(item),
+            "items": [item["id"]],
+        }
+        if item["id"] in applied:
+            rule = applied[item["id"]]
+            card["relayed"] = {**relayed[rule["relayed"]], "applied": rule["result"]}
+        cards.append(card)
+
+    questionnaire = {"schema": "rule-questionnaire-v1", "customer_id": plan["customer_id"], "rule_version": plan["rule_version"], "title": plan["title"], "questions": cards}
+    out.write_text(json.dumps(questionnaire, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    counts = Counter(card["group"] for card in cards)
+    print(
+        f"发现 {len(items)} 处；卡片 {len(cards)} 张：共性问题 {counts['common']}（管 {sum(len(c['items']) for c in plan.get('common', []))} 处）、"
+        f"交客户补结论 {counts['conclusion']}、通用判定说明 {counts['general']}、逐条问题 {counts['clause']}（其中按转达答复处理 {len(applied)}）"
+    )
+    leaked = [word for word in ("OWL", "本体", "公理", "推理", "ofn", "__") if word in json.dumps([{k: v for k, v in c.items() if k not in ("key", "items")} for c in cards], ensure_ascii=False)]
+    if leaked:
+        raise SystemExit(f"[白话] 卡片里有技术词：{'、'.join(leaked)}")
+
+
+def where(item_id: str) -> tuple[str, str]:
+    clause, _, place = item_id.partition("#")
+    file = clause.replace(":", "-", 1) + ".ofn"
+    if place.startswith("G"):
+        return file, f"原文没有给出结论的文件 {place[1:]}"
+    if place.startswith("C"):
+        return file, f"原文同时给出通过和不通过的文件 {place[1:]}"
+    if "." in place:
+        number, question = place.split(".", 1)
+        return file, f"第 {number} 处（原文没有说）第 {question} 问"
+    return file, f"第 {place} 处（歧义）"
+
+
+def local_time(value: str) -> str:
+    return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def described(answer: dict) -> str:
+    parts = []
+    if answer.get("choice_label"):
+        parts.append(f"选择「{answer['choice_label']}」" + (f"（{answer['choice']}）" if answer.get("choice") and answer["choice"] != answer["choice_label"] else ""))
+    if answer.get("text"):
+        parts.append(f"原话「{answer['text']}」")
+    if answer.get("note"):
+        parts.append(f"备注「{answer['note']}」")
+    return "；".join(parts)
+
+
+def answers(export_path: Path, directory: Path, out: Path) -> None:
+    export = json.loads(export_path.read_text(encoding="utf-8"))
+    if export.get("schema") != "rule-questionnaire-answers-v1":
+        raise SystemExit("[导出] 不是规则确认问卷的导出文件")
+    per_file: dict[str, list[str]] = {}
+    unanswered, general = [], []
+    for card in export["questions"]:
+        rows = card["answers"]
+        lines = []
+        for row in rows:
+            when = local_time(row["answered_at"])
+            lines.append(f"- {row['answerer']}，{when}：{described(row)}" + (f"（改过 {len(row['history'])} 次）" if row["history"] else ""))
+        distinct = {(row.get("choice"), (row.get("text") or "").strip()) for row in rows}
+        if len(distinct) > 1:
+            lines.append("- **答复不一致**：不替客户选，交产品负责人决定。")
+        if rows and not card["items"]:
+            general += [f"### {card['question']}", *lines, ""]
+        for item in card["items"]:
+            file, place = where(item)
+            if not (directory / file).exists():
+                raise SystemExit(f"[导出] 工作目录里没有 {file}")
+            if not rows:
+                unanswered.append(f"- {file} {place}：{card['question']}")
+                continue
+            source = "本条问题" if card["group"] == "clause" else f"共性问题「{card['key'].split(':', 1)[1]}」" if card["group"] == "common" else f"交客户补结论「{card['question']}」"
+            per_file.setdefault(file, []).append("\n".join([f"### {place}", f"来源：{source}", *lines, ""]))
+    title = f"# {export['title']} · 问卷答复回填清单\n\n导出时间：{local_time(export['exported_at'])}" + ("（问卷已关闭）" if export.get("closed_at") else "（问卷仍开放，之后可能还有答复）")
+    body = [title, "", "回填时 `:answered` 记原话、答复人和时间，如：`原话（答复人，2026-11-21，规则确认页）`。答复不一致的不回填，交产品负责人决定。", ""]
+    for file in sorted(per_file):
+        body += [f"## {file}", "", *per_file[file]]
+    if general:
+        body += ["## 不属于某条条款的答复", "", *general]
+    if unanswered:
+        body += ["## 还没有答复", "", *unanswered, ""]
+    out.write_text("\n".join(body), encoding="utf-8")
+    print(f"有答复的条款文件 {len(per_file)} 个，没有答复的发现 {len(unanswered)} 处；写入 {out}")
+
+
+def main(argv: list[str]) -> None:
+    if len(argv) >= 4 and argv[0] == "build":
+        build(Path(argv[1]), Path(argv[2]), Path(argv[3]))
+    elif len(argv) in (3, 4) and argv[0] == "answers":
+        directory = Path(argv[2])
+        answers(Path(argv[1]), directory, Path(argv[3]) if len(argv) == 4 else directory / "问卷答复.md")
+    else:
+        raise SystemExit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

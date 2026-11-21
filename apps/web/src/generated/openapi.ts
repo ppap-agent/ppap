@@ -1573,6 +1573,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rule-questionnaires": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Rule Questionnaires */
+        get: operations["list_rule_questionnaires_rule_questionnaires_get"];
+        put?: never;
+        /** Import Rule Questionnaire */
+        post: operations["import_rule_questionnaire_rule_questionnaires_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rule-questionnaires/{questionnaire_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Rule Questionnaire */
+        get: operations["read_rule_questionnaire_rule_questionnaires__questionnaire_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rule-questionnaires/{questionnaire_id}/answers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer Rule Question */
+        post: operations["answer_rule_question_rule_questionnaires__questionnaire_id__answers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rule-questionnaires/{questionnaire_id}/answers/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Rule Answer Operation */
+        get: operations["read_rule_answer_operation_rule_questionnaires__questionnaire_id__answers__operation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rule-questionnaires/{questionnaire_id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close Rule Questionnaire */
+        post: operations["close_rule_questionnaire_rule_questionnaires__questionnaire_id__close_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rule-questionnaires/{questionnaire_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Rule Questionnaire */
+        get: operations["export_rule_questionnaire_rule_questionnaires__questionnaire_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rule-types": {
         parameters: {
             query?: never;
@@ -4407,6 +4510,42 @@ export interface components {
             /** Type */
             type: string | null;
         };
+        /** RuleAnswerReceipt */
+        RuleAnswerReceipt: {
+            /** Answered At */
+            answered_at: string;
+            /** Answerer */
+            answerer: string;
+            /** Choice */
+            choice: string | null;
+            /** Mine */
+            mine: boolean;
+            /** Note */
+            note: string | null;
+            /** Operation Id */
+            operation_id: string;
+            /** Question Key */
+            question_key: string;
+            /** Questionnaire Id */
+            questionnaire_id: string;
+            /** Revision */
+            revision: number;
+            /** Text */
+            text: string | null;
+        };
+        /** RuleAnswerRevision */
+        RuleAnswerRevision: {
+            /** Answered At */
+            answered_at: string;
+            /** Choice */
+            choice: string | null;
+            /** Note */
+            note: string | null;
+            /** Revision */
+            revision: number;
+            /** Text */
+            text: string | null;
+        };
         /** RuleCandidate */
         RuleCandidate: {
             body: components["schemas"]["EngineRuleBody"];
@@ -4573,6 +4712,144 @@ export interface components {
             source_file_version_id?: string;
             /** Status */
             status: string;
+        };
+        /** RuleQuestion */
+        RuleQuestion: {
+            /** Answers */
+            answers: components["schemas"]["RuleQuestionAnswer"][];
+            /** Clauses */
+            clauses: string[];
+            /** Expect */
+            expect: string;
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "common" | "conclusion" | "general" | "clause";
+            /** Items */
+            items: string[];
+            /** Key */
+            key: string;
+            /** Options */
+            options: components["schemas"]["RuleQuestionOption"][];
+            /** Question */
+            question: string;
+            /** Related */
+            related: components["schemas"]["RuleQuestionRelated"][];
+            relayed: components["schemas"]["RuleQuestionRelayed"] | null;
+            /** Why */
+            why: string;
+        };
+        /** RuleQuestionAnswer */
+        RuleQuestionAnswer: {
+            /** Answered At */
+            answered_at: string;
+            /** Answerer */
+            answerer: string;
+            /** Choice */
+            choice: string | null;
+            /** First Answered At */
+            first_answered_at: string;
+            /** History */
+            history: components["schemas"]["RuleAnswerRevision"][];
+            /** Mine */
+            mine: boolean;
+            /** Note */
+            note: string | null;
+            /** Revision */
+            revision: number;
+            /** Text */
+            text: string | null;
+        };
+        /** RuleQuestionnaireList */
+        RuleQuestionnaireList: {
+            /** Can Manage */
+            can_manage: boolean;
+            /** Questionnaires */
+            questionnaires: components["schemas"]["RuleQuestionnaireSummary"][];
+        };
+        /** RuleQuestionnaireSummary */
+        RuleQuestionnaireSummary: {
+            /** Answered */
+            answered: number;
+            /** Closed */
+            closed: boolean;
+            /** Closed At */
+            closed_at: string | null;
+            /** Customer Id */
+            customer_id: string;
+            /** Customer Name */
+            customer_name: string;
+            /** Id */
+            id: string;
+            /** Imported At */
+            imported_at: string;
+            /** Mine */
+            mine: number;
+            /** Rule Version */
+            rule_version: string;
+            /** Title */
+            title: string;
+            /** Total */
+            total: number;
+        };
+        /** RuleQuestionnaireView */
+        RuleQuestionnaireView: {
+            /** Answered */
+            answered: number;
+            /** Can Manage */
+            can_manage: boolean;
+            /** Closed */
+            closed: boolean;
+            /** Closed At */
+            closed_at: string | null;
+            /** Customer Id */
+            customer_id: string;
+            /** Customer Name */
+            customer_name: string;
+            /** Id */
+            id: string;
+            /** Imported At */
+            imported_at: string;
+            /** Mine */
+            mine: number;
+            /** Questions */
+            questions: components["schemas"]["RuleQuestion"][];
+            /** Rule Version */
+            rule_version: string;
+            /** Title */
+            title: string;
+            /** Total */
+            total: number;
+        };
+        /** RuleQuestionOption */
+        RuleQuestionOption: {
+            /** Detail */
+            detail: string;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+        };
+        /** RuleQuestionRelated */
+        RuleQuestionRelated: {
+            /** Clause */
+            clause: string;
+            /** Example */
+            example: string;
+            /** Question */
+            question: string;
+        };
+        /** RuleQuestionRelayed */
+        RuleQuestionRelayed: {
+            /** Answer */
+            answer: string;
+            /** Applied */
+            applied: string;
+            /** Date */
+            date: string;
+            /** Source */
+            source: string;
         };
         /** RulesList */
         RulesList: {
@@ -8831,6 +9108,239 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuleLibrary"];
+                };
+            };
+        };
+    };
+    list_rule_questionnaires_rule_questionnaires_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleQuestionnaireList"];
+                };
+            };
+        };
+    };
+    import_rule_questionnaire_rule_questionnaires_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Operation Id */
+                    operation_id: string;
+                    /** Questionnaire */
+                    questionnaire: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleQuestionnaireSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_rule_questionnaire_rule_questionnaires__questionnaire_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionnaire_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleQuestionnaireView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    answer_rule_question_rule_questionnaires__questionnaire_id__answers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionnaire_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Choice */
+                    choice: string | null;
+                    /** Expected Revision */
+                    expected_revision: number;
+                    /** Note */
+                    note: string | null;
+                    /** Operation Id */
+                    operation_id: string;
+                    /** Question Key */
+                    question_key: string;
+                    /** Text */
+                    text: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleAnswerReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_rule_answer_operation_rule_questionnaires__questionnaire_id__answers__operation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+                questionnaire_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleAnswerReceipt"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    close_rule_questionnaire_rule_questionnaires__questionnaire_id__close_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionnaire_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleQuestionnaireSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_rule_questionnaire_rule_questionnaires__questionnaire_id__export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionnaire_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

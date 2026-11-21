@@ -96,11 +96,11 @@ def render(found: Found) -> str:
         number += 1
         lines.append(f"### {number}. {found.issue.get(position, MISSING)}\n")
         for letter in found.offered[position]:
-            mark = "【已按你的答复选定】" if found.chosen.get(position) == letter else ""
+            mark = "【已按答复选定】" if found.chosen.get(position) == letter else ""
             lines.append(f"- {ordinal(found, position, letter)}（{found.label.get((position, letter), MISSING)}）{mark}：{found.says.get((position, letter), MISSING)}")
         lines.append("")
         if position in found.chosen:
-            lines.append(f"你的答复：「{found.answered.get(position, MISSING)}」\n")
+            lines.append(f"答复：「{found.answered.get(position, MISSING)}」\n")
             continue
         if position in found.example:
             lines.append(f"例如{'（' + assuming(found, found.example_under[position])[1:-1] + '）' if found.example_under.get(position) else ''}：{found.example[position]}")
@@ -120,7 +120,7 @@ def render(found: Found) -> str:
         number += 1
         lines.append(f"### {number}. 「{quote}」\n")
         lines.append("原文没有说：\n")
-        lines += [f"- {question}" + (f"\n  你的答复：「{answer}」" if answer else "") for question, answer in questions]
+        lines += [f"- {question}" + (f"\n  答复：「{answer}」" if answer else "") for question, answer in questions]
         lines.append("")
 
     if found.gaps:
