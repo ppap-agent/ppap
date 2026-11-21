@@ -341,16 +341,24 @@ def test_real_generations_of_one_document_type_do_not_block_each_other(selector,
     assert "oracle_rules_changed" not in plan.reasons
 
 
-def test_corpus_selector_is_the_leaf_its_truths_were_judged_under():
+def test_corpus_selector_is_the_leaf_its_truths_were_judged_under(monkeypatch):
     from audit.standard_suites import load_predefined_checkers, predefined_directory_suites
 
     installed = {suite.source_path: suite for suite in predefined_directory_suites()}
-    # The product moved UAES to a newer rule revision; its truths and recordings stay with the frozen one.
-    frozen = {suite.source_path: suite for suite in load_predefined_checkers(oracle.REPO_ROOT / "assets/uaes/rulebook/v0.0/m1/checkers")}
-    sources = oracle.suite_sources()
-    assert sources["uaes/U08"] == frozen["uaes/U08"] != installed["uaes/U08"]
-    assert oracle.reviewed_rules()["uaes/U08"] == oracle.reviewed_contract(sources["uaes/U08"])
-    assert all(sources[path] == installed[path] for path in installed if not path.startswith("uaes/"))
+    frozen = {suite.source_path: suite for suite in load_predefined_checkers(oracle.UAES_JUDGED_REVISION / "checkers")}
+    path = "uaes/U08"
+    # Even when the rule text is unchanged, use the historical leaf rather than the live program.
+    live_files = {**installed[path].files, "checker.py": installed[path].files["checker.py"] + b"\n# Live checker changed.\n"}
+    installed[path] = replace(installed[path], files=live_files)
+    monkeypatch.setattr(oracle, "predefined_directory_suites", lambda: tuple(installed.values()))
+    oracle._judged_sources.cache_clear()
+    try:
+        sources = oracle.suite_sources()
+        assert sources[path] == frozen[path] != installed[path]
+        assert oracle.reviewed_rules()[path] == oracle.reviewed_contract(sources[path])
+        assert all(sources[path] == installed[path] for path in installed if not path.startswith("uaes/"))
+    finally:
+        oracle._judged_sources.cache_clear()
 
 
 def test_frozen_uaes_presets_preserve_repeated_docx_source_numbers():

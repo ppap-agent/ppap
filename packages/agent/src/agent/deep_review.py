@@ -337,7 +337,13 @@ def review_targets(
         for index, target in enumerate(snapshot.targets):
             on_task(index)
             program = {str(item["clause_id"]): item for item in findings if item["file_version_id"] == target.file_version_id}
-            if target.file_version_id in unavailable or not program:
+            if target.file_version_id in unavailable:
+                states[target.file_version_id] = {"state": "degraded", "reason": "deep_input_missing"}
+                continue
+            if not target.binding.entrypoints:
+                states[target.file_version_id] = {"state": "not_applicable"}
+                continue
+            if not program:
                 states[target.file_version_id] = {"state": "degraded", "reason": "deep_input_missing"}
                 continue
             started, before = time.monotonic(), (runner.input_tokens, runner.output_tokens)
@@ -457,9 +463,10 @@ def _corrected_item(finding: Mapping[str, Any], record: Mapping[str, Any], filen
 def merge_reviews(snapshot: ExecutionSnapshot, result: dict[str, Any], raw: object) -> tuple[dict[str, Any], dict[str, dict[str, str]], dict[tuple[str, str], dict[str, Any]]]:
     """Apply checked corrections to the validated program result.
 
-    Returns the merged result, each target's deep state (completed/degraded) and the
-    per-clause review records. A target whose review output is malformed keeps its
-    program result and is reported as not deep-reviewed.
+    Returns the merged result, applicable deep states and per-clause review records.
+    A target with no bound clauses and an available original has no result to review.
+    A target whose review output is malformed keeps its program result and is
+    reported as not deep-reviewed.
     """
     from audit.checker_core import validate_results
 
@@ -468,10 +475,16 @@ def merge_reviews(snapshot: ExecutionSnapshot, result: dict[str, Any], raw: obje
         raise ValueError("deep_output_invalid")
     known = {item.file_version_id for item in snapshot.inputs}
     filenames = {item.file_version_id: item.filename for item in snapshot.inputs}
+    unavailable = set(result.get("unavailable_sources", ()))
     states: dict[str, dict[str, str]] = {}
     records: dict[tuple[str, str], dict[str, Any]] = {}
     findings: list[dict[str, Any]] = []
     for version, target in targets.items():
+        if not target.binding.entrypoints:
+            # The host derives applicability from the frozen binding and validated availability, not the guest's state.
+            if version in unavailable:
+                states[version] = {"state": "degraded", "reason": "deep_input_missing"}
+            continue
         program = [dict(item) for item in result["findings"] if item["file_version_id"] == version]
         state = raw[version]
         if isinstance(state, dict) and isinstance(state.get("usage"), dict):

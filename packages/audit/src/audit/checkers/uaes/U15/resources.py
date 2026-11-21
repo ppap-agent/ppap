@@ -10,5 +10,5 @@ RESOURCE = {
         ".xlsm": "audit.checker_lib.uaes.records:UaesTrialAgent",
         ".xlsx": "audit.checker_lib.uaes.records:UaesTrialAgent",
     },
-    "methods": {},
+    "methods": {"U15:1": "rule_1"},
 }

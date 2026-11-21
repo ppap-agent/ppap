@@ -9,5 +9,5 @@ RESOURCE = {
         ".xlsm": "audit.checker_lib.uaes.engineering:UaesProcessFlowAgent",
         ".xlsx": "audit.checker_lib.uaes.engineering:UaesProcessFlowAgent",
     },
-    "methods": {},
+    "methods": {"U16:1": "rule_1", "U16:2": "rule_2", "U16:3": "rule_3"},
 }

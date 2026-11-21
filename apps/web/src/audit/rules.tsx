@@ -8,7 +8,7 @@ import {useAccess} from '../journey/access'
 import {auditAddressChanged} from './routes'
 import {customerRules} from './rule-templates'
 import {CustomerRulesBrowser, RuleDetail} from './rule-templates-view'
-import {RuleQuestionnairePage} from './rule-questions'
+import {QuestionnaireEntries, RuleQuestionnairePage} from './rule-questions'
 import type {QuestionnaireList} from './rule-questions-contract'
 
 /** The customer rule library: customers on the left, their file types and current rules (read only) on the right, and the questions on a rule version the customer answers here. */
@@ -61,6 +61,6 @@ function RulesWorkspace({active}: {active: boolean}) {
     return <RuleDetail ruleId={route.rule} customer={owner && {id: owner.customer_id, name: owner.short_name}}/>
   }
   return <section aria-label="审核规则库" className="flex min-h-0 flex-1 flex-col">
-    <CustomerRulesBrowser entries={entries} selectedId={route.customer} loading={read.loading} questionnaires={questionnaires}/>
+    <CustomerRulesBrowser entries={entries} selectedId={route.customer} loading={read.loading} questions={customerId => <QuestionnaireEntries list={questionnaires} customerId={customerId}/>}/>
   </section>
 }

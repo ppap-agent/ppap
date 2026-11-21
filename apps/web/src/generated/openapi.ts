@@ -3542,7 +3542,6 @@ export interface components {
             preset_key?: string;
             /** Rule Profile */
             rule_profile?: string;
-            rulebook?: components["schemas"]["RulebookRevision"];
             /** Rules */
             rules: components["schemas"]["RuleItem"][];
             /** Suite Key */
@@ -4444,8 +4443,6 @@ export interface components {
         };
         /** Rule */
         Rule: {
-            /** Checked Clause Count */
-            checked_clause_count?: number;
             /** Clause Count */
             clause_count?: number;
             /** Created At */
@@ -4471,7 +4468,6 @@ export interface components {
             preset_key?: string;
             /** Rule Profile */
             rule_profile: string | null;
-            rulebook?: components["schemas"]["RulebookRevision"];
             /** Suite Key */
             suite_key?: string;
             /** Title */
@@ -4515,18 +4511,6 @@ export interface components {
             /** Text */
             text: string | null;
         };
-        /**
-         * RulebookRevision
-         * @description The rulebook revision a product preset's clauses come from, e.g. 规范性条款 v1.0 revision 0.
-         */
-        RulebookRevision: {
-            /** Name */
-            name: string;
-            /** Revision */
-            revision: number;
-            /** Version */
-            version: string;
-        };
         /** RuleCandidate */
         RuleCandidate: {
             body: components["schemas"]["EngineRuleBody"];
@@ -4534,19 +4518,6 @@ export interface components {
             source_file_version_id: string;
             /** Title */
             title: string;
-        };
-        /**
-         * RuleClauseChange
-         * @description How a clause differs from the previous rulebook revision, in the rule maintainers' words.
-         */
-        RuleClauseChange: {
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "same" | "changed" | "new";
-            /** Note */
-            note: string;
         };
         /** RuleCoverageItem */
         RuleCoverageItem: {
@@ -4592,8 +4563,6 @@ export interface components {
             /** Body */
             body: components["schemas"]["EngineRuleBody"] | components["schemas"]["PresenceRuleBody"];
             case_context?: components["schemas"]["CaseContext"];
-            /** Checked Clauses */
-            checked_clauses?: string[];
             /** Created At */
             created_at: string;
             /** Created By */
@@ -4631,7 +4600,6 @@ export interface components {
         RuleItem: {
             /** Category */
             category: string;
-            change?: components["schemas"]["RuleClauseChange"];
             /** Id */
             id: string;
             /** Priority */

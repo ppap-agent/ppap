@@ -36,51 +36,36 @@ def table(dataset: str, kind: str, *, corpus: Path = CORPUS) -> Path:
     return corpus / f"{dataset}-{kind}"
 
 
-# A rule revision the product has moved on from keeps the checker leaves and presets it was judged with
-# (assets/<customer>/rulebook/<version>/<revision>/checkers and presets.json). Human truths and model recordings belong
-# to the frozen revision they were made under, so the corpus runs that revision rather than the current one.
-FROZEN_REVISIONS = REPO_ROOT / "assets"
+# The existing UAES oracle was judged under v0.0 m1, not whichever revision
+# happens to match one leaf. The archive pins source leaves/presets only:
+# the replay runs the shared library installed in this checkout.
+UAES_JUDGED_REVISION = REPO_ROOT / "assets/uaes/rulebook/v0.0/m1"
 
 
 @lru_cache(maxsize=1)
-def _judged_sources() -> tuple[dict[str, StandardSuite], dict[str, Path]]:
-    """Per leaf path, the Suite the reviewed rules were judged under, and the frozen revision it came from."""
-    current = {suite.source_path: suite for suite in predefined_directory_suites()}
-    reviewed = reviewed_rules()
-    chosen, origin = dict(current), {}
-    for revision in sorted(path.parent for path in FROZEN_REVISIONS.glob("*/rulebook/*/*/checkers")):
-        suites = load_predefined_checkers(revision / "checkers")
-
-        # A revision the reviewed rules were judged under, while the product has moved on: the corpus runs all of it.
-        def judged_here(suite: StandardSuite) -> bool:
-            path = suite.source_path
-            moved_on = path not in current or reviewed_contract(current[path]) != reviewed.get(path)
-            return path in reviewed and reviewed[path] == reviewed_contract(suite) and moved_on
-
-        judged = any(judged_here(suite) for suite in suites)
-        for suite in suites if judged else ():
-            chosen[suite.source_path], origin[suite.source_path] = suite, revision
-    return chosen, origin
+def _judged_sources() -> dict[str, StandardSuite]:
+    archived = {suite.source_path: suite for suite in load_predefined_checkers(UAES_JUDGED_REVISION / "checkers")}
+    for path, expected in reviewed_rules().items():
+        if path.startswith("uaes/") and (path not in archived or reviewed_contract(archived[path]) != expected):
+            raise ValueError(f"{path}: UAES oracle does not match its frozen v0.0 m1 rule contract")
+    current = {suite.source_path: suite for suite in predefined_directory_suites() if suite.customer != "UAES"}
+    return {**current, **archived}
 
 
 def suite_sources() -> dict[str, StandardSuite]:
-    """Exact leaf paths, never a current/latest Suite lookup: the revision each leaf's human truths were judged under."""
-    return dict(_judged_sources()[0])
+    """Resolve the frozen v0.0 m1 UAES leaves for the existing human truths."""
+    return dict(_judged_sources())
 
 
 @contextmanager
 def presets_as_judged(customer: str) -> Iterator[None]:
-    """Recognition reads the customer's presets of the frozen revision its truths and recordings were made under."""
+    """Recognition reads the presets of the revision its truths were made under."""
     import audit.presets as presets
 
-    customer_dir = {suite.customer: path.split("/", 1)[0] for path, suite in _judged_sources()[0].items()}.get(customer)
-    revisions = {revision for path, revision in _judged_sources()[1].items() if path.split("/", 1)[0] == customer_dir}
-    if not revisions:
+    if customer != "UAES":
         yield
         return
-    if len(revisions) != 1:
-        raise ValueError(f"{customer}: truths judged under several frozen revisions")
-    rows = json.loads((revisions.pop() / "presets.json").read_text(encoding="utf-8"))
+    rows = json.loads((UAES_JUDGED_REVISION / "presets.json").read_text(encoding="utf-8"))
     frozen = tuple(presets.CustomerPreset(**{**row, "clauses": tuple(presets.PresetClause(**clause) for clause in row["clauses"])}) for row in rows)
     current = presets.customer_presets
     judged = (*frozen, *(preset for preset in current() if preset.customer != customer))

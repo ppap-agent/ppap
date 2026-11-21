@@ -18,12 +18,34 @@ def publication_fingerprint(*, suite_key: str, revision_id: str, expected_revisi
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def adoption_block(suite: ResolvedSuite, *, verified: bool, force_unverified: bool) -> str | None:
-    """Release-boundary refusal.
+def partial_official_directory_slice(suite: ResolvedSuite) -> bool:
+    """Official leaf declared partial whose binding does not cover every clause.
 
-    A partial official leaf is adoptable: it binds the clauses its program is aligned with, and the rest of the
-    rule revision stays unchecked (never PASS) until the program catches up (assets/uaes/AGENTS.md).
+    Tenant copies keep explicit ``force_unverified``. The decision is the leaf's
+    ``directory_coverage`` and exact binding. Checker source text is not read.
     """
+    if suite.revision.tenant_id is not None:
+        return False
+    try:
+        rules = json.loads(suite.files["rules.json"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if rules.get("directory_coverage") != "partial":
+        return False
+    rows = rules.get("rules")
+    binding = rules.get("checker_binding")
+    if not isinstance(rows, list) or not isinstance(binding, dict):
+        return False
+    ids = [row.get("id") for row in rows if isinstance(row, dict)]
+    if not ids or any(not isinstance(clause, str) for clause in ids):
+        return False
+    return set(binding) != set(ids)
+
+
+def adoption_block(suite: ResolvedSuite, *, verified: bool, force_unverified: bool) -> str | None:
+    """Release-boundary refusal. Partial official leaves ignore force_unverified."""
+    if partial_official_directory_slice(suite):
+        return "partial_directory_suite_not_adoptable"
     if not verified and not force_unverified and not is_unimplemented_suite(suite):
         return "suite_confirmation_required"
     return None

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
 import type {RegisteredCustomer} from './customer-register.ts'
-import {customerRulebook, customerRules, ruleCoverage, ruleTemplateKey, templateName} from './rule-templates.ts'
+import {customerRules, ruleCoverage, ruleTemplateKey, templateName} from './rule-templates.ts'
 
 type Rule = components['schemas']['Rule']
 const rule = (id: string, customers: string[], type: string, extra: Partial<Rule> = {}) =>
@@ -22,20 +22,6 @@ test('each registered customer lists the current rules of every type in its M, a
   const [listed] = customerRules([nio], rules)
   assert.deepEqual(listed.types?.map(type => [type.label, type.rules.map(row => row.id)]), [['控制计划', ['cp-2', 'cp']], ['过程流程图', []]])
   assert.deepEqual(ruleCoverage(nio), {covered: 1, total: 2})
-})
-
-test('a customer whose rules come from one rulebook revision shows it with how many clauses the checkers are aligned with', () => {
-  const uaes = customer('uaes', '联合汽车电子', 'UAES', [['T11', '控制计划'], ['T09', '过程流程图']], ['T11', 'T09'])
-  const rulebook = {name: '规范性条款', version: 'v1.0', revision: 0}
-  const [listed] = customerRules([uaes], [
-    rule('cp', ['UAES'], '控制计划', {clause_count: 13, checked_clause_count: 3, rulebook}),
-    rule('pfd', ['UAES'], '过程流程图', {clause_count: 4, checked_clause_count: 0, rulebook}),
-  ])
-  assert.deepEqual(listed.types?.[0].rules[0], {id: 'cp', title: '控制计划审核规则', clauses: 13, updatedAt: '2026-11-01', rulebook: '规范性条款 v1.0 修订 0', checked: 3})
-  assert.deepEqual(customerRulebook(listed), {label: '规范性条款 v1.0 修订 0', clauses: 17, checked: 3})
-  // Rules from no rulebook, or from two revisions at once, name none.
-  assert.equal(customerRulebook(customerRules([uaes], [rule('cp', ['UAES'], '控制计划')])[0]), null)
-  assert.equal(customerRulebook(customerRules([uaes], [rule('cp', ['UAES'], '控制计划', {rulebook}), rule('pfd', ['UAES'], '过程流程图', {rulebook: {...rulebook, revision: 1}})])[0]), null)
 })
 
 test('a customer without M lists no types and has no coverage', () => {

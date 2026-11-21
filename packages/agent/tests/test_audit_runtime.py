@@ -430,12 +430,7 @@ def test_all_standard_suites_execute_explicit_clauses_without_claiming_correctne
     expected = {(target.file_version_id, clause) for target in targets for clause in target.binding.entrypoints}
     assert {(row["file_version_id"], row["clause_id"]) for row in result["findings"]} == expected
     assert not [row for row in result["findings"] if row["status"] == "ERR"]
-    # Bound clauses run; a leaf still catching up with its rule revision leaves the rest unsupported, never PASS.
-    assert all(
-        row["coverage"] == ("mapped" if row["clause_id"] in binding else "unsupported")
-        for row in result["coverage"]
-        for binding in [next(target.binding.entrypoints for target in targets if target.file_version_id == row["file_version_id"])]
-    )
+    assert all(row["coverage"] == "mapped" for row in result["coverage"])
     assert all(target.verification == "unverified" for target in targets)
 
 

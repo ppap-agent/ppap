@@ -1,9 +1,8 @@
 """Compile the customer rule presets shipped with audit wheels.
 
-UAES clauses come from the current revision of its rulebook (assets/uaes/rulebook,
-see assets/uaes/AGENTS.md); its leaves must carry exactly those clauses. For the other
-customers clause text comes from each checker leaf's rules.json. The DOCX files are the
-historical import archive: they supply document identity, never clause text.
+Clause text comes from each checker leaf's rules.json, the current authority.
+The DOCX files are the historical import archive: they only supply document
+identity, clause numbering, category and locator, never clause text.
 This neither generates Checker code nor claims that a clause is implemented.
 CI runs --check in the Repository job; it exits nonzero when preset_rules.json drifts.
 """
@@ -23,29 +22,6 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 OUTPUT = ROOT / "packages/audit/src/audit/preset_rules.json"
 LEAVES = ROOT / "packages/audit/src/audit/checkers"
-# The UAES rulebook revision presets are compiled from, and the checker leaf of each of its document codes.
-UAES_RULEBOOK = {"name": "规范性条款", "version": "v1.0", "revision": 0}
-UAES_CODES = {
-    "U01": "IR",
-    "U02": "MCMP",
-    "U03": "LAB",
-    "U04": "MSL",
-    "U05": "MSA",
-    "U06": "PCE",
-    "U07": "PFMEA",
-    "U08": "CP",
-    "U09": "PKG",
-    "U10": "MSPEC",
-    "U11": "SSH",
-    "U12": "SCL",
-    "U13": "PHOTO",
-    "U14": "ORD",
-    "U15": "TA",
-    "U16": "PFD",
-    "U17": "PSW",
-    "U18": "TRACE",
-    "U19": "CEA",
-}
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 # Explicit source identity. Sorting filenames would swap L02/L03 and U07/U08.
 FILES = {
@@ -128,49 +104,9 @@ def assign_clause_ids(entry: str, clauses: list[dict]) -> None:
         clause["id"] = f"{entry}:{number}" if uses[number] == 1 else f"{entry}:{number}-{seen[number]}"
 
 
-def rulebook_directory() -> Path:
-    return ASSETS / "uaes/rulebook" / UAES_RULEBOOK["version"] / f"m{UAES_RULEBOOK['revision']}"
-
-
-def rulebook_changes() -> dict[str, dict]:
-    """Per clause, how it differs from the previous revision: the comparison table in the version directory."""
-    version = ASSETS / "uaes/rulebook" / UAES_RULEBOOK["version"]
-    tables = sorted(version.glob("* 到 " + UAES_RULEBOOK["version"] + f"-m{UAES_RULEBOOK['revision']} 对照.md"))
-    if len(tables) != 1:
-        raise ValueError(f"Expected one comparison table in {version.relative_to(ROOT)}")
-    kinds = {"意思不变": "same", "意思变了": "changed", "新增": "new"}
-    changes = {}
-    for line in tables[0].read_text(encoding="utf-8").splitlines():
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")] if line.startswith("|") else []
-        if len(cells) != 5 or cells[0] in {"新条款", "---"}:
-            continue
-        kind = cells[2].removesuffix("（待复核）")
-        if kind not in kinds:
-            raise ValueError(f"Unknown comparison kind: {cells[2]}")
-        changes[cells[0]] = {"kind": kinds[kind], "note": cells[3]}
-    return changes
-
-
-def rulebook_clauses(entry: str, changes: dict[str, dict]) -> list[dict]:
-    code = UAES_CODES[entry]
-    rows = json.loads((rulebook_directory() / "rules" / f"{code}.json").read_text(encoding="utf-8"))["rules"]
-    return [
-        {
-            "id": row["id"],
-            "source_number": row["id"].split(":", 1)[1],
-            "category": row["category"].removeprefix(f"UAES-{code}-"),
-            "text": row["rule_to_check"],
-            "locator": f"{code}.json#{row['id']}",
-            "change": changes[row["id"]],
-        }
-        for row in rows
-    ]
-
-
 def compile_presets() -> str:
     result = []
     expected_files = set()
-    changes = rulebook_changes()
     for customer, entries in FILES.items():
         prefix = {"UAES": "U", "理想": "L", "蔚来": "N"}[customer]
         for index, (kind, filename) in enumerate(entries, 1):
@@ -199,10 +135,6 @@ def compile_presets() -> str:
             if not clauses:
                 raise ValueError(f"Empty clauses: {path.name}")
             assign_clause_ids(entry, clauses)
-            rulebook, source = None, path
-            if customer == "UAES":
-                clauses, rulebook = rulebook_clauses(entry, changes), dict(UAES_RULEBOOK)
-                source = rulebook_directory() / "rules" / f"{UAES_CODES[entry]}.json"
             result.append(
                 {
                     "customer": customer,
@@ -210,9 +142,8 @@ def compile_presets() -> str:
                     "source_type": kind,
                     "level": "L1" if index <= (3 if customer == "蔚来" else 8) else "L2",
                     "title": path.stem,
-                    "source_path": str(source.relative_to(ROOT)),
+                    "source_path": str(path.relative_to(ROOT)),
                     "clauses": clauses,
-                    **({"rulebook": rulebook} if rulebook else {}),
                 }
             )
     li = {row["entry_id"]: row for row in result if row["customer"] == "理想"}
@@ -226,10 +157,6 @@ def compile_presets() -> str:
         texts = {item["id"]: item["rule_to_check"] for item in json.loads(leaf.read_text(encoding="utf-8"))["rules"]}
         if list(texts) != [clause["id"] for clause in row["clauses"]]:
             raise ValueError(f"Clause identities differ from the checker leaf: {leaf.relative_to(ROOT)}")
-        if row.get("rulebook"):
-            if any(texts[clause["id"]] != clause["text"] for clause in row["clauses"]):
-                raise ValueError(f"Clause text differs from the rulebook: {leaf.relative_to(ROOT)}")
-            continue
         for clause in row["clauses"]:
             clause["text"] = texts[clause["id"]]
     if {path for customer in FILES for path in (ASSETS / customer_directory(customer) / "rules").glob("*.docx")} != expected_files:

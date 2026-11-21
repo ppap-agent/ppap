@@ -191,6 +191,7 @@ def register_suite_routes(app: FastAPI, store, principal_of):
                     "suite_operation_conflict",
                     "suite_confirmation_required",
                     "suite_dependencies_not_adopted",
+                    "partial_directory_suite_not_adoptable",
                 }
                 else 400
             )

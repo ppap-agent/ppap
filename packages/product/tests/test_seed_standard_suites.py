@@ -165,13 +165,10 @@ def test_directory_discovery_keeps_placeholders_and_states_the_reader_limit():
     assert set(reader_ids) == declared
     rules = json.loads(physical["li/L01"].files["rules.json"])
     assert rules["directory_coverage"] == "complete"
-    for path, row in rows.items():
-        leaf = json.loads(physical[path].files["rules.json"])
-        # A complete leaf binds every clause; a partial one binds the clauses its program is aligned with.
-        assert row["capability"]["clause_count"] > 0
-        assert (row["capability"]["bound_clause_count"] == row["capability"]["clause_count"]) == (leaf.get("directory_coverage", "complete") == "complete")
+    for row in rows.values():
+        assert row["capability"]["bound_clause_count"] == row["capability"]["clause_count"] > 0
     u08 = rows["uaes/U08"]["capability"]
-    assert u08["evidence_reader_clause_ids"] == list(json.loads(physical["uaes/U08"].files["rules.json"])["checker_binding"])
+    assert u08["evidence_reader_clause_ids"] == [clause["id"] for clause in json.loads(physical["uaes/U08"].files["rules.json"])["rules"]]
     assert leaf_capability({"rules.json": b'{"rules":[{"id":"C1"},{"id":"C2"}],"checker_binding":{"C1":"checker:create_audit"},"directory_coverage":"complete"}'}) == {
         "clause_count": 2,
         "bound_clause_count": 1,

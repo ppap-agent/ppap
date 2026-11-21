@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {applyReceipt, checkedReceipt, choiceLabel, groupQuestions, type Question, type QuestionnaireView} from './rule-questions-contract.ts'
+import {applyReceipt, checkedReceipt, choiceLabel, groupQuestions, questionnaireVersionLabel, type Question, type QuestionnaireView} from './rule-questions-contract.ts'
 
 const card = (key: string, group: Question['group'], extra: Partial<Question> = {}): Question => ({
   key, group, clauses: [], question: `${key}？`, why: '', options: [{key: 'A', label: '按原文', detail: ''}], expect: '', related: [], items: [], relayed: null, answers: [], ...extra,
@@ -10,6 +10,16 @@ const view = (questions: Question[]): QuestionnaireView => ({
   total: questions.length, answered: questions.filter(row => row.answers.length).length, mine: 0, questions,
 })
 const receipt = (revision: number, choice: string | null, text: string | null = null) => ({operation_id: `op-${revision}`, questionnaire_id: 'q1', question_key: 'c1', answerer: '张三', mine: true, revision, choice, text, note: null, answered_at: `2026-11-2${revision}T00:00:00Z`})
+
+test('the existing UAES questionnaire shows its revision without changing its ID or stored version', () => {
+  const existing = view([card('c1', 'common')])
+  const answered = applyReceipt(existing, receipt(1, 'A'))
+  assert.equal(questionnaireVersionLabel(existing), '规范性条款 v1.0 修订 0')
+  assert.equal(questionnaireVersionLabel(answered), '规范性条款 v1.0 修订 0')
+  assert.deepEqual([answered.id, answered.rule_version, answered.answered], ['q1', '规范性条款 v1.0', 1])
+  assert.equal(questionnaireVersionLabel({...existing, customer_id: 'li'}), '规范性条款 v1.0')
+  assert.equal(questionnaireVersionLabel({...existing, rule_version: '规范性条款 v1.0 修订 1'}), '规范性条款 v1.0 修订 1')
+})
 
 test('groups follow the answering order with common questions first, empty groups left out', () => {
   const groups = groupQuestions([card('x', 'clause'), card('c1', 'common', {answers: [{...receipt(1, 'A'), first_answered_at: '', history: []}]}), card('g', 'general')])

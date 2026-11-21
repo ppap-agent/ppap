@@ -131,6 +131,8 @@ def checker_response(
     spec: ExecuteRequest,
     executed: list[tuple[FrozenFile, list]],
     *,
+    unsupported: frozenset[tuple[str, str]] = frozenset(),
+    unavailable_sources: frozenset[str] = frozenset(),
     usage: dict[str, int] | None = None,
     usage_source: Literal["unknown", "provider", "controlled"] = "controlled",
 ) -> ExecuteResponse:
@@ -182,6 +184,18 @@ def checker_response(
 
         for clause in clauses:
             clause_id = str(clause.get("id") or "").strip()
+            coverage_row = {
+                "file_version_id": target.file_version_id,
+                "filename": target.filename,
+                "rule_version_id": target.rule_version_id,
+                "rule_item_id": clause_id,
+                "id": clause_id,
+                "category": str(clause.get("category") or "客户规则"),
+                "rule_to_check": clause.get("rule_to_check") or "",
+            }
+            if (target.file_version_id, clause_id) in unsupported:
+                rule_items.append({**coverage_row, "coverage": "unsupported", "reason": "未登记检查程序，暂未检查。"})
+                continue
             bucket = grouped.get(clause_id, [])
             index = consumed.get(clause_id, 0)
             consumed[clause_id] = index + 1
@@ -242,13 +256,7 @@ def checker_response(
             )
             rule_items.append(
                 {
-                    "file_version_id": target.file_version_id,
-                    "filename": target.filename,
-                    "rule_version_id": target.rule_version_id,
-                    "rule_item_id": clause_id,
-                    "id": clause_id,
-                    "category": str(clause.get("category") or "客户规则"),
-                    "rule_to_check": clause.get("rule_to_check") or "",
+                    **coverage_row,
                     "item_key": item_key,
                     "coverage": "executed" if matched_result is not None and status != "ERR" else "execution_error",
                     "status": status,
@@ -355,7 +363,11 @@ def checker_response(
                 )
             )
         clarifications.extend(_merge_clarifications(parsed_results, target.file_version_id, clarifications, set(file_facts)))
-        if any(item.status != "ERR" and item.clause_id in expected_counts for item in parsed_results):
+        if target.file_version_id in unavailable_sources:
+            unchecked.append(f"{target.filename}（原件不可用，未检查）")
+        elif all((target.file_version_id, clause_id) in unsupported for clause_id in expected_ids):
+            unchecked.append(f"{target.filename}（未登记检查程序，暂未检查）")
+        elif any(item.status != "ERR" and item.clause_id in expected_counts for item in parsed_results):
             checked.append(target.filename)
         else:
             unchecked.append(f"{target.filename}（审核执行失败，未执行）")

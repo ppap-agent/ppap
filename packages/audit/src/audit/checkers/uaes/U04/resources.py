@@ -9,5 +9,5 @@ RESOURCE = {
         ".xlsm": "audit.checker_lib.uaes.materials:UaesMaterialsAgent",
         ".xlsx": "audit.checker_lib.uaes.materials:UaesMaterialsAgent",
     },
-    "methods": {"MSL:3": "rule_3"},
+    "methods": {"U04:1": "rule_1", "U04:2": "rule_2", "U04:3": "rule_3"},
 }

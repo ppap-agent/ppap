@@ -37,32 +37,28 @@ def test_installed_u08_leaf_reads_its_own_files():
     for name in LEAF:
         assert suite.files[name] == (disk / name).read_bytes() == (ROOT / "packages/audit/src/audit/checkers/uaes/U08" / name).read_bytes()
     rules = json.loads(suite.files["rules.json"])
-    # The leaf runs only the clauses its program is aligned with; the rest of the revision stays unchecked.
-    assert rules["directory_coverage"] == "partial"
+    assert rules["directory_coverage"] == "complete"
     assert rules["related_suite_keys"] == ["UAES:U07", "UAES:U16"]
     preset = preset_rule("UAES", "U08")
     assert [row["id"] for row in rules["rules"]] == [clause.id for clause in preset.clauses]
     assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
-    assert rules["checker_binding"] == {clause_id: "checker:create_audit" for clause_id in ("CP:3", "CP:11", "CP:12")}
+    assert rules["checker_binding"] == {clause.id: "checker:create_audit" for clause in preset.clauses}
     assert "rule_profile" not in rules
     assert suite.entrypoints == rules["checker_binding"]
 
 
-def test_every_preset_has_a_leaf_that_names_its_implementation():
+def test_every_preset_has_a_complete_leaf_that_names_its_implementation():
     directory = {suite.suite_key: suite for suite in predefined_directory_suites()}
     for preset in customer_presets():
         suite = directory[f"{preset.customer}:{preset.entry_id}"]
         rules = json.loads(suite.files["rules.json"])
         clause_ids = [clause.id for clause in preset.clauses]
-        bound = set(rules["checker_binding"])
-        # A leaf binds every clause, or declares itself partial and binds the clauses its program is aligned with.
-        assert bound <= set(clause_ids) and (rules.get("directory_coverage", "complete") == "complete") == (bound == set(clause_ids))
-        assert rules["checker_binding"] == {clause_id: "checker:create_audit" for clause_id in clause_ids if clause_id in bound}
+        assert rules["checker_binding"] == {clause_id: "checker:create_audit" for clause_id in clause_ids}
         namespace: dict = {}
         exec(suite.files["resources.py"], namespace)
         resource = namespace["RESOURCE"]
         assert resource["customer"] == preset.customer and resource["preset_key"] == preset.entry_id
-        assert set(resource["methods"]) == bound
+        assert set(resource["methods"]) == set(clause_ids)
         assert all(path.startswith("audit.checker_lib." + customer_directory(preset.customer) + ".") for path in resource["carriers"].values())
         assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
 
@@ -279,8 +275,7 @@ def test_wheel_and_container_context_keep_the_same_leaf_bytes(tmp_path):
 
 
 def test_u13_accepts_image_formats_only(tmp_path):
-    # PHOTO:1 "提交文件为图片格式": a PDF is not an image format, so no implementation reads it. The leaf does not bind the
-    # clause yet (v1.0 changed it); the implementation's carrier rule is exercised directly.
+    # U13:1 "提交文件为图片格式": a PDF is not an image format, so no implementation reads it.
     import ast
     import io
 
@@ -294,7 +289,6 @@ def test_u13_accepts_image_formats_only(tmp_path):
     (resource,) = [
         ast.literal_eval(node.value) for node in ast.parse(source).body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RESOURCE" for target in node.targets)
     ]
-    resource = {**resource, "methods": {"PHOTO:1": "rule_1"}}
     body = preset_rule_body("UAES", "U13")
     rule = RuleInput(rule_id="u13", **{key: value for key, value in body.items() if key != "kind"})
     stream = io.BytesIO()
@@ -303,5 +297,5 @@ def test_u13_accepts_image_formats_only(tmp_path):
     for suffix in (".png", ".pdf"):
         path = tmp_path / f"photo{suffix}"
         path.write_bytes(stream.getvalue())
-        statuses[suffix] = AgentAudit(AuditInput(audit_id=suffix, file_url=str(path)), rule, None, resource=resource).evaluate("PHOTO:1").status
+        statuses[suffix] = AgentAudit(AuditInput(audit_id=suffix, file_url=str(path)), rule, None, resource=resource).evaluate("U13:1").status
     assert statuses == {".png": "PASS", ".pdf": "UNABLE"}

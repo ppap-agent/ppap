@@ -10,14 +10,16 @@
   "title": "订货规范审核规则",
   "rules": [
     {
-      "id": "ORD:1",
-      "category": "受控章-存在性",
+      "id": "U14:1",
+      "category": "订货规范（BV）版本最新版本及受控判定",
       "priority": "P0",
-      "rule_to_check": "订货规范（BV）文件中必须包含受控章；没有受控章即不通过。存在疑似印章图形但章内文字或受控标识无法辨认的，按不通过处理并提示人工复核。\n\n供应商签署栏加盖合同章的，与受控公章同等认定。供需双方的责任签署栏均须有对应负责人签字，存在空白未签栏位的按签署不闭环判。",
+      "rule_to_check": "当订货规范（BV）中包含受控章即通过，否则不通过；",
       "type_of_rule": "text",
       "severity": "A"
     }
   ],
-  "directory_coverage": "partial",
-  "checker_binding": {}
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "U14:1": "checker:create_audit"
+  }
 }

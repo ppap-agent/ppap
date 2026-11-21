@@ -73,7 +73,7 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
             changes["rules.json"] = json.dumps(rules, ensure_ascii=False)
         elif fault == "no-reader":
             resource = ast.literal_eval(selected_source.files["resources.py"].decode().split("RESOURCE = ", 1)[1])
-            resource["methods"].pop("CP:3")
+            resource["methods"].pop("U08:6")
             changes["resources.py"] = "RESOURCE = " + repr(resource) + "\n"
         if changes:
             selected = SuiteReleaseStore(settings, v4_objects).save_candidate(principal, selected, changes)["id"]
@@ -146,9 +146,8 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
             snapshot, programs = captured[0]
             assert snapshot == frozen.to_dict() and programs == {checker_digest(program): program}
             if fault == "native":
-                # The leaf runs the clauses it is aligned with; the rest of the rule revision is not checked yet.
-                assert set(findings) == set(target.binding.entrypoints), {cid: findings[cid]["status"] for cid in findings}
+                assert findings["U08:1"]["status"] == findings["U08:4"]["status"] == "PASS", {cid: (findings[cid]["status"], findings[cid].get("suggestions")) for cid in ("U08:1", "U08:4")}
             elif fault == "no-reader":
-                assert findings["CP:3"]["status"] == "UNABLE"
+                assert findings["U08:6"]["status"] == "UNABLE"
             else:
                 assert not any(row["status"] == "PASS" for row in round["findings"])

@@ -12,33 +12,25 @@ import {Textarea} from '../components/ui/textarea'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {message} from '../journey/remote'
 import {followRulesLink, rulesAddress} from './rule-templates-view'
-import {applyReceipt, checkedReceipt, choiceLabel, groupQuestions, RELAYED, type AnswerReceipt, type AnswerRequest, type Question, type QuestionAnswer, type QuestionnaireList, type QuestionnaireSummary, type QuestionnaireView} from './rule-questions-contract'
+import {applyReceipt, checkedReceipt, choiceLabel, groupQuestions, questionnaireVersionLabel, RELAYED, type AnswerReceipt, type AnswerRequest, type Question, type QuestionAnswer, type QuestionnaireList, type QuestionnaireSummary, type QuestionnaireView} from './rule-questions-contract'
 
 const progress = (row: Pick<QuestionnaireSummary, 'answered' | 'total'>) => `已答 ${row.answered} / ${row.total} 题`
 
 /** On the rules page, under a customer: each version of its rules that has questions waiting for the customer. */
-/** A customer's questionnaires as links; the one on the shown rulebook revision is named by what it is, not by that revision again. */
-export function QuestionnaireEntries({list, customerId, current}: {list: QuestionnaireList | null; customerId: string; current?: string}) {
+export function QuestionnaireEntries({list, customerId}: {list: QuestionnaireList | null; customerId: string}) {
   const rows = list?.questionnaires.filter(row => row.customer_id === customerId) ?? []
   if (!rows.length) return null
-  return <>
+  return <div className="grid shrink-0 gap-2 border-b p-4">
     {rows.map(row => {
       const href = rulesAddress({template: customerId, ruleQuestions: row.id})
       return <Item key={row.id} variant="outline" size="sm" asChild>
         <a href={href} aria-labelledby={`rq-${row.id}-title`} aria-describedby={`rq-${row.id}-progress`} onClick={event => followRulesLink(event, href)}>
-          <ItemContent><ItemTitle id={`rq-${row.id}-title`} wrap>{row.rule_version === current ? '待确认问题' : `${row.rule_version} 待确认问题`}</ItemTitle><ItemDescription id={`rq-${row.id}-progress`}>{row.closed ? `已关闭 · ${progress(row)}` : progress(row)}</ItemDescription></ItemContent>
+          <ItemContent><ItemTitle id={`rq-${row.id}-title`} wrap>{questionnaireVersionLabel(row)} 待确认问题</ItemTitle><ItemDescription id={`rq-${row.id}-progress`}>{row.closed ? `已关闭 · ${progress(row)}` : progress(row)}</ItemDescription></ItemContent>
           <ItemActions aria-hidden="true"><span className="flex items-center gap-1 text-sm text-primary">{row.closed ? '查看' : '去作答'}<Icon icon={iconChevronRight} className="size-3.5"/></span></ItemActions>
         </a>
       </Item>
     })}
-  </>
-}
-
-/** Scroll only the content area that holds `target`; the page frame (navigation) stays where it is. */
-function reveal(target: HTMLElement | null) {
-  let scroller = target?.parentElement ?? null
-  while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement
-  if (target && scroller) scroller.scrollTo({top: scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top, behavior: 'smooth'})
+  </div>
 }
 
 /** One questionnaire on a wide page: a fixed column with the title, progress and the groups, and every card shown in full beside it. */
@@ -62,16 +54,14 @@ export function RuleQuestionnairePage({questionnaireId}: {questionnaireId: strin
   }, [read])
   const groups = view ? groupQuestions(view.questions) : []
   const conflict = async () => {setNotice('问卷已有更新，已重新读取，请核对后再保存。'); await read()}
+  // Only the content area scrolls; the page frame (navigation) stays where it is.
   const jump = (key: string) => {
     setCurrent(key)
-    reveal(document.getElementById(`rq-group-${key}`))
+    const target = document.getElementById(`rq-group-${key}`)
+    let scroller = target?.parentElement ?? null
+    while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement
+    if (target && scroller) scroller.scrollTo({top: scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top, behavior: 'smooth'})
   }
-  // A link from a clause names one card in the address fragment; open the page at it once the cards are shown.
-  const loaded = Boolean(view)
-  useEffect(() => {
-    const key = loaded && location.hash ? decodeURIComponent(location.hash.slice(1)) : ''
-    if (key) reveal(document.querySelector<HTMLElement>(`[data-question="${CSS.escape(key)}"]`))
-  }, [loaded])
 
   if (error && !view) return <div className="max-w-3xl"><Alert variant="destructive"><AlertTitle>待确认问题未能读取</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" size="sm" onClick={() => {setError(''); void read()}}>重新读取</Button></AlertDescription></Alert></div>
   if (!view) return <ReadSkeleton label="正在读取待确认问题…" kind="detail" rows={6}/>
@@ -79,7 +69,7 @@ export function RuleQuestionnairePage({questionnaireId}: {questionnaireId: strin
   return <div className="grid items-start gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
     <aside className="grid gap-4 lg:sticky lg:top-0">
       <a className="w-fit text-sm text-primary hover:underline" href={rulesAddress({template: view.customer_id})} onClick={event => followRulesLink(event, rulesAddress({template: view.customer_id}))}>{view.customer_name}</a>
-      <h1 className="text-xl font-semibold">{view.rule_version} 待确认问题</h1>
+      <h1 className="text-xl font-semibold">{questionnaireVersionLabel(view)} 待确认问题</h1>
       <p className="text-sm tabular-nums text-muted-foreground">{progress(view)} · 我答了 {view.mine} 题</p>
       <nav aria-label="分组"><ul className="grid gap-1">{groups.map(group => <li key={group.key}>
         <button type="button" aria-current={group.key === active ? 'true' : undefined} aria-describedby={`rq-nav-${group.key}`} onClick={() => jump(group.key)} className={`flex h-10 w-full items-center justify-between rounded-md px-3 text-left text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${group.key === active ? 'bg-primary-soft font-semibold text-primary' : 'hover:bg-muted'}`}>
@@ -89,7 +79,7 @@ export function RuleQuestionnairePage({questionnaireId}: {questionnaireId: strin
     </aside>
     <div className="grid min-w-0 gap-6">
       {view.closed ? <Alert><AlertTitle>问卷已关闭</AlertTitle><AlertDescription>答复只能查看，不能再作答或修改。</AlertDescription></Alert>
-        : <p className="text-sm text-muted-foreground">这些问题来自对这一版规则原文的逐条检查：每处都附了例子，不答，这份文件就得不到确定结论。每张卡单独保存，不用一次答完；同一张卡每个人的答复分开记录。</p>}
+        : <p className="text-sm text-muted-foreground">这些问题来自对这一版规则原文的逐条检查。每张卡可单独作答，每个人的答复分开记录。「已答」只表示收到答复，不代表规则已确认。</p>}
       {notice && <p role="status" className="text-sm">{notice}</p>}
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
       {groups.map(group => <section key={group.key} id={`rq-group-${group.key}`} aria-labelledby={`rq-group-${group.key}-title`} className="grid scroll-mt-4 gap-4">
@@ -179,7 +169,7 @@ function QuestionCard({question, questionnaireId, closed, onSaved, onConflict}: 
     finally {setSaving(false)}
   }
   const option = 'flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 text-sm hover:bg-muted'
-  return <article data-question={question.key} aria-labelledby={`${id}-question`} className="grid scroll-mt-4 gap-8 rounded-xl border bg-card p-6 xl:grid-cols-[minmax(0,58fr)_minmax(0,42fr)]">
+  return <article aria-labelledby={`${id}-question`} className="grid gap-8 rounded-xl border bg-card p-6 xl:grid-cols-[minmax(0,58fr)_minmax(0,42fr)]">
     <div className="grid min-w-0 content-start gap-4 text-sm">
       {question.clauses.length > 0 && <p>{question.clauses.join('、')}</p>}
       <h3 id={`${id}-question`} className="text-base font-semibold">{question.question}</h3>

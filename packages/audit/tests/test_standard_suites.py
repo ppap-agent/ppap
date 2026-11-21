@@ -34,13 +34,13 @@ def check_clause(context, resource):
     return audit.evaluate(context.clause_id)
 
 
-def test_every_company_leaf_binds_its_clauses_to_declared_implementation_methods():
+def test_every_company_leaf_binds_each_clause_to_a_declared_implementation_method():
     suites = predefined_directory_suites()
     assert {s.suite_key for s in suites} == {f"{p.customer}:{p.entry_id}" for p in customer_presets()}
     for suite in suites:
         rules = json.loads(suite.files["rules.json"])
         source = resources(suite)
-        assert set(source["methods"]) == set(suite.entrypoints) <= {rule["id"] for rule in rules["rules"]}
+        assert set(source["methods"]) == set(suite.entrypoints) == {rule["id"] for rule in rules["rules"]}
         for class_path in set(source["carriers"].values()):
             module, name = class_path.split(":")
             cls = getattr(importlib.import_module(module), name)

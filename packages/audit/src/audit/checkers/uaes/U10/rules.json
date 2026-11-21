@@ -10,14 +10,16 @@
   "title": "材料规范审核规则",
   "rules": [
     {
-      "id": "MSPEC:1",
-      "category": "受控章-存在性",
+      "id": "U10:1",
+      "category": "材料规范版本最新版本及受控判定",
       "priority": "P0",
-      "rule_to_check": "材料规范文件中必须包含受控章；没有受控章即不通过。存在疑似印章图形但章内文字或受控标识无法辨认的，按不通过处理并提示人工复核。\n\n文件所载材料牌号/标准号须与同批次图纸及 ISIR 材料报告中记载的牌号一致；不一致的按不通过判。\n\n同批未提交图纸、或缺 ISIR 材料报告时，以已提交的一方为基准比对，并在依据中写明取值来源；两者均缺时，本条“牌号一致”一项记“不适用”并写明依据，不记作通过。受控章一项不受此影响，仍照常判定。",
+      "rule_to_check": "当材料规范中包含受控章即通过，否则不通过；",
       "type_of_rule": "text",
       "severity": "A"
     }
   ],
-  "directory_coverage": "partial",
-  "checker_binding": {}
+  "directory_coverage": "complete",
+  "checker_binding": {
+    "U10:1": "checker:create_audit"
+  }
 }
