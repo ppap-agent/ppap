@@ -16,6 +16,7 @@ from product import workflow
 from product.mcp import MAX_RESULT_BYTES, SCOPES, McpError
 from pydantic import Field
 
+from api import mcp_views as views
 from api import web_contract as wc
 from api.mcp_gateway import Outcome, PageRequest, Reply, page_result
 
@@ -85,9 +86,6 @@ def receipt(reply: Reply, tool: str, arguments: dict, *, task_id: str | None) ->
     if reply.status == "unknown":
         return Outcome(task_id=task_id, request_id=rid, next={"kind": "recover", "strategy": "read_operation", "tool": "get_operation", "arguments": {"request_id": rid}})
     return blocked("denied_by_user" if reply.status == "denied" else reply.error or "business_request_failed", task_id=task_id, request_id=rid)
-
-
-MACHINE = {"PASS": "符合", "NG": "不符合", "UNABLE": "证据不足以判定", "NA": "不适用", "ERR": "没有检查完"}
 
 
 def _short(text, limit: int = 300):
@@ -343,15 +341,10 @@ def register_tools(mcp, gateway, authority, runtime):
             if citations:
                 body["citations"] = citations
             source = await gateway.get(actor, "audits:read", path)
-            # Say which finding this is about, so the person approves a judgment on something they can name.
+            # The clause, the machine's finding and its evidence: what the Web shows beside its review form.
             row: dict[str, Any] = next((f for f in source.get("findings", []) if f["item_key"] == item_key), {})
-            subject = [
-                f"对「{(row.get('locator') or {}).get('filename') or '这份文件'}」的一条检查项记录人工复核。",
-                f"检查项：{_short(row.get('item'), 120)}",
-                f"机器结论：{MACHINE.get(str(row.get('status')), str(row.get('status') or '—'))}（保持不变，复核与它并列保存）",
-            ]
-            said = [f"你的判定：{judgment}", f"理由：{rationale}"] + ([f"下一步：{next_step}"] if next_step else [])
-            snapshot = {"operation": "record_review", "summary": subject + said, "request": body, "sources": [source]}
+            summary, details = views.review(row, body)
+            snapshot = {"operation": "record_review", "summary": summary, "details": details, "request": body, "sources": [source]}
             reply = await gateway.write(actor, "reviews:write", "record_review", rid, "PUT", path + "/reviews", body, probes=[path], confirmation=snapshot)
             arguments = {"task_id": tid, "request_id": rid, "item_key": item_key, "judgment": judgment, "rationale": rationale, "next_step": next_step, "citations": citations}
             return receipt(reply, "record_review", arguments, task_id=tid) or Outcome(task_id=tid, request_id=rid, result={"item_key": item_key, "saved": True}, next=DONE)
@@ -372,7 +365,8 @@ def register_tools(mcp, gateway, authority, runtime):
                 raise workflow.Rejected("round_has_errors")
             probe = f"/rounds/{round_id}"
             source = await gateway.get(actor, "audits:read", probe)
-            snapshot = {"operation": "publish_report", "summary": ["生成飞书审核报告文档。"], "request": None, "sources": [source]}
+            summary, details = views.report(audit, source)
+            snapshot = {"operation": "publish_report", "summary": summary, "details": details, "request": None, "sources": [source]}
             reply = await gateway.write(actor, "reports:send", "publish_report", rid, "POST", f"/integrations/feishu/rounds/{round_id}/report", None, probes=[probe], confirmation=snapshot)
             return receipt(reply, "publish_report", {"task_id": tid, "request_id": rid}, task_id=tid) or Outcome(task_id=tid, request_id=rid, result={"delivery": reply.data}, next=DONE)
         except Exception as exc:

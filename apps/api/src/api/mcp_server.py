@@ -24,7 +24,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from api.mcp_auth import OAuthProvider, register_oauth
 from api.mcp_gateway import BusinessGateway
-from api.mcp_pages import lines, page
+from api.mcp_pages import details, lines, page
 from api.mcp_runtime import TaskRuntime
 
 
@@ -221,11 +221,13 @@ def install_mcp(app, product, http, session_of):
         except McpError as exc:
             return page("操作不可确认", "<p>此请求已处理、已过期，或当前账号没有权限。</p>", exc.status)
         # What will happen, in the user's words; the exact request stays bound to the approval, not on the page.
+        shown = value["confirmation"].get("details") or []
         return page(
             "确认这次操作",
-            lines(value["confirmation"].get("summary", [])) + '<p class="notice">只确认上面这一次；内容有变化时需要重新确认。确认后回到客户端继续。</p>'
+            lines(value["confirmation"].get("summary", [])) + details(shown) + '<p class="notice">只确认上面这一次；内容有变化时需要重新确认。确认后回到客户端继续。</p>'
             f'<form method="post"><input type="hidden" name="csrf" value="{escape(value["csrf"])}">'
             '<button name="decision" value="deny">拒绝</button><button name="decision" value="approve">确认</button></form>',
+            wide=bool(shown),
         )
 
     @app.post("/mcp/confirm/{operation_id}", include_in_schema=False)

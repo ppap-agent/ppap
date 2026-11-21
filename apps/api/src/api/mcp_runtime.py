@@ -16,6 +16,7 @@ from typing import Any
 from product import workflow
 from product.mcp import Delegation, McpError
 
+from api import mcp_views as views
 from api.mcp_gateway import Reply
 
 log = logging.getLogger(__name__)
@@ -33,16 +34,6 @@ def check_state(job: dict | None) -> dict:
     if job["status"] == "succeeded" and result.get("state") in {"valid", "invalid"}:
         return {"state": result["state"], "reasons": result.get("reasons") or []}
     return {"state": "error", "reasons": []}
-
-
-def acceptance(task: dict) -> list[str]:
-    """What starting this audit means, in the user's words, for the approval page."""
-    names = [row["file"]["original_filename"] for row in task.get("files", []) if row.get("selection") == "selected"]
-    lines = [f"开始审核：任务 {task.get('number', '')}，共 {len(names)} 份文件。", *(f"· {name}" for name in names)]
-    lines.append("审核方式：深度模式。" if task.get("deep_mode") else "审核方式：标准模式。")
-    if task.get("estimated_points") is not None:
-        lines.append(f"预计扣减 {task['estimated_points']} 点。")
-    return lines
 
 
 class TaskRuntime:
@@ -308,7 +299,9 @@ class TaskRuntime:
                 await self.api(actor, "PUT", path + "/notification", {"enabled": notify_when_done, "expected_revision": audit.get("notification_revision", 0)})
             body = {"request_id": request_id, "expected_revision": audit.get("input_revision", 0), "expected_confirmation_basis_digest": quote_id}
         task = await self.gateway.get(actor, "audits:read", path)
-        snapshot = {"operation": "confirm_audit", "summary": acceptance(task), "request": body, "sources": [task]}
+        folders = {entry["version"]["id"]: entry.get("folder") for entry in row["state"]["files"].values() if entry.get("version")}
+        summary, details = views.audit_start(task, facts.get("precheck"), folders)
+        snapshot = {"operation": "confirm_audit", "summary": summary, "details": details, "request": body, "sources": [task]}
         return await self.gateway.write(actor, "audits:execute", "confirm_audit", request_id, "POST", path + "/confirm", body, probes=[path], confirmation=snapshot)
 
     async def resolve(self, actor: Delegation, task_id: str, issue_id: str, action_id: str, expected_revision: int, request_id: str, value: Any) -> Reply | None:
@@ -377,6 +370,7 @@ class TaskRuntime:
         }
         # The owner checks the approval against its own canonical form of what the person saw.
         source = FactAnswersView.model_validate(current).model_dump(mode="json")
-        shown = "是" if answer is True else "否" if answer is False else answer
-        snapshot = {"operation": "resolve_issue", "summary": [f"确认原件事实：{question['prompt']}", f"回答：{shown}"], "request": body, "sources": [source]}
+        names = {row["file"]["id"]: row["file"]["original_filename"] for row in (facts.get("audit") or {}).get("files", [])}
+        summary, details = views.answer(question, names.get(subject["file_version_id"]), answer)
+        snapshot = {"operation": "resolve_issue", "summary": summary, "details": details, "request": body, "sources": [source]}
         return await self.gateway.write(actor, "reviews:write", "resolve_issue", request_id, "POST", path, body, probes=[path], confirmation=snapshot)

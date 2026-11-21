@@ -57,6 +57,21 @@ button[value=approve]:hover,button.primary:hover{background:var(--color-primary-
 section{padding:12px 0;border-top:1px solid var(--color-border)}
 section:first-of-type{border-top:0}
 section form{margin:8px 0 0;justify-content:flex-start}
+main.wide{max-width:760px}
+h3{margin:20px 0 8px;font-size:var(--text-lg);line-height:var(--leading-lg);font-weight:600}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:12px 0 0}
+dt{color:var(--color-muted-foreground)}
+dd{margin:0;overflow-wrap:anywhere}
+.scroll{overflow-x:auto;margin:0 -4px;padding:0 4px}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-weight:400;color:var(--color-muted-foreground);padding:8px 12px 8px 0;border-bottom:1px solid var(--color-border);white-space:nowrap}
+td{padding:10px 12px 10px 0;border-bottom:1px solid var(--color-border);vertical-align:top;overflow-wrap:anywhere}
+.quote{margin:0;padding:8px 12px;background:var(--color-secondary);border-radius:calc(var(--radius-control) - 2px);white-space:pre-wrap;overflow-wrap:anywhere}
+.tag{display:inline-block;padding:0 6px;border-radius:calc(var(--radius-control) - 4px);font-size:var(--text-xs);line-height:20px;
+background:var(--color-secondary);color:var(--color-muted-foreground);white-space:nowrap}
+.tag.ng{color:var(--color-destructive);background:color-mix(in srgb,var(--color-destructive) 10%,transparent)}
+.tag.pass{color:var(--color-success);background:color-mix(in srgb,var(--color-success) 10%,transparent)}
+.tag.warn{color:var(--color-warning);background:color-mix(in srgb,var(--color-warning) 12%,transparent)}
 @media (max-width:520px){body{padding:16px}main{padding:20px}}
 """
 
@@ -97,12 +112,12 @@ def stylesheet() -> str:
     return f":root{{{';'.join(base)};{colours(light)}}}@media (prefers-color-scheme:dark){{:root{{{colours(dark)}}}}}" + LAYOUT.replace("\n", "")
 
 
-def page(title: str, body: str, status: int = 200) -> HTMLResponse:
+def page(title: str, body: str, status: int = 200, *, wide: bool = False) -> HTMLResponse:
     """A complete page around `body`, which callers build from escaped values only."""
     return HTMLResponse(
         '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
         f"<title>{escape(title)} · PPAP</title><style>{stylesheet()}</style>"
-        f'<main><p class="brand">PPAP</p><h1>{escape(title)}</h1>{body}</main></html>',
+        f'<main{" class=wide" if wide else ""}><p class="brand">PPAP</p><h1>{escape(title)}</h1>{body}</main></html>',
         status_code=status,
         headers=HEADERS,
     )
@@ -121,4 +136,38 @@ def lines(summary: list[str]) -> str:
         out.append(f"<p>{escape(line)}</p>")
     if items:
         out.append("<ul>" + "".join(items) + "</ul>")
+    return "".join(out)
+
+
+TAGS = {"符合": "pass", "不符合": "ng", "待审核": "warn", "证据不足以判定": "warn", "没有检查完": "warn", "需要处理": "warn", "提醒": "warn"}
+
+
+def _cell(value) -> str:
+    """A table cell or fact value. A short status word is shown as a tag; everything is text, escaped."""
+    text = "—" if value is None or value == "" else str(value)
+    if text in TAGS:
+        return f'<span class="tag {TAGS[text]}">{escape(text)}</span>'
+    return escape(text)
+
+
+def details(blocks: list[dict]) -> str:
+    """What the person is deciding on, as the Web shows it: facts, tables and quoted text.
+
+    Blocks come from the confirmation the person approves, so they are rendered exactly as recorded and never re-read."""
+    out = []
+    for block in blocks:
+        title = f"<h3>{escape(block['title'])}</h3>" if block.get("title") else ""
+        kind = block.get("kind")
+        if kind == "facts":
+            rows = "".join(f"<dt>{escape(label)}</dt><dd>{_cell(value)}</dd>" for label, value in block["rows"])
+            out.append(f"{title}<dl>{rows}</dl>")
+        elif kind == "table" and block.get("rows"):
+            head = "".join(f"<th>{escape(column)}</th>" for column in block["head"])
+            body = "".join("<tr>" + "".join(f"<td>{_cell(value)}</td>" for value in row) + "</tr>" for row in block["rows"])
+            more = f'<p class="muted">另有 {block["more"]} 项未列出。</p>' if block.get("more") else ""
+            out.append(f'{title}<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{more}')
+        elif kind == "text" and block.get("text"):
+            out.append(f'{title}<p class="quote">{escape(block["text"])}</p>')
+        elif kind == "note" and block.get("text"):
+            out.append(f'<p class="notice">{escape(block["text"])}</p>')
     return "".join(out)

@@ -62,3 +62,41 @@ def test_authorization_pages_take_every_colour_from_the_design_tokens_and_run_no
     assert "--color-primary:#1456f0" in style and "prefers-color-scheme:dark" in style
     assert "<script" not in html and "http" not in style
     assert "<ul><li>a.pdf</li><li>&lt;b&gt;.xlsx</li></ul><p>预计扣减 3 点。</p>" in html
+
+
+def test_an_approval_page_shows_what_the_web_shows_at_the_same_decision():
+    from api.mcp_pages import details, page
+    from api.mcp_views import audit_start
+
+    task = {
+        "number": "PPAP-1",
+        "customer_preference": "UAES",
+        "estimated_points": 1000,
+        "deep_mode": False,
+        "confirmation_scope": {"target_file_version_ids": ["v1", "v2"], "reference_file_version_ids": [], "excluded_files": [{"file_version_id": "v3", "reason": "没有对应的审核要求"}]},
+        "files": [
+            {
+                "file": {"id": "v1", "original_filename": "控制计划.pdf"},
+                "match": {"document_type": "控制计划", "metadata": {"part_number": "F01", "part": "磁性罩"}, "rule": {"title": "控制计划审核规则"}},
+            },
+            {"file": {"id": "v2", "original_filename": "MSA.xls"}, "match": {"document_type": "测量系统分析评价", "metadata": {}, "rule": {"title": "MSA 审核规则"}}},
+            {"file": {"id": "v3", "original_filename": "<说明>.docx"}, "match": {"state": "unmatched"}},
+        ],
+    }
+    precheck = {"blocks": [], "warnings": [{"file_version_id": "v2", "filename": "MSA.xls", "problem": "公式错误值", "action": "修正公式"}]}
+    summary, blocks = audit_start(task, precheck, {"v1": "测试文件/10 控制计划"})
+    html = page("确认这次操作", details(blocks), wide=True).body.decode()
+    assert summary == ["开始审核：送审 2 份文件，预计扣 1000 点。"]
+    for shown in (
+        "送审的文件 · 2 份",
+        "测试文件/10 控制计划",
+        "控制计划审核规则",
+        "F01",
+        "磁性罩",
+        "预检发现 · 1 项",
+        "修正公式",
+        "不送审的文件 · 1 份",
+        "&lt;说明&gt;.docx",
+        "有条件通过 · 含警告 1 项",
+    ):
+        assert shown in html, shown
