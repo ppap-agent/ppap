@@ -596,7 +596,7 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
                     "review",
                     "info",
                     "audit",
-                    f"「{row.get('item') or row['item_key']}」的结论与之前的结果不同，建议人工复核。",
+                    (f"「{row['file']}」的" if row.get("file") else "") + f"检查项「{check_name(row)}」这次的结论与之前的结果不同，建议人工复核。",
                     "接受后这一项标为待复核；忽略则保持现在的结论。",
                     [_act("accept", "接受建议"), _act("ignore", "忽略")],
                     subject={"kind": "finding", "key": row["item_key"]},
@@ -621,6 +621,15 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
                     )
                 )
     return found
+
+
+def check_name(finding: dict) -> str:
+    """What a person calls a check: its name, else the first line of its clause, kept short."""
+    name = (finding.get("name") or "").strip()
+    if not name:
+        name = re.split(r"[；;\n]", (finding.get("item") or "").strip(), maxsplit=1)[0].strip()
+    name = name or str(finding.get("item_key"))
+    return name if len(name) <= 40 else name[:39] + "…"
 
 
 def _precheck_issue(task_id: str, item: dict, by_version: dict[str, str], editable: bool) -> dict:

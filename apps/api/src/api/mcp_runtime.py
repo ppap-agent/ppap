@@ -96,7 +96,11 @@ class TaskRuntime:
         if audit and workflow.audited(audit):
             facts["questions"] = await self.read(actor, f"/audit-rounds/{audit['round_id']}/fact-answers")
             found = await self.read(actor, f"/rounds/{audit['round_id']}") or {}
-            facts["hints"] = [{"item_key": row["item_key"], "item": row.get("item"), "hint": row["review_hint"]} for row in found.get("findings", []) if row.get("review_hint")]
+            facts["hints"] = [
+                {"item_key": row["item_key"], "item": row.get("item"), "name": row.get("classification"), "file": (row.get("locator") or {}).get("filename"), "hint": row["review_hint"]}
+                for row in found.get("findings", [])
+                if row.get("review_hint")
+            ]
         return facts
 
     async def view(self, actor: Delegation, task_id: str) -> tuple[dict, dict, dict]:

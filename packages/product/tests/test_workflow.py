@@ -247,3 +247,14 @@ def test_a_finished_audit_is_read_while_its_reports_are_still_being_made():
     assert view["result"]["files"][0]["report"] == "generating"
     still = audit(row, state="reviewing", execution="running", round_id="round")
     assert w.project(TASK, state, {"audit": still})["phase"] == "auditing"
+
+
+def test_a_recheck_suggestion_names_the_check_not_its_whole_clause():
+    state = w.apply(prepared("a"), {"type": "audit_created"})
+    done = audit(audit_row("a"), state="completed", conclusion="NG", round_id="round")
+    clause = "PFMEA中S/O/D均为1~10的整数；超出范围或为空则不通过；\nS与失效后果匹配……" * 3
+    named = {"item_key": "k1", "item": clause, "name": "S/O/D 评分是否合理", "file": "PFMEA.pdf", "hint": {}}
+    unnamed = {"item_key": "k2", "item": clause, "name": None, "file": None, "hint": {}}
+    first, second = w.project(TASK, state, {"audit": done, "hints": [named, unnamed]})["issues"]
+    assert first["message"] == "「PFMEA.pdf」的检查项「S/O/D 评分是否合理」这次的结论与之前的结果不同，建议人工复核。"
+    assert "超出范围" not in second["message"] and len(second["message"]) < 80
