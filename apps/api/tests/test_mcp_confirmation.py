@@ -84,12 +84,13 @@ def test_an_approval_page_shows_what_the_web_shows_at_the_same_decision():
         ],
     }
     precheck = {"blocks": [], "warnings": [{"file_version_id": "v2", "filename": "MSA.xls", "problem": "公式错误值", "action": "修正公式"}]}
-    summary, blocks = audit_start(task, precheck, {"v1": "测试文件/10 控制计划"})
+    summary, blocks = audit_start(task, precheck, {"v1": "测试文件/10 控制计划", "v2": "测试文件/06 测量系统分析评价"})
     html = page("确认这次操作", details(blocks), wide=True).body.decode()
     assert summary == ["开始审核：送审 2 份文件，预计扣 1000 点。"]
+    assert "测试文件/" not in html  # the folder every file shares is not repeated on each row
     for shown in (
         "送审的文件 · 2 份",
-        "测试文件/10 控制计划",
+        "10 控制计划",
         "控制计划审核规则",
         "F01",
         "磁性罩",

@@ -57,7 +57,7 @@ button[value=approve]:hover,button.primary:hover{background:var(--color-primary-
 section{padding:12px 0;border-top:1px solid var(--color-border)}
 section:first-of-type{border-top:0}
 section form{margin:8px 0 0;justify-content:flex-start}
-main.wide{max-width:760px}
+main.wide{max-width:1040px}
 h3{margin:20px 0 8px;font-size:var(--text-lg);line-height:var(--leading-lg);font-weight:600}
 dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:12px 0 0}
 dt{color:var(--color-muted-foreground)}
@@ -139,7 +139,7 @@ def lines(summary: list[str]) -> str:
     return "".join(out)
 
 
-TAGS = {"符合": "pass", "不符合": "ng", "待审核": "warn", "证据不足以判定": "warn", "没有检查完": "warn", "需要处理": "warn", "提醒": "warn"}
+TAGS = {"阻断": "ng", "符合": "pass", "不符合": "ng", "待审核": "warn", "证据不足以判定": "warn", "没有检查完": "warn", "需要处理": "warn", "提醒": "warn"}
 
 
 def _cell(value) -> str:

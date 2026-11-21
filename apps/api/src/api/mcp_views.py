@@ -32,6 +32,12 @@ def _precheck_rating(precheck: dict | None) -> str:
 
 def audit_start(task: dict, precheck: dict | None, folders: dict[str, str]) -> tuple[list[str], list[dict]]:
     """Before starting an audit: the precheck-and-rules page of the Web."""
+    # Folders as the person sees them inside what they shared: a prefix every file shares says nothing.
+    parts = [path.split("/") for path in folders.values() if path]
+    common = 0
+    while parts and all(len(p) > common + 1 for p in parts) and len({p[common] for p in parts}) == 1:
+        common += 1
+    folders = {key: "/".join(path.split("/")[common:]) if path else path for key, path in folders.items()}
     scope = task.get("confirmation_scope") or {}
     targets = set(scope.get("target_file_version_ids") or [])
     references = set(scope.get("reference_file_version_ids") or [])
@@ -85,7 +91,7 @@ def audit_start(task: dict, precheck: dict | None, folders: dict[str, str]) -> t
     details.append({"kind": "table", "title": f"送审的文件 · {len(sent)} 份", "head": ["文件", "所在文件夹", "文件类型", "零件号", "零件名称", "审核规则", "预检"], **_rows(sent)})
     details.append({"kind": "table", "title": f"预检发现 · {len(findings)} 项", "head": ["文件", "级别", "问题", "整改"], **_rows(findings)})
     details.append({"kind": "table", "title": f"不送审的文件 · {len(skipped)} 份", "head": ["文件", "所在文件夹", "原因"], **_rows(skipped)})
-    details.append({"kind": "note", "text": "预检提醒不阻止开始审核，正式审核会再核对。确认后审核在后台进行，进度和结果回到客户端查看；不送审的文件不计费。"})
+    details.append({"kind": "note", "text": "上面的文件都可以开始审核，预检发现的问题由正式审核再核对。确认后审核在后台进行，进度和结果回到客户端查看；不送审的文件不计费。"})
     return summary, details
 
 
