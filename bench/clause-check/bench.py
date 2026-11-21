@@ -7,7 +7,7 @@
                               holds only rules.json (this one clause) and files/ (the real files). It loads only a
                               read-only copy of the skill, inside sandbox-exec that hides the whole home directory
                               (repositories, credentials, Claude Code and earlier pi sessions) and every other case
-                              folder. Afterwards the bench regenerates the report from the session's formalization,
+                              folder. Afterwards the bench regenerates the report from the session's structured review,
                               so what is scored is what the skill's script says, and copies everything to
                               bench/clause-check/runs/N/<case>/
     score runs/N [--rejudge]  a judging Claude Code session (fixed model, started in an empty folder so it loads no
@@ -232,23 +232,27 @@ def denials(transcript: Path) -> list[str]:
     return refused
 
 
-def formalization(work: Path, case_id: str) -> Path | None:
-    """The session's formalization of this clause: the newest .ofn whose :clause names it."""
-    candidates = [path for path in work.rglob("*.ofn") if ".robot" not in str(path.parent) and f'#{case_id}"' in path.read_text(encoding="utf-8", errors="ignore")]
+def review_file(work: Path, case_id: str) -> Path | None:
+    """Select the session's latest clause review, not a generated report."""
+    candidates = []
+    for path in work.rglob("*.review.json"):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if record.get("source", "").endswith(f"#{case_id}"):
+            candidates.append(path)
     return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
 
 
-def regenerate(ontology: Path, skill: Path, out: Path) -> int:
-    """Run the skill's script on the session's final formalization; the report scored is the one it writes."""
-    scratch = out / ".regenerated"
+def regenerate(review: Path, skill: Path, out: Path) -> int:
+    """Regenerate both reports from the original review JSON for scoring."""
     done = subprocess.run(
-        [sys.executable, str(skill / "scripts" / "check.py"), str(ontology), "--out", str(scratch), "--report", str(out / "report.md")],
-        cwd=ontology.parent,
-        capture_output=True,
-        text=True,
+        [sys.executable, str(skill / "scripts" / "check.py"), str(review),
+         "--report", str(out / "report.md"), "--data", str(out / "report.json")],
+        cwd=review.parent, capture_output=True, text=True,
     )
     (out / "check.txt").write_text(done.stdout + done.stderr, encoding="utf-8")
-    shutil.rmtree(scratch, ignore_errors=True)
     return done.returncode
 
 
@@ -270,21 +274,21 @@ def run_case(case: dict, name: str, skill: Path, model: str, thinking: str, time
     if sessions:
         shutil.copy(sessions[-1], out / "transcript.jsonl")
     result["denials"] = denials(out / "transcript.jsonl")
-    ontology = formalization(work, case["id"])
-    result["formalization"] = ontology.name if ontology else None
+    review = review_file(work, case["id"])
+    result["review"] = review.name if review else None
     result["check_exit"] = None
     result["report_matches"] = None
-    if ontology:
-        shutil.copy(ontology, out / ontology.name)
-        written = ontology.with_suffix(".report.md")
+    if review:
+        shutil.copy(review, out / review.name)
+        written = review.with_name(review.name.removesuffix(".review.json") + ".report.md")
         if written.exists():
             shutil.copy(written, out / "session-report.md")
-        result["check_exit"] = regenerate(ontology, skill, out)
+        result["check_exit"] = regenerate(review, skill, out)
         if written.exists() and (out / "report.md").exists():
             result["report_matches"] = written.read_text(encoding="utf-8") == (out / "report.md").read_text(encoding="utf-8")
     (out / "session.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     state = "超时" if result.get("timed_out") else "失败" if result["is_error"] else "完成"
-    complete = {0: "发现已确认", 1: "有发现没确认", 2: "形式化无法使用", None: "没有形式化"}.get(result["check_exit"], "检查出错")
+    complete = {0: "结构校验通过", 1: "审查记录不合格", 2: "来源不可用", None: "没有审查记录"}.get(result["check_exit"], "检查出错")
     return f"{case['id']}：{state}，{complete}，{result['duration_ms'] // 1000} 秒"
 
 
@@ -350,7 +354,7 @@ def plain_problems(report: str, case: dict) -> tuple[list[str], int]:
 def score(run: Path, rejudge: bool) -> None:
     data = cases()
     info = json.loads((run / "run.json").read_text(encoding="utf-8")) if (run / "run.json").exists() else {}
-    header = "| 条款 | 发现已确认 | 报告与脚本一致 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 说错 | 重复问题 | 技术词 | 待补 | 被沙箱拒绝 | 用时 | 输出 tokens |"
+    header = "| 条款 | 结构校验 | 报告与脚本一致 | 找到 | 部分 | 漏掉 | 新发现 | 越界 | 说错 | 重复问题 | 技术词 | 待补 | 被沙箱拒绝 | 用时 | 输出 tokens |"
     rows = [header, "|" + "---|" * (header.count("|") - 1)]
     details = []
     judged_with: set[str] = set()
@@ -359,7 +363,7 @@ def score(run: Path, rejudge: bool) -> None:
         if not folder.exists():
             continue
         session = json.loads((folder / "session.json").read_text(encoding="utf-8")) if (folder / "session.json").exists() else {}
-        complete = {0: "是", 1: "否", 2: "无法使用", None: "没有形式化"}.get(session.get("check_exit"), "出错")
+        complete = {0: "是", 1: "否", 2: "无法使用", None: "没有审查记录"}.get(session.get("check_exit"), "出错")
         matches = {True: "是", False: "否（手改或没重跑）", None: "—"}[session.get("report_matches")]
         refused = session.get("denials", [])
         tail = f" {len(refused)} | {session.get('duration_ms', 0) // 1000}s | {session.get('output_tokens', 0)} |"
