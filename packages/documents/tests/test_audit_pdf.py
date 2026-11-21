@@ -2,7 +2,6 @@
 
 import re
 from copy import deepcopy
-from pathlib import Path
 from uuid import UUID
 
 import pymupdf
@@ -326,17 +325,18 @@ def test_one_cjk_font_family_is_embedded_as_a_subset():
     regular, _bold = report_layout.report_fonts()
     family = pymupdf.Font(fontbuffer=regular).name
     assert any(family.split()[0] in name for name in names)
-    if any(Path(path).is_file() for path, _bold_path in report_layout.NOTO_PATHS):
-        assert "Noto Sans CJK SC" in family
+    assert family.startswith("Sarasa UI SC")
 
 
-def test_a_collection_face_is_extracted_as_a_standalone_font():
-    candidates = (("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "CJK SC"), ("/System/Library/Fonts/Courier.ttc", "Bold Oblique"))
-    collection, wanted = next(((Path(path), wanted) for path, wanted in candidates if Path(path).is_file()), (None, ""))
-    if collection is None:
-        pytest.skip("no font collection on this machine")
-    face = report_layout._extract_collection_face(collection.read_bytes(), wanted)
-    assert face is not None and wanted in pymupdf.Font(fontbuffer=face).name
+def test_the_report_font_is_the_pinned_sarasa_ui_sc_release():
+    # The files are the v1.0.43 unhinted release; a change of font is a deliberate change of these digests.
+    import hashlib
+
+    digests = {name: hashlib.sha256((report_layout.FONT_DIR / name).read_bytes()).hexdigest() for name in report_layout.FONT_FILES}
+    assert digests == {
+        "SarasaUiSC-Regular.ttf": "f5d4abd5a4b01084598590f01c084cc86794603674a6899b190c9225b754a213",
+        "SarasaUiSC-Bold.ttf": "00199abc2b5e839e6ba68f26338532d60415a5f2407fa4218f71c4217b27c200",
+    }
 
 
 def _on_page(document, needle: str) -> bool:

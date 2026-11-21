@@ -119,6 +119,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY assets/li/templates /app/assets/li/templates
 COPY assets/nio/templates /app/assets/nio/templates
 COPY assets/uaes/templates /app/assets/uaes/templates
+COPY assets/fonts /app/assets/fonts
 
 ARG PPAP_BUILD_SHA=
 ARG PPAP_SERVICE=api

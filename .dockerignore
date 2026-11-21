@@ -17,6 +17,8 @@ assets
 !assets/li/templates
 !assets/nio/templates
 !assets/uaes/templates
+# The report font (Sarasa UI SC, OFL) is read by report rendering in the app image.
+!assets/fonts
 **/__pycache__
 **/*.pyc
 .env

@@ -13,7 +13,6 @@ chapter list from that outline, so chapter names exist only in the renderers.
 from __future__ import annotations
 
 import re
-import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
@@ -30,12 +29,10 @@ GAP = 6
 MAX_PAGES = 500
 MAX_HTML = 4_000_000
 FAMILY = "ReportSans"
-# Noto Sans CJK (思源黑体) from the runtime image (fonts-noto-cjk); the SC face of a collection.
-NOTO_PATHS = (
-    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
-    ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc"),
-    ("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc"),
-)
+# Sarasa UI SC (更纱黑体 UI SC, OFL 1.1, v1.0.43 unhinted): Inter for Latin and digits, Source Han Sans for Chinese,
+# TrueType outlines so a face is cut to a report's characters quickly. The files live in the repository and the image.
+FONT_DIR = Path(__file__).resolve().parents[4] / "assets" / "fonts" / "sarasa-ui-sc"
+FONT_FILES = ("SarasaUiSC-Regular.ttf", "SarasaUiSC-Bold.ttf")
 CSS = (
     f"body {{font-family:{FAMILY}; font-size:10pt; line-height:1.55}} h1 {{font-size:16pt; margin:0 0 8pt 0}} h2 {{font-size:12pt; margin:8pt 0 4pt 0}} "
     "h3 {font-size:10.5pt; margin:6pt 0 3pt 0} p {white-space:pre-wrap; margin:2pt 0} .meta {font-size:8.5pt; color:#444} "
@@ -82,49 +79,11 @@ def chapter_title(number: int, name: str) -> str:
     return f"{CHINESE_NUMBERS[number - 1] if number <= 10 else number}、{name}"
 
 
-def _extract_collection_face(collection: bytes, wanted: str) -> bytes | None:
-    """One face of a TrueType/OpenType collection as a standalone font file."""
-    if collection[:4] != b"ttcf":
-        return collection
-    count = struct.unpack(">I", collection[8:12])[0]
-    for index in range(count):
-        offset = struct.unpack(">I", collection[12 + 4 * index : 16 + 4 * index])[0]
-        version, tables = struct.unpack(">IH", collection[offset : offset + 6])
-        records = [struct.unpack(">4sIII", collection[offset + 12 + 16 * n : offset + 28 + 16 * n]) for n in range(tables)]
-        header = bytearray(collection[offset : offset + 12])
-        body = bytearray()
-        start = 12 + 16 * tables
-        directory = bytearray()
-        for tag, checksum, table_offset, length in records:
-            directory += struct.pack(">4sIII", tag, checksum, start + len(body), length)
-            body += collection[table_offset : table_offset + length]
-            body += b"\0" * (-len(body) % 4)
-        face = bytes(header + directory + body)
-        try:
-            name = pymupdf.Font(fontbuffer=face).name
-        except Exception:  # noqa: BLE001 - an unreadable face is skipped
-            continue
-        if wanted in name:
-            return face
-    return None
-
-
 @cache
 def report_fonts() -> tuple[bytes, bytes]:
     """Regular and bold faces of the one report font family."""
-    for regular_path, bold_path in NOTO_PATHS:
-        regular_file = Path(regular_path)
-        if not regular_file.is_file():
-            continue
-        regular = _extract_collection_face(regular_file.read_bytes(), "CJK SC")
-        if regular is None:
-            continue
-        bold_file = Path(bold_path)
-        bold = _extract_collection_face(bold_file.read_bytes(), "CJK SC") if bold_file.is_file() else None
-        return regular, bold or regular
-    # MuPDF's own embedded CJK font covers Chinese and ASCII; still one family for every glyph.
-    fallback = pymupdf.Font("cjk").buffer
-    return fallback, fallback
+    regular, bold = (FONT_DIR / name for name in FONT_FILES)
+    return regular.read_bytes(), bold.read_bytes()
 
 
 @cache
@@ -234,13 +193,12 @@ def _subset(face: bytes, characters: set[int]) -> bytes:
 
     font = TTFont(BytesIO(face), recalcBBoxes=False, recalcTimestamp=False)
     options = subset.Options()
-    options.layout_features = ["*"]
+    # Only features that keep every glyph on its own code point. Inter's contextual forms (calt, case: a hyphen
+    # between digits) are glyphs without one; copied text would read them as control characters.
+    options.layout_features = ["kern", "locl", "ccmp", "mark", "mkmk"]
     options.name_IDs = ["*"]
     options.notdef_outline = True
     options.ignore_missing_unicodes = True
-    # Noto CJK is a CID-keyed CFF font: MuPDF draws its glyphs by their original ids, so renumbering them
-    # (the default) leaves every glyph blank. Unused glyphs are emptied instead; the face is still ~20x smaller.
-    options.retain_gids = True
     subsetter = subset.Subsetter(options)
     subsetter.populate(unicodes=characters)
     subsetter.subset(font)
@@ -309,8 +267,10 @@ class _Pages:
         return pymupdf.Rect(BODY.x0, self.y, BODY.x1, BODY.y1)
 
     def _fits(self, html: str, rect: pymupdf.Rect) -> bool:
-        more, _filled = self._story(html).place(rect)
-        return not more
+        # MuPDF can report a table as placed while its last rows run past the bottom and would be clipped;
+        # it fits only when nothing is left over and what was placed ends inside the rectangle.
+        more, filled = self._story(html).place(rect)
+        return not more and pymupdf.Rect(filled).y1 <= rect.y1 + 0.5
 
     def flow(self, html: str) -> None:
         """Place HTML from the cursor on, continuing over as many pages as it needs."""
@@ -354,7 +314,9 @@ class _Pages:
                 index += 1
             else:
                 story = self._story(table_html(table, rest[:low], continued))
-                _more, filled = story.place(self._remaining())
+                more, filled = story.place(self._remaining())
+                if more or pymupdf.Rect(filled).y1 > self._remaining().y1 + 0.5:
+                    raise ValueError("report_table_overflow")  # never draw a page that would drop rows
                 story.draw(self.device)
                 self.y = pymupdf.Rect(filled).y1 + GAP
                 index += low
@@ -443,7 +405,6 @@ def _render(characters: set[int], seen: set[int], *, cover: str, chapters: list[
             page.draw_line((51, 48), (544, 48), color=(0.6, 0.6, 0.6), width=0.5)
             line(page, pymupdf.Rect(51, 804, 300, 818), date, pymupdf.TEXT_ALIGN_LEFT)
             line(page, pymupdf.Rect(300, 804, 544, 818), f"第 {index + 1} / {total} 页", pymupdf.TEXT_ALIGN_RIGHT)
-        # fontTools subsets the Noto CJK faces; MuPDF's own subsetter rejects their CFF and leaves them whole.
         # The text layer is made exact before the contents lines are found by their titles.
         document.subset_fonts(fallback=True)
         _canonical_to_unicode(document)

@@ -9,7 +9,7 @@ dependencies = [
     "xlrd>=1.2.0",
     "Pillow>=10.2.0",
     "PyMuPDF>=1.26.0",
-    # Subsets the CFF-based Noto Sans CJK report font; MuPDF's own subsetter cannot read it and would embed ~17 MB per face.
+    # Cuts the report font to each report's characters before layout.
     "fonttools>=4.55.0",
     "httpx>=0.24.0",
     "requests>=2.31.0",
