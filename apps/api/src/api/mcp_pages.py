@@ -16,7 +16,8 @@ from pathlib import Path
 
 from fastapi.responses import HTMLResponse
 
-TOKENS = Path(__file__).resolve().parents[4] / "apps" / "web" / "tokens"
+# A link to apps/web/tokens: an installed wheel carries the files, the editable image follows the link.
+TOKENS = Path(__file__).with_name("design_tokens")
 HEADERS = {
     "Cache-Control": "no-store",
     "Referrer-Policy": "no-referrer",

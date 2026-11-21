@@ -252,6 +252,8 @@ class UiA11yTests(unittest.TestCase):
                     )
                 elif path == "/rules/" + RULE:
                     route.fulfill(json=rule, headers=cors)
+                elif path == "/rule-questionnaires":
+                    route.fulfill(json={"questionnaires": []}, headers=cors)
                 else:
                     unexpected.append(path)
                     route.fulfill(status=404, json={"error": "unexpected_test_request"}, headers=cors)

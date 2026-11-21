@@ -30,8 +30,9 @@ MAX_PAGES = 500
 MAX_HTML = 4_000_000
 FAMILY = "ReportSans"
 # Sarasa UI SC (更纱黑体 UI SC, OFL 1.1, v1.0.43 unhinted): Inter for Latin and digits, Source Han Sans for Chinese,
-# TrueType outlines so a face is cut to a report's characters quickly. The files live in the repository and the image.
-FONT_DIR = Path(__file__).resolve().parents[4] / "assets" / "fonts" / "sarasa-ui-sc"
+# TrueType outlines so a face is cut to a report's characters quickly. `fonts` links to assets/fonts/sarasa-ui-sc: an
+# installed wheel carries the files, the editable image follows the link to its one copy.
+FONT_DIR = Path(__file__).with_name("fonts")
 FONT_FILES = ("SarasaUiSC-Regular.ttf", "SarasaUiSC-Bold.ttf")
 CSS = (
     f"body {{font-family:{FAMILY}; font-size:10pt; line-height:1.55}} h1 {{font-size:16pt; margin:0 0 8pt 0}} h2 {{font-size:12pt; margin:8pt 0 4pt 0}} "
