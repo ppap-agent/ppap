@@ -16,14 +16,13 @@ def test_preset_matrix_uses_customer_identity_not_legacy_filename_numbers():
         preset_rule("UAES", "E12")
 
 
-def test_repeated_source_numbers_have_distinct_stable_clause_identities():
+def test_current_uaes_presets_use_the_frozen_v1_rulebook_clause_ids():
     sample = preset_rule("UAES", "U01")
-    assert [clause.source_number for clause in sample.clauses] == ["1", "2", "3", "1"]
-    assert len({clause.id for clause in sample.clauses}) == 4
-    assert sample.clauses[0].category == "尺寸测量报告覆盖性检查"
-    assert "实测值的列数是否是3或3的倍数" in sample.clauses[0].text
-    assert "气泡图独立文件" in sample.clauses[3].text
-    assert sample.clauses[0].id != sample.clauses[3].id
+    assert sample.rulebook == {"name": "规范性条款", "version": "v1.0", "revision": 0}
+    assert sample.source_path == "assets/uaes/rulebook/v1.0/m0/rules/IR.json"
+    assert [(clause.id, clause.source_number, clause.locator) for clause in sample.clauses] == [
+        (f"IR:{number}", str(number), f"IR.json#IR:{number}") for number in range(1, 5)
+    ]
 
 
 def test_control_plan_customer_rules_preserve_actual_differences():

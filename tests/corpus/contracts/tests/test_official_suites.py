@@ -353,6 +353,18 @@ def test_corpus_selector_is_the_leaf_its_truths_were_judged_under():
     assert all(sources[path] == installed[path] for path in installed if not path.startswith("uaes/"))
 
 
+def test_frozen_uaes_presets_preserve_repeated_docx_source_numbers():
+    from audit.presets import preset_rule
+
+    with oracle.presets_as_judged("UAES"):
+        sample = preset_rule("UAES", "U01")
+        assert [clause.source_number for clause in sample.clauses] == ["1", "2", "3", "1"]
+        assert [clause.id for clause in sample.clauses] == ["U01:1-1", "U01:2", "U01:3", "U01:1-2"]
+        assert sample.clauses[0].category == "尺寸测量报告覆盖性检查"
+        assert "实测值的列数是否是3或3的倍数" in sample.clauses[0].text
+        assert "气泡图独立文件" in sample.clauses[3].text
+
+
 def test_corpus_table_path_is_not_stored_as_directory_identity():
     from product.seed_standard_suites import official_source_suites, persisted_source_path
 
