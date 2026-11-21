@@ -1,0 +1,23 @@
+{
+  "schema": "clause-check-report-v1",
+  "clause": {
+    "id": "CP:4",
+    "title": "控制计划（CP）（UAES 审核规则库 规范性条款 v1.0）",
+    "category": "UAES-CP-特性类型-列与标记",
+    "text": "控制计划中必须存在“特性类型”列或“特殊特性”列（至少一列），且该列下应有非空白的特性标记。没有相应列，或列下无特性标记，均不通过。\n\n存在语义相近但不在允许同义写法范围内的列名时，按“列名近似但未登记”处理，交人工确认，不直接当作该列已具备。",
+    "source": "rules/CP.json#CP:4",
+    "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
+  },
+  "review_sha256": "7c52e80c8e4577ef00e58e80fcd9b0ac935ede28c41e1397ee25eab6a56adcee",
+  "findings": [],
+  "excluded": [
+    {
+      "quote": "交人工确认，不直接当作该列已具备",
+      "issue": "近似而未登记的列名是否自动认可？",
+      "reason": "条款已指定人工确认的处理方式，不需要就单一近似列名再次发通用问卷。"
+    }
+  ],
+  "policy_sha256": {
+    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
+  }
+}
