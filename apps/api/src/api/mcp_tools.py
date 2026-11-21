@@ -252,6 +252,9 @@ def register_tools(mcp, gateway, authority, runtime):
             actor = await authority()
             actor.require("audits:execute")
             reply = await runtime.confirm(actor, tid, quote_id, rid, notify_when_done)
+            if reply.status == "error" and reply.error in {"task_confirmation_changed", "confirmation_content_changed", "task_revision_conflict"}:
+                # What the user agreed to no longer holds. Nothing started and nothing was charged.
+                raise workflow.Rejected("quote_changed")
             arguments = {"task_id": tid, "quote_id": quote_id, "request_id": rid, "notify_when_done": notify_when_done}
             return receipt(reply, "confirm_audit", arguments, task_id=tid) or await task_outcome(actor, tid, request_id=rid)
         except Exception as exc:
@@ -379,6 +382,17 @@ def register_tools(mcp, gateway, authority, runtime):
         try:
             actor = await authority()
             operation = await asyncio.to_thread(gateway.store.operation, actor, rid)
+            # The receipt is this connection's own request (the store scopes it to the grant and its scope).
+            if operation["state"] == "ready":
+                # Approved (or claimed by no one yet) but not carried out: only the original call carries it out.
+                step = {
+                    "kind": "call_tool",
+                    "tool": operation["tool"],
+                    "reason": "approved_not_started",
+                    "arguments": {"request_id": rid},
+                    "message": "这次操作已获同意但还没有执行。请用原来的参数和同一个 request_id 再调用一次原工具。",
+                }
+                return Outcome(request_id=rid, result={"tool": operation["tool"], "state": "approved_not_started"}, next=step)
             reply = await gateway.operation_reply(actor, operation)
             pending = receipt(reply, operation["tool"], {"request_id": rid}, task_id=None)
             if pending is not None:

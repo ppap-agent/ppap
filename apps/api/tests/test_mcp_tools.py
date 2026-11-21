@@ -99,13 +99,19 @@ class Product:
         return found.json()
 
     async def write(self, actor, scope, tool, rid, method, path, body, *, probes, confirmation=None, result_path=None):
-        self.operations[rid] = {"tool": tool, "state": "ready", "arguments": {"body": body}}
+        recorded = self.operations.setdefault(rid, {"tool": tool, "state": "ready", "arguments": {"body": body}, "confirmation": confirmation})
+        if fingerprint(recorded["confirmation"]) != fingerprint(confirmation):
+            raise McpError("confirmation_content_changed", 409)
         if confirmation is not None and not self.approved:
-            self.operations[rid]["state"] = "confirmation_required"
+            recorded["state"] = "confirmation_required"
             return Reply(status="confirmation_required", request_id=rid, confirmation_url="https://ppap.example/mcp/confirm/" + rid)
         if tool == "confirm_audit":
+            # The audit task itself refuses a confirmation whose basis has changed since the user agreed.
+            if body["expected_confirmation_basis_digest"] != self.audit["confirmation_basis_digest"]:
+                recorded["state"] = "failed"
+                return Reply(status="error", error="task_confirmation_changed", request_id=rid)
             self.audit["state"] = "reviewing"
-        self.operations[rid]["state"] = "succeeded"
+        recorded["state"] = "succeeded"
         return Reply(status="ok", data={}, request_id=rid)
 
     @property
@@ -280,3 +286,29 @@ def test_a_task_that_cannot_be_read_is_an_error_not_a_wait():
     world.product.request = broken
     seen = world.call("get_task", task_id=task)
     assert seen["result"] is None and seen["next"]["kind"] == "recover" and seen["next"]["reason"] == "internal_error"
+
+
+def test_an_approval_survives_fields_that_move_on_their_own_and_a_changed_quote_is_asked_again():
+    world = World("a.xlsx")
+    task = str(uuid4())
+    quote = world.call("prepare_audit", request_id=task, source="fld1")["result"]["quote"]["quote_id"]
+    request = str(uuid4())
+    world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
+    world.product.approved = True
+    world.product.operations[request]["state"] = "ready"  # what the approval page records
+    # Approved but not yet carried out: the receipt says to call the tool again, never to wait.
+    pending = world.call("get_operation", request_id=request)
+    assert pending["next"]["kind"] == "call_tool" and pending["next"]["tool"] == "confirm_audit" and pending["next"]["reason"] == "approved_not_started"
+    world.product.audit["updated_at"] = "later"  # the task moved on without changing what was agreed
+    assert world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)["result"]["phase"] == "auditing"
+
+    other = World("a.xlsx")
+    task = str(uuid4())
+    quote = other.call("prepare_audit", request_id=task, source="fld1")["result"]["quote"]["quote_id"]
+    request = str(uuid4())
+    other.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
+    other.product.approved = True
+    other.product.audit["confirmation_basis_digest"] = "a-new-quote"  # what confirming would start has changed
+    changed = other.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
+    assert changed["next"] == {"kind": "call_tool", "tool": "get_task", "arguments": {"task_id": task}, "reason": "quote_changed"}
+    assert other.product.audit["state"] == "pending_confirm"

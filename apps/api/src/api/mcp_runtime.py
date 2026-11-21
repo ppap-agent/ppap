@@ -288,9 +288,13 @@ class TaskRuntime:
     async def confirm(self, actor: Delegation, task_id: str, quote_id: str, request_id: str, notify_when_done: bool | None) -> Reply:
         path = f"/audit-tasks/{task_id}"
         prior = await self.recorded(actor, request_id)
-        if prior is not None and prior["tool"] == "confirm_audit":
-            # A replay confirms what the first call fixed; the task may have moved on since.
-            body = prior["arguments"]["body"]
+        if prior is not None and prior["tool"] == "confirm_audit" and prior["confirmation"] is not None:
+            # A replay carries what the person approved, as it was. Whether that still holds is the quote's to say:
+            # the audit task refuses a confirmation whose basis changed, while fields that move on their own (times,
+            # estimates) never void an approval.
+            return await self.gateway.write(
+                actor, "audits:execute", "confirm_audit", request_id, "POST", path + "/confirm", prior["arguments"]["body"], probes=[path], confirmation=prior["confirmation"]
+            )
         else:
             row, facts, view = await self.view(actor, task_id)
             if view["phase"] != "ready_to_confirm":
