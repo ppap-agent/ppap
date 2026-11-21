@@ -344,8 +344,8 @@ def test_predefined_catalog_binds_each_source_path_to_its_official_revision(auth
         "revision_id": latest.id,
         **leaf_capability(updated),
     }
-    assert predefined["uaes/U08"]["evidence_reader_clause_ids"] == [clause["id"] for clause in rules["rules"]]
-    assert predefined["uaes/U08"]["bound_clause_count"] == predefined["uaes/U08"]["clause_count"] == len(rules["rules"])
+    assert predefined["uaes/U08"]["evidence_reader_clause_ids"] == list(rules["checker_binding"])
+    assert predefined["uaes/U08"]["bound_clause_count"] == len(rules["checker_binding"]) < predefined["uaes/U08"]["clause_count"] == len(rules["rules"])
     held = leaf_capability(placeholder.files)
     declaration = {}
     exec(placeholder.files["resources.py"], declaration)

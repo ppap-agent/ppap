@@ -9,5 +9,5 @@ RESOURCE = {
         ".xlsm": "audit.checker_lib.uaes.approval:UaesApprovalAgent",
         ".xlsx": "audit.checker_lib.uaes.approval:UaesApprovalAgent",
     },
-    "methods": {"U19:1": "rule_1"},
+    "methods": {},
 }

@@ -117,6 +117,21 @@ class Metadata(TypedDict):
     project: NotRequired[str | None]
 
 
+class RulebookRevision(TypedDict):
+    """The rulebook revision a product preset's clauses come from, e.g. 规范性条款 v1.0 revision 0."""
+
+    name: str
+    version: str
+    revision: int
+
+
+class RuleClauseChange(TypedDict):
+    """How a clause differs from the previous rulebook revision, in the rule maintainers' words."""
+
+    kind: Literal["same", "changed", "new"]
+    note: str
+
+
 class Rule(TypedDict):
     id: str
     title: str
@@ -132,6 +147,9 @@ class Rule(TypedDict):
     suite_key: NotRequired[str]
     preset_key: NotRequired[str]
     clause_count: NotRequired[int]
+    rulebook: NotRequired[RulebookRevision]
+    # Clauses of a product preset its checker is aligned with; the others are not checked yet.
+    checked_clause_count: NotRequired[int]
 
 
 class RuleItem(TypedDict):
@@ -142,6 +160,7 @@ class RuleItem(TypedDict):
     type_of_rule: str
     # Default severity carried by the rule (rule package v1.5 severity; PRD §2.11 五); absent means ungraded.
     severity: NotRequired[Literal["A", "B", "C"]]
+    change: NotRequired[RuleClauseChange]
 
 
 class EngineRuleBody(TypedDict):
@@ -150,6 +169,7 @@ class EngineRuleBody(TypedDict):
     checker_binding: NotRequired[dict[str, str]]
     title: NotRequired[str]
     preset_key: NotRequired[str]
+    rulebook: NotRequired[RulebookRevision]
     appendix: NotRequired[list[dict[str, Any]]]
     kind: Literal["engine"]
     type: str
@@ -181,6 +201,7 @@ class RuleDetail(TypedDict):
     predecessor_id: NotRequired[str | None]
     created_by: NotRequired[str | None]
     case_context: NotRequired[CaseContext]
+    checked_clauses: NotRequired[list[str]]
 
 
 class RuleCandidate(TypedDict):

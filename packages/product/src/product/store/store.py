@@ -87,6 +87,7 @@ from product.rules import (
     document_type_aliases,
     latest_rule_versions,
     normalize_rule_body,
+    preset_checked_clauses,
     rule_parse_request,
     rule_parse_view,
     rule_title,
@@ -2893,6 +2894,11 @@ class AuthStore:
                     item["preset_key"] = preset_key
                 clauses = body.get("rules")
                 item["clause_count"] = len(clauses) if isinstance(clauses, list) else 0
+                if isinstance(body.get("rulebook"), dict):
+                    item["rulebook"] = body["rulebook"]
+                checked = preset_checked_clauses(body)
+                if checked is not None:
+                    item["checked_clause_count"] = len(checked)
             out.append(item)
         return out
 
@@ -2969,6 +2975,7 @@ class AuthStore:
             "created_by": str(row[7]) if row[7] else None,
             "case_context": row[8] or {},
             "customer_scope": customer_scope(row[2], row[8]),
+            **({"checked_clauses": checked} if (checked := preset_checked_clauses(row[2])) is not None else {}),
         }
 
     def publish_rule(self, principal: Principal, title, body, source_file_version_id, predecessor_id=None, request_id=None, case_context=None) -> dict:

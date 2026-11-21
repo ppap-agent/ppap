@@ -19,6 +19,8 @@ class PresetClause:
     category: str
     text: str
     locator: str
+    # How the clause differs from the previous rulebook revision: {"kind": same|changed|new, "note": …}.
+    change: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,8 @@ class CustomerPreset:
     title: str
     source_path: str
     clauses: tuple[PresetClause, ...]
+    # The rulebook revision these clauses come from: {"name", "version", "revision"}; None for undated presets.
+    rulebook: dict | None = None
 
 
 @lru_cache(maxsize=1)
@@ -92,6 +96,7 @@ def preset_rule_body(customer: str, entry_id: str) -> dict:
         "rule_profile": "v4",
         "type": preset_document_type(preset),
         "preset_key": preset.entry_id,
+        **({"rulebook": dict(preset.rulebook)} if preset.rulebook else {}),
         "customers": [preset.customer],
         "models": [],
         "parts": [],
@@ -103,6 +108,7 @@ def preset_rule_body(customer: str, entry_id: str) -> dict:
                 "rule_to_check": clause.text,
                 "type_of_rule": "text",
                 **({"severity": severities[clause.id]} if clause.id in severities else {}),
+                **({"change": dict(clause.change)} if clause.change else {}),
             }
             for clause in preset.clauses
         ],

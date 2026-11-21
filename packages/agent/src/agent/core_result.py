@@ -39,7 +39,7 @@ def core_response(
         row["verification_status"] = target.verification
         row["samples_not_rerun"] = target.samples_not_rerun
         if (version, clause) in unsupported:
-            row.update(coverage="unsupported", reason="未检查：这条没有对应的检查，由人判断。")
+            row.update(coverage="unsupported", reason="规则已更新，暂未检查：检查程序还没有跟上这一条，由人判断。")
             row.pop("item_key", None)
             row.pop("status", None)
     response.coverage.checker_execution = {

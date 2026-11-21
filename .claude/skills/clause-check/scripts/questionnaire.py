@@ -72,7 +72,9 @@ def findings(directory: Path, rule_version: str) -> tuple[list[dict], dict[str, 
             if not policy_file or hashlib.sha256(policy_file.read_bytes()).hexdigest() != digest:
                 raise SystemExit(f"[报告] {path.name} 引用政策已变化；请重新审查并重跑 check.py")
         rule_id = clause["id"]
-        title = re.sub(r"（[^（）]*" + re.escape(rule_version) + r"[^（）]*）$", "", clause["title"]).strip()
+        # The rule file title names the version («…规范性条款 v1.0）»), not the revision the questionnaire is for.
+        version = re.sub(r" 修订 \d+$", "", rule_version)
+        title = re.sub(r"（[^（）]*" + re.escape(version) + r"[^（）]*）$", "", clause["title"]).strip()
         name = f"{title}{'' if title.endswith('）') else ' '}规则 {rule_id.split(':', 1)[-1]}"
         if rule_id in names:
             raise SystemExit(f"[报告] 同一条款重复：{rule_id}")

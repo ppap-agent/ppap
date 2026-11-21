@@ -9,5 +9,5 @@ RESOURCE = {
         ".png": "audit.checker_lib.uaes.records:UaesPhotoAgent",
         ".webp": "audit.checker_lib.uaes.records:UaesPhotoAgent",
     },
-    "methods": {"U13:1": "rule_1"},
+    "methods": {},
 }

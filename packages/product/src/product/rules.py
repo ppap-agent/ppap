@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from typing import Any, Literal
 
 from audit.contracts import RuleItem
@@ -275,6 +276,28 @@ def rule_title(value) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > 200:
         raise ValueError("invalid_rule_title")
     return value.strip()
+
+
+@lru_cache(maxsize=1)
+def _repository_bindings() -> dict[str, frozenset[str]]:
+    """Clauses each repository checker leaf binds; leaves ship with the image and do not change while it runs."""
+    from audit.standard_suites import predefined_directory_suites
+
+    return {suite.suite_key: frozenset(suite.entrypoints) for suite in predefined_directory_suites()}
+
+
+def preset_checked_clauses(body) -> list[str] | None:
+    """The clauses of a product preset its checker leaf is aligned with (binds), in clause order; None for other rules.
+
+    The rest of the preset's clauses are not checked yet: the program is catching up with the rule revision.
+    """
+    if not isinstance(body, dict) or body.get("rule_profile") != "v4":
+        return None
+    key, customers = body.get("preset_key"), body.get("customers")
+    if not isinstance(key, str) or not isinstance(customers, list) or len(customers) != 1:
+        return None
+    bound = _repository_bindings().get(f"{customers[0]}:{key}", frozenset())
+    return [str(row["id"]) for row in body.get("rules") or [] if isinstance(row, dict) and str(row.get("id")) in bound]
 
 
 def install_customer_presets(conn, tenant_id: str) -> None:

@@ -6,13 +6,15 @@ import csv
 import hashlib
 import json
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, cast
 
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-from audit.standard_suites import StandardSuite, library_revision, predefined_directory_suites
+from audit.standard_suites import StandardSuite, library_revision, load_predefined_checkers, predefined_directory_suites
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 CORPUS = REPO_ROOT / "assets/corpus"
@@ -34,10 +36,59 @@ def table(dataset: str, kind: str, *, corpus: Path = CORPUS) -> Path:
     return corpus / f"{dataset}-{kind}"
 
 
+# A rule revision the product has moved on from keeps the checker leaves and presets it was judged with
+# (assets/<customer>/rulebook/<version>/<revision>/checkers and presets.json). Human truths and model recordings belong
+# to the frozen revision they were made under, so the corpus runs that revision rather than the current one.
+FROZEN_REVISIONS = REPO_ROOT / "assets"
+
+
 @lru_cache(maxsize=1)
+def _judged_sources() -> tuple[dict[str, StandardSuite], dict[str, Path]]:
+    """Per leaf path, the Suite the reviewed rules were judged under, and the frozen revision it came from."""
+    current = {suite.source_path: suite for suite in predefined_directory_suites()}
+    reviewed = reviewed_rules()
+    chosen, origin = dict(current), {}
+    for revision in sorted(path.parent for path in FROZEN_REVISIONS.glob("*/rulebook/*/*/checkers")):
+        suites = load_predefined_checkers(revision / "checkers")
+
+        # A revision the reviewed rules were judged under, while the product has moved on: the corpus runs all of it.
+        def judged_here(suite: StandardSuite) -> bool:
+            path = suite.source_path
+            moved_on = path not in current or reviewed_contract(current[path]) != reviewed.get(path)
+            return path in reviewed and reviewed[path] == reviewed_contract(suite) and moved_on
+
+        judged = any(judged_here(suite) for suite in suites)
+        for suite in suites if judged else ():
+            chosen[suite.source_path], origin[suite.source_path] = suite, revision
+    return chosen, origin
+
+
 def suite_sources() -> dict[str, StandardSuite]:
-    """Exact leaf paths, never a current/latest Suite lookup."""
-    return {suite.source_path: suite for suite in predefined_directory_suites()}
+    """Exact leaf paths, never a current/latest Suite lookup: the revision each leaf's human truths were judged under."""
+    return dict(_judged_sources()[0])
+
+
+@contextmanager
+def presets_as_judged(customer: str) -> Iterator[None]:
+    """Recognition reads the customer's presets of the frozen revision its truths and recordings were made under."""
+    import audit.presets as presets
+
+    customer_dir = {suite.customer: path.split("/", 1)[0] for path, suite in _judged_sources()[0].items()}.get(customer)
+    revisions = {revision for path, revision in _judged_sources()[1].items() if path.split("/", 1)[0] == customer_dir}
+    if not revisions:
+        yield
+        return
+    if len(revisions) != 1:
+        raise ValueError(f"{customer}: truths judged under several frozen revisions")
+    rows = json.loads((revisions.pop() / "presets.json").read_text(encoding="utf-8"))
+    frozen = tuple(presets.CustomerPreset(**{**row, "clauses": tuple(presets.PresetClause(**clause) for clause in row["clauses"])}) for row in rows)
+    current = presets.customer_presets
+    judged = (*frozen, *(preset for preset in current() if preset.customer != customer))
+    presets.customer_presets = lambda: judged  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        presets.customer_presets = current  # type: ignore[assignment]
 
 
 def reviewed_contract(suite: StandardSuite) -> dict:
@@ -241,8 +292,11 @@ def recognize_references(case: OracleCase) -> dict[str, dict]:
     from worker.intake.file_analysis import analyze_file
 
     customer = case_customer(case)
-    rules = customer_rules(customer)
-    return {file.file_id: analyze_file(file.filename, file.path.read_bytes(), rules, customer_preference=customer, scoped=True, reference_only=True) for file in case.files if file.role == "reference"}
+    with presets_as_judged(customer):
+        rules = customer_rules(customer)
+        return {
+            file.file_id: analyze_file(file.filename, file.path.read_bytes(), rules, customer_preference=customer, scoped=True, reference_only=True) for file in case.files if file.role == "reference"
+        }
 
 
 def build_round(case: OracleCase, recognized: dict[str, dict] | None = None) -> tuple[ExecutionSnapshot, dict[str, bytes], dict[str, int]]:

@@ -341,11 +341,16 @@ def test_real_generations_of_one_document_type_do_not_block_each_other(selector,
     assert "oracle_rules_changed" not in plan.reasons
 
 
-def test_corpus_selector_is_the_installed_u08_leaf():
-    from audit.standard_suites import predefined_directory_suites
+def test_corpus_selector_is_the_leaf_its_truths_were_judged_under():
+    from audit.standard_suites import load_predefined_checkers, predefined_directory_suites
 
-    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "uaes/U08")
-    assert oracle.suite_sources()["uaes/U08"] is directory or oracle.suite_sources()["uaes/U08"] == directory
+    installed = {suite.source_path: suite for suite in predefined_directory_suites()}
+    # The product moved UAES to a newer rule revision; its truths and recordings stay with the frozen one.
+    frozen = {suite.source_path: suite for suite in load_predefined_checkers(oracle.REPO_ROOT / "assets/uaes/rulebook/v0.0/m1/checkers")}
+    sources = oracle.suite_sources()
+    assert sources["uaes/U08"] == frozen["uaes/U08"] != installed["uaes/U08"]
+    assert oracle.reviewed_rules()["uaes/U08"] == oracle.reviewed_contract(sources["uaes/U08"])
+    assert all(sources[path] == installed[path] for path in installed if not path.startswith("uaes/"))
 
 
 def test_corpus_table_path_is_not_stored_as_directory_identity():

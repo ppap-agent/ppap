@@ -22,7 +22,11 @@ export function templateName(key: string): string {
   return key.replace(/^customer:/, '')
 }
 
-export type RuleRow = {id: string; title: string; clauses: number | null; updatedAt: string}
+export type Rulebook = components['schemas']['RulebookRevision']
+/** How people name a rulebook revision: 规范性条款 v1.0 修订 0. */
+export const rulebookLabel = (rulebook: Rulebook) => `${rulebook.name} ${rulebook.version} 修订 ${rulebook.revision}`
+/** `checked` counts the clauses the checker is aligned with; the others are not checked until it catches up. */
+export type RuleRow = {id: string; title: string; clauses: number | null; updatedAt: string; rulebook: string | null; checked: number | null}
 export type TypeRules = {code: string; type: string; label: string; rules: RuleRow[]}
 /** One registered customer on the rules page: its type set M with the current rules of each type; `types` is null when M is not configured. */
 export type CustomerRules = {customer: RegisteredCustomer; types: TypeRules[] | null}
@@ -40,7 +44,7 @@ export function customerRules(customers: RegisteredCustomer[], rules: Rule[]): C
     const own = current.filter(rule => (rule.customers ?? []).some(value => registeredCustomer([customer], value)))
     return {customer, types: types.map(type => ({
       code: type.code, type: type.rule_type, label: documentTypeLabel(type.rule_type),
-      rules: own.filter(rule => rule.type === type.rule_type).map(rule => ({id: rule.id, title: rule.title, clauses: rule.clause_count ?? null, updatedAt: rule.created_at}))
+      rules: own.filter(rule => rule.type === type.rule_type).map(rule => ({id: rule.id, title: rule.title, clauses: rule.clause_count ?? null, updatedAt: rule.created_at, rulebook: rule.rulebook ? rulebookLabel(rule.rulebook) : null, checked: rule.checked_clause_count ?? null}))
         .sort((a, b) => a.title.localeCompare(b.title, 'zh-CN')),
     }))}
   })
@@ -50,4 +54,12 @@ export function customerRules(customers: RegisteredCustomer[], rules: Rule[]): C
 export function ruleCoverage(customer: RegisteredCustomer) {
   const coverage = customer.coverage
   return coverage?.types.length ? {covered: coverage.rule_types.length, total: coverage.types.length} : null
+}
+
+/** The one rulebook revision a customer's current rules come from, and how many of its clauses the checkers are aligned with; null otherwise. */
+export function customerRulebook(entry: CustomerRules): {label: string; clauses: number; checked: number} | null {
+  const rows = (entry.types ?? []).flatMap(type => type.rules).filter(rule => rule.rulebook)
+  const labels = [...new Set(rows.map(rule => rule.rulebook))]
+  if (labels.length !== 1) return null
+  return {label: labels[0]!, clauses: rows.reduce((sum, rule) => sum + (rule.clauses ?? 0), 0), checked: rows.reduce((sum, rule) => sum + (rule.checked ?? 0), 0)}
 }

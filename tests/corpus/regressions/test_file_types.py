@@ -1,6 +1,6 @@
 """File recognition regression: every corpus target matches its own customer rule."""
 
-from corpus_contracts.oracle import REPO_ROOT, case_rows, customer_rules
+from corpus_contracts.oracle import REPO_ROOT, case_rows, customer_rules, presets_as_judged
 from worker.intake.file_analysis import analyze_file
 
 
@@ -24,5 +24,7 @@ def pytest_generate_tests(metafunc):
 def test_target_matches_its_customer_rule(target):
     group, path, filename = target
     customer, entry = group.split(":")
-    result = analyze_file(filename, path.read_bytes(), customer_rules(customer), customer_preference=customer, scoped=True)
+    # Recognition reads the presets of the revision this target's truths and recordings were made under.
+    with presets_as_judged(customer):
+        result = analyze_file(filename, path.read_bytes(), customer_rules(customer), customer_preference=customer, scoped=True)
     assert (result["matching_status"], result["matched_rule_id"]) == ("matched", entry), result["notices"]

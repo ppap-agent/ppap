@@ -10,5 +10,5 @@ RESOURCE = {
         ".xlsm": "audit.checker_lib.uaes.warrant:UaesWarrantAgent",
         ".xlsx": "audit.checker_lib.uaes.warrant:UaesWarrantAgent",
     },
-    "methods": {"U17:1": "rule_1", "U17:2": "rule_2", "U17:3": "rule_3", "U17:4": "rule_4", "U17:5": "rule_5"},
+    "methods": {},
 }

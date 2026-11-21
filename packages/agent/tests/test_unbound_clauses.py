@@ -15,7 +15,7 @@ def test_u08_bytes_do_not_pass_unbound_clauses_or_unsupported_formats(tmp_path):
     rules = json.loads(suite.files["rules.json"])
     # Exercise an explicitly incomplete binding independently of the installed
     # leaf's current business maturity.
-    rules["checker_binding"].pop("U08:2")
+    rules["checker_binding"].pop("CP:3")
     program = {name: suite.files[name] for name in ("checker.py", "resources.py")}
     digest = checker_digest(program)
     binding = RuleBinding(suite.suite_key, digest, rules["checker_binding"])
