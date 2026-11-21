@@ -225,6 +225,14 @@ def _revision(state: dict, facts: dict) -> dict | None:
     return {"customer_preference": customer, "files": inputs, "expected_revision": audit.get("input_revision", 0)}
 
 
+def audited(audit: dict | None) -> bool:
+    """The audit has its result: the task is completed, or its round finished while reports are still being made
+    (the Web shows it done then too). Reports have their own state."""
+    if not audit or not audit.get("round_id"):
+        return False
+    return audit.get("state") == "completed" or audit.get("execution") in {"completed", "failed"}
+
+
 def effects(state: dict, facts: dict) -> list[dict]:
     """What to do now. Each effect is idempotent under its request ID; running one twice changes nothing."""
     if state["closed"]:
@@ -541,7 +549,7 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
             found.append(_precheck_issue(task_id, item, by_version, editable))
         for item in precheck.get("warnings") or []:
             found.append(_precheck_issue(task_id, item, by_version, editable))
-    if audit.get("state") == "completed":
+    if audited(audit):
         for row in audit.get("files", []):
             review = row.get("audit") or {}
             errors = (review.get("counts") or {}).get("error_count") or 0
@@ -691,7 +699,7 @@ def project(task_id: str, state: dict, facts: dict) -> dict:
 
     if state["closed"]:
         phase = "closed"
-    elif audit.get("state") == "completed":
+    elif audited(audit):
         phase = "completed"
     elif audit.get("state") == "reviewing":
         phase = "auditing"

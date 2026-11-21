@@ -93,7 +93,7 @@ class TaskRuntime:
             facts["estimate"] = await self.read(actor, "/audit-duration-estimate")
             if not audit.get("customer_preference"):
                 facts["customers"] = await self.read(actor, "/audit-customers")
-        if audit and audit.get("state") == "completed" and audit.get("round_id"):
+        if audit and workflow.audited(audit):
             facts["questions"] = await self.read(actor, f"/audit-rounds/{audit['round_id']}/fact-answers")
             found = await self.read(actor, f"/rounds/{audit['round_id']}") or {}
             facts["hints"] = [{"item_key": row["item_key"], "item": row.get("item"), "hint": row["review_hint"]} for row in found.get("findings", []) if row.get("review_hint")]

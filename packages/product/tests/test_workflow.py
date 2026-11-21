@@ -236,3 +236,14 @@ def test_checks_that_did_not_run_are_said_to_be_unfinished_never_passed():
     (issue,) = view["issues"]
     assert issue["code"] == "CHECK_NOT_COMPLETED" and issue["subject"]["filename"] == "a" and "4 个检查项" in issue["message"] and not issue["blocking"]
     assert view["result"]["audit"]["conclusion"] == "ERROR"
+
+
+def test_a_finished_audit_is_read_while_its_reports_are_still_being_made():
+    state = w.apply(prepared("a"), {"type": "audit_created"})
+    row = audit_row("a", audit={"conclusion": "NG", "execution": "completed", "report": {"state": "generating"}})
+    running = audit(row, state="reviewing", execution="completed", conclusion="NG", round_id="round")
+    view = w.project(TASK, state, {"audit": running})
+    assert view["phase"] == "completed" and view["next"] == {"kind": "call_tool", "tool": "get_results", "arguments": {"task_id": TASK}}
+    assert view["result"]["files"][0]["report"] == "generating"
+    still = audit(row, state="reviewing", execution="running", round_id="round")
+    assert w.project(TASK, state, {"audit": still})["phase"] == "auditing"

@@ -164,7 +164,7 @@ def register_tools(mcp, gateway, authority, runtime):
 
     async def audit_round(actor, task_id: str) -> tuple[dict, str]:
         audit = await gateway.get(actor, "audits:read", f"/audit-tasks/{task_id}")
-        if audit.get("state") != "completed" or not audit.get("round_id"):
+        if not workflow.audited(audit):
             raise workflow.Rejected("results_not_ready")
         return audit, audit["round_id"]
 
