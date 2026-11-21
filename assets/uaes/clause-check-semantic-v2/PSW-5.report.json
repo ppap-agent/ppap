@@ -1,0 +1,23 @@
+{
+  "schema": "clause-check-report-v1",
+  "clause": {
+    "id": "PSW:5",
+    "title": "零件提交保证书（PSW）（UAES 审核规则库 规范性条款 v1.0）",
+    "category": "UAES-PSW-提交等级-校验",
+    "text": "PSW 必须包含“要求提交的等级”字段，且该字段对应区域的等级选项中有且仅有一项被勾选；没有该字段、没有任何选项被勾选，或多于一项被勾选，均不通过。\n\n勾选计数前须做同义合并：同一语义的中英文／简称／序号写法算 1 项（等级 3 ＝ Level 3 ＝ 等级三），合并后仍多于 1 项才判“勾选多项”，不按字面卡唯一性。",
+    "source": "rules/PSW.json#PSW:5",
+    "source_sha256": "701acff9b912b1ea3fe5ff70638f10c55b5a5673511bb890a9049eeccef8dfdc"
+  },
+  "review_sha256": "538a572894fb7f37b297c567a04cdc1d7c481a0c0d7a1990ea9f0621cc5ba80d",
+  "findings": [],
+  "excluded": [
+    {
+      "quote": "等级 3 ＝ Level 3 ＝ 等级三",
+      "issue": "只同时勾选中英文的等级 3，是否违反单选",
+      "reason": "两种写法是同一项，原文明确要求先合并再计数。"
+    }
+  ],
+  "policy_sha256": {
+    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
+  }
+}

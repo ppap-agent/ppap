@@ -1,0 +1,23 @@
+{
+  "schema": "clause-check-report-v1",
+  "clause": {
+    "id": "PFD:3",
+    "title": "过程流程图（PFD）（UAES 审核规则库 规范性条款 v1.0）",
+    "category": "UAES-PFD-受控章-存在性",
+    "text": "过程流程图中必须包含受控章；没有受控章即不通过。存在疑似印章图形但章内文字或受控标识无法辨认的，按不通过处理并提示人工复核。",
+    "source": "rules/PFD.json#PFD:3",
+    "source_sha256": "81aa83efd4b4178e9cd2104210d940b4fe925215c64fffed3444aff7e5b03094"
+  },
+  "review_sha256": "24f8f6c98f5b960aab21be8ebf5910f67c48611e44414dce6f23b6dbc33f6c56",
+  "findings": [],
+  "excluded": [
+    {
+      "quote": "存在疑似印章图形但章内文字或受控标识无法辨认的",
+      "issue": "能否套用流程图规则2不可辨记未审",
+      "reason": "规则2的例外指工序分类图形。受控章有自己的明确结论：疑似章不可辨时不通过，并请人工复核；不能仅凭文本没提取到就说无章。"
+    }
+  ],
+  "policy_sha256": {
+    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
+  }
+}
