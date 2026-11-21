@@ -17,7 +17,7 @@ import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
-from html import escape
+from html import escape, unescape
 from io import BytesIO
 from pathlib import Path
 
@@ -199,8 +199,57 @@ def _canonical_to_unicode(document: pymupdf.Document) -> None:
         document.update_stream(target, (head + blocks + tail).encode("latin-1"))
 
 
-def _archive() -> tuple[pymupdf.Archive, str]:
-    regular, bold = report_fonts()
+# Text the layout itself writes besides the report's own: contents, continuation labels, the running
+# header and footer, and the characters around numbers. Every character a report can show is in its faces.
+LAYOUT_TEXT = "目录封面（续表）第页/…—·：；，。、（）《》「」【】0123456789" + "".join(chr(code) for code in range(0x20, 0x7F)) + "\u00a0"
+
+
+def _characters(*parts) -> set[int]:
+    """Every character the report will typeset, from its HTML, tables and running lines."""
+    found: set[int] = set(map(ord, LAYOUT_TEXT))
+
+    def add(value) -> None:
+        if isinstance(value, Table):
+            for part in (value.caption, value.empty, *value.head, *(cell for row in value.rows for cell in row)):
+                add(part)
+        elif isinstance(value, Chapter):
+            add(value.title)
+            for block in value.blocks:
+                add(block)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                add(item)
+        elif value is not None:
+            found.update(map(ord, unescape(str(value))))
+
+    add(parts)
+    return found
+
+
+def _subset(face: bytes, characters: set[int]) -> bytes:
+    """The face cut down to these characters. Laid out with a few hundred glyphs instead of tens of thousands,
+    each story and line loads a small font, and the report renders in a fraction of the memory."""
+    from fontTools import subset
+    from fontTools.ttLib import TTFont
+
+    font = TTFont(BytesIO(face), recalcBBoxes=False, recalcTimestamp=False)
+    options = subset.Options()
+    options.layout_features = ["*"]
+    options.name_IDs = ["*"]
+    options.notdef_outline = True
+    options.ignore_missing_unicodes = True
+    # Noto CJK is a CID-keyed CFF font: MuPDF draws its glyphs by their original ids, so renumbering them
+    # (the default) leaves every glyph blank. Unused glyphs are emptied instead; the face is still ~20x smaller.
+    options.retain_gids = True
+    subsetter = subset.Subsetter(options)
+    subsetter.populate(unicodes=characters)
+    subsetter.subset(font)
+    out = BytesIO()
+    font.save(out)
+    return out.getvalue()
+
+
+def _archive(regular: bytes, bold: bytes) -> tuple[pymupdf.Archive, str]:
     archive = pymupdf.Archive()
     archive.add(regular, "report-regular.otf")
     archive.add(bold, "report-bold.otf")
@@ -226,9 +275,15 @@ def row_html(table: Table, row: tuple[str, ...], continued: bool) -> str:
     return caption + fields
 
 
+def _typeset(seen: set[int], value: str) -> str:
+    """Record the characters of text about to be typeset; return it unchanged."""
+    seen.update(map(ord, unescape(re.sub(r"<[^>]*>", "", value))))
+    return value
+
+
 class _Pages:
-    def __init__(self, writer: pymupdf.DocumentWriter, archive: pymupdf.Archive, css: str):
-        self.writer, self.archive, self.css = writer, archive, css
+    def __init__(self, writer: pymupdf.DocumentWriter, archive: pymupdf.Archive, css: str, seen: set[int]):
+        self.writer, self.archive, self.css, self.seen = writer, archive, css, seen
         self.device = None
         self.count = 0
         self.y = BODY.y0
@@ -248,7 +303,7 @@ class _Pages:
             self.device = None
 
     def _story(self, html: str) -> pymupdf.Story:
-        return pymupdf.Story(html=f'<html lang="zh"><body>{html}</body></html>', user_css=self.css, archive=self.archive)
+        return pymupdf.Story(html=f'<html lang="zh"><body>{_typeset(self.seen, html)}</body></html>', user_css=self.css, archive=self.archive)
 
     def _remaining(self) -> pymupdf.Rect:
         return pymupdf.Rect(BODY.x0, self.y, BODY.x1, BODY.y1)
@@ -316,12 +371,27 @@ def render_report(*, cover: str, chapters: list[Chapter], name: str, kind: str, 
     """``cover`` is the cover HTML; ``name`` and ``kind`` go into the running header, ``date`` into the footer."""
     if len(cover) + sum(_size(chapter.blocks) for chapter in chapters) > MAX_HTML:
         raise ValueError("report_content_too_large")
-    archive, faces = _archive()
+    characters = _characters(cover, chapters, name, kind, date)
+    seen: set[int] = set()
+    body = _render(characters, seen, cover=cover, chapters=chapters, name=name, kind=kind, date=date)
+    # The faces were cut before layout. A character the layout typeset outside them would be drawn as another
+    # glyph (and read back as another character), so the check is on what went into layout, not on the PDF:
+    # any such character is added and the report laid out once more.
+    if seen - characters:
+        body = _render(characters | seen, set(), cover=cover, chapters=chapters, name=name, kind=kind, date=date)
+    return body
+
+
+def _render(characters: set[int], seen: set[int], *, cover: str, chapters: list[Chapter], name: str, kind: str, date: str) -> bytes:
+    full_regular, full_bold = report_fonts()
+    regular = _subset(full_regular, characters)
+    bold = regular if full_bold is full_regular else _subset(full_bold, characters)
+    archive, faces = _archive(regular, bold)
     css = faces + CSS
     output = BytesIO()
     starts: list[int] = []
     with pymupdf.DocumentWriter(output) as writer:
-        pages = _Pages(writer, archive, css)
+        pages = _Pages(writer, archive, css, seen)
         pages.new_page()
         pages.flow(f"<div class='cover'>{cover}</div>")
         for chapter in chapters:
@@ -341,7 +411,7 @@ def render_report(*, cover: str, chapters: list[Chapter], name: str, kind: str, 
     rows = "".join(f"<tr><td>{escape(title)}</td><td class='page'>{page}</td></tr>" for title, page in entries)
     contents = BytesIO()
     with pymupdf.DocumentWriter(contents) as writer:
-        story = pymupdf.Story(html=f'<html lang="zh"><body><h1>目录</h1><table class="toc">{rows}</table></body></html>', user_css=css, archive=archive)
+        story = pymupdf.Story(html=_typeset(seen, f'<html lang="zh"><body><h1>目录</h1><table class="toc">{rows}</table></body></html>'), user_css=css, archive=archive)
         device = writer.begin_page(PAGE)
         more, _filled = story.place(BODY)
         if more:
@@ -353,13 +423,13 @@ def render_report(*, cover: str, chapters: list[Chapter], name: str, kind: str, 
         total = len(document)
         # The running header and footer use one loaded face for every page: loading the CJK face for each line
         # (as an HTML box does) held a fresh copy per line and took gigabytes on a thirty-page report.
-        face = pymupdf.Font(fontbuffer=report_fonts()[0])
+        face = pymupdf.Font(fontbuffer=regular)
         header = name if len(name) <= 50 else name[:49] + "…"
         grey = (0.27, 0.27, 0.27)
 
         def line(page, rect, value: str, align: int) -> None:
             writer = pymupdf.TextWriter(page.rect)
-            writer.fill_textbox(rect, value, font=face, fontsize=8, align=align)
+            writer.fill_textbox(rect, _typeset(seen, value), font=face, fontsize=8, align=align)
             writer.write_text(page, color=grey)
 
         for page in document:

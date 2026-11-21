@@ -258,6 +258,38 @@ def test_running_header_and_footer_share_one_embedded_face_however_many_pages():
         assert f"第 {len(document)} / {len(document)} 页" in last and "PPAP 审核报告" in last
 
 
+def test_every_character_the_layout_writes_is_in_the_cut_faces(monkeypatch):
+    # The faces are cut to the report's characters before layout. Text the layout adds by itself (contents,
+    # 续表, running lines, an ellipsis) must end up in them too, never drawn from a fallback font.
+    from documents import report_layout
+
+    cuts = []
+    original = report_layout._subset
+
+    def recorded(face, characters):
+        cuts.append(set(characters))
+        return original(face, characters)
+
+    monkeypatch.setattr(report_layout, "_subset", recorded)
+    monkeypatch.setattr(report_layout, "LAYOUT_TEXT", "")  # as if the list of layout text had gaps
+    source = report_source()
+    source["filename"] = source["originals"]["version-one"] = "很长的文件名" * 12 + ".pdf"
+    base = source["audit"]["checks"][0]
+    source["audit"]["checks"] = []
+    for number in range(1, 80):
+        check = deepcopy(base)
+        check["rule_item"].update(id=f"R{number}", category=f"类别{number}")
+        source["audit"]["checks"].append(check)
+    # A character missing from the cut faces is not an empty box: it is drawn, and read back, as another
+    # character. So the layout's own words must come out exactly as written.
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        pages = ["".join(page.get_text().split()) for page in document]
+        total = len(document)
+    assert pages[1].startswith("目录封面1") and f"第{total}/{total}页" in pages[-1]
+    assert any("（续表）" in page for page in pages)
+    assert {ord(char) for char in "封面目录续表第页"} <= cuts[-1]
+
+
 def test_new_pdfs_carry_no_internal_identity_or_checker_sample_verification():
     identity = "1ff467a2-fa00-4a10-8abc-ff12abcd3456"
     source = report_source()
