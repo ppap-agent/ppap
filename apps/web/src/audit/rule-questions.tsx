@@ -17,8 +17,9 @@ import {applyReceipt, checkedReceipt, choiceLabel, groupQuestions, questionnaire
 const progress = (row: Pick<QuestionnaireSummary, 'answered' | 'total'>) => `已答 ${row.answered} / ${row.total} 题`
 
 /** On the rules page, under a customer: each version of its rules that has questions waiting for the customer. */
-export function QuestionnaireEntries({list, customerId}: {list: QuestionnaireList | null; customerId: string}) {
-  const rows = list?.questionnaires.filter(row => row.customer_id === customerId) ?? []
+export function QuestionnaireEntries({list, customerId, shown = new Set()}: {list: QuestionnaireList | null; customerId: string; shown?: ReadonlySet<string>}) {
+  // A questionnaire already reached through its rulebook revision is not listed again.
+  const rows = list?.questionnaires.filter(row => row.customer_id === customerId && !shown.has(row.id)) ?? []
   if (!rows.length) return null
   return <div className="grid shrink-0 gap-2 border-b p-4">
     {rows.map(row => {
@@ -31,6 +32,13 @@ export function QuestionnaireEntries({list, customerId}: {list: QuestionnaireLis
       </Item>
     })}
   </div>
+}
+
+/** Scroll only the content area that holds `target`; the page frame (navigation) stays where it is. */
+export function reveal(target: HTMLElement | null) {
+  let scroller = target?.parentElement ?? null
+  while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement
+  if (target && scroller) scroller.scrollTo({top: scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top, behavior: 'smooth'})
 }
 
 /** One questionnaire on a wide page: a fixed column with the title, progress and the groups, and every card shown in full beside it. */
@@ -54,14 +62,16 @@ export function RuleQuestionnairePage({questionnaireId}: {questionnaireId: strin
   }, [read])
   const groups = view ? groupQuestions(view.questions) : []
   const conflict = async () => {setNotice('问卷已有更新，已重新读取，请核对后再保存。'); await read()}
-  // Only the content area scrolls; the page frame (navigation) stays where it is.
   const jump = (key: string) => {
     setCurrent(key)
-    const target = document.getElementById(`rq-group-${key}`)
-    let scroller = target?.parentElement ?? null
-    while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement
-    if (target && scroller) scroller.scrollTo({top: scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top, behavior: 'smooth'})
+    reveal(document.getElementById(`rq-group-${key}`))
   }
+  // A link from a rule clause names one card in the address fragment; open the page at it once the cards are shown.
+  const loaded = Boolean(view)
+  useEffect(() => {
+    const key = loaded && location.hash ? decodeURIComponent(location.hash.slice(1)) : ''
+    if (key) reveal(document.querySelector<HTMLElement>(`[data-question="${CSS.escape(key)}"]`))
+  }, [loaded])
 
   if (error && !view) return <div className="max-w-3xl"><Alert variant="destructive"><AlertTitle>待确认问题未能读取</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" size="sm" onClick={() => {setError(''); void read()}}>重新读取</Button></AlertDescription></Alert></div>
   if (!view) return <ReadSkeleton label="正在读取待确认问题…" kind="detail" rows={6}/>
@@ -169,7 +179,7 @@ function QuestionCard({question, questionnaireId, closed, onSaved, onConflict}: 
     finally {setSaving(false)}
   }
   const option = 'flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 text-sm hover:bg-muted'
-  return <article aria-labelledby={`${id}-question`} className="grid gap-8 rounded-xl border bg-card p-6 xl:grid-cols-[minmax(0,58fr)_minmax(0,42fr)]">
+  return <article data-question={question.key} aria-labelledby={`${id}-question`} className="grid scroll-mt-4 gap-8 rounded-xl border bg-card p-6 xl:grid-cols-[minmax(0,58fr)_minmax(0,42fr)]">
     <div className="grid min-w-0 content-start gap-4 text-sm">
       {question.clauses.length > 0 && <p>{question.clauses.join('、')}</p>}
       <h3 id={`${id}-question`} className="text-base font-semibold">{question.question}</h3>

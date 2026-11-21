@@ -119,6 +119,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY assets/li/templates /app/assets/li/templates
 COPY assets/nio/templates /app/assets/nio/templates
 COPY assets/uaes/templates /app/assets/uaes/templates
+# Read-only rulebook revisions (assets/<customer>/rulebook), one line per customer that has one.
+COPY assets/uaes/rulebook /app/assets/uaes/rulebook
 COPY assets/fonts /app/assets/fonts
 
 ARG PPAP_BUILD_SHA=

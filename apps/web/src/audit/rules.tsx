@@ -8,7 +8,8 @@ import {useAccess} from '../journey/access'
 import {auditAddressChanged} from './routes'
 import {customerRules} from './rule-templates'
 import {CustomerRulesBrowser, RuleDetail} from './rule-templates-view'
-import {QuestionnaireEntries, RuleQuestionnairePage} from './rule-questions'
+import {RuleQuestionnairePage} from './rule-questions'
+import {CustomerRulebook, RulebookRevisionPage} from './rulebook-view'
 import type {QuestionnaireList} from './rule-questions-contract'
 
 /** The customer rule library: customers on the left, their file types and current rules (read only) on the right, and the questions on a rule version the customer answers here. */
@@ -19,7 +20,7 @@ export function AuditRules({active}: {active: boolean; onPublished?: () => void;
 
 const routeParams = () => {
   const url = new URL(location.href)
-  return {customer: url.searchParams.get('template') ?? '', rule: url.searchParams.get('systemRule') ?? '', questions: url.searchParams.get('ruleQuestions') ?? ''}
+  return {customer: url.searchParams.get('template') ?? '', rule: url.searchParams.get('systemRule') ?? '', questions: url.searchParams.get('ruleQuestions') ?? '', rulebook: url.searchParams.get('rulebook') ?? ''}
 }
 
 function RulesWorkspace({active}: {active: boolean}) {
@@ -56,11 +57,16 @@ function RulesWorkspace({active}: {active: boolean}) {
   const entries = customerRules(read.customers, read.rules)
   if (read.error) return <Alert variant="destructive"><AlertTitle>客户规则未能读取</AlertTitle><AlertDescription><p>{read.error}</p><Button variant="outline" size="sm" onClick={() => setRevision(value => value + 1)}>重新读取</Button></AlertDescription></Alert>
   if (route.questions) return <RuleQuestionnairePage questionnaireId={route.questions}/>
+  if (route.rulebook) {
+    const owner = entries.find(entry => entry.customer.customer_id === route.customer)?.customer
+    if (read.loading && !owner) return null
+    return <RulebookRevisionPage customer={{id: route.customer, name: owner?.short_name ?? route.customer}} revision={route.rulebook} questionnaires={questionnaires}/>
+  }
   if (route.rule) {
     const owner = entries.find(entry => entry.types?.some(type => type.rules.some(rule => rule.id === route.rule)))?.customer
     return <RuleDetail ruleId={route.rule} customer={owner && {id: owner.customer_id, name: owner.short_name}}/>
   }
   return <section aria-label="审核规则库" className="flex min-h-0 flex-1 flex-col">
-    <CustomerRulesBrowser entries={entries} selectedId={route.customer} loading={read.loading} questions={customerId => <QuestionnaireEntries list={questionnaires} customerId={customerId}/>}/>
+    <CustomerRulesBrowser entries={entries} selectedId={route.customer} loading={read.loading} questions={customerId => <CustomerRulebook customerId={customerId} questionnaires={questionnaires}/>}/>
   </section>
 }

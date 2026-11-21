@@ -25,6 +25,7 @@ def test_production_context_keeps_runtime_files_and_excludes_research():
             "assets/li/templates/APQP-过程流程图.xlsx",
             "assets/nio/templates/10 控制计划.xlsx",
             "assets/uaes/templates/零件追溯检查单-模板 20250609.xlsx",
+            "assets/uaes/rulebook/v1.0/m0/rules/CP.json",
         ]
         excluded = [
             "tests/root.py",

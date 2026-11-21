@@ -17,7 +17,7 @@ test('the existing UAES questionnaire shows its revision without changing its ID
   assert.equal(questionnaireVersionLabel(existing), '规范性条款 v1.0 修订 0')
   assert.equal(questionnaireVersionLabel(answered), '规范性条款 v1.0 修订 0')
   assert.deepEqual([answered.id, answered.rule_version, answered.answered], ['q1', '规范性条款 v1.0', 1])
-  assert.equal(questionnaireVersionLabel({...existing, customer_id: 'li'}), '规范性条款 v1.0')
+  assert.equal(questionnaireVersionLabel({...existing, customer_id: 'li'}), '规范性条款 v1.0 修订 0')
   assert.equal(questionnaireVersionLabel({...existing, rule_version: '规范性条款 v1.0 修订 1'}), '规范性条款 v1.0 修订 1')
 })
 
