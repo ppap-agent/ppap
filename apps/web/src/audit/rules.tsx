@@ -27,7 +27,6 @@ function RulesWorkspace({active}: {active: boolean}) {
   const [revision, setRevision] = useState(0)
   // Questions waiting for the customer on a rule version; their own read, so the rules show even if it fails.
   const [questionnaires, setQuestionnaires] = useState<QuestionnaireList | null>(null)
-  const [questionsRevision, setQuestionsRevision] = useState(0)
   const [route, setRoute] = useState(routeParams)
   useEffect(() => {
     const restore = () => setRoute(routeParams())
@@ -53,7 +52,7 @@ function RulesWorkspace({active}: {active: boolean}) {
       .then(list => {if (!controller.signal.aborted) setQuestionnaires(list)})
       .catch(() => {if (!controller.signal.aborted) setQuestionnaires(null)})
     return () => controller.abort()
-  }, [questionsRevision, active, route.questions])
+  }, [active, route.questions])
   const entries = customerRules(read.customers, read.rules)
   if (read.error) return <Alert variant="destructive"><AlertTitle>客户规则未能读取</AlertTitle><AlertDescription><p>{read.error}</p><Button variant="outline" size="sm" onClick={() => setRevision(value => value + 1)}>重新读取</Button></AlertDescription></Alert>
   if (route.questions) return <RuleQuestionnairePage questionnaireId={route.questions}/>
@@ -62,6 +61,6 @@ function RulesWorkspace({active}: {active: boolean}) {
     return <RuleDetail ruleId={route.rule} customer={owner && {id: owner.customer_id, name: owner.short_name}}/>
   }
   return <section aria-label="审核规则库" className="flex min-h-0 flex-1 flex-col">
-    <CustomerRulesBrowser entries={entries} selectedId={route.customer} loading={read.loading} questions={customerId => <QuestionnaireEntries list={questionnaires} customerId={customerId} onImported={() => setQuestionsRevision(value => value + 1)}/>}/>
+    <CustomerRulesBrowser entries={entries} selectedId={route.customer} loading={read.loading} questions={customerId => <QuestionnaireEntries list={questionnaires} customerId={customerId}/>}/>
   </section>
 }

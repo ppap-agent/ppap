@@ -1,17 +1,26 @@
-"""Turn clause-check reports into a rule-confirmation questionnaire, and its exported answers into a backfill list.
+"""Turn clause-check reports into a rule-confirmation questionnaire, load it into the product database, and turn
+the answers exported from there into a backfill list.
 
     python3 questionnaire.py build <工作目录> <整理文件.json> <导入文件.json>
+    python3 questionnaire.py load <导入文件.json> <租户编号>      > 导入.sql
+    python3 questionnaire.py export <导入文件.json> <租户编号>    > 导出.sql
+    python3 questionnaire.py close <导入文件.json> <租户编号>     > 关闭.sql
     python3 questionnaire.py answers <导出文件.json> <工作目录> [<回填清单.md>]
 
 `build` reads every `<条款序号>.report.md` in the work directory: each unanswered ambiguity, undefined case, file
 without a conclusion and conflicting file is one finding, named `<条款 id>#<处>` (`CP:8#1`, `CP:8#8.1`, `CP:8#G1`,
 `CP:8#C1`). The curation file says which findings a common question covers, which were settled by an answer already
 relayed, which go back to the customer for a conclusion, and the questions about the rulebook's general notes;
-every other finding becomes a card of its own. The output is what a platform operator imports on the rules page.
+every other finding becomes a card of its own.
 
-`answers` reads the operator's export and lists, per clause file, every answer to every finding with its answerer
-and time, and where answers differ. It never writes `.ofn` files: choosing among different answers is not the
-script's decision.
+`load`, `export` and `close` print SQL for the enterprise whose Feishu tenant key is given, run with `psql` as the
+database's migration role (the product itself never writes questionnaires): `load` adds the questionnaire and its
+cards in one transaction and refuses a second load of the same version; `export` prints every answerer's revisions
+of every card as one JSON value (`psql -At`); `close` makes it read only.
+
+`answers` reads that export and lists, per clause file, every answer to every finding with its answerer and time,
+and where answers differ. It never writes `.ofn` files: choosing among different answers is not the script's
+decision.
 """
 
 from __future__ import annotations
@@ -24,6 +33,8 @@ from datetime import datetime
 from pathlib import Path
 
 NUMBERS = "一二三四五六七八九十"
+GROUPS = ("common", "conclusion", "general", "clause")
+RELAYED = "relayed"  # the choice that confirms the answer already relayed on a card
 VERDICT_OPTIONS = [{"key": "PASS", "label": "通过"}, {"key": "NG", "label": "不通过"}, {"key": "UNABLE", "label": "待审核（交人工）"}]
 
 
@@ -228,6 +239,122 @@ def build(directory: Path, plan_path: Path, out: Path) -> None:
         raise SystemExit(f"[白话] 卡片里有技术词：{'、'.join(leaked)}")
 
 
+def choice_label(card: dict, choice: str | None) -> str:
+    if not choice:
+        return ""
+    if choice == RELAYED:
+        return "确认按共性答复处理" if (card.get("relayed") or {}).get("applied") else "确认已转达的答复"
+    return next((option["label"] for option in card.get("options", []) if option["key"] == choice), choice)
+
+
+def literal(value: str) -> str:
+    if "\x00" in value:
+        raise SystemExit("[导入] 文本里有空字符")
+    return "'" + value.replace("'", "''") + "'"
+
+
+def validate(questionnaire: dict) -> None:
+    """The shape the rules page reads; the database only checks that each card is an object keyed as declared."""
+    problems = []
+    if questionnaire.get("schema") != "rule-questionnaire-v1":
+        problems.append("不是问卷导入文件")
+    if not re.fullmatch(r"[a-z0-9-]{1,64}", str(questionnaire.get("customer_id", ""))):
+        problems.append("customer_id 不是客户注册表编号")
+    for field in ("rule_version", "title"):
+        if not isinstance(questionnaire.get(field), str) or not 1 <= len(questionnaire[field].strip()) <= 200:
+            problems.append(f"{field} 缺失或太长")
+    cards = questionnaire.get("questions") or []
+    keys = [card.get("key") for card in cards]
+    if not cards or len(set(keys)) != len(keys):
+        problems.append("没有卡片，或卡片编号重复")
+    for card in cards:
+        options = [option.get("key") for option in card.get("options", [])]
+        if card.get("group") not in GROUPS or not str(card.get("question", "")).strip() or len(set(options)) != len(options) or RELAYED in options:
+            problems.append(f"卡片 {card.get('key')} 的分组、问题或选项不对")
+        relayed = card.get("relayed")
+        if relayed and not (relayed.get("answer") and relayed.get("source") and re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(relayed.get("date", "")))):
+            problems.append(f"卡片 {card.get('key')} 的转达答复缺来源或日期")
+    if problems:
+        raise SystemExit("[导入] " + "；".join(problems))
+
+
+def target(questionnaire: dict, tenant: str) -> str:
+    """The questionnaire's row: this enterprise, this customer, this rule version."""
+    return (
+        f"r.tenant_id = (SELECT id FROM product.tenants WHERE provider = 'feishu' AND external_key = {literal(tenant)}) "
+        f"AND r.customer_id = {literal(questionnaire['customer_id'])} AND r.rule_version = {literal(questionnaire['rule_version'])}"
+    )
+
+
+def load_sql(questionnaire: dict, tenant: str) -> str:
+    validate(questionnaire)
+    cards = questionnaire["questions"]
+    rows = ",\n".join(f"    ({position}, {literal(json.dumps(card, ensure_ascii=False, separators=(',', ':')))}::jsonb)" for position, card in enumerate(cards))
+    return f"""\\set ON_ERROR_STOP on
+BEGIN;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM product.tenants WHERE provider = 'feishu' AND external_key = {literal(tenant)}) THEN
+        RAISE EXCEPTION '没有这个企业：%', {literal(tenant)};
+    END IF;
+END $$;
+WITH questionnaire AS (
+    INSERT INTO product.rule_questionnaires (id, tenant_id, customer_id, rule_version, title)
+    SELECT gen_random_uuid(), id, {literal(questionnaire["customer_id"])}, {literal(questionnaire["rule_version"])}, {literal(questionnaire["title"])}
+    FROM product.tenants WHERE provider = 'feishu' AND external_key = {literal(tenant)}
+    RETURNING id
+)
+INSERT INTO product.rule_questions (questionnaire_id, question_key, position, card)
+SELECT questionnaire.id, cards.card->>'key', cards.position, cards.card
+FROM questionnaire, (VALUES
+{rows}
+) AS cards(position, card);
+DO $$
+BEGIN
+    IF (SELECT count(*) FROM product.rule_questions q JOIN product.rule_questionnaires r ON r.id = q.questionnaire_id WHERE {target(questionnaire, tenant)}) <> {len(cards)} THEN
+        RAISE EXCEPTION '导入的卡片数不是 {len(cards)}';
+    END IF;
+END $$;
+SELECT r.id AS questionnaire_id, (SELECT count(*) FROM product.rule_questions q WHERE q.questionnaire_id = r.id) AS cards
+FROM product.rule_questionnaires r WHERE {target(questionnaire, tenant)};
+COMMIT;
+"""
+
+
+def export_sql(questionnaire: dict, tenant: str) -> str:
+    return f"""\\set ON_ERROR_STOP on
+SELECT jsonb_build_object(
+    'schema', 'rule-questionnaire-answers-v1',
+    'customer_id', r.customer_id, 'rule_version', r.rule_version, 'title', r.title,
+    'closed_at', r.closed_at, 'exported_at', now(),
+    'questions', coalesce((
+        SELECT jsonb_agg(jsonb_build_object('key', q.question_key, 'card', q.card, 'answers', coalesce((
+            SELECT jsonb_agg(jsonb_build_object('answerer', person.answerer, 'revisions', person.revisions) ORDER BY person.first_at)
+            FROM (
+                SELECT min(a.answered_at) AS first_at,
+                       coalesce((SELECT i.display_name FROM product.identities i
+                                 WHERE i.user_id = a.answered_by AND i.provider = t.provider AND i.tenant_key = t.external_key
+                                 ORDER BY i.display_name <> '' DESC LIMIT 1), '') AS answerer,
+                       jsonb_agg(jsonb_build_object('revision', a.revision, 'choice', a.choice, 'text', a.answer_text, 'note', a.note, 'answered_at', a.answered_at) ORDER BY a.revision) AS revisions
+                FROM product.rule_question_answers a
+                WHERE a.questionnaire_id = q.questionnaire_id AND a.question_key = q.question_key
+                GROUP BY a.answered_by
+            ) person), '[]'::jsonb)) ORDER BY q.position)
+        FROM product.rule_questions q WHERE q.questionnaire_id = r.id), '[]'::jsonb)
+)
+FROM product.rule_questionnaires r JOIN product.tenants t ON t.id = r.tenant_id
+WHERE {target(questionnaire, tenant)};
+"""
+
+
+def close_sql(questionnaire: dict, tenant: str) -> str:
+    # Closing waits for answers being saved; a closed questionnaire keeps its first closing.
+    return f"""\\set ON_ERROR_STOP on
+UPDATE product.rule_questionnaires r SET closed_at = now() WHERE {target(questionnaire, tenant)} AND r.closed_at IS NULL;
+SELECT r.closed_at FROM product.rule_questionnaires r WHERE {target(questionnaire, tenant)};
+"""
+
+
 def where(item_id: str) -> tuple[str, str]:
     clause, _, place = item_id.partition("#")
     file = clause.replace(":", "-", 1) + ".ofn"
@@ -262,8 +389,12 @@ def answers(export_path: Path, directory: Path, out: Path) -> None:
         raise SystemExit("[导出] 不是规则确认问卷的导出文件")
     per_file: dict[str, list[str]] = {}
     unanswered, general = [], []
-    for card in export["questions"]:
-        rows = card["answers"]
+    for entry in export["questions"]:
+        card = entry["card"]
+        # Each answerer's current answer is their latest revision; the earlier ones are its history.
+        rows = [{**person["revisions"][-1], "answerer": person["answerer"] or "未署名成员", "history": person["revisions"][:-1]} for person in entry["answers"]]
+        for row in rows:
+            row["choice_label"] = choice_label(card, row.get("choice"))
         lines = []
         for row in rows:
             when = local_time(row["answered_at"])
@@ -271,9 +402,9 @@ def answers(export_path: Path, directory: Path, out: Path) -> None:
         distinct = {(row.get("choice"), (row.get("text") or "").strip()) for row in rows}
         if len(distinct) > 1:
             lines.append("- **答复不一致**：不替客户选，交产品负责人决定。")
-        if rows and not card["items"]:
+        if rows and not card.get("items"):
             general += [f"### {card['question']}", *lines, ""]
-        for item in card["items"]:
+        for item in card.get("items", []):
             file, place = where(item)
             if not (directory / file).exists():
                 raise SystemExit(f"[导出] 工作目录里没有 {file}")
@@ -297,6 +428,9 @@ def answers(export_path: Path, directory: Path, out: Path) -> None:
 def main(argv: list[str]) -> None:
     if len(argv) >= 4 and argv[0] == "build":
         build(Path(argv[1]), Path(argv[2]), Path(argv[3]))
+    elif len(argv) == 3 and argv[0] in ("load", "export", "close"):
+        questionnaire = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+        print({"load": load_sql, "export": export_sql, "close": close_sql}[argv[0]](questionnaire, argv[2]), end="")
     elif len(argv) in (3, 4) and argv[0] == "answers":
         directory = Path(argv[2])
         answers(Path(argv[1]), directory, Path(argv[3]) if len(argv) == 4 else directory / "问卷答复.md")

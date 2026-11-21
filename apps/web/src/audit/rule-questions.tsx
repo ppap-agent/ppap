@@ -1,7 +1,7 @@
 import {useCallback, useEffect, useId, useRef, useState, type ReactNode} from 'react'
-import {apiUrl, request} from '../api'
+import {request} from '../api'
 import {displayTime} from '../helpers'
-import {iconChevronRight, iconDownload, iconUpload} from '../components/icons'
+import {iconChevronRight} from '../components/icons'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 import {Icon} from '../components/ui/icon'
@@ -28,9 +28,9 @@ function Toggle({label, count, children}: {label: string; count: number; childre
 }
 
 /** On the rules page, under a customer: each version of its rules that has questions waiting for the customer. */
-export function QuestionnaireEntries({list, customerId, onImported}: {list: QuestionnaireList | null; customerId: string; onImported: () => void}) {
+export function QuestionnaireEntries({list, customerId}: {list: QuestionnaireList | null; customerId: string}) {
   const rows = list?.questionnaires.filter(row => row.customer_id === customerId) ?? []
-  if (!rows.length && !list?.can_manage) return null
+  if (!rows.length) return null
   return <div className="grid shrink-0 gap-2 border-b p-4">
     {rows.map(row => {
       const href = rulesAddress({template: customerId, ruleQuestions: row.id})
@@ -41,32 +41,6 @@ export function QuestionnaireEntries({list, customerId, onImported}: {list: Ques
         </a>
       </Item>
     })}
-    {list?.can_manage && <QuestionnaireImport onImported={onImported}/>}
-  </div>
-}
-
-/** Platform operators only: a file written offline by clause-check becomes the version's questionnaire. */
-function QuestionnaireImport({onImported}: {onImported: () => void}) {
-  const input = useRef<HTMLInputElement>(null)
-  const [state, setState] = useState({busy: false, error: '', notice: ''})
-  async function pick(file: File | undefined) {
-    if (!file) return
-    setState({busy: true, error: '', notice: ''})
-    try {
-      let questionnaire: unknown
-      try {questionnaire = JSON.parse(await file.text())} catch {throw new Error('这个文件不是问卷导入文件，请用条款检查导出的文件。')}
-      const summary = await request<QuestionnaireSummary>('/rule-questionnaires', 'POST', {operation_id: crypto.randomUUID(), questionnaire})
-      setState({busy: false, error: '', notice: `已导入 ${summary.rule_version}，共 ${summary.total} 题。`})
-      onImported()
-    } catch (cause) {setState({busy: false, error: message(cause), notice: ''})}
-    finally {if (input.current) input.current.value = ''}
-  }
-  return <div className="flex flex-wrap items-center gap-3">
-    <input ref={input} type="file" accept="application/json,.json" hidden onChange={event => void pick(event.target.files?.[0])}/>
-    <Button type="button" variant="outline" size="sm" disabled={state.busy} onClick={() => input.current?.click()}><Icon icon={iconUpload} aria-hidden="true"/>导入问卷</Button>
-    {state.busy && <span role="status" className="text-sm text-muted-foreground">正在导入…</span>}
-    {state.notice && <span role="status" className="text-sm">{state.notice}</span>}
-    {state.error && <span role="alert" className="text-sm text-destructive">{state.error}</span>}
   </div>
 }
 
@@ -102,7 +76,7 @@ export function RuleQuestionnairePage({questionnaireId}: {questionnaireId: strin
   if (!view) return <div className="max-w-4xl"><ReadSkeleton label="正在读取待确认问题…" kind="detail" rows={6}/></div>
   return <div className="max-w-4xl space-y-6">
     <RulesTrail items={[{label: view.customer_name, href: rulesAddress({template: view.customer_id})}]}/>
-    <RuleDetailHeader title={`${view.rule_version} 待确认问题`} action={view.can_manage ? <ManageQuestionnaire view={view} onClosed={read}/> : undefined}>
+    <RuleDetailHeader title={`${view.rule_version} 待确认问题`}>
       <span className="text-sm tabular-nums text-muted-foreground">{progress(view)} · 我答了 {view.mine} 题</span>
     </RuleDetailHeader>
     {view.closed ? <Alert><AlertTitle>问卷已关闭</AlertTitle><AlertDescription>答复只能查看，不能再作答或修改。</AlertDescription></Alert>
@@ -122,24 +96,6 @@ export function RuleQuestionnairePage({questionnaireId}: {questionnaireId: strin
         </div>
       </section>
     })}
-  </div>
-}
-
-/** Operators export every answer for offline backfill, and close the questionnaire when the round of questions is over. */
-function ManageQuestionnaire({view, onClosed}: {view: QuestionnaireView; onClosed: () => Promise<void>}) {
-  const [confirming, setConfirming] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('')
-  async function close() {
-    setBusy(true); setError('')
-    try {await request(`/rule-questionnaires/${encodeURIComponent(view.id)}/close`, 'POST'); setConfirming(false); await onClosed()}
-    catch (cause) {setError(message(cause))}
-    finally {setBusy(false)}
-  }
-  return <div className="flex flex-wrap items-center justify-end gap-2">
-    <Button variant="outline" size="sm" asChild><a href={`${apiUrl}/rule-questionnaires/${encodeURIComponent(view.id)}/export`} download="rule-questionnaire-answers.json"><Icon icon={iconDownload} aria-hidden="true"/>导出答复</a></Button>
-    {!view.closed && (confirming
-      ? <div role="group" aria-label="关闭问卷" className="flex flex-wrap items-center gap-2"><span className="text-sm">关闭后所有人只能查看，不能再作答或修改。</span><Button variant="destructive" size="sm" disabled={busy} onClick={() => void close()}>{busy ? '正在关闭…' : '确认关闭'}</Button><Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirming(false)}>取消</Button></div>
-      : <Button variant="outline" size="sm" onClick={() => setConfirming(true)}>关闭问卷</Button>)}
-    {error && <p role="alert" className="basis-full text-right text-sm text-destructive">{error}</p>}
   </div>
 }
 

@@ -97,6 +97,10 @@ const messages: Record<string,string> = {
   model_consumption_refused: '暂时无法处理，请稍后重试。',
   duplicate_file_content: '有两份文件内容完全相同，请只保留其中一份再识别。',
   checker_not_generated: '这条规则还没有检查程序，不能用于审核。检查程序由平台离线准备，如需准备请联系我们。',
+  questionnaire_closed: '问卷已关闭，答复不能再新增或修改。',
+  answer_revision_conflict: '你的答复已在别处更新过，已重新读取，请核对后再保存。',
+  answer_required: '请选择一项，或写下你的答案。',
+  invalid_answer_request: '答复不完整，请重新选择后再保存。',
 }
 const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined
 export const requestTrace = (cause: unknown) => safeRequestTrace(cause instanceof Error && 'traceId' in cause ? cause.traceId : undefined)

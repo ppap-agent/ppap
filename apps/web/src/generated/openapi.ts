@@ -1583,8 +1583,7 @@ export interface paths {
         /** List Rule Questionnaires */
         get: operations["list_rule_questionnaires_rule_questionnaires_get"];
         put?: never;
-        /** Import Rule Questionnaire */
-        post: operations["import_rule_questionnaire_rule_questionnaires_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1634,40 +1633,6 @@ export interface paths {
         };
         /** Read Rule Answer Operation */
         get: operations["read_rule_answer_operation_rule_questionnaires__questionnaire_id__answers__operation_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rule-questionnaires/{questionnaire_id}/close": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Close Rule Questionnaire */
-        post: operations["close_rule_questionnaire_rule_questionnaires__questionnaire_id__close_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rule-questionnaires/{questionnaire_id}/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Export Rule Questionnaire */
-        get: operations["export_rule_questionnaire_rule_questionnaires__questionnaire_id__export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4763,8 +4728,6 @@ export interface components {
         };
         /** RuleQuestionnaireList */
         RuleQuestionnaireList: {
-            /** Can Manage */
-            can_manage: boolean;
             /** Questionnaires */
             questionnaires: components["schemas"]["RuleQuestionnaireSummary"][];
         };
@@ -4797,8 +4760,6 @@ export interface components {
         RuleQuestionnaireView: {
             /** Answered */
             answered: number;
-            /** Can Manage */
-            can_manage: boolean;
             /** Closed */
             closed: boolean;
             /** Closed At */
@@ -9132,46 +9093,6 @@ export interface operations {
             };
         };
     };
-    import_rule_questionnaire_rule_questionnaires_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** Operation Id */
-                    operation_id: string;
-                    /** Questionnaire */
-                    questionnaire: {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuleQuestionnaireSummary"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     read_rule_questionnaire_rule_questionnaires__questionnaire_id__get: {
         parameters: {
             query?: never;
@@ -9270,68 +9191,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuleAnswerReceipt"] | null;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    close_rule_questionnaire_rule_questionnaires__questionnaire_id__close_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                questionnaire_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuleQuestionnaireSummary"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    export_rule_questionnaire_rule_questionnaires__questionnaire_id__export_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                questionnaire_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

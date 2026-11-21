@@ -140,7 +140,22 @@ python3 <技能目录>/scripts/check.py <工作目录>/<条款序号>.ofn
    python3 <技能目录>/scripts/questionnaire.py build <工作目录> <工作目录>/问卷整理.json <工作目录>/问卷导入.json
    ```
 
-3. 平台运营在规则页该客户下「导入问卷」。客户成员逐张作答，每人的答复分开记录，没有“最终答复”。答完后平台运营关闭问卷、导出答复。
+3. 直接写进数据库，给一个企业（飞书租户编号）用。产品本身不能导入、关闭或导出问卷，这三步都用数据库的迁移身份（`ppap_migrator`）以 `psql` 执行：
+
+   ```bash
+   python3 <技能目录>/scripts/questionnaire.py load <工作目录>/问卷导入.json <租户编号> > 导入.sql
+   psql -f 导入.sql
+   ```
+
+   同一企业同一规则版本只能导入一次，卡片导入后不能改。导入后该企业成员在规则页该客户下看到「待确认问题」，逐张作答，每人的答复分开记录，没有“最终答复”；其他企业看不到。
+4. 收答复时导出，答完后关闭（关闭后只读）：
+
+   ```bash
+   python3 <技能目录>/scripts/questionnaire.py export <工作目录>/问卷导入.json <租户编号> > 导出.sql
+   psql -At -f 导出.sql > <工作目录>/问卷导出.json
+   python3 <技能目录>/scripts/questionnaire.py close <工作目录>/问卷导入.json <租户编号> > 关闭.sql
+   psql -f 关闭.sql
+   ```
 
 ### 8. 回填答复
 
@@ -149,7 +164,7 @@ python3 <技能目录>/scripts/check.py <工作目录>/<条款序号>.ofn
 - **来自规则确认页**：先把导出文件整理成按条款的回填清单，再逐条回填：
 
   ```bash
-  python3 <技能目录>/scripts/questionnaire.py answers <导出文件.json> <工作目录>
+  python3 <技能目录>/scripts/questionnaire.py answers <工作目录>/问卷导出.json <工作目录>
   ```
 
   `:answered` 记原话，并记下答复人和时间，如 `"按缺件判不通过（张三，2026-11-21，规则确认页）"`。同一处有几个人答复且不一致时，不替客户选，交产品负责人决定。

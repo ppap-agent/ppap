@@ -6,7 +6,7 @@ const card = (key: string, group: Question['group'], extra: Partial<Question> = 
   key, group, clauses: [], question: `${key}？`, why: '', options: [{key: 'A', label: '按原文', detail: ''}], expect: '', related: [], items: [], relayed: null, answers: [], ...extra,
 })
 const view = (questions: Question[]): QuestionnaireView => ({
-  id: 'q1', customer_id: 'uaes', customer_name: 'UAES', rule_version: '规范性条款 v1.0', title: 'UAES', imported_at: '', closed_at: null, closed: false, can_manage: false,
+  id: 'q1', customer_id: 'uaes', customer_name: 'UAES', rule_version: '规范性条款 v1.0', title: 'UAES', imported_at: '', closed_at: null, closed: false,
   total: questions.length, answered: questions.filter(row => row.answers.length).length, mine: 0, questions,
 })
 const receipt = (revision: number, choice: string | null, text: string | null = null) => ({operation_id: `op-${revision}`, questionnaire_id: 'q1', question_key: 'c1', answerer: '张三', mine: true, revision, choice, text, note: null, answered_at: `2026-11-2${revision}T00:00:00Z`})
