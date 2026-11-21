@@ -389,7 +389,7 @@ def test_a_feishu_folder_is_prepared_confirmed_and_audited_and_an_interruption_c
         results = call(client, token, "get_results", task_id=task)
         assert results["result"]["execution"] == "completed" and results["result"]["files"][0]["file_version_id"] == version
         assert results["next"]["kind"] == "done"
-        assert call(client, token, "find_audits")["result"]["tasks"][0]["id"] == task
+        assert call(client, token, "find_audits")["result"]["audits"][0]["task_id"] == task
         assert call(client, token, "find_submissions", folder=FOLDER)["result"]["audits_from_this_folder"][0]["task_id"] == task
 
 

@@ -335,3 +335,33 @@ def test_an_unfinished_audit_offers_no_delivery_and_says_why_before_any_approval
     refused = world.call("publish_report", task_id=task, request_id=str(uuid4()))
     assert refused["next"]["error_code"] == "round_has_errors" and "复审" in refused["next"]["message"]
     assert world.product.operations == {}  # nothing was put to the user to approve
+
+
+def test_finding_audits_lists_what_a_person_scans_for_not_whole_tasks():
+    from api.mcp_tools import audit_line
+
+    row = {
+        "id": "t1",
+        "number": "PPAP-1",
+        "state": "completed",
+        "created_at": "2026-11-21",
+        "creator": {"mine": True},
+        "subject": {"customer": "UAES", "part": "磁性罩"},
+        "result_counts": {"NG": 3},
+        "files": [{"file": {"original_filename": n}, "selection": "selected"} for n in ("a", "b", "c", "d")] + [{"file": {"original_filename": "x"}, "selection": "removed"}],
+        "input_revision": 4,
+    }
+    line = audit_line(row)
+    assert line == {
+        "task_id": "t1",
+        "number": "PPAP-1",
+        "state": "已结束",
+        "customer": "UAES",
+        "part": "磁性罩",
+        "files": 4,
+        "first_files": ["a", "b", "c"],
+        "result_counts": {"NG": 3},
+        "has_execution_error": None,
+        "created_at": "2026-11-21",
+        "mine": True,
+    }

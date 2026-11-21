@@ -96,6 +96,28 @@ def _short(text, limit: int = 300):
     return text if not isinstance(text, str) or len(text) <= limit else text[:limit] + "…"
 
 
+STATES = {"matching": "准备中", "pending_confirm": "待确认", "reviewing": "审核中", "completed": "已结束"}
+
+
+def audit_line(row: dict) -> dict:
+    """One audit in a list: what a person would scan for, not the full task."""
+    subject = row.get("subject") or {}
+    selected = [f["file"]["original_filename"] for f in row.get("files", []) if f.get("selection") == "selected"]
+    return {
+        "task_id": row["id"],
+        "number": row.get("number"),
+        "state": STATES.get(row.get("state", ""), row.get("state")),
+        "customer": subject.get("customer"),
+        "part": subject.get("part"),
+        "files": len(selected),
+        "first_files": selected[:3],
+        "result_counts": row.get("result_counts"),
+        "has_execution_error": row.get("has_execution_error"),
+        "created_at": row.get("created_at"),
+        "mine": (row.get("creator") or {}).get("mine"),
+    }
+
+
 def result_view(round_: dict, file_version_id: str | None, status: str | None, offset: int, limit: int) -> dict:
     """One round's findings, a page at a time, each without its evidence body."""
     rows = [row for row in round_.get("findings", []) if (not file_version_id or (row.get("locator") or {}).get("file_version_id") == file_version_id) and (not status or row["status"] == status)]
@@ -386,7 +408,7 @@ def register_tools(mcp, gateway, authority, runtime):
         try:
             actor = await authority()
             found = await gateway.get(actor, "audits:read", "/audit-tasks", params={"limit": limit, "offset": offset, "q": search, "state": state})
-            return Outcome(result=found, next=DONE)
+            return Outcome(result={"audits": [audit_line(row) for row in found.get("tasks", [])], "next_offset": found.get("next_offset")}, next=DONE)
         except Exception as exc:
             return failure(exc)
 
