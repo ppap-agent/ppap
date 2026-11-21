@@ -163,6 +163,29 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertEqual(row[2]["note"], "unsupported_job_kind")
         self.assertIsNone(worker.claim_job("unsupported-job-test"))
 
+    def test_a_report_job_that_keeps_killing_its_worker_fails_instead_of_being_taken_forever(self):
+        from product.db import connect
+        from product.store import AuthStore
+
+        exhausted, fresh = str(uuid.uuid4()), str(uuid.uuid4())
+        with connect(self.settings, "migrator") as conn:
+            # Both workers that took them died (killed out of memory): the leases ran out unsettled.
+            for job_id, attempt in ((exhausted, 3), (fresh, 1)):
+                conn.execute(
+                    """INSERT INTO engine.jobs (id, tenant_id, kind, status, attempt, lease_owner, lease_until, payload)
+                    VALUES (%s, %s, 'report_pdf', 'leased', %s, 'killed-worker', now() - interval '1 minute', '{}'::jsonb)""",
+                    (job_id, self.alice.tenant_id, attempt),
+                )
+                conn.execute("INSERT INTO engine.attempts (id, job_id, attempt, worker_id, diagnostic) VALUES (gen_random_uuid(), %s, %s, 'killed-worker', '{}')", (job_id, attempt))
+        worker = AuthStore(self.settings, role="worker")
+        claimed = worker.claim_job("report-cap-test")
+        self.assertEqual(claimed.id, fresh)  # one that has not yet used up its attempts is taken again
+        with connect(self.settings, "migrator") as conn:
+            row = conn.execute("SELECT status, result, lease_until FROM engine.jobs WHERE id = %s", (exhausted,)).fetchone()
+        self.assertEqual(row[0], "failed")
+        self.assertEqual(row[1], {"error": "report_pdf_failed", "reason": "attempts_exhausted"})
+        self.assertIsNone(row[2])
+
     def test_support_reads_current_session_and_does_not_create_audit_or_usage_records(self):
         from api import create_app
         from fastapi.testclient import TestClient

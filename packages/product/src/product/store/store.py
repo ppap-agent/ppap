@@ -170,6 +170,10 @@ def _attempt_diagnostic(claimed: ClaimedJob, result: dict, findings: list) -> di
     return diagnostic
 
 
+# How many times a report job may outlive its lease before it is failed instead of taken again.
+MAX_REPORT_ATTEMPTS = 3
+
+
 class AuthStore:
     def __init__(
         self,
@@ -3480,8 +3484,27 @@ class AuthStore:
             "deep" if head[4] else "standard",
         )
 
+    def _fail_exhausted_reports(self) -> None:
+        """A report job whose lease ran out this many times keeps killing the worker that takes it (out of memory,
+        a crash). It fails like any failed report, notification included, instead of being taken again forever;
+        the audit's conclusion is untouched and the report can be regenerated."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT id, kind, payload, attempt, lease_owner, tenant_id FROM engine.jobs
+                WHERE kind IN ('report_pdf', 'report_zip') AND status = 'leased' AND lease_until < now() AND attempt >= %s""",
+                (MAX_REPORT_ATTEMPTS,),
+            ).fetchall()
+        for row in rows:
+            payload = row[2] or {}
+            claimed = ClaimedJob(str(row[0]), row[1], payload, int(row[3]), payload.get("round_id"), str(row[5]) if row[5] else None)
+            result: dict[str, Any] = {"error": row[1] + "_failed", "reason": "attempts_exhausted"}
+            if row[1] == "report_zip":
+                result["outcomes"] = [{"reference": source["reference"], "state": "failed", "reason": "ZIP 工作失败；原报告保留。"} for source in payload.get("sources", [])]
+            self.complete_job(claimed, row[4] or "", result, "failed")
+
     def claim_job(self, worker_ident: str) -> ClaimedJob | None:
         """The oldest claimable job."""
+        self._fail_exhausted_reports()
         with self._conn() as conn:
             with conn.transaction():
                 row = conn.execute(
