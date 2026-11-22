@@ -462,17 +462,25 @@ def test_fixed_source_branch_supports_advances_and_older_commits(tmp_path):
     assert not (tmp_path / "askpass.py").exists()
 
 
-def test_a_run_in_progress_stops_a_new_build_before_anything_is_pushed(tmp_path):
+def test_a_fourth_concurrent_build_waits_and_stuck_runs_do_not_count(tmp_path):
     operation = BUILD["yunxiao"]
+    now = time.time() * 1000
+    stuck = {"pipelineRunId": 53, "startTime": now - 10 * 86400 * 1000}
+    live = [{"pipelineRunId": n, "startTime": now} for n in (147, 148, 149)]
 
-    def cloud(method, path, body=None, query=None):
-        assert (method, path, query["status"]) == ("GET", BUILD["FLOW"] + "/runs", "RUNNING")
-        return [{"pipelineRunId": 147, "startTime": time.time() * 1000}, {"pipelineRunId": 53, "startTime": (time.time() - 10 * 86400) * 1000}]
+    def run_with(listed):
+        def cloud(method, path, body=None, query=None):
+            assert (method, path, query["status"]) == ("GET", BUILD["FLOW"] + "/runs", "RUNNING")
+            return listed
 
-    def forbidden(*args):
-        pytest.fail("nothing is pushed or dispatched beside a run in progress")
+        def pushed(*args):
+            raise RuntimeError("pushed")
 
-    with patch.dict(operation.__globals__, {"cloud": cloud, "source_branch": forbidden}):
-        # The 10-day-old run is stuck in Yunxiao and does not hold a build back; only the live one does.
-        with pytest.raises(ValueError, match="run 147 is in progress"):
+        with patch.dict(operation.__globals__, {"cloud": cloud, "source_branch": pushed}):
             operation(SHA, tmp_path, None)
+
+    # Two live builds and a 10-day-old stuck run leave room for this one.
+    with pytest.raises(RuntimeError, match="pushed"):
+        run_with([stuck, *live[:2]])
+    with pytest.raises(ValueError, match="3 Yunxiao runs are in progress"):
+        run_with([stuck, *live])

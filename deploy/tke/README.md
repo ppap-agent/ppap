@@ -72,7 +72,7 @@ is needed. Only preview caches are ephemeral; originals remain in PPAP storage.
 ## 发布 SOP
 
 - **推送前**：在本机跑受影响范围的 CI 等效测试，通过再推：`python3 -m scripts.ci_shards integration`（需要 Docker），`distributions --shard <n>`，以及相关单元测试。本地 API 测试用的开发数据库要先起来。
-- **构建**：`deploy/tke/build-current.py <完整 SHA>` 在云效流水线构建，本机只是发起和等待（细节见下文「构建镜像」）。有运行中的流水线时脚本停止并列出它：是本次源码就用 `--run-id` 跟进，否则等它结束；中断后同样先用 `--run-id` 续读，不盲目重发。构建期间不改 `deploy/tke/current.yaml`。改 `pyproject.toml` 或 `uv.lock` 会让依赖基础层失效、要求先重建基础层，非依赖改动不要碰这两个文件。
+- **构建**：`deploy/tke/build-current.py <完整 SHA>` 在云效流水线构建，本机只是发起和等待（细节见下文「构建镜像」）。已有 3 个构建在跑时脚本停止并列出它们，等其中一个结束，或用 `--run-id` 跟进本次源码的那个；中断后同样先用 `--run-id` 续读，不盲目重发。构建期间不改 `deploy/tke/current.yaml`。改 `pyproject.toml` 或 `uv.lock` 会让依赖基础层失效、要求先重建基础层，非依赖改动不要碰这两个文件。
 - **部署**（ppap-test，整套一起）：有新迁移时先更新 ConfigMap `ppap-current-migrations` 并重跑 Job `ppap-current-init-db`，读回 `product.schema_migrations`；再按下文「更新镜像或应用清单」应用 ConfigMap、Deployment 和 CronJob，等滚动更新完成；提交 `current.yaml` 的镜像版本。个人标识和密钥只放根目录 `.env` 与 Secret `ppap-current`，容器只按 key 引用，不进 git。
 - **线上验证**：用真实客户端走真实路径，读回页面上看得到的结果；授权页和确认页在内置浏览器里点。会改动真实客户数据、且无法撤回的步骤（如关闭真实问卷、往里加卡片），改在单独的测试版本上验证，并告诉产品负责人留下了哪些测试数据。扣点数的操作先说明点数。
 
@@ -223,7 +223,7 @@ python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 
 云效公共 Runner 使用原生 Docker 驱动和 inline 缓存，导出到现有各组件的 `:build-cache` 镜像；缓存 tag 不能作为部署 pin。该节点实际拒绝 `docker-container` BuildKit 启动（`flow not support`），因此不启用依赖该驱动的 registry `mode=max` 中间阶段缓存，也不为缓存新增构建服务。中间阶段（转换沙箱编译、Pi 的 npm 安装、Web 的 pnpm 安装）每次重新执行，但它们的产物都放在依赖层之上，不会引起大层重推。镜像站或仓库连接中断时，构建在流水线内最多重试两次，已完成的步骤走缓存。临时 Runner 的本地 uv cache mount 不保证跨运行持久化；实际缓存收益由构建步骤耗时确认。
 
-默认入口先验证该 SHA 的四个镜像；全部存在且身份正确则直接复用，不读取历史成功运行。仅有镜像明确缺失时查询活动流水线：有运行中的 run 就停止并列出它（开始超过 12 小时仍显示运行中的是云效卡住的旧 run，只提示、不阻挡）（云效运行详情不含源码 SHA，是否同源码由发起人判断，同源码用 `--run-id` 跟进）；历史运行也通过 `--run-id` 显式恢复。查询使用云效 [ListPipelineRuns 的 RUNNING 过滤](https://help.aliyun.com/en/yunxiao/developer-reference/listpipelineruns)，不再逐条读取成功历史。
+默认入口先验证该 SHA 的四个镜像；全部存在且身份正确则直接复用，不读取历史成功运行。仅有镜像明确缺失时查询活动流水线：云效最多同时跑 3 个构建，已有 3 个运行中就停止并列出它们（开始超过 12 小时仍显示运行中的是云效卡住的旧 run，只提示、不计数；云效运行详情不含源码 SHA，同源码的 run 由发起人用 `--run-id` 跟进）；历史运行也通过 `--run-id` 显式恢复。查询使用云效 [ListPipelineRuns 的 RUNNING 过滤](https://help.aliyun.com/en/yunxiao/developer-reference/listpipelineruns)，不再逐条读取成功历史。
 
 每次保留 digest／config 字节、平台及源码身份验证；仓库匿名访问检查移至 TCR 创建或访问权限变更时，由权限维护者确认仓库及镜像不能匿名拉取。日常构建只执行正常认证拉取，不重复申请匿名 token、探测公开权限。网络、认证或身份验证失败不当作“镜像不存在”，不能据此重新触发构建。
 
