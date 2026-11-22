@@ -125,7 +125,7 @@ audit_round
 
 ## MCP
 
-用户给一个飞书文件夹，PPAP 在服务端把它准备成一次可确认的审核，只有人能决定的事才问人。任务是持久状态机：`product.workflow` 的 `apply`/`effects`/`project` 不做读写，`api.mcp_runtime` 经 Product API 执行副作用，状态存在 `product.audit_workflows`。每次返回 `result`、`issues`、`next`；`next` 是建议不是授权，`confirm_audit`、`record_review`、`publish_report` 只在用户明确要求时调用。MCP 只收飞书文件夹或链接，不传字节，不改审核用的规则。每个面向用户的路由要么由工具到达，要么在 `apps/api/tests/test_mcp_coverage.py` 写明为何留给网页。工具、阶段、问题类别、报价、写操作幂等、授权与接入见 [apps/api/README.md](apps/api/README.md#mcp)。
+用户给一个飞书文件夹，PPAP 在服务端把它准备成一次可确认的审核，只有人能决定的事才问人。任务是持久状态机：`product.workflow` 的 `apply`/`effects`/`project` 不做读写，`api.mcp_runtime` 经 Product API 执行副作用，状态存在 `product.audit_workflows`。每次返回 `result`、`issues`、`next`；`next` 是建议不是授权，`confirm_audit`、`record_review`、`publish_report` 只在用户明确要求时调用。MCP 只收飞书文件夹或链接，不传字节，不改审核用的规则。每个面向用户的路由要么由工具到达，要么在 `apps/api/tests/test_mcp_coverage.py` 写明为何留给网页。工具、阶段、问题类别、报价、写操作幂等、授权与接入见 [apps/api/README.md](apps/api/README.md#mcp)。开发用的 coding agent 默认不加载它；需要时用 [`.agents/mcp.json`](.agents/mcp.json)（Claude Code `claude --mcp-config .agents/mcp.json`，Codex 按 apps/api/README.md「接入」`codex mcp add`）。
 
 ## 规则
 

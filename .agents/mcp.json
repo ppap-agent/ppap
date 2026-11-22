@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ppap": {
+      "type": "http",
+      "url": "https://ppap.icoastline.com/ppap/mcp"
+    }
+  }
+}
