@@ -43,7 +43,7 @@ def nonempty(value: object) -> bool:
 
 
 def require_text(value: object, location: str, errors: list[str]) -> str:
-    if not nonempty(value):
+    if not isinstance(value, str) or not value.strip():
         errors.append(f"{location} 缺少实质文字")
         return ""
     return value.strip()
@@ -215,13 +215,18 @@ def check_review(review_path: Path, review: dict, clause: dict) -> tuple[list[st
 
 
 def render(clause: dict, review: dict, findings: list[dict]) -> str:
-    lines = [f"# {clause['id']} 条款语义检查报告", "", f"- **规则文件**：{clause['title']}：{clause['category']}（{clause['id']}）",
-             f"- **规则原文**：{' '.join(clause['text'].split())}", f"- **结论**：{len(findings)} 处候选问题；结构与原文引用已校验，语义仍须人工审阅。", ""]
+    lines = [
+        f"# {clause['id']} 条款语义检查报告",
+        "",
+        f"- **规则文件**：{clause['title']}：{clause['category']}（{clause['id']}）",
+        f"- **规则原文**：{' '.join(clause['text'].split())}",
+        f"- **结论**：{len(findings)} 处候选问题；结构与原文引用已校验，语义仍须人工审阅。",
+        "",
+    ]
     if findings:
         lines.extend(["## 逐条发现", ""])
     for row in findings:
-        lines.extend([f"### {row['id'].split('#', 1)[1]}. {row['title']}", "", f"原文：「{'」「'.join(row['quote'])}」", "",
-                      f"例子：{row['example']}", ""])
+        lines.extend([f"### {row['id'].split('#', 1)[1]}. {row['title']}", "", f"原文：「{'」「'.join(row['quote'])}」", "", f"例子：{row['example']}", ""])
         if row["kind"] == "ambiguity":
             for reading in row["readings"]:
                 lines.append(f"- 理解{reading['ordinal']}（{reading['label']}）：{reading['says']}（该例判{reading['verdict']}）")
@@ -279,11 +284,13 @@ def main(argv: list[str] | None = None) -> int:
         "review_sha256": hashlib.sha256(raw).hexdigest(),
         "findings": findings,
         "excluded": review.get("excluded", []),
-        "policy_sha256": {policy["source"]: hashlib.sha256(resolve(review_path, policy["source"]).read_bytes()).hexdigest() for policy in review.get("policies", [])},
+        # check_review already refused a policy whose file cannot be found.
+        "policy_sha256": {policy["source"]: hashlib.sha256(Path(str(resolve(review_path, policy["source"]))).read_bytes()).hexdigest() for policy in review.get("policies", [])},
     }
     report_path.write_text(render(clause, review, findings), encoding="utf-8")
     data_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"检查完成：{sum(not item.get('resolution') for item in findings)} 处待确认、{sum(bool(item.get('resolution')) for item in findings)} 处已答复、{len(review.get('excluded', []))} 处已排除；写入 {report_path} 和 {data_path}")
+    answered = sum(bool(item.get("resolution")) for item in findings)
+    print(f"检查完成：{len(findings) - answered} 处待确认、{answered} 处已答复、{len(review.get('excluded', []))} 处已排除；写入 {report_path} 和 {data_path}")
     return 0
 
 

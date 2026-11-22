@@ -101,8 +101,8 @@ COPY apps/api /app/apps/api
 COPY apps/worker /app/apps/worker
 # The authorization pages the API serves take their colours, type and corners from the Web design tokens.
 COPY apps/web/tokens /app/apps/web/tokens
-# A submitted clause review is checked by the clause-check skill's own script (product/clause_check.py links to it).
-COPY .claude/skills/clause-check/scripts/check.py /app/.claude/skills/clause-check/scripts/check.py
+# A submitted clause review is checked by the clause-check skill's own script (product/clause-check links to it).
+COPY .claude/skills/clause-check/scripts /app/.claude/skills/clause-check/scripts
 COPY deploy/app/entrypoint.sh /app/entrypoint.sh
 # Workspace packages install editable: the venv points at /app/packages instead of carrying a second,
 # byte-compiled copy, so a release pushes the source once (a few MB), not a ~15 MB install layer.

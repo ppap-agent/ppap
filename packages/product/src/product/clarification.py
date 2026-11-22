@@ -16,12 +16,14 @@ clause. Rounds do depend on each other: the next revision starts from the confir
 
 from __future__ import annotations
 
+import importlib.util
 import uuid
 from copy import deepcopy
+from functools import cache
 from pathlib import Path
 from typing import Any
 
-from product import clause_check, rulebooks
+from product import rulebooks
 from product.workflow import Rejected, _act, _issue
 
 NAMESPACE = uuid.UUID("5d0c6f0e-3b0a-4d55-9a0e-6c6d2f1f0a11")
@@ -80,6 +82,21 @@ def apply(state: dict, event: dict) -> dict:
     return state
 
 
+# A submitted review is checked by the clause-check skill's own script, never a second copy of its rules. `clause-check`
+# is a link to the skill's scripts: an installed wheel carries the files, the editable image follows the link.
+CHECK_SCRIPT = Path(__file__).with_name("clause-check") / "check.py"
+
+
+@cache
+def _check_review():
+    spec = importlib.util.spec_from_file_location("clause_check", CHECK_SCRIPT)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("clause_check_unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.check_review
+
+
 class Invalid(Rejected):
     """Prepared work that cannot be taken as it is; `problems` says everything wrong with it at once."""
 
@@ -116,7 +133,7 @@ def decide(state: dict, facts: dict, issue: dict, action_id: str, value: Any, by
     clause = next(row for row in clauses(revision) if row["id"] == issue["subject"]["key"])
     if action_id == "submit_review":
         review = {**value, "schema": value.get("schema", REVIEW_SCHEMA)}
-        errors, findings = clause_check.check_review(Path("."), review, {"id": clause["id"], "text": clause["text"]})
+        errors, findings = _check_review()(Path("."), review, {"id": clause["id"], "text": clause["text"]})
         if errors:
             raise Invalid("review_rejected", errors)
         return {"type": "reviewed", "clause": clause["id"], "digest": clause["digest"], "revision": revision["revision"], "review": review, "findings": findings, "by": by}

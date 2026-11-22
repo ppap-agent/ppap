@@ -67,8 +67,6 @@ exclude = [
     "migrations",
     ".venv",
     "venv",
-    # A link to the clause-check skill's script, which keeps its own layout.
-    "packages/product/src/product/clause_check.py",
 ]
 
 [tool.ruff.lint]
@@ -91,8 +89,3 @@ mypy_path = [
     "apps/api/src",
     "apps/worker/src",
 ]
-
-# A link to the clause-check skill's script: it is the skill's code, checked as the skill.
-[[tool.mypy.overrides]]
-module = "product.clause_check"
-ignore_errors = true
