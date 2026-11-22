@@ -1,7 +1,7 @@
 ------------------------ MODULE RoundPreparation ---------------------------
 EXTENDS Integers, FiniteSets
 
-\* Focused obligation for #165 and DATA_MODEL: preparation is not acceptance.
+\* Focused obligation for #165 and AGENTS.md (数据): preparation is not acceptance.
 \* All correct preparation steps preserve the
 \* accepted count. No full refinement or liveness claim is made.
 \* One operation, two request identities (the second exposes an unsafe retry),

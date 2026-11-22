@@ -6,7 +6,7 @@
 
 与线上 Controller 相同：在从 `HEAD` 构建的深度镜像里，以 root 启动本地模型网关和 `ContainerRuntime`，guest 降权为 uid 10001、在 `prlimit` 下运行，由 `CoreRuntime.execute_snapshot` 在一个 guest 中执行整轮、同组共享上下文：逐份运行已验证的 Suite 程序（允许模型读取），再逐份由 Pi 按 `deep_agent/AGENTS.md` 复核，宿主校验并合并订正；每份的时限与线上相同，见 [deploy/deep](../../deploy/deep/README.md)。某份复核未完成时，这份保留程序结论，记为未复核。
 
-- 模型：平台模型（`.env` 中的 `PPAP_MODEL_TEXT_*` / `VISION_*` / `CODING_*`），按未配置企业 Key 的租户冻结身份；推理强度、请求上限、沙箱配置取自 `.env.production`。检查用文本与看图模型，复核（Pi）用 coding 模型，强度为 `PPAP_MODEL_CODING_REASONING_EFFORT`（含义见 [模型来源](../../docs/DEVELOPMENT.md#模型来源平台默认--企业-key)；网关以配置的强度为准）。
+- 模型：平台模型（`.env` 中的 `PPAP_MODEL_TEXT_*` / `VISION_*` / `CODING_*`），按未配置企业 Key 的租户冻结身份；推理强度、请求上限、沙箱配置取自 `.env.production`。检查用文本与看图模型，复核（Pi）用 coding 模型，强度为 `PPAP_MODEL_CODING_REASONING_EFFORT`（含义见 [AGENTS.md](../../AGENTS.md#开发)「模型来源」；网关以配置的强度为准）。
 - 可调的只有复核强度：`--effort low|medium|high|xhigh`。模型一律用配置的，检查不受影响。实际的复核模型与强度写进 `meta.json`。
 - 用例：`assets/corpus` 中 UAES 的人工 Oracle（`uaes-cases.csv`、`uaes-oracle.csv`、`uaes-reviewed-rules.json`）。语料合同照常检查条款正文与人工复核语义是否一致，不一致即报错，不评测过期真值。
 - 用量与费用：每次模型请求都经过本进程托管的网关，逐次记下用途、模型、实际强度和服务商返回的用量（输入、其中缓存命中、输出、其中推理），按发出时正在进行的任务归到对应文件的检查或复核。费用按 [prices.json](prices.json) 的公开价计算（美元），价格表由人维护，写明来源与读取日期。

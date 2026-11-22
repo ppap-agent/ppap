@@ -1,6 +1,6 @@
 # Web Client
 
-桌面浏览器与飞书 H5 使用同一个 PPAP 产品客户端（React + TypeScript，源码在 `src/`），只支持桌面宽度（最小 1280px），不提供手机/平板布局、PWA 或离线缓存。数据只通过 Product API 读取；JSON 类型由 OpenAPI 生成（见 [DEVELOPMENT](../../docs/DEVELOPMENT.md#web-wire-contract)）。产品地址以 `src/audit/routes.ts` 为准；Docs-addon 的 `/addon` 宿主适配进入同一产品 API。
+桌面浏览器与飞书 H5 使用同一个 PPAP 产品客户端（React + TypeScript，源码在 `src/`），只支持桌面宽度（最小 1280px），不提供手机/平板布局、PWA 或离线缓存。数据只通过 Product API 读取；JSON 类型由 OpenAPI 生成（见 [AGENTS.md](../../AGENTS.md#开发)「Web 接口类型」）。产品地址以 `src/audit/routes.ts` 为准；Docs-addon 的 `/addon` 宿主适配进入同一产品 API。
 
 ## 运行
 

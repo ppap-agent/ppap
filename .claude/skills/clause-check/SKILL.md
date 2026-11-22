@@ -95,7 +95,7 @@ description: 离线检查审核条款的语义歧义、缺口和真实冲突。�
 
 执行 check.py，仔细阅读它生成的白话报告。脚本检查条款 ID、引用、输入结构、问题与例子的完整性以及读法判定差异，**不检查解释是否符合自然语言逻辑**。这一步必须靠上面的全文审查，并用「才／就」「局部豁免」「多必要条件」「强制项缺充分条件」等已知误报作为回归。
 
-需要客户确认时，用问卷整理与 SQL 导入流程；questionnaire.py build 读取 *.report.json：
+在规则澄清循环里（经 MCP，见根目录 AGENTS.md「规则处理 SOP」），每条审查记录直接作为 `submit_review` 的输入提交：服务端用本技能的 check.py 校验，用 questionnaire.py 的同一个卡片生成函数出卡片，由平台负责人确认发送。下面的问卷整理与 SQL 导入流程用于线下：给另一个企业导入同一批问题，或整理共性问题。questionnaire.py build 读取 *.report.json：
 
     python3 <技能目录>/scripts/questionnaire.py build <工作目录> <工作目录>/问卷整理.json <工作目录>/问卷导入.json
 

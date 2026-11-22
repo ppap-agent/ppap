@@ -4,24 +4,8 @@
 
 > 打开一次审核，就知道审了什么、结果是什么、原始依据在哪里、下一步做什么。
 
-## 从这里开始
-
-| 需要了解 | 当前入口 |
-|---|---|
-| 产品目标和术语 | [Northstar](docs/NORTHSTAR.md) |
-| 代码与运行边界 | [Architecture](docs/ARCHITECTURE.md) |
-| 数据不变量 | [Data model](docs/DATA_MODEL.md) |
-| 开发、配置、运行 | [Development](docs/DEVELOPMENT.md)、[.env.dev](.env.dev)、[.env.production](.env.production)、[.env.example](.env.example) |
-| 测试 | [测试入口](tests/README.md) |
-| 视觉设计（token、design.md、检查） | [Design tokens](apps/web/tokens/README.md)、[design.md](design.md) |
-| 安全边界 | [Security](docs/SECURITY.md) |
-
-当前实现事实以 `main` 上的源码和测试为准；工作状态只在 GitHub Issues，不维护第二份状态台账。具体开发约束见 [AGENTS.md](AGENTS.md)。
-
-主要运行路径：
+产品、架构、数据、安全、审核与规则流程、MCP、开发和发布都在 [AGENTS.md](AGENTS.md)。测试见 [tests/README](tests/README.md)，视觉设计见 [Design tokens](apps/web/tokens/README.md) 与 [design.md](design.md)，配置见 [.env.example](.env.example)。
 
 ```text
 apps/web -> apps/api -> PostgreSQL / object storage -> apps/worker -> packages
 ```
-
-条款形式化是交付规则前的离线工具，见 [DATA_MODEL](docs/DATA_MODEL.md#规则形式化)。

@@ -9,4 +9,4 @@
 | `agent` | Deep 执行协议、UDS client 与 Controller（`python -m agent`）；Worker 只连 UDS |
 | `documents` | 物理文档读取、定位和局部呈现（Excel、Word、PDF、图像、OCR、PDF 转换），不判定审核结果 |
 
-Corpus regression 的契约包在 `tests/corpus/contracts`，仅用于开发/测试，不是产品 runtime API。Worker 执行 job 中冻结的 Checker Core 与 Suite 快照，见 [ARCHITECTURE](../docs/ARCHITECTURE.md#执行)。
+Corpus regression 的契约包在 `tests/corpus/contracts`，仅用于开发/测试，不是产品 runtime API。Worker 执行 job 中冻结的 Checker Core 与 Suite 快照，见 [AGENTS.md](../AGENTS.md#架构)。
