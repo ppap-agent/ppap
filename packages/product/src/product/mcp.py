@@ -23,6 +23,8 @@ SCOPES = {
     "reports:write": "重新生成报告",
     "reports:send": "向飞书写回或发送报告；须逐次确认",
     "usage:read": "读取额度与费用记录",
+    "rulebooks:read": "读取规则库修订、待确认问题与答复",
+    "rulebooks:write": "准备规则澄清；发问卷、确认修订与解读须逐次确认",
 }
 READ_SCOPES = tuple(s for s in SCOPES if s.endswith(":read"))
 MAX_MCP_BYTES = 1024 * 1024

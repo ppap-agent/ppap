@@ -185,3 +185,79 @@ def answer(question: dict, filename: str | None, value: Any) -> tuple[list[str],
         {"kind": "note", "text": "回答只用于本轮所选文件版本：依赖它的检查项按规则重新计算，机器结果与你的确认分别保存，不修改规则。"},
     ]
     return summary, details
+
+
+# ---- rulebook clarification: what the platform operator approves ----------------------------------------------
+
+CHANGE = {"same": "意思不变", "changed": "意思变了", "new": "新增"}
+
+
+def _revision_name(revision: dict, number: int | None = None) -> str:
+    return f"{revision['version']} 修订 {revision['revision'] if number is None else number}"
+
+
+def rulebook_clauses(customer: str, version: str, draft: dict) -> tuple[list[str], list[dict]]:
+    """Before clauses become revision 0: every clause as it will be frozen."""
+    documents = draft["documents"]
+    total = sum(len(document["clauses"]) for document in documents)
+    summary = [f"把 {len(documents)} 类文件、{total} 条条款确认为 {version} 修订 0。"]
+    details: list[dict] = [{"kind": "facts", "rows": [("提交人", draft["by"]), ("版本", f"{version} 修订 0"), ("条款", f"{total} 条")]}]
+    for document in documents:
+        details.append({"kind": "table", "title": f"{document['title']} · {len(document['clauses'])} 条", "head": ["编号", "原文"], **_rows([[c["id"], c["text"]] for c in document["clauses"]])})
+    details.append({"kind": "note", "text": "确认后这一修订冻结，原文不能再改；之后的改动成为新的修订。审核仍用原来的规则，不会因此切换。"})
+    return summary, details
+
+
+def rule_cards(revision: dict, cards: list[dict]) -> tuple[list[str], list[dict]]:
+    """Before cards reach the customer: each question, why it is asked and the answers offered."""
+    summary = [f"把 {len(cards)} 张问题卡片发给客户成员，在规则页 {_revision_name(revision)} 下作答。"]
+    rows = [[card["clauses"][0] if card["clauses"] else None, card["question"], card.get("why"), "；".join(option["label"] for option in card.get("options", [])) or "自己写答案"] for card in cards]
+    details: list[dict] = [
+        {"kind": "table", "title": f"卡片 · {len(cards)} 张", "head": ["条款", "问题", "为什么问", "可选答案"], **_rows(rows)},
+        {"kind": "note", "text": "发送后本企业成员都能看到并作答，卡片内容不再修改。"},
+    ]
+    return summary, details
+
+
+def rulebook_revision(revision: dict, proposals: dict[str, dict]) -> tuple[list[str], list[dict]]:
+    """Before proposed wording becomes the next revision: each clause before and after, and what it rests on."""
+    before = {clause["id"]: clause["text"] for document in revision["documents"] for clause in document["clauses"]}
+    summary = [f"把 {len(proposals)} 条条款的新写法确认为 {_revision_name(revision, revision['revision'] + 1)}。"]
+    details: list[dict] = []
+    for clause, row in proposals.items():
+        grounds = "；".join(f"卡片 {source['question_key']}（{'、'.join(source['answerers'])}）" for source in row["sources"])
+        details.append({"kind": "facts", "title": clause, "rows": [("改动", CHANGE[row["kind"]]), ("说明", row["note"]), ("依据", grounds), ("提出人", row["by"])]})
+        details.append({"kind": "text", "title": "原来", "text": before[clause]})
+        details.append({"kind": "text", "title": "改为", "text": row["text"]})
+    details.append({"kind": "note", "text": f"确认后新修订冻结，{_revision_name(revision)} 的问卷关闭，答复保留可查。审核仍用原来的规则，不会因此切换。"})
+    return summary, details
+
+
+def rulebook_clarified(revision: dict, progress: dict) -> tuple[list[str], list[dict]]:
+    summary = [f"确认 {_revision_name(revision)} 已澄清：每条都已审查，没有未决问题。"]
+    cards = progress["cards"]
+    details: list[dict] = [
+        {
+            "kind": "facts",
+            "rows": [
+                ("条款", f"{progress['clauses']} 条，已审 {progress['reviewed']} 条"),
+                ("审查没有发现问题", f"{progress['reviewed_without_findings']} 条"),
+                ("已处理的卡片", f"{cards['settled']} 张"),
+            ],
+        },
+        {"kind": "note", "text": "确认后可以为每条条款配解读。已澄清不可撤销；以后发现新问题，改动成为新的修订。"},
+    ]
+    return summary, details
+
+
+def rule_readings(revision: dict, readings: dict[str, dict]) -> tuple[list[str], list[dict]]:
+    """Before readings are shown beside clauses: each reading in full, next to the clause it reads."""
+    texts = {clause["id"]: clause["text"] for document in revision["documents"] for clause in document["clauses"]}
+    summary = [f"把 {len(readings)} 条解读发布到规则页 {_revision_name(revision)} 的原文旁。"]
+    details: list[dict] = []
+    for clause, reading in readings.items():
+        details.append({"kind": "text", "title": f"{clause} 原文", "text": texts[clause]})
+        rows = [("查什么", "；".join(reading["checks"])), ("通过", "；".join(reading["passes"])), ("不通过", "；".join(reading["fails"])), ("转人工", "；".join(reading["manual"]))]
+        details.append({"kind": "facts", "rows": [(label, value or None) for label, value in rows]})
+    details.append({"kind": "note", "text": "原文仍是唯一的判定依据；解读发布后不再修改。"})
+    return summary, details

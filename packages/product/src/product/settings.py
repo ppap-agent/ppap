@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     # Platform operators: comma-separated Feishu identities `tenant_key:open_id`. Only they upload/publish
     # rules or adopt checker versions; tenant members only read. Empty means nobody (isolated-dev: the fixtures).
     platform_operators: str = Field(default="", alias="PPAP_PLATFORM_OPERATORS")
+    # People the platform has commissioned to prepare rule clarifications (reviews, proposed wording, readings) in an
+    # enterprise. They cannot send, confirm or publish anything; a platform operator does that.
+    clause_reviewers: str = Field(default="", alias="PPAP_CLAUSE_REVIEWERS")
     mcp_allowed_origins: list[str] = Field(default_factory=list, alias="PPAP_MCP_ALLOWED_ORIGINS")
     # Feishu Project (Meego) plugin host. Off unless the plugin credential and
     # an explicit Meego tenant -> Feishu tenant mapping are configured.
@@ -142,6 +145,7 @@ class Settings(BaseSettings):
             if not parsed.hostname or parsed.scheme != "https" or "*" in origin or origin != f"{parsed.scheme}://{parsed.netloc}":
                 raise ValueError("Meego plugin origins must be explicit HTTPS origins")
         self.platform_operator_identities()
+        self._identities(self.clause_reviewers, "PPAP_CLAUSE_REVIEWERS")
         if self.profile == "isolated-dev":
             if "platform_operators" not in self.model_fields_set:
                 self.platform_operators = ISOLATED_DEV_PLATFORM_OPERATORS
@@ -238,19 +242,26 @@ class Settings(BaseSettings):
         allowed = self.allowed_tenant_keys()
         return not allowed or tenant_key.strip() in allowed
 
-    def platform_operator_identities(self) -> frozenset[tuple[str, str]]:
+    @staticmethod
+    def _identities(value: str, name: str) -> frozenset[tuple[str, str]]:
         identities = set()
-        for entry in self.platform_operators.split(","):
+        for entry in value.split(","):
             if not entry.strip():
                 continue
             tenant_key, sep, subject = (part.strip() for part in entry.strip().partition(":"))
             if not sep or not tenant_key or not subject or ":" in subject:
-                raise ValueError("PPAP_PLATFORM_OPERATORS entries must be tenant_key:open_id")
+                raise ValueError(f"{name} entries must be tenant_key:open_id")
             identities.add((tenant_key, subject))
         return frozenset(identities)
 
+    def platform_operator_identities(self) -> frozenset[tuple[str, str]]:
+        return self._identities(self.platform_operators, "PPAP_PLATFORM_OPERATORS")
+
     def platform_operator(self, tenant_key: str, subject: str) -> bool:
         return (tenant_key, subject) in self.platform_operator_identities()
+
+    def clause_reviewer(self, tenant_key: str, subject: str) -> bool:
+        return (tenant_key, subject) in self._identities(self.clause_reviewers, "PPAP_CLAUSE_REVIEWERS")
 
     def public_config(self) -> dict[str, object]:
         return {

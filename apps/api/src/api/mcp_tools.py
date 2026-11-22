@@ -12,13 +12,14 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from mcp.types import ToolAnnotations
-from product import workflow
+from product import clarification, workflow
 from product.customers import by_key
 from product.mcp import MAX_RESULT_BYTES, SCOPES, McpError
 from pydantic import Field
 
 from api import mcp_views as views
 from api import web_contract as wc
+from api.mcp_clarification import ClarificationRuntime
 from api.mcp_gateway import Outcome, PageRequest, Reply, page_result
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
@@ -41,6 +42,9 @@ _SAY = {
     "denied_by_user": "用户在确认页拒绝了这次操作。",
     "request_conflict": "这个 request_id 已经用于另一次不同的请求。请为新的请求生成一个新的随机 UUID。",
     "customer_required": "还没有选定审核客户。请让用户从 get_account 列出的客户中选一个，把它的 key 作为 customer 传入。",
+    "rulebook_version_required": "规则库版本要写成 v1.0 这样。已有的版本见 get_account 的 rulebooks。",
+    "rulebook_version_not_found": "这个客户没有这个版本的规则库。已有的版本见 get_account 的 rulebooks；新建版本要由平台负责人或受委托的审查方发起。",
+    "platform_operator_required": "这一步只有平台负责人能确认。",
     "round_has_errors": "这次审核有检查项没有检查完，不能生成飞书报告。可以对同一份资料复审，结论确定后再交付。",
 }
 
@@ -51,6 +55,10 @@ def blocked(code: str, *, task_id: str | None = None, request_id: str | None = N
 
 def failure(exc: Exception, *, task_id: str | None = None, request_id: str | None = None) -> Outcome:
     """Why a call did nothing, as the next thing to do about it."""
+    if isinstance(exc, clarification.Invalid):
+        # Prepared work that cannot be taken: everything wrong with it at once, to fix and submit again under a new request_id.
+        step = {"kind": "blocked", "error_code": str(exc), "message": "提交的内容不合格，改好后用新的 request_id 再提交：" + "；".join(exc.problems)[:3000], "problems": exc.problems[:50]}
+        return Outcome(task_id=task_id, request_id=request_id, next=step)
     if isinstance(exc, workflow.Rejected):
         code = str(exc)
         if code == "results_not_ready" and task_id:
@@ -151,6 +159,8 @@ def result_view(round_: dict, file_version_id: str | None, status: str | None, o
 
 
 def register_tools(mcp, gateway, authority, runtime):
+    clarifications = ClarificationRuntime(runtime)
+
     async def task_outcome(actor, task_id: str, *, request_id: str | None = None, files_offset: int = 0, files_limit: int = 50) -> Outcome:
         row, _facts, view = await runtime.view(actor, task_id)
         result = dict(view["result"])
@@ -163,6 +173,25 @@ def register_tools(mcp, gateway, authority, runtime):
         if len(outcome.model_dump_json().encode()) > MAX_RESULT_BYTES:
             raise McpError("result_too_large_use_smaller_files_limit", 413)
         return outcome
+
+    async def clarification_of(actor, task_id: str) -> dict | None:
+        """The task's row when it is a rulebook clarification; such a task belongs to the enterprise, not one person."""
+        try:
+            row = await asyncio.to_thread(runtime.store.load, actor.session.principal, task_id)
+        except McpError:
+            return None
+        return row if row is not None and row["state"].get("kind") == "clarification" else None
+
+    async def clarification_outcome(actor, row: dict, *, request_id: str | None = None, offset: int = 0, limit: int = 50) -> Outcome:
+        _facts, view = await clarifications.view(actor, row)
+        result = dict(view["result"])
+        lines = result.pop("clauses")
+        found = view["issues"]
+        result["clauses"] = {"total": len(lines), "offset": offset, "items": lines[offset : offset + limit]}
+        result["issue_counts"] = {"open": len(found)}
+        # One issue per clause would bury the reply: the next action names the one to work on, the lines name the rest.
+        shown = [issue for issue in found if issue["subject"]["kind"] != "clause"] + [issue for issue in found if issue["subject"]["kind"] == "clause"][:5]
+        return Outcome(task_id=row["id"], task_revision=row["revision"], result=result, issues=shown, next=view["next"], request_id=request_id)
 
     async def audit_round(actor, task_id: str) -> tuple[dict, str]:
         audit = await gateway.get(actor, "audits:read", f"/audit-tasks/{task_id}")
@@ -226,6 +255,29 @@ def register_tools(mcp, gateway, authority, runtime):
         except Exception as exc:
             return failure(exc, task_id=tid, request_id=rid)
 
+    @mcp.tool(annotations=UPDATE)
+    async def prepare_rule_clarification(
+        customer: Annotated[str, Field(min_length=1, max_length=500, description="The `key` of the customer whose rulebook is clarified, from the customers `get_account` lists.")],
+        version: Annotated[
+            str, Field(pattern=r"^v\d+\.\d+$", description="The rulebook version, e.g. v1.0: one that `get_account` lists under rulebooks, or a new one to start from the customer's rules.")
+        ],
+    ) -> Outcome:
+        """Open the clarification of one version of a customer's rulebook: review each clause, put the open questions before the
+        customer, turn their answers into the next revision, and repeat until nothing is open; then write a reading beside each clause.
+        The enterprise has one such task per customer and version; calling this again returns it. Then follow `next`. Review a clause
+        with the clause-check method and submit it through resolve_issue; sending cards and confirming a revision are the platform
+        operator's decisions, approved in the browser."""
+        tid = None
+        try:
+            actor = await authority()
+            tid = await clarifications.open(actor, customer, version)
+            row = await clarification_of(actor, tid)
+            if row is None:
+                raise McpError("task_not_found", 404)
+            return await clarification_outcome(actor, row)
+        except Exception as exc:
+            return failure(exc, task_id=tid)
+
     @mcp.tool(annotations=READ)
     async def get_task(task_id: UUID, files_offset: Offset = 0, files_limit: Limit = 50) -> Outcome:
         """Where an audit stands: its phase and stages, one line per file, the open issues and what to do next. Reading it also lets a
@@ -233,6 +285,9 @@ def register_tools(mcp, gateway, authority, runtime):
         tid = str(task_id)
         try:
             actor = await authority()
+            shared = await clarification_of(actor, tid)
+            if shared is not None:
+                return await clarification_outcome(actor, shared, offset=files_offset, limit=files_limit)
             actor.require("audits:read")
             await runtime.settle(actor, tid)
             return await task_outcome(actor, tid, files_offset=files_offset, files_limit=files_limit)
@@ -245,6 +300,12 @@ def register_tools(mcp, gateway, authority, runtime):
         tid = str(task_id)
         try:
             actor = await authority()
+            shared = await clarification_of(actor, tid)
+            if shared is not None:
+                facts, view = await clarifications.view(actor, shared)
+                issue, _ = workflow.find_issue(view["issues"], issue_id)
+                step = {"kind": "user_action", "issue_id": issue_id, "prompt": issue["message"], "resolve_with": "resolve_issue"} if issue["allowed_actions"] else view["next"]
+                return Outcome(task_id=tid, task_revision=shared["revision"], result=clarification.issue_detail(issue, shared["state"], facts), next=step)
             actor.require("audits:read")
             row, _facts, view = await runtime.view(actor, tid)
             issue, _ = workflow.find_issue(view["issues"], issue_id)
@@ -267,10 +328,15 @@ def register_tools(mcp, gateway, authority, runtime):
         tid, rid = str(task_id), str(request_id)
         try:
             actor = await authority()
+            arguments = {"task_id": tid, "issue_id": issue_id, "action_id": action_id, "expected_revision": expected_revision, "request_id": rid, "value": value}
+            shared = await clarification_of(actor, tid)
+            if shared is not None:
+                reply = await clarifications.resolve(actor, shared, issue_id, action_id, expected_revision, rid, value)
+                pending = receipt(reply, "resolve_issue", arguments, task_id=tid) if reply is not None else None
+                return pending or await clarification_outcome(actor, await clarification_of(actor, tid) or shared, request_id=rid)
             actor.require("audits:write")
             reply = await runtime.resolve(actor, tid, issue_id, action_id, expected_revision, rid, value)
             if reply is not None:
-                arguments = {"task_id": tid, "issue_id": issue_id, "action_id": action_id, "expected_revision": expected_revision, "request_id": rid, "value": value}
                 pending = receipt(reply, "resolve_issue", arguments, task_id=tid)
                 if pending is not None:
                     return pending
@@ -465,6 +531,13 @@ def register_tools(mcp, gateway, authority, runtime):
         try:
             actor = await authority()
             result = {"user": await gateway.get(actor, "identity:read", "/me"), "customers": await runtime.read(actor, "/audit-customers")}
+            if actor.scopes >= {"rulebooks:read"}:
+                # Which versions of each customer's rulebook exist here, for prepare_rule_clarification.
+                keys = [row["customer_id"] for row in (result["customers"] or {}).get("customers", [])]
+                listed = await asyncio.gather(*(runtime.read(actor, f"/rulebooks/{key}") for key in keys))
+                result["rulebooks"] = {
+                    key: [{k: row[k] for k in ("version", "revision", "clause_count", "clarified")} for row in (found or {}).get("revisions", [])] for key, found in zip(keys, listed)
+                }
             if actor.scopes >= {"usage:read"}:
                 result["points"] = await runtime.read(actor, "/integrations/feishu/usage/quota", {"target_count": 1})
             return Outcome(result=result, next=DONE)

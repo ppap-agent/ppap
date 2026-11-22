@@ -1589,6 +1589,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rule-questionnaires/cards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Rule Cards
+         * @description Putting cards before the customer is a platform operator's decision; through MCP, one they approved.
+         */
+        post: operations["send_rule_cards_rule_questionnaires_cards_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rulebooks/{customer_id}": {
         parameters: {
             query?: never;
@@ -1617,6 +1637,57 @@ export interface paths {
         get: operations["read_rulebook_revision_rulebooks__customer_id___version___revision__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rulebooks/{customer_id}/{version}/{revision}/clarified": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clarify Rulebook Revision */
+        post: operations["clarify_rulebook_revision_rulebooks__customer_id___version___revision__clarified_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rulebooks/{customer_id}/{version}/{revision}/readings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save Rulebook Readings */
+        put: operations["save_rulebook_readings_rulebooks__customer_id___version___revision__readings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rulebooks/{customer_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Rulebook Revision */
+        post: operations["create_rulebook_revision_rulebooks__customer_id__revisions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4395,13 +4466,25 @@ export interface components {
             /** Same */
             same: number;
         };
+        /** RulebookChangeSource */
+        RulebookChangeSource: {
+            /** Answerers */
+            answerers?: string[] | null;
+            /** Question Key */
+            question_key?: string | null;
+            /** Ruling */
+            ruling?: string | null;
+        };
         /** RulebookClause */
         RulebookClause: {
             /** Category */
             category: string;
             change: components["schemas"]["RulebookClauseChange"] | null;
+            /** Digest */
+            digest: string;
             /** Id */
             id: string;
+            reading: components["schemas"]["RulebookClauseReading"] | null;
             /** Text */
             text: string;
         };
@@ -4414,11 +4497,26 @@ export interface components {
             kind: "same" | "changed" | "new";
             /** Note */
             note: string;
+            /** Sources */
+            sources?: components["schemas"]["RulebookChangeSource"][] | null;
+        };
+        /** RulebookClauseReading */
+        RulebookClauseReading: {
+            /** Checks */
+            checks: string[];
+            /** Fails */
+            fails: string[];
+            /** Manual */
+            manual: string[];
+            /** Passes */
+            passes: string[];
         };
         /** RulebookDocument */
         RulebookDocument: {
             /** Clauses */
             clauses: components["schemas"]["RulebookClause"][];
+            /** Key */
+            key: string;
             /** Title */
             title: string;
         };
@@ -4438,8 +4536,21 @@ export interface components {
         RulebookRevisionSummary: {
             base: components["schemas"]["RulebookRevisionRef"] | null;
             changes: components["schemas"]["RulebookChangeCounts"] | null;
+            /** Clarified */
+            clarified: boolean;
             /** Clause Count */
             clause_count: number;
+            /** Created At */
+            created_at: string;
+            /** Customer Id */
+            customer_id: string;
+            /** Id */
+            id: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "shipped" | "local" | "clarification";
             /** Revision */
             revision: number;
             /** Version */
@@ -4449,10 +4560,23 @@ export interface components {
         RulebookRevisionView: {
             base: components["schemas"]["RulebookRevisionRef"] | null;
             changes: components["schemas"]["RulebookChangeCounts"] | null;
+            /** Clarified */
+            clarified: boolean;
             /** Clause Count */
             clause_count: number;
+            /** Created At */
+            created_at: string;
+            /** Customer Id */
+            customer_id: string;
             /** Documents */
             documents: components["schemas"]["RulebookDocument"][];
+            /** Id */
+            id: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "shipped" | "local" | "clarification";
             /** Revision */
             revision: number;
             /** Version */
@@ -4465,6 +4589,34 @@ export interface components {
             source_file_version_id: string;
             /** Title */
             title: string;
+        };
+        /** RuleCardsReceipt */
+        RuleCardsReceipt: {
+            /** Added */
+            added: number;
+            /** Answered */
+            answered: number;
+            /** Closed */
+            closed: boolean;
+            /** Closed At */
+            closed_at: string | null;
+            /** Customer Id */
+            customer_id: string;
+            /** Customer Name */
+            customer_name: string;
+            /** Id */
+            id: string;
+            /** Imported At */
+            imported_at: string;
+            /** Mine */
+            mine: number;
+            /** Rule Version */
+            rule_version: string;
+            rulebook: components["schemas"]["RuleQuestionnaireRulebook"];
+            /** Title */
+            title: string;
+            /** Total */
+            total: number;
         };
         /** RuleCoverageItem */
         RuleCoverageItem: {
@@ -4584,6 +4736,8 @@ export interface components {
             clauses: string[];
             /** Expect */
             expect: string;
+            /** Follows */
+            follows?: string | null;
             /**
              * Group
              * @enum {string}
@@ -8910,6 +9064,53 @@ export interface operations {
             };
         };
     };
+    send_rule_cards_rule_questionnaires_cards_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Cards */
+                    cards: {
+                        [key: string]: unknown;
+                    }[];
+                    /** Customer Id */
+                    customer_id: string;
+                    /** RuleQuestionnaireRulebook */
+                    rulebook: {
+                        /** Revision */
+                        revision: number;
+                        /** Version */
+                        version: string;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleCardsReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_rulebook_revisions_rulebooks__customer_id__get: {
         parameters: {
             query?: never;
@@ -8953,6 +9154,149 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RulebookRevisionView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clarify_rulebook_revision_rulebooks__customer_id___version___revision__clarified_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                customer_id: string;
+                revision: number;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RulebookRevisionView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_rulebook_readings_rulebooks__customer_id___version___revision__readings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                customer_id: string;
+                revision: number;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Readings */
+                    readings: {
+                        [key: string]: {
+                            /** Checks */
+                            checks: string[];
+                            /** Fails */
+                            fails: string[];
+                            /** Manual */
+                            manual: string[];
+                            /** Passes */
+                            passes: string[];
+                        };
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RulebookRevisionView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_rulebook_revision_rulebooks__customer_id__revisions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                customer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    base: {
+                        /** Revision */
+                        revision: number;
+                        /** Version */
+                        version: string;
+                    } | null;
+                    /** Changes */
+                    changes: {
+                        [key: string]: unknown;
+                    };
+                    /** Documents */
+                    documents: {
+                        [key: string]: unknown;
+                    }[];
+                    /**
+                     * Origin
+                     * @enum {string}
+                     */
+                    origin: "local" | "clarification";
+                    /** Revision */
+                    revision: number;
+                    /** Version */
+                    version: string;
+                };
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

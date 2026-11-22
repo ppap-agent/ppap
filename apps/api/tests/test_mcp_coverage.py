@@ -67,9 +67,8 @@ LEFT_TO_WEB = {
     "/template-submissions": "网页提交模板需求",
     "/rules": "网页规则页只读列出规则；发布是平台运营的内部写入口",
     "/rules/": "网页规则页只读查看规则；解析是平台运营的内部写入口",
-    "/rule-questionnaires": "规则确认问卷由客户成员在网页作答；导入、关闭、导出在线下直接操作数据库",
-    "/rule-questionnaires/": "规则确认问卷由客户成员在网页作答；导入、关闭、导出在线下直接操作数据库",
-    "/rulebooks/": "规则库各修订供成员在规则页评审，只读",
+    "/rule-questionnaires/{}/answers": "规则确认问卷由客户成员在网页作答；MCP 只读答复",
+    "/rule-questionnaires/{}/answers/": "规则确认问卷由客户成员在网页作答；MCP 只读答复",
     "/suites": "平台运营查看与采用检查程序的内部入口",
     "/suites/": "平台运营查看与采用检查程序的内部入口",
     "/suite-revisions/": "平台运营查看检查程序修订的内部入口",
@@ -87,7 +86,7 @@ def _routes() -> set[str]:
 def _reached() -> set[str]:
     # A tool path is a literal, or a literal base plus a literal suffix (p + "/pdf").
     # Tools state what they do; the runtime runs the task's effects. Both reach the Product API.
-    text = "".join((SOURCE / name).read_text(encoding="utf-8") for name in ("mcp_tools.py", "mcp_runtime.py"))
+    text = "".join((SOURCE / name).read_text(encoding="utf-8") for name in ("mcp_tools.py", "mcp_runtime.py", "mcp_clarification.py"))
     literals = {_normal(path) for path in LITERAL.findall(text)}
     return literals | {base + suffix for base in literals for suffix in literals}
 

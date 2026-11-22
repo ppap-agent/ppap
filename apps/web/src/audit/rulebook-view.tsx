@@ -16,6 +16,7 @@ import type {Question, QuestionnaireList, QuestionnaireView} from './rule-questi
 import {followRulesLink, rulesAddress, RulesTrail} from './rule-templates-view'
 import {CHANGE_LABEL, changeSummary, parseRevisionKey, questionnaireFor, questionsByClause, revisionKey, revisionLabel, type RevisionList, type RevisionSummary, type RevisionView} from './rulebook-contract'
 
+const READING_PARTS = [['checks', '查什么'], ['passes', '通过'], ['fails', '不通过'], ['manual', '转人工']] as const
 const progress = (row: {answered: number; total: number}) => `待确认问题 已答 ${row.answered} / ${row.total}`
 
 /** Under a customer on the rules page: its rulebook revisions, then any questionnaire not reached through one. */
@@ -36,7 +37,7 @@ export function CustomerRulebook({customerId, questionnaires}: {customerId: stri
       {[...revisions].reverse().map(row => {
         const href = rulesAddress({template: customerId, rulebook: revisionKey(row)}), id = `rb-${revisionKey(row)}`
         const questionnaire = questionnaireFor(questionnaires, customerId, row)
-        const facts = [`${row.clause_count} 条`, changeSummary(row), questionnaire ? progress(questionnaire) : ''].filter(Boolean).join(' · ')
+        const facts = [`${row.clause_count} 条`, row.clarified ? '已澄清' : '', changeSummary(row), questionnaire ? progress(questionnaire) : ''].filter(Boolean).join(' · ')
         return <Item key={id} variant="outline" size="sm" asChild>
           <a href={href} aria-labelledby={`${id}-title`} aria-describedby={`${id}-facts`} onClick={event => followRulesLink(event, href)}>
             <ItemContent><ItemTitle id={`${id}-title`} wrap>规则 {revisionLabel(row)}</ItemTitle><ItemDescription id={`${id}-facts`}>{facts}</ItemDescription></ItemContent>
@@ -90,12 +91,15 @@ export function RulebookRevisionPage({customer, revision, questionnaires}: {cust
   const cardsOf = (clause: string) => questions.get(clause) ?? []
   const documents = view.documents.map((document, index) => ({...document, index, clauses: document.clauses.filter(clause => !asked || cardsOf(clause.id).length > 0)})).filter(document => document.clauses.length > 0)
   const questionnaireHref = questionnaire && rulesAddress({template: customer.id, ruleQuestions: questionnaire.id}).split('#', 1)[0]!
+  // A changed clause rests on answers given on the revision before it: its questionnaire holds those cards.
+  const earlier = view.base ? questionnaireFor(questionnaires, customer.id, view.base) : undefined
+  const earlierHref = earlier && rulesAddress({template: customer.id, ruleQuestions: earlier.id}).split('#', 1)[0]!
   return <div className="grid items-start gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
     <aside className="grid gap-4 lg:sticky lg:top-0">
       {trail}
       <div className="grid gap-2">
         <h1 className="text-xl font-semibold">规则 {revisionLabel(view)}</h1>
-        <p className="text-sm text-muted-foreground">{view.clause_count} 条{view.changes ? `；${changeSummary(view)}` : ''}</p>
+        <p className="text-sm text-muted-foreground">{view.clause_count} 条{view.clarified ? '；已澄清' : ''}{view.changes ? `；${changeSummary(view)}` : ''}</p>
       </div>
       {questionnaire && questionnaireHref && <Item variant="outline" size="sm" asChild>
         <a href={questionnaireHref} aria-labelledby="rb-questions-title" aria-describedby="rb-questions-progress" onClick={event => followRulesLink(event, questionnaireHref)}>
@@ -118,8 +122,19 @@ export function RulebookRevisionPage({customer, revision, questionnaires}: {cust
           const cards = cardsOf(clause.id), number = Number(clause.id.split(':')[1]) || 0
           return <RuleClause key={clause.id} number={number} title={clause.category} text={clause.text}
             aside={clause.change && <Badge variant={clause.change.kind === 'same' ? 'outline' : clause.change.kind === 'new' ? 'info' : 'warning'}>{CHANGE_LABEL[clause.change.kind]}</Badge>}
-            details={(clause.change?.note || cards.length > 0) && <div className="grid gap-3 text-sm">
+            details={(clause.change?.note || cards.length > 0 || clause.reading) && <div className="grid gap-3 text-sm">
               {clause.change?.note && <p className="text-muted-foreground">{view.base ? `相对 ${revisionLabel(view.base)}：` : ''}{clause.change.note}</p>}
+              {(clause.change?.sources ?? []).length > 0 && <ul className="grid gap-1 text-muted-foreground">{clause.change!.sources!.map((source, index) => {
+                const href = source.question_key && earlierHref ? `${earlierHref}#${encodeURIComponent(source.question_key)}` : ''
+                return <li key={index}>依据：{source.ruling ?? `${(source.answerers ?? []).join('、')} 的答复`}
+                  {href && <> · <a className="rounded-sm text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50" href={href} onClick={event => followRulesLink(event, href)}>查看问题与答复</a></>}</li>
+              })}</ul>}
+              {clause.reading && <div className="grid gap-1.5">
+                <p className="font-medium">解读</p>
+                <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1">{READING_PARTS.filter(([part]) => clause.reading![part].length > 0).map(([part, label]) => <div key={part} className="contents">
+                  <dt className="text-muted-foreground">{label}</dt><dd>{clause.reading![part].join('；')}</dd>
+                </div>)}</dl>
+              </div>}
               {cards.length > 0 && questionnaireHref && <div className="grid gap-1.5">
                 <p className="font-medium">待确认问题</p>
                 <ul className="grid gap-1.5">{cards.map(card => {

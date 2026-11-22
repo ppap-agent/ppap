@@ -2861,7 +2861,8 @@ class AuthStore:
     @staticmethod
     def _list_rules(conn, tenant_id: str, *, catalog: bool = False) -> list[dict]:
         rows = conn.execute(
-            "SELECT id, title, body, created_at, predecessor_id, case_context FROM product.rule_versions WHERE tenant_id = %s ORDER BY created_at DESC, id DESC",
+            # A rulebook revision's clauses live in this table too, but are never rules an audit can be bound to.
+            "SELECT id, title, body, created_at, predecessor_id, case_context FROM product.rule_versions WHERE tenant_id = %s AND rulebook_revision_id IS NULL ORDER BY created_at DESC, id DESC",
             (tenant_id,),
         ).fetchall()
         out = []
@@ -2900,7 +2901,7 @@ class AuthStore:
                        fv.file_id, r.predecessor_id, r.created_by, r.case_context
                 FROM product.rule_versions r
                 LEFT JOIN product.file_versions fv ON fv.id = r.source_file_version_id
-                WHERE r.tenant_id = %s AND r.id = %s
+                WHERE r.tenant_id = %s AND r.id = %s AND r.rulebook_revision_id IS NULL
                 """,
                 (tenant_id, parsed),
             ).fetchone()

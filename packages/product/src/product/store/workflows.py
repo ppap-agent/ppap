@@ -60,6 +60,24 @@ class WorkflowStore:
             )
             return done.rowcount == 1
 
+    def open_shared(self, principal: Principal, task_id: str, state: dict) -> None:
+        """The enterprise's one task for a source (a rulebook version being clarified): created by whoever asks first."""
+        with self.connection() as conn:
+            conn.execute(
+                """INSERT INTO product.audit_workflows(id, tenant_id, created_by, request_fingerprint, source_ref, state)
+                   VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING""",
+                (task_id, principal.tenant_id, principal.user_id, fingerprint(state["source"]), state["source"]["token"], Jsonb(state)),
+            )
+
+    def save_shared(self, principal: Principal, task_id: str, revision: int, state: dict) -> bool:
+        """Replace a shared task's state if nobody changed it since `revision`. Who may change what is the caller's check."""
+        with self.connection() as conn:
+            done = conn.execute(
+                "UPDATE product.audit_workflows SET state=%s, revision=revision+1, updated_at=now() WHERE id=%s AND tenant_id=%s AND revision=%s",
+                (Jsonb(state), task_id, principal.tenant_id, revision),
+            )
+            return done.rowcount == 1
+
     def by_source(self, principal: Principal, source_ref: str, limit: int = 5) -> list[dict]:
         with self.connection() as conn:
             rows = conn.execute(

@@ -1,0 +1,1 @@
+../../../../.claude/skills/clause-check/scripts/check.py

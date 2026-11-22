@@ -155,12 +155,12 @@ def test_members_answer_each_their_own_answers_keep_history_and_other_enterprise
 def test_the_product_cannot_change_questionnaires_and_the_database_refuses_answers_once_closed(auth_store_factory):
     store, api_store, people, _ = fixture(auth_store_factory)
     qid = load(store, people["zhang"].tenant_id)
-    # The runtime role only reads questionnaires and cards, and only appends answers.
+    # The runtime role adds cards and closes a questionnaire, but never changes a card, a questionnaire's identity or an answer.
     for statement in (
-        "INSERT INTO product.rule_questionnaires(id,tenant_id,customer_id,rule_version,title) SELECT gen_random_uuid(),tenant_id,'uaes','v2','x' FROM product.rule_questionnaires",
+        "UPDATE product.rule_questionnaires SET title='x'",
+        "DELETE FROM product.rule_questionnaires",
         "UPDATE product.rule_questions SET card='{}'::jsonb",
         "DELETE FROM product.rule_questions",
-        "UPDATE product.rule_questionnaires SET closed_at=now()",
         "UPDATE product.rule_question_answers SET note='x'",
     ):
         with api_store._conn() as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):

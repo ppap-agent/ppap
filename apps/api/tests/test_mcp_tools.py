@@ -15,6 +15,7 @@ from product.workflow import task_id_for
 TOOLS = {
     "find_submissions",
     "prepare_audit",
+    "prepare_rule_clarification",
     "get_task",
     "get_issue",
     "resolve_issue",
