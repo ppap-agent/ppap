@@ -17,6 +17,7 @@ clause. Rounds do depend on each other: the next revision starts from the confir
 from __future__ import annotations
 
 import importlib.util
+import sys
 import uuid
 from copy import deepcopy
 from functools import cache
@@ -82,19 +83,28 @@ def apply(state: dict, event: dict) -> dict:
     return state
 
 
-# A submitted review is checked by the clause-check skill's own script, never a second copy of its rules. `clause-check`
-# is a link to the skill's scripts: an installed wheel carries the files, the editable image follows the link.
-CHECK_SCRIPT = Path(__file__).with_name("clause-check") / "check.py"
+# A submitted review is checked, and its findings become cards, by the clause-check skill's own scripts: never a second
+# copy of their rules. `clause-check` is a link to the skill's scripts: an installed wheel carries the files, the
+# editable image follows the link.
+SCRIPTS = Path(__file__).with_name("clause-check")
 
 
 @cache
-def _check_review():
-    spec = importlib.util.spec_from_file_location("clause_check", CHECK_SCRIPT)
+def _script(name: str):
+    """One of the skill's scripts as a module; `questionnaire` imports `check` by its plain name, so check loads first."""
+    if name != "check":
+        _script("check")
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
     if spec is None or spec.loader is None:
         raise RuntimeError("clause_check_unavailable")
     module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(name, module)
     spec.loader.exec_module(module)
-    return module.check_review
+    return module
+
+
+def _check_review():
+    return _script("check").check_review
 
 
 class Invalid(Rejected):
@@ -186,7 +196,7 @@ def decide(state: dict, facts: dict, issue: dict, action_id: str, value: Any, by
             "clauses": answered[follows]["clauses"],
             "question": _words(value.get("question"), 1000),
             "why": _words(value.get("why"), 4000),
-            "options": [{"key": f"o{index}", "label": option["label"].strip(), "detail": str(option.get("detail") or "")} for index, option in enumerate(options, start=1)],
+            "options": [{**lettered, "detail": str(option.get("detail") or "")} for lettered, option in zip(_script("questionnaire").lettered([o["label"].strip() for o in options]), options)],
             "expect": "" if options else "请给出明确的标准、数值，或是与否。",
             "sources": answered[follows].get("sources", []),
             "items": [key],
@@ -214,27 +224,10 @@ def reviewed(state: dict, clause: dict) -> dict | None:
     return review if review and review["digest"] == clause["digest"] else None
 
 
-def card_key(clause: str, revision: int, code: str) -> str:
-    return f"{clause}#r{revision}.{code}"
-
-
 def _card(clause: dict, revision: int, finding: dict) -> dict:
-    """A finding as the question card the customer answers."""
-    options = [{"key": f"r{index}", "label": reading["label"], "detail": reading["says"]} for index, reading in enumerate(finding.get("readings") or [], start=1)]
-    # The example, then what each answer offered would conclude on it, named as the options are.
-    outcomes = "；".join(f"按「{reading['label']}」判{reading['verdict']}" for reading in finding.get("readings") or [])
-    why = finding["example"] + (" " + outcomes + "。" if outcomes else "")
-    return {
-        "key": card_key(clause["id"], revision, finding["id"].split("#", 1)[1]),
-        "group": "clause",
-        "clauses": [f"{clause['document']} {clause['id']}"],
-        "question": finding["question"],
-        "why": why,
-        "options": options,
-        "expect": "" if options else "请给出明确的标准、数值，或是与否。",
-        "sources": [{"clause": clause["id"], "text": clause["text"], "quotes": finding["quote"]}],
-        "items": [card_key(clause["id"], revision, finding["id"].split("#", 1)[1])],
-    }
+    """A finding as the question card the customer answers: the same card the offline questionnaire build makes."""
+    questionnaire = _script("questionnaire")
+    return questionnaire.clause_card(finding, questionnaire.clause_name(clause["document"], clause["id"]), clause["text"], revision)
 
 
 def candidate_cards(state: dict, revision: dict) -> list[dict]:

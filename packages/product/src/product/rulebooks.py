@@ -239,3 +239,14 @@ def reading_problems(clause_text: str, reading: Any) -> list[str]:
     missing = [term for term in _QUOTED.findall(clause_text) if term.strip() and term.strip() not in joined]
     missing += [number for number in _NUMBER.findall(clause_text) if number not in joined]
     return ["解读缺少原文内容：" + "、".join(dict.fromkeys(missing))[:300]] if missing else []
+
+
+def recorded_changes(documents: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """A revision directory's changes as a revision records them: the comparison table's note is the ground it gives."""
+    changes = {}
+    for document in documents:
+        for clause in document["clauses"]:
+            change = clause.get("change")
+            if change:
+                changes[clause["id"]] = {"kind": change["kind"], "note": change["note"], **({"sources": [{"ruling": change["note"]}]} if change["note"] else {})}
+    return changes

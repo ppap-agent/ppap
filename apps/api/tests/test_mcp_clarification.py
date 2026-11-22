@@ -163,15 +163,15 @@ def test_a_round_reaches_the_customer_only_through_the_operators_approval(auth_s
     (questionnaire,) = member.web.get("/rule-questionnaires").json()["questionnaires"]
     assert questionnaire["total"] == 1
 
-    answer = {"operation_id": str(uuid4()), "question_key": "A:1#r0.1", "expected_revision": 0, "choice": "r1", "text": None, "note": None}
+    answer = {"operation_id": str(uuid4()), "question_key": "A:1#1", "expected_revision": 0, "choice": "A", "text": None, "note": None}
     assert member.web.post(f"/rule-questionnaires/{questionnaire['id']}/answers", json=answer).status_code == 200
 
     # The answer reopens the clause; the proposed wording names the card and who answered it.
     task = reviewer.call("get_task", task_id=task["task_id"])
     answered = issue_of(task, "CLAUSE_ANSWERED")
     shown = reviewer.call("get_issue", task_id=task["task_id"], issue_id=answered["id"])["result"]["detail"]["cards"]
-    assert [(card["key"], card["answers"][0]["answerer"], card["answers"][0]["choice_label"]) for card in shown] == [("A:1#r0.1", "客户工程师", "电子签名也算")]
-    task = reviewer.resolve(task, answered, "propose_text", {"text": "须已签名，手写或电子均可", "kind": "changed", "note": "电子签名也算已签名", "cards": ["A:1#r0.1"]})
+    assert [(card["key"], card["answers"][0]["answerer"], card["answers"][0]["choice_label"]) for card in shown] == [("A:1#1", "客户工程师", "理解一：电子签名也算")]
+    task = reviewer.resolve(task, answered, "propose_text", {"text": "须已签名，手写或电子均可", "kind": "changed", "note": "电子签名也算已签名", "cards": ["A:1#1"]})
     assert task["result"]["phase"] == "ready_to_revise"
     task = owner.call("get_task", task_id=task["task_id"])
     task = owner.approve(task, issue_of(task, "REVISION_READY"), "confirm_revision")
@@ -179,10 +179,10 @@ def test_a_round_reaches_the_customer_only_through_the_operators_approval(auth_s
     # Revision 1 exists with its grounds, revision 0 reads as before, and its questionnaire is closed with the answer kept.
     assert task["result"]["revision"] == {"version": "v9.0", "revision": 1, "clarified": False}
     changed = member.web.get("/rulebooks/uaes/v9.0/1").json()["documents"][0]["clauses"][0]
-    assert changed["text"] == "须已签名，手写或电子均可" and changed["change"]["sources"] == [{"question_key": "A:1#r0.1", "answerers": ["客户工程师"]}]
+    assert changed["text"] == "须已签名，手写或电子均可" and changed["change"]["sources"] == [{"question_key": "A:1#1", "answerers": ["客户工程师"]}]
     assert member.web.get("/rulebooks/uaes/v9.0/0").json()["documents"][0]["clauses"][0]["text"] == "须已签名"
     closed = member.web.get(f"/rule-questionnaires/{questionnaire['id']}").json()
-    assert closed["closed"] and closed["questions"][0]["answers"][0]["choice"] == "r1"
+    assert closed["closed"] and closed["questions"][0]["answers"][0]["choice"] == "A"
 
     # Only the reworded clause is reviewed again; with nothing open, the operator confirms the revision clarified.
     assert [issue["subject"]["key"] for issue in task["issues"]] == ["A:1"]

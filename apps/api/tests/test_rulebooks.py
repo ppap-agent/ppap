@@ -1,6 +1,7 @@
 """Members read the rulebook revisions the product ships; without a session nothing is read."""
 
 import json
+import uuid
 
 from api import create_app
 from fastapi.testclient import TestClient
@@ -86,10 +87,58 @@ def test_operator_sends_cards_and_the_next_revision_closes_the_questionnaire(aut
     assert (more["id"], more["total"], more["added"]) == (first["id"], 2, 1)
     assert owner.post("/rule-questionnaires/cards", json=send([card("A:1#1", "换一个问题")])).status_code == 409
     assert [q.get("follows") for q in member.get(f"/rule-questionnaires/{first['id']}").json()["questions"]] == [None, "A:1#1"]
+    # Nobody had answered, so nobody was told; once someone answers, they hear about the next cards, once.
+    assert (first["notified"], more["notified"]) == (0, 0)
+    answer = {"operation_id": str(uuid.uuid4()), "question_key": "A:1#1", "expected_revision": 0, "choice": "yes", "text": None, "note": None}
+    assert member.post(f"/rule-questionnaires/{first['id']}/answers", json=answer).status_code == 200
+    third = owner.post("/rule-questionnaires/cards", json=send([card("A:1#3", "盖章算吗？")])).json()
+    assert (third["added"], third["notified"]) == (1, 1)
+    assert owner.post("/rule-questionnaires/cards", json=send([card("A:1#3", "盖章算吗？")])).json()["notified"] == 0
+    with api._conn() as conn:
+        jobs = conn.execute("SELECT payload FROM engine.jobs WHERE kind='rule_cards_notification'").fetchall()
+    reader = store.upsert_feishu_identity("acme-t", "ou_reader", "读者")
+    assert [(job[0]["user_id"], job[0]["added"]) for job in jobs] == [(reader.user_id, 1)]
 
     documents = [{"key": "A", "title": "A 文件", "clauses": [{"id": "A:1", "category": "", "text": "须已签名，手写或电子均可"}]}]
     changes = {"A:1": {"kind": "changed", "note": "电子签名也算", "sources": [{"question_key": "A:1#1", "answerers": ["读者"]}]}}
     revision = {"version": "v9.0", "revision": 1, "base": {"version": "v9.0", "revision": 0}, "documents": documents, "changes": changes, "origin": "clarification"}
     assert owner.post("/rulebooks/uaes/revisions", json=revision).status_code == 200
     assert member.get(f"/rule-questionnaires/{first['id']}").json()["closed"] is True
-    assert owner.post("/rule-questionnaires/cards", json=send([card("A:1#3")])).json()["error"] == "questionnaire_closed"
+    assert owner.post("/rule-questionnaires/cards", json=send([card("A:1#4")])).json()["error"] == "questionnaire_closed"
+
+
+def test_the_new_questions_card_opens_the_questionnaire():
+    from urllib.parse import parse_qs, urlsplit
+
+    from product.feishu_notifications import rule_cards_card
+
+    card = rule_cards_card("联电科技/UAES", "uaes", {"version": "v1.0", "revision": 1}, 3, "https://ppap.example", "q-1")
+    assert card["header"]["subtitle"]["content"] == "联电科技/UAES 规则库 v1.0 修订 1" and "新增 **3 个**问题" in card["body"]["elements"][0]["content"]
+    link = card["body"]["elements"][1]["behaviors"][0]["default_url"]
+    assert parse_qs(urlsplit(link).query)["return_to"] == ["https://ppap.example/requirements?template=uaes&ruleQuestions=q-1"]
+
+
+def test_an_offline_revision_is_loaded_once_by_an_operator(auth_store_factory, tmp_path):
+    import pytest
+    from product import rulebook_import
+
+    rules = tmp_path / "uaes" / "rulebook" / "v8.0" / "m0" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "A.json").write_text(json.dumps({"title": "A 文件", "rules": [{"id": "A:1", "rule_to_check": "须已签名。"}]}), encoding="utf-8")
+    original = tmp_path / "原件.txt"
+    original.write_text("A 文件\n须已签名。\n", encoding="utf-8")
+    bundle = rulebook_import.checked(rules.parent, original)
+    # Shipped files live elsewhere: what is loaded comes only from the bundle.
+    store = auth_store_factory(Settings(feishu_app_id="rulebooks-l", usage_charge_enabled=False, template_root=str(tmp_path / "shipped"), platform_operators="acme-t:ou_owner"))
+    store.upsert_feishu_identity("acme-t", "ou_owner", "负责人")
+    store.upsert_feishu_identity("acme-t", "ou_reader", "读者")
+    api = build_product_store(store.settings, objects=store.objects, role="api")
+    with pytest.raises(SystemExit, match="平台运营"):
+        rulebook_import.load(bundle, "acme-t:ou_reader", store=api)
+    with pytest.raises(SystemExit, match="没有这个身份"):
+        rulebook_import.load(
+            bundle, "other-t:ou_owner", store=build_product_store(Settings(**{**store.settings.model_dump(), "platform_operators": "other-t:ou_owner"}), objects=store.objects, role="api")
+        )
+    first = rulebook_import.load(bundle, "acme-t:ou_owner", store=api)
+    assert (first["version"], first["revision"], first["origin"], first["clause_count"]) == ("v8.0", 0, "local", 1)
+    assert rulebook_import.load(bundle, "acme-t:ou_owner", store=api)["id"] == first["id"]

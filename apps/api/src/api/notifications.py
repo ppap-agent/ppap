@@ -48,6 +48,30 @@ def dispatch_task_notification(store: AuthStore, http, settings: Settings, worke
     return True
 
 
+def dispatch_card_notification(store: AuthStore, http, settings: Settings, worker_ident: str) -> bool:
+    """New rule questions, to someone who answered that rulebook version before. One send per job, never repeated."""
+    if not (settings.feishu_notifications_enabled and settings.feishu_app_id and settings.feishu_app_secret):
+        return False
+    from product.customers import find
+    from product.feishu_notifications import rule_cards_card
+    from product.store import rule_questionnaires
+
+    claimed = rule_questionnaires.claim_card_notification(store, worker_ident)
+    if claimed is None:
+        return False
+    try:
+        token = tenant_access_token(http, settings.feishu_app_id, settings.feishu_app_secret, store.app_ticket(settings.feishu_app_id) or "", claimed["tenant_key"])
+    except FeishuUsageError:
+        rule_questionnaires.finish_card_notification(store, claimed, {"state": "failed", "message_id": None, "reason": "feishu_connection_unavailable"})
+        return True
+    registered = find(claimed["customer_id"])
+    card = rule_cards_card(
+        registered.name if registered else claimed["customer_id"], claimed["customer_id"], claimed["rulebook"], claimed["added"], settings.canonical_web_url(), claimed["questionnaire_id"]
+    )
+    rule_questionnaires.finish_card_notification(store, claimed, send_task_notification(http, token, claimed["id"], claimed["receive_id"], card))
+    return True
+
+
 def run_task_notifications(store: AuthStore, settings: Settings, stop: threading.Event) -> None:
     worker_ident = "api-notifier-" + str(uuid.uuid4())
     with httpx.Client() as http:
@@ -63,4 +87,8 @@ def run_task_notifications(store: AuthStore, settings: Settings, stop: threading
             except Exception:
                 # Never requeue after an uncertain send; the persisted dispatch boundary owns recovery.
                 emit("notification_dispatch_unavailable", level=logging.WARNING)
+            try:
+                worked = dispatch_card_notification(store, http, settings, worker_ident) or worked
+            except Exception:
+                emit("rule_card_notification_unavailable", level=logging.WARNING)
             stop.wait(0.1 if worked else 5)

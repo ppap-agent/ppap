@@ -2,7 +2,7 @@
 
 A revision belongs to one enterprise and names one registered customer, a version and a revision number. Its clauses
 are rows of `product.rule_versions`, one per document type, written once and never offered to an audit. The revisions
-shipped with the product (`<template_root>/<customer>/rulebook`) are copied in the first time an enterprise reads them;
+shipped with the product (`<template_root>/<customer>/rulebook`) are copied in when a member of the enterprise signs in;
 later revisions come from the clarification loop or from the offline import, through the same checks. Nothing here
 decides which revision audits use.
 """
@@ -74,7 +74,7 @@ def ensure_shipped(conn, tenant_id: str, root: Path) -> None:
                 continue
             head = _head(conn, tenant_id, customer_id, row["version"], row["revision"])
             if head is None:
-                changes = {clause["id"]: clause["change"] for document in found["documents"] for clause in document["clauses"] if clause.get("change")}
+                changes = rulebooks.recorded_changes(found["documents"])
                 _insert(conn, tenant_id, None, customer_id, row["version"], row["revision"], found["base"], found["documents"], changes, "shipped")
             elif head[4] == "shipped" and head[5] != rulebooks.digest(found["documents"]):
                 emit("rulebook_shipped_revision_differs", level=logging.WARNING, customer_id=customer_id, version=row["version"], revision=row["revision"])
@@ -101,7 +101,6 @@ def list_revisions(store, principal, customer_id: str, root: Path) -> dict:
     """Every revision of a customer's rulebook this enterprise has, oldest first."""
     with store._conn() as conn, conn.transaction():
         _member(conn, principal)
-        ensure_shipped(conn, principal.tenant_id, root)
         keys = conn.execute("SELECT version, revision FROM product.rulebook_revisions WHERE tenant_id=%s AND customer_id=%s", (principal.tenant_id, customer_id)).fetchall()
         rows = []
         for version, revision in sorted(keys, key=lambda key: (tuple(int(part) for part in key[0][1:].split(".")), key[1])):
@@ -114,7 +113,6 @@ def read_revision(store, principal, customer_id: str, version: str, revision: in
     """One revision: its clauses by document type, each with how it changed, on what grounds, and its reading."""
     with store._conn() as conn, conn.transaction():
         _member(conn, principal)
-        ensure_shipped(conn, principal.tenant_id, root)
         head = _head(conn, principal.tenant_id, customer_id, version, revision)
         if head is None:
             return None
@@ -151,7 +149,6 @@ def create_revision(store, principal, customer_id: str, payload: Any, root: Path
     documents, changes = payload["documents"], payload["changes"]
     with store._conn() as conn, conn.transaction():
         _member(conn, principal)
-        ensure_shipped(conn, principal.tenant_id, root)
         previous = None
         if base is not None:
             previous = _head(conn, principal.tenant_id, customer_id, base["version"], base["revision"])

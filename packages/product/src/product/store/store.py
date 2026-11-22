@@ -279,6 +279,7 @@ class AuthStore:
                     from product.rules import install_customer_presets
 
                     install_customer_presets(conn, str(tenant_id))
+                    self._install_rulebooks(conn, str(tenant_id))
                     return Principal(str(user_id), str(tenant_id), provider, app_id, tenant_key, subject, role, name)
                 tenant_id = cast(
                     tuple[Any, ...],
@@ -311,7 +312,15 @@ class AuthStore:
                 from product.rules import install_customer_presets
 
                 install_customer_presets(conn, str(tenant_id))
+                self._install_rulebooks(conn, str(tenant_id))
                 return Principal(str(user_id), str(tenant_id), provider, app_id, tenant_key, subject, "member", display_name)
+
+    def _install_rulebooks(self, conn, tenant_id: str) -> None:
+        """The rulebook revisions shipped with the product, copied in when a member of the enterprise signs in."""
+        from product.store.rulebook_revisions import ensure_shipped
+        from product.template_library import template_root
+
+        ensure_shipped(conn, tenant_id, template_root(self.settings))
 
     def create_session(self, principal: Principal, tokens: UserTokens | None = None, ttl_seconds: int = 43200, channel: str = "web") -> str:
         # A Docs add-on token names its channel, so a request never has to look it up in two places.

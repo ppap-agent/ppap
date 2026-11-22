@@ -208,11 +208,13 @@ def rulebook_clauses(customer: str, version: str, draft: dict) -> tuple[list[str
     return summary, details
 
 
-def rule_cards(revision: dict, cards: list[dict]) -> tuple[list[str], list[dict]]:
-    """Before cards reach the customer: each question, why it is asked and the answers offered."""
+def rule_cards(revision: dict, cards: list[dict], answerers: list[str]) -> tuple[list[str], list[dict]]:
+    """Before cards reach the customer: each question, why it is asked, the answers offered, and who is told."""
     summary = [f"把 {len(cards)} 张问题卡片发给客户成员，在规则页 {_revision_name(revision)} 下作答。"]
     rows = [[card["clauses"][0] if card["clauses"] else None, card["question"], card.get("why"), "；".join(option["label"] for option in card.get("options", [])) or "自己写答案"] for card in cards]
+    told = "、".join(answerers) + "（答复过这个版本的问卷）会收到飞书通知" if answerers else "这次没有人会收到通知：还没有人答复过这个版本的问卷。请把规则页链接发给需要作答的人"
     details: list[dict] = [
+        {"kind": "facts", "rows": [("通知", told)]},
         {"kind": "table", "title": f"卡片 · {len(cards)} 张", "head": ["条款", "问题", "为什么问", "可选答案"], **_rows(rows)},
         {"kind": "note", "text": "发送后本企业成员都能看到并作答，卡片内容不再修改。"},
     ]

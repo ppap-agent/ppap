@@ -113,6 +113,8 @@ class RuleCardsRequest(BaseModel):
 
 class RuleCardsReceipt(RuleQuestionnaireSummary):
     added: int
+    # How many people who answered this version before are told about the new cards.
+    notified: int
 
 
 class RuleQuestionnaireView(RuleQuestionnaireSummary):

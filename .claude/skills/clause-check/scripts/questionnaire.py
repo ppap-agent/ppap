@@ -14,9 +14,13 @@ unanswered ambiguity, undefined case, gap or conflict is one finding, named `<�
 relayed, which go back to the customer for a conclusion, and the questions about the rulebook's general notes;
 every other finding becomes a card of its own.
 
+A finding becomes a card through `clause_card`, which the product's clarification loop also uses: the card's key is
+the finding ID on a version's first revision and names the revision after it (`card_key`).
+
 `load`, `export` and `close` print SQL for the enterprise whose Feishu tenant key is given, run with `psql` as the
-database's migration role (the product itself never writes questionnaires): `load` adds the questionnaire and its
-cards in one transaction and refuses a second load of the same rulebook revision; `export` prints every answerer's revisions
+database's migration role. In the clarification loop the product sends cards itself; `load` is for putting the same
+questions before another enterprise: it adds the questionnaire and its cards in one transaction and refuses a second
+load of the same rulebook revision; `export` prints every answerer's revisions
 of every card as one JSON value (`psql -At`); `close` makes it read only.
 
 `answers` reads that export and lists, per clause file, every answer to every finding with its answerer and time,
@@ -73,7 +77,7 @@ def findings(directory: Path, rule_version: str) -> tuple[list[dict], dict[str, 
                 raise SystemExit(f"[报告] {path.name} 引用政策已变化；请重新审查并重跑 check.py")
         rule_id = clause["id"]
         title = re.sub(r"（[^（）]*" + re.escape(rule_version) + r"[^（）]*）$", "", clause["title"]).strip()
-        name = f"{title}{'' if title.endswith('）') else ' '}规则 {rule_id.split(':', 1)[-1]}"
+        name = clause_name(title, rule_id)
         if rule_id in names:
             raise SystemExit(f"[报告] 同一条款重复：{rule_id}")
         names[rule_id] = name
@@ -115,6 +119,36 @@ def expect(item: dict) -> str:
     if re.search(r"哪些|哪一|什么|凭什么|怎样|怎么|指哪", question):
         return "给出认定标准，或列出包括哪些。"
     return "是或否；如有条件，写明条件。"
+
+
+def clause_name(title: str, rule_id: str) -> str:
+    """How a card names a clause: the rule file's title and the clause number, e.g. 控制计划（CP）审核规则 规则 8."""
+    return f"{title}{'' if title.endswith('）') else ' '}规则 {rule_id.split(':', 1)[-1]}"
+
+
+def card_key(item_id: str, revision: int) -> str:
+    """A card's key: the finding ID on a version's first revision (CP:8#1), the revision named after it (CP:8#r1.1).
+    The same finding on a later revision is a new question, so it never reuses an earlier revision's key."""
+    if revision == 0:
+        return item_id
+    clause, _, code = item_id.partition("#")
+    return f"{clause}#r{revision}.{code}"
+
+
+def clause_card(item: dict, name: str, text: str, revision: int) -> dict:
+    """One finding as the card the customer answers. The offline build and the online clarification loop both use it."""
+    key = card_key(item["id"], revision)
+    return {
+        "key": key,
+        "group": "clause",
+        "clauses": [name],
+        "question": item["question"],
+        "why": why(item),
+        "options": options(item),
+        "expect": expect(item),
+        "sources": [{"clause": name, "text": text, "quotes": list(dict.fromkeys(item.get("quote", [])))}],
+        "items": [key],
+    }
 
 
 def related(item: dict, names: dict[str, str]) -> dict:
@@ -198,17 +232,7 @@ def build(directory: Path, plan_path: Path, out: Path) -> None:
         return (order.index(prefix) if prefix in order else len(order), prefix, int(number) if number.isdigit() else 0)
 
     for item in sorted((item for item in items if item["id"] not in used or item["id"] in applied), key=position):
-        card = {
-            "key": item["id"],
-            "group": "clause",
-            "clauses": [names[item["clause"]]],
-            "question": item["question"],
-            "why": why(item),
-            "options": options(item),
-            "expect": expect(item),
-            "sources": sources([item]),
-            "items": [item["id"]],
-        }
+        card = clause_card(item, names[item["clause"]], texts[item["clause"]], int(plan["rulebook_revision"]))
         if item["id"] in applied:
             rule = applied[item["id"]]
             card["relayed"] = {**relayed[rule["relayed"]], "applied": rule["result"]}

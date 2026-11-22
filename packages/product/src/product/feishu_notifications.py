@@ -185,3 +185,31 @@ def send_task_notification(http, tenant_token: str, notification_id: str, receiv
     except Exception:
         pass
     return {"state": "unknown", "message_id": None, "reason": "send_receipt_unknown"}
+
+
+def rule_cards_card(customer: str, customer_id: str, rulebook: dict, added: int, web_url: str, questionnaire_id: str) -> dict:
+    """New questions on a rulebook revision, for someone who has answered its questionnaire before."""
+    name = f"{customer} 规则库 {rulebook['version']}" + (f" 修订 {rulebook['revision']}" if rulebook["revision"] else "")
+    target = web_url.rstrip("/") + "/requirements?" + urlencode({"template": customer_id, "ruleQuestions": questionnaire_id})
+    link = web_url.rstrip("/") + "/enter-current?" + urlencode({"return_to": target})
+    return {
+        "schema": "2.0",
+        "config": {"summary": {"content": f"{name} · 有 {added} 个新的待确认问题"}},
+        "header": {"template": "blue", "title": {"tag": "plain_text", "content": "规则有新的待确认问题"}, "subtitle": {"tag": "plain_text", "content": name}, "padding": "12px 16px 12px 16px"},
+        "body": {
+            "direction": "vertical",
+            "padding": "16px",
+            "vertical_spacing": "12px",
+            "elements": [
+                {"tag": "markdown", "content": f"新增 **{added} 个**问题。你之前答复过这份规则的问卷，请打开查看并作答。"},
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "去作答"},
+                    "type": "primary_filled",
+                    "size": "large",
+                    "width": "fill",
+                    "behaviors": [{"type": "open_url", "default_url": link}],
+                },
+            ],
+        },
+    }

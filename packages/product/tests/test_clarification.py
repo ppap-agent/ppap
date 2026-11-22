@@ -68,33 +68,37 @@ def test_a_round_from_review_to_the_next_revision():
     view = c.project(TASK, state, facts(r0))
     assert view["phase"] == "ready_to_send" and view["result"]["progress"]["reviewed_without_findings"] == 1
     (card,) = c._standing(state, facts(r0), r0)["unsent"]
-    assert card["key"] == "A:1#r0.1" and [o["label"] for o in card["options"]] == ["电子签名也算", "仅手写算"]
-    assert card["why"] == "批准人为电子签名。 按「电子签名也算」判通过；按「仅手写算」判不通过。"
+    assert card["key"] == "A:1#1" and [o["label"] for o in card["options"]] == ["理解一：电子签名也算", "理解二：仅手写算"]
+    # One generator: the card is exactly the one the offline questionnaire build makes for the same finding.
+    questionnaire = c._script("questionnaire")
+    (finding,) = state["reviews"]["A:1"]["findings"]
+    assert card == questionnaire.clause_card(finding, questionnaire.clause_name("A 文件", "A:1"), "须已签名", 0)
+    assert questionnaire.card_key("A:1#1", 2) == "A:1#r2.1"
     assert not next(i for i in c.issues(TASK, state, facts(r0, roles={"prepare": True, "confirm": False})) if i["code"] == "CARDS_READY")["allowed_actions"]
 
-    sent = facts(r0, [answered("A:1#r0.1", 0)])
+    sent = facts(r0, [answered("A:1#1", 0)])
     view = c.project(TASK, state, sent)
     assert view["phase"] == "awaiting_answers" and view["next"]["kind"] == "wait"
 
     # Two people answer differently: the task says so and leaves the choice to a person.
-    split = facts(r0, [answered("A:1#r0.1", 0, ("张三", "r1"), ("李四", "r2"))])
+    split = facts(r0, [answered("A:1#1", 0, ("张三", "A"), ("李四", "B"))])
     issue = next(i for i in c.issues(TASK, state, split) if i["code"] == "CLAUSE_ANSWERED")
     assert "答复不一致" in issue["message"]
-    both = facts(r0, [answered("A:1#r0.1", 0, ("张三", "r1"), ("李四", "r1"))])
+    both = facts(r0, [answered("A:1#1", 0, ("张三", "A"), ("李四", "A"))])
     with pytest.raises(c.Invalid):
-        act(state, both, "CLAUSE_ANSWERED", "propose_text", {"text": "须已签名", "kind": "changed", "note": "x", "cards": ["A:1#r0.1"]}, "A:1")
-    state = act(state, both, "CLAUSE_ANSWERED", "propose_text", {"text": "须已签名，手写或电子均可", "kind": "changed", "note": "电子签名也算", "cards": ["A:1#r0.1"]}, "A:1")
+        act(state, both, "CLAUSE_ANSWERED", "propose_text", {"text": "须已签名", "kind": "changed", "note": "x", "cards": ["A:1#1"]}, "A:1")
+    state = act(state, both, "CLAUSE_ANSWERED", "propose_text", {"text": "须已签名，手写或电子均可", "kind": "changed", "note": "电子签名也算", "cards": ["A:1#1"]}, "A:1")
     view = c.project(TASK, state, both)
     assert view["phase"] == "ready_to_revise" and view["next"]["kind"] == "user_action"
 
     # The request that writes the next revision is one the revision store accepts: named grounds, same clause names.
     body = c.next_revision(state, r0)
-    assert body["changes"]["A:1"]["sources"] == [{"question_key": "A:1#r0.1", "answerers": ["张三", "李四"]}]
+    assert body["changes"]["A:1"]["sources"] == [{"question_key": "A:1#1", "answerers": ["张三", "李四"]}]
     assert rulebooks.revision_problems(body["documents"], body["changes"], r0["documents"]) == []
 
     # On the next revision only the reworded clause is reviewed again, and the settled question is not asked again.
     r1 = revision(1, {"A:1": "须已签名，手写或电子均可", "A:2": "须盖章"})
-    closed = [{**answered("A:1#r0.1", 0, ("张三", "r1")), "closed": True}]
+    closed = [{**answered("A:1#1", 0, ("张三", "A")), "closed": True}]
     view = c.project(TASK, state, facts(r1, closed))
     assert [i["subject"]["key"] for i in view["issues"]] == ["A:1"] and view["phase"] == "reviewing"
     state = act(state, facts(r1, closed), "CLAUSE_REVIEW", "submit_review", review(), "A:1")
@@ -105,14 +109,14 @@ def test_a_round_from_review_to_the_next_revision():
 def test_an_unanswered_card_is_asked_again_and_an_open_answer_is_followed_up():
     state, r0 = c.new_state("uaes", "v9.0"), revision(0, {"A:1": "须已签名"})
     state = act(state, facts(r0), "CLAUSE_REVIEW", "submit_review", review([AMBIGUITY]), "A:1")
-    half = facts(r0, [answered("A:1#r0.1", 0, ("张三", None))])
-    state = act(state, half, "CLAUSE_ANSWERED", "ask_further", {"follows": "A:1#r0.1", "question": "盖章能代替签名吗？", "why": "答复只说了电子签名。"}, "A:1")
+    half = facts(r0, [answered("A:1#1", 0, ("张三", None))])
+    state = act(state, half, "CLAUSE_ANSWERED", "ask_further", {"follows": "A:1#1", "question": "盖章能代替签名吗？", "why": "答复只说了电子签名。"}, "A:1")
     (card,) = c._standing(state, half, r0)["unsent"]
-    assert (card["key"], card["follows"]) == ("A:1#r0.1.f1", "A:1#r0.1")
+    assert (card["key"], card["follows"]) == ("A:1#1.f1", "A:1#1")
     # A card asked on an earlier revision and never answered goes to the current revision's questionnaire again.
     r1 = revision(1, {"A:1": "须已签名"})
-    earlier = [answered("A:1#r0.1", 0, ("张三", None)), answered("A:1#r0.1.f1", 0)]
-    assert [card["key"] for card in c._standing(state, facts(r1, earlier), r1)["unsent"]] == ["A:1#r0.1.f1"]
+    earlier = [answered("A:1#1", 0, ("张三", None)), answered("A:1#1.f1", 0)]
+    assert [card["key"] for card in c._standing(state, facts(r1, earlier), r1)["unsent"]] == ["A:1#1.f1"]
 
 
 def test_readings_follow_a_clarified_revision_and_keep_the_clause_terms():

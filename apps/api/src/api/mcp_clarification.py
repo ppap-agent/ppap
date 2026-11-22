@@ -107,7 +107,8 @@ class ClarificationRuntime:
         if action_id == "send_cards":
             cards = clarification._standing(state, facts, revision)["unsent"]
             body = {"customer_id": customer, "rulebook": {"version": version, "revision": revision["revision"]}, "cards": cards}
-            summary, details = views.rule_cards(revision, cards)
+            answerers = sorted({answer["answerer"] for row in facts["cards"] for answer in row["answers"]})
+            summary, details = views.rule_cards(revision, cards, answerers)
             return await self._approved(actor, request_id, "POST", "/rule-questionnaires/cards", body, path, summary, details)
         if action_id == "confirm_revision":
             body = clarification.next_revision(state, revision)
