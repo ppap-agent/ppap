@@ -69,6 +69,7 @@ def test_a_round_from_review_to_the_next_revision():
     assert view["phase"] == "ready_to_send" and view["result"]["progress"]["reviewed_without_findings"] == 1
     (card,) = c._standing(state, facts(r0), r0)["unsent"]
     assert card["key"] == "A:1#r0.1" and [o["label"] for o in card["options"]] == ["电子签名也算", "仅手写算"]
+    assert card["why"] == "批准人为电子签名。 按「电子签名也算」判通过；按「仅手写算」判不通过。"
     assert not next(i for i in c.issues(TASK, state, facts(r0, roles={"prepare": True, "confirm": False})) if i["code"] == "CARDS_READY")["allowed_actions"]
 
     sent = facts(r0, [answered("A:1#r0.1", 0)])

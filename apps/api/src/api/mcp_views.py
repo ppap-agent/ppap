@@ -233,16 +233,17 @@ def rulebook_revision(revision: dict, proposals: dict[str, dict]) -> tuple[list[
     return summary, details
 
 
-def rulebook_clarified(revision: dict, progress: dict) -> tuple[list[str], list[dict]]:
+def rulebook_clarified(revision: dict, progress: dict, asked: list[dict]) -> tuple[list[str], list[dict]]:
+    """`asked`: every card put to the customer on this version up to this revision, with its answers."""
     summary = [f"确认 {_revision_name(revision)} 已澄清：每条都已审查，没有未决问题。"]
-    cards = progress["cards"]
+    answered = sum(1 for row in asked if row["answers"])
     details: list[dict] = [
         {
             "kind": "facts",
             "rows": [
                 ("条款", f"{progress['clauses']} 条，已审 {progress['reviewed']} 条"),
                 ("审查没有发现问题", f"{progress['reviewed_without_findings']} 条"),
-                ("已处理的卡片", f"{cards['settled']} 张"),
+                (f"{revision['version']} 问过的卡片", f"{len(asked)} 张，已答复 {answered} 张" if asked else "没有"),
             ],
         },
         {"kind": "note", "text": "确认后可以为每条条款配解读。已澄清不可撤销；以后发现新问题，改动成为新的修订。"},

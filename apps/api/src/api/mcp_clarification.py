@@ -114,7 +114,8 @@ class ClarificationRuntime:
             summary, details = views.rulebook_revision(revision, clarification.proposals(state, revision))
             return await self._approved(actor, request_id, "POST", listing + "/revisions", body, path, summary, details)
         if action_id == "confirm_clarified":
-            summary, details = views.rulebook_clarified(revision, clarification.project(task_id, state, facts)["result"]["progress"])
+            asked = [row for row in facts["cards"] if row["revision"] <= number]
+            summary, details = views.rulebook_clarified(revision, clarification.project(task_id, state, facts)["result"]["progress"], asked)
             return await self._approved(actor, request_id, "POST", path + "/clarified", None, path, summary, details)
         if action_id == "confirm_readings":
             readings = {clause: entry["reading"] for clause, entry in clarification.pending_readings(state, revision).items()}

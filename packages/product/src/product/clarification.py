@@ -221,7 +221,9 @@ def card_key(clause: str, revision: int, code: str) -> str:
 def _card(clause: dict, revision: int, finding: dict) -> dict:
     """A finding as the question card the customer answers."""
     options = [{"key": f"r{index}", "label": reading["label"], "detail": reading["says"]} for index, reading in enumerate(finding.get("readings") or [], start=1)]
-    why = finding["example"] + (" " + finding["verdict"] if finding.get("verdict") else "")
+    # The example, then what each answer offered would conclude on it, named as the options are.
+    outcomes = "；".join(f"按「{reading['label']}」判{reading['verdict']}" for reading in finding.get("readings") or [])
+    why = finding["example"] + (" " + outcomes + "。" if outcomes else "")
     return {
         "key": card_key(clause["id"], revision, finding["id"].split("#", 1)[1]),
         "group": "clause",

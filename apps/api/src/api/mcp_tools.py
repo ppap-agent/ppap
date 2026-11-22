@@ -533,10 +533,11 @@ def register_tools(mcp, gateway, authority, runtime):
             result = {"user": await gateway.get(actor, "identity:read", "/me"), "customers": await runtime.read(actor, "/audit-customers")}
             if actor.scopes >= {"rulebooks:read"}:
                 # Which versions of each customer's rulebook exist here, for prepare_rule_clarification.
-                keys = [row["customer_id"] for row in (result["customers"] or {}).get("customers", [])]
-                listed = await asyncio.gather(*(runtime.read(actor, f"/rulebooks/{key}") for key in keys))
+                # Listed under the same `key` the tools take as `customer`.
+                rows = (result["customers"] or {}).get("customers", [])
+                listed = await asyncio.gather(*(runtime.read(actor, f"/rulebooks/{row['customer_id']}") for row in rows))
                 result["rulebooks"] = {
-                    key: [{k: row[k] for k in ("version", "revision", "clause_count", "clarified")} for row in (found or {}).get("revisions", [])] for key, found in zip(keys, listed)
+                    row["key"]: [{k: r[k] for k in ("version", "revision", "clause_count", "clarified")} for r in (found or {}).get("revisions", [])] for row, found in zip(rows, listed)
                 }
             if actor.scopes >= {"usage:read"}:
                 result["points"] = await runtime.read(actor, "/integrations/feishu/usage/quota", {"target_count": 1})

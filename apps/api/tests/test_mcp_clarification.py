@@ -131,6 +131,9 @@ def test_a_round_reaches_the_customer_only_through_the_operators_approval(auth_s
     api = build_product_store(store.settings, objects=store.objects, role="api")
     owner, reviewer, member = (Person(store, api, "acme-t", subject, name) for subject, name in (("ou_owner", "负责人"), ("ou_reviewer", "审查员"), ("ou_member", "客户工程师")))
 
+    # The versions a client can open are listed under the same customer key the tool takes.
+    assert reviewer.call("get_account")["result"]["rulebooks"]["UAES"] == [{"version": "v9.0", "revision": 0, "clause_count": 2, "clarified": False}]
+
     # The enterprise has one task for this version: the reviewer and the operator see the same one.
     task = reviewer.call("prepare_rule_clarification", customer="UAES", version="v9.0")
     assert task["result"]["phase"] == "reviewing" and task["result"]["progress"]["clauses"] == 2
