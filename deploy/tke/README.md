@@ -69,6 +69,13 @@ downloads exact originals from `http://ppap-current-api:8080/office/content` usi
 short-lived signed tickets. No Mac, port-forward, new DNS name or TLS certificate
 is needed. Only preview caches are ephemeral; originals remain in PPAP storage.
 
+## 发布 SOP
+
+- **推送前**：在本机跑受影响范围的 CI 等效测试，通过再推：`python3 -m scripts.ci_shards integration`（需要 Docker），`distributions --shard <n>`，以及相关单元测试。本地 API 测试用的开发数据库要先起来。
+- **构建**：`deploy/tke/build-current.py <完整 SHA>` 在云效流水线构建，本机只是发起和等待（细节见下文「构建镜像」）。有运行中的流水线时脚本停止并列出它：是本次源码就用 `--run-id` 跟进，否则等它结束；中断后同样先用 `--run-id` 续读，不盲目重发。构建期间不改 `deploy/tke/current.yaml`。改 `pyproject.toml` 或 `uv.lock` 会让依赖基础层失效、要求先重建基础层，非依赖改动不要碰这两个文件。
+- **部署**（ppap-test，整套一起）：有新迁移时先更新 ConfigMap `ppap-current-migrations` 并重跑 Job `ppap-current-init-db`，读回 `product.schema_migrations`；再按下文「更新镜像或应用清单」应用 ConfigMap、Deployment 和 CronJob，等滚动更新完成；提交 `current.yaml` 的镜像版本。个人标识和密钥只放根目录 `.env` 与 Secret `ppap-current`，容器只按 key 引用，不进 git。
+- **线上验证**：用真实客户端走真实路径，读回页面上看得到的结果；授权页和确认页在内置浏览器里点。会改动真实客户数据、且无法撤回的步骤（如关闭真实问卷、往里加卡片），改在单独的测试版本上验证，并告诉产品负责人留下了哪些测试数据。扣点数的操作先说明点数。
+
 ## Authoritative release procedure
 
 本节是现有栈的部署入口。部署直接使用 `kubectl`；不运行 Python 部署编排、不自动预加载镜像、不创建临时测试环境。默认先执行本次需要的更新，遇到实际错误再诊断。构建与部署分开，配置变更不触发构建。
