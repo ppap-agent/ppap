@@ -26,3 +26,11 @@ def test_a_reworded_sentence_is_refused(tmp_path):
     directory, original = revision(tmp_path, "批准栏须已签名（电子签名也可）并填写日期，D<10 不通过。")
     with pytest.raises(SystemExit, match="A:1"):
         rulebook_import.checked(directory, original)
+
+
+def test_the_bundle_is_the_body_the_revision_endpoint_takes(tmp_path, capsys):
+    directory, original = revision(tmp_path, "本节适用于全部 A 文件。批准栏须已签名并填写日期，D<10 不通过。")
+    assert rulebook_import.main(["bundle", str(directory), "--original", str(original)]) == 0
+    out = capsys.readouterr()
+    assert set(json.loads(out.out)) == {"version", "revision", "base", "documents", "changes", "origin"}
+    assert out.err.strip() == "POST /rulebooks/uaes/revisions"

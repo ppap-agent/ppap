@@ -181,7 +181,7 @@ audit_round
 - 确认人是产品负责人（平台运营身份 `PPAP_PLATFORM_OPERATORS`，格式 `tenant_key:open_id`，空即无人可写）。受委托的审查方（`PPAP_CLAUSE_REVIEWERS`）只准备、不确认、不作答。
 
 **澄清一轮怎么走**
-1. **收规则**：客户规则线下发来。平台按原件拆成修订目录 `<客户>/rulebook/<版本>/m<修订>/rules/<缩写>.json`，用 `python -m product.rulebook_import check <目录> --original <原件>` 逐句核对原文（不调模型；Markdown 排版与空白不计）；通过后 `bundle`，在 API Pod 里以平台运营身份 `load`。也可由 Claude 经 MCP 提交拆好的条款，平台负责人在浏览器确认。不做在线导入。随产品发布的规则库目录（`assets/<客户>/rulebook`）在企业成员登录时原样写入。
+1. **收规则**：客户规则线下发来。平台按原件拆成修订目录 `<客户>/rulebook/<版本>/m<修订>/rules/<缩写>.json`，用 `python -m product.rulebook_import check <目录> --original <原件>` 逐句核对原文（不调模型；Markdown 排版与空白不计）；通过后 `bundle` 输出请求体（stderr 给出路径），平台运营身份登录 PPAP 后在同一站点把它 POST 到 `/ppap/rulebooks/<客户>/revisions`（Cookie 会话）。也可由 Claude 经 MCP 提交拆好的条款，平台负责人在浏览器确认。不做在线导入。随产品发布的规则库目录（`assets/<客户>/rulebook`）在企业成员登录时原样写入。
 2. **审查**：经 MCP `prepare_rule_clarification` 打开这个版本的澄清任务（一个企业对一个客户的一个版本只有一个），按 `next` 走。每条条款用 [`clause-check`](.claude/skills/clause-check/SKILL.md) 审查并提交审查记录，没有问题也要提交；服务端用该技能的 `check.py` 校验，不合格之处一次列全。效果用 [`bench/clause-check`](bench/clause-check/README.md) 对比。
 3. **发问卷**：发现由该技能 `questionnaire.py` 的同一个函数做成卡片（修订 0 的卡片编号是发现编号如 `CP:8#1`，之后的修订带修订号如 `CP:8#r1.1`）。平台负责人在浏览器确认后卡片才进入问卷，可分批追加；答复过这个版本问卷的人收到飞书通知，第一次发时没人答复过就不通知。要让另一个企业也作答，用 `questionnaire.py` 以迁移身份线下导入，各企业答复分开保存。答复按人分开、追加保存，不设最终答复。
 4. **处理答复**：对有答复的条款，按答复改写并写明依据的卡片，或说明不需要改，或追问（`follows` 指向原卡片）。答复不一致由产品负责人取舍。
