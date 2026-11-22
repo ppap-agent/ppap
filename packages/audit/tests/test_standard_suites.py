@@ -84,7 +84,7 @@ def test_editable_u12_l11_n03_starters_execute_source_clauses(tmp_path):
         workbook.save(path)
         workbook.close()
         audit = AuditInput(audit_id="frozen-version", file_url=str(path))
-        rule = RuleInput(rule_id="standard-revision", **preset_rule_body(suite.customer, suite.source_entry))
+        rule = RuleInput.of(preset_rule_body(suite.customer, suite.source_entry), rule_id="standard-revision")
         closeables = []
         context = SimpleNamespace(audit_file=audit, rule=rule, group_context=GroupContextInput(by_audit_id={audit.audit_id: audit}), cache={}, on_close=closeables.append)
         try:

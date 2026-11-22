@@ -684,8 +684,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Drafts List */
-        get: operations["drafts_list_drafts_get"];
+        get?: never;
         put?: never;
         /** Drafts Create */
         post: operations["drafts_create_drafts_post"];
@@ -707,23 +706,6 @@ export interface paths {
         /** Drafts Save */
         put: operations["drafts_save_drafts__draft_id__put"];
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/drafts/{draft_id}/accept": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Drafts Accept */
-        post: operations["drafts_accept_drafts__draft_id__accept_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1420,23 +1402,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/rounds": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Rounds List */
-        get: operations["rounds_list_rounds_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/rounds/{round_id}": {
         parameters: {
             query?: never;
@@ -1556,23 +1521,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/rule-library": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Rule Library */
-        get: operations["read_rule_library_rule_library_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/rule-questionnaires": {
         parameters: {
             query?: never;
@@ -1641,15 +1589,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/rule-types": {
+    "/rulebooks/{customer_id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Rules Types */
-        get: operations["rules_types_rule_types_get"];
+        /** List Rulebook Revisions */
+        get: operations["list_rulebook_revisions_rulebooks__customer_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rulebooks/{customer_id}/{version}/{revision}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Rulebook Revision */
+        get: operations["read_rulebook_revision_rulebooks__customer_id___version___revision__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1898,23 +1863,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/usage": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Usage List */
-        get: operations["usage_list_usage_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/version": {
         parameters: {
             query?: never;
@@ -1975,27 +1923,17 @@ export interface components {
         };
         /**
          * AuditArchiveCustomer
-         * @description One customer's documents as the same vehicle/part tree; filter by `customer` = `id` plus a category id.
+         * @description The documents whose files write one customer, as the same vehicle/part tree; filter by `customer` = `name` plus a category id.
          *
-         *     A registered customer is one node whichever registered name its documents recorded (`id` is its customer id).
-         *     A recorded value matching no registered customer is its own node, `registered` false, shown as recorded.
-         *     `values` are the recorded customer values in this node.
+         *     `name` is the customer value exactly as the files recorded it; it is never matched to a rule set or renamed.
          */
         AuditArchiveCustomer: {
             /** Categories */
             categories: components["schemas"]["AuditArchiveCategory"][];
             /** Count */
             count: number;
-            /** Full Name */
-            full_name: string;
-            /** Id */
-            id: string;
-            /** Registered */
-            registered: boolean;
-            /** Short Name */
-            short_name: string;
-            /** Values */
-            values: string[];
+            /** Name */
+            name: string;
         };
         /**
          * AuditArchiveDocument
@@ -2031,8 +1969,6 @@ export interface components {
             categories: components["schemas"]["AuditArchiveCategory"][];
             /** Customer Groups */
             customer_groups: components["schemas"]["AuditArchiveCustomer"][];
-            /** Customers */
-            customers: string[];
             /** Document Count */
             document_count: number;
             /** Document Types */
@@ -2153,26 +2089,31 @@ export interface components {
         };
         /**
          * AuditCustomer
-         * @description A registered customer. `name` is the name rules and the customer preference use; null coverage means M is not configured.
+         * @description A registered customer. `name` is the only name shown; `key` is what rules carry and a customer preference submits, never shown.
+         *
+         *     Null coverage means M is not configured.
          */
         AuditCustomer: {
             coverage: components["schemas"]["CustomerCoverage"] | null;
             /** Customer Id */
             customer_id: string;
-            /** Full Name */
-            full_name: string;
+            /** Key */
+            key: string;
             /** Name */
             name: string;
-            /** Short Name */
-            short_name: string;
         };
         /**
          * AuditCustomerCatalog
-         * @description Registered customers, and customer names on current rules that match no registered customer, exactly as recorded.
+         * @description Registered customers, customer names on current rules that match no registered customer (as recorded), and the
+         *     one name of every document type code the product shows.
          */
         AuditCustomerCatalog: {
             /** Customers */
             customers: components["schemas"]["AuditCustomer"][];
+            /** Type Names */
+            type_names: {
+                [key: string]: string;
+            };
             /** Unregistered */
             unregistered: string[];
         };
@@ -2232,6 +2173,8 @@ export interface components {
             excerpt: string;
             /** File Version Id */
             file_version_id: string;
+            /** Label */
+            label: string | null;
             /** Location Gap */
             location_gap: string | null;
             /** Locator */
@@ -3387,7 +3330,7 @@ export interface components {
         };
         /**
          * CustomerTypeEntry
-         * @description One document type of a customer's type set M: its PPAP code and the type name rules use.
+         * @description One document type of a customer's type set M: its PPAP code and the type name rules use; `type_names` names it.
          */
         CustomerTypeEntry: {
             /** Code */
@@ -3493,13 +3436,6 @@ export interface components {
             updated_at: string;
             upload_preparation?: components["schemas"]["AuditUploadPreparation"] | null;
             writeback: components["schemas"]["WritebackTarget"];
-        };
-        /** DraftList */
-        DraftList: {
-            /** Drafts */
-            drafts: components["schemas"]["Draft"][];
-            /** Next Offset */
-            next_offset: number | null;
         };
         /** DriveFile */
         DriveFile: {
@@ -3689,10 +3625,10 @@ export interface components {
             fingerprint: string;
             /** Item Keys */
             item_keys: string[];
+            /** Label */
+            label: string;
             /** Locator */
-            locator: {
-                [key: string]: unknown;
-            };
+            locator: components["schemas"]["XlsxCellLocator"] | components["schemas"]["XlsxRangeLocator"] | components["schemas"]["PdfBlockLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["PdfCellLocator"] | components["schemas"]["DocxParagraphLocator"] | components["schemas"]["DocxCellLocator"];
             /** Prompt */
             prompt: string;
         };
@@ -3827,18 +3763,16 @@ export interface components {
         /** LibraryCustomer */
         LibraryCustomer: {
             coverage: components["schemas"]["TemplateCoverage"] | null;
-            /** Full Name */
-            full_name: string;
             /** Id */
             id: string;
-            /** Short Name */
-            short_name: string;
+            /** Name */
+            name: string;
             /** Templates */
             templates: components["schemas"]["LibraryTemplate"][];
         };
         /**
          * LibraryTemplate
-         * @description One built-in customer template; `filename` is the clean download name.
+         * @description One built-in customer template; `filename` is the clean download name and `document_type` names `type_code`.
          */
         LibraryTemplate: {
             /** Byte Size */
@@ -3854,7 +3788,7 @@ export interface components {
             /** Name */
             name: string;
             /** Type Code */
-            type_code: string | null;
+            type_code: string;
         };
         /** MatchingCandidate */
         MatchingCandidate: {
@@ -4333,8 +4267,6 @@ export interface components {
             inputs: components["schemas"]["MaterialWire"][];
             /** Predecessor Id */
             predecessor_id: string | null;
-            /** Preparation Allowed */
-            preparation_allowed?: boolean;
             progress: components["schemas"]["RoundProgress"] | null;
             read_view?: components["schemas"]["AuditRoundReadView"];
             /** Result Attempt */
@@ -4355,13 +4287,6 @@ export interface components {
             message: string;
             /** Retryable */
             retryable: boolean;
-        };
-        /** RoundList */
-        RoundList: {
-            /** Next Offset */
-            next_offset: number | null;
-            /** Rounds */
-            rounds: components["schemas"]["RoundSummary"][];
         };
         /** RoundProgress */
         RoundProgress: {
@@ -4385,54 +4310,6 @@ export interface components {
             total_count?: number;
             /** Updated At */
             updated_at: string;
-        };
-        /** RoundSummary */
-        RoundSummary: {
-            /** Case Scope */
-            case_scope: string;
-            /** Case Title */
-            case_title: string;
-            /** Created At */
-            created_at: string | null;
-            /** Deep Mode */
-            deep_mode?: boolean;
-            /** Execution */
-            execution: string;
-            /** Has Execution Error */
-            has_execution_error?: boolean;
-            /** Id */
-            id: string;
-            /** Inputs */
-            inputs: components["schemas"]["RoundSummaryInput"][];
-            /** Predecessor Id */
-            predecessor_id: string | null;
-            /** Result Counts */
-            result_counts: {
-                [key: string]: number;
-            };
-            /** Reviewed Count */
-            reviewed_count: number;
-            /** Source Draft Id */
-            source_draft_id?: string | null;
-            /** Task Id */
-            task_id?: string | null;
-            /** Uncovered Count */
-            uncovered_count?: number;
-            /** Updated At */
-            updated_at?: string | null;
-        };
-        /** RoundSummaryInput */
-        RoundSummaryInput: {
-            /** File Version Id */
-            file_version_id: string;
-            /** Original Filename */
-            original_filename: string;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "target" | "reference";
-            rule: components["schemas"]["RoundSummaryRule"] | null;
         };
         /** RoundSummaryRule */
         RoundSummaryRule: {
@@ -4510,6 +4387,78 @@ export interface components {
             revision: number;
             /** Text */
             text: string | null;
+        };
+        /** RulebookChangeCounts */
+        RulebookChangeCounts: {
+            /** Changed */
+            changed: number;
+            /** New */
+            new: number;
+            /** Same */
+            same: number;
+        };
+        /** RulebookClause */
+        RulebookClause: {
+            /** Category */
+            category: string;
+            change: components["schemas"]["RulebookClauseChange"] | null;
+            /** Id */
+            id: string;
+            /** Text */
+            text: string;
+        };
+        /** RulebookClauseChange */
+        RulebookClauseChange: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "same" | "changed" | "new";
+            /** Note */
+            note: string;
+        };
+        /** RulebookDocument */
+        RulebookDocument: {
+            /** Clauses */
+            clauses: components["schemas"]["RulebookClause"][];
+            /** Title */
+            title: string;
+        };
+        /** RulebookRevisionList */
+        RulebookRevisionList: {
+            /** Revisions */
+            revisions: components["schemas"]["RulebookRevisionSummary"][];
+        };
+        /** RulebookRevisionRef */
+        RulebookRevisionRef: {
+            /** Revision */
+            revision: number;
+            /** Version */
+            version: string;
+        };
+        /** RulebookRevisionSummary */
+        RulebookRevisionSummary: {
+            base: components["schemas"]["RulebookRevisionRef"] | null;
+            changes: components["schemas"]["RulebookChangeCounts"] | null;
+            /** Clause Count */
+            clause_count: number;
+            /** Revision */
+            revision: number;
+            /** Version */
+            version: string;
+        };
+        /** RulebookRevisionView */
+        RulebookRevisionView: {
+            base: components["schemas"]["RulebookRevisionRef"] | null;
+            changes: components["schemas"]["RulebookChangeCounts"] | null;
+            /** Clause Count */
+            clause_count: number;
+            /** Documents */
+            documents: components["schemas"]["RulebookDocument"][];
+            /** Revision */
+            revision: number;
+            /** Version */
+            version: string;
         };
         /** RuleCandidate */
         RuleCandidate: {
@@ -4614,55 +4563,6 @@ export interface components {
             /** Type Of Rule */
             type_of_rule: string;
         };
-        /** RuleLibrary */
-        RuleLibrary: {
-            /** Versions */
-            versions: components["schemas"]["RuleLibraryEntry"][];
-        };
-        /** RuleLibraryEntry */
-        RuleLibraryEntry: {
-            /** Clause Count */
-            clause_count: number;
-            /** Created At */
-            created_at: string;
-            /** Document Type */
-            document_type: string;
-            /** Document Type Aliases */
-            document_type_aliases: string[];
-            /** Id */
-            id: string;
-            /** Predecessor Id */
-            predecessor_id: string | null;
-            /** Reason */
-            reason: string;
-            scope: components["schemas"]["RuleLibraryScope"];
-            /**
-             * Source Review
-             * @enum {string}
-             */
-            source_review: "unchecked" | "partial" | "checked";
-            /** Suite Key */
-            suite_key: string | null;
-            /** Title */
-            title: string;
-            /** Version */
-            version: string;
-        };
-        /** RuleLibraryScope */
-        RuleLibraryScope: {
-            /** Allcustomers */
-            allCustomers: boolean;
-            /** Allparts */
-            allParts: boolean;
-            /** Allrevisions */
-            allRevisions: boolean;
-            /** Customer */
-            customer: string;
-            /** Part */
-            part: string;
-            /** Revision */
-            revision: string;
-        };
         /** RuleParseJob */
         RuleParseJob: {
             /** Document Type */
@@ -4733,6 +4633,13 @@ export interface components {
             /** Questionnaires */
             questionnaires: components["schemas"]["RuleQuestionnaireSummary"][];
         };
+        /** RuleQuestionnaireRulebook */
+        RuleQuestionnaireRulebook: {
+            /** Revision */
+            revision: number;
+            /** Version */
+            version: string;
+        };
         /** RuleQuestionnaireSummary */
         RuleQuestionnaireSummary: {
             /** Answered */
@@ -4753,6 +4660,7 @@ export interface components {
             mine: number;
             /** Rule Version */
             rule_version: string;
+            rulebook: components["schemas"]["RuleQuestionnaireRulebook"];
             /** Title */
             title: string;
             /** Total */
@@ -4780,6 +4688,7 @@ export interface components {
             questions: components["schemas"]["RuleQuestion"][];
             /** Rule Version */
             rule_version: string;
+            rulebook: components["schemas"]["RuleQuestionnaireRulebook"];
             /** Title */
             title: string;
             /** Total */
@@ -4846,11 +4755,6 @@ export interface components {
             id: string;
             /** Location */
             location: string;
-        };
-        /** RuleTypes */
-        RuleTypes: {
-            /** Types */
-            types: string[];
         };
         /** SemanticDiagnostic */
         SemanticDiagnostic: {
@@ -5303,41 +5207,6 @@ export interface components {
              */
             state: "received";
         };
-        /** UsageEvent */
-        UsageEvent: {
-            /** Ai Item Id */
-            ai_item_id?: string;
-            /**
-             * Charge
-             * @enum {string}
-             */
-            charge?: "audit" | "deep_surcharge";
-            /** Consumed Points */
-            consumed_points: number;
-            /** Created At */
-            created_at: string;
-            /** External Confirmed At */
-            external_confirmed_at?: string | null;
-            /** External Record Id */
-            external_record_id?: string | null;
-            /** External Status */
-            external_status?: string;
-            /** File Version Id */
-            file_version_id?: string | null;
-            /** Id */
-            id: string;
-            /** Is Free Trial */
-            is_free_trial: boolean;
-            /** Round Id */
-            round_id?: string | null;
-        };
-        /** UsageList */
-        UsageList: {
-            /** Events */
-            events: components["schemas"]["UsageEvent"][];
-            /** Next Offset */
-            next_offset: number | null;
-        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -5562,8 +5431,11 @@ export interface operations {
                      * @constant
                      */
                     confirmed: true;
-                    /** Customer Preference */
-                    customer_preference: ("UAES" | "理想" | "蔚来") | null;
+                    /**
+                     * Customer Preference
+                     * @enum {string}
+                     */
+                    customer_preference: "UAES" | "理想" | "蔚来";
                     /** Expected Revision */
                     expected_revision: number;
                 };
@@ -6261,7 +6133,7 @@ export interface operations {
             content: {
                 "application/json": {
                     /** Customer Preference */
-                    customer_preference: string | null;
+                    customer_preference: string;
                     /** Expected Draft Revision */
                     expected_draft_revision?: number;
                     /** Expected Revision */
@@ -7019,39 +6891,6 @@ export interface operations {
             };
         };
     };
-    drafts_list_drafts_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-                q?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DraftList"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     drafts_create_drafts_post: {
         parameters: {
             query?: never;
@@ -7059,37 +6898,13 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
-                    /** CaseContext */
-                    case_context?: {
-                        /**
-                         * Customer Scope
-                         * @constant
-                         */
-                        customer_scope?: "all";
-                        /** Registration */
-                        registration?: string;
-                    };
-                    /** Items */
-                    items?: {
-                        /** File Version Id */
-                        file_version_id: string;
-                        /**
-                         * Role
-                         * @enum {string}
-                         */
-                        role: "target" | "reference";
-                        /** Rule Version Id */
-                        rule_version_id: string | null;
-                    }[];
-                    /** Predecessor Id */
-                    predecessor_id?: string | null;
                     /** Request Id */
-                    request_id?: string;
+                    request_id: string;
                     /** AuditUploadPreparation */
-                    upload_preparation?: {
+                    upload_preparation: {
                         /** Customer Preference */
                         customer_preference: string | null;
                         /** Files */
@@ -7156,9 +6971,9 @@ export interface operations {
                          */
                         version: 1;
                     };
-                } | {
+                } & {
                     [key: string]: unknown;
-                } | null;
+                };
             };
         };
         responses: {
@@ -7225,32 +7040,10 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** CaseContext */
-                    case_context?: {
-                        /**
-                         * Customer Scope
-                         * @constant
-                         */
-                        customer_scope?: "all";
-                        /** Registration */
-                        registration?: string;
-                    };
                     /** Expected Revision */
-                    expected_revision?: number;
-                    /** Items */
-                    items?: {
-                        /** File Version Id */
-                        file_version_id: string;
-                        /**
-                         * Role
-                         * @enum {string}
-                         */
-                        role: "target" | "reference";
-                        /** Rule Version Id */
-                        rule_version_id: string | null;
-                    }[];
+                    expected_revision: number;
                     /** AuditUploadPreparation */
-                    upload_preparation?: {
+                    upload_preparation: {
                         /** Customer Preference */
                         customer_preference: string | null;
                         /** Files */
@@ -7341,50 +7134,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Draft"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    drafts_accept_drafts__draft_id__accept_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                draft_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** Expected Model Revision */
-                    expected_model_revision?: string | null;
-                    /** Idempotency Key */
-                    idempotency_key: string;
-                    /** Predecessor Id */
-                    predecessor_id?: string | null;
-                } & {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Round"];
                 };
             };
             /** @description Validation Error */
@@ -8719,41 +8468,6 @@ export interface operations {
             };
         };
     };
-    rounds_list_rounds_get: {
-        parameters: {
-            query?: {
-                execution?: string;
-                limit?: number;
-                offset?: number;
-                q?: string;
-                unreviewed?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RoundList"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     rounds_get_rounds__round_id__get: {
         parameters: {
             query?: {
@@ -9067,26 +8781,6 @@ export interface operations {
             };
         };
     };
-    read_rule_library_rule_library_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuleLibrary"];
-                };
-            };
-        };
-    };
     list_rule_questionnaires_rule_questionnaires_get: {
         parameters: {
             query?: never;
@@ -9218,11 +8912,13 @@ export interface operations {
             };
         };
     };
-    rules_types_rule_types_get: {
+    list_rulebook_revisions_rulebooks__customer_id__get: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                customer_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -9233,7 +8929,49 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RuleTypes"];
+                    "application/json": components["schemas"]["RulebookRevisionList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_rulebook_revision_rulebooks__customer_id___version___revision__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                customer_id: string;
+                revision: number;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RulebookRevisionView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9753,40 +9491,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TemplateSubmissionReceipt"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    usage_list_usage_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-                since?: string | null;
-                until?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UsageList"];
                 };
             };
             /** @description Validation Error */

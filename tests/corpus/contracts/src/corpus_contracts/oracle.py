@@ -6,13 +6,15 @@ import csv
 import hashlib
 import json
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, cast
 
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-from audit.standard_suites import StandardSuite, library_revision, predefined_directory_suites
+from audit.standard_suites import StandardSuite, library_revision, load_predefined_checkers, predefined_directory_suites
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 CORPUS = REPO_ROOT / "assets/corpus"
@@ -34,10 +36,44 @@ def table(dataset: str, kind: str, *, corpus: Path = CORPUS) -> Path:
     return corpus / f"{dataset}-{kind}"
 
 
+# The existing UAES oracle was judged under v0.0 m1, not whichever revision
+# happens to match one leaf. The archive pins source leaves/presets only:
+# the replay runs the shared library installed in this checkout.
+UAES_JUDGED_REVISION = REPO_ROOT / "assets/uaes/rulebook/v0.0/m1"
+
+
 @lru_cache(maxsize=1)
+def _judged_sources() -> dict[str, StandardSuite]:
+    archived = {suite.source_path: suite for suite in load_predefined_checkers(UAES_JUDGED_REVISION / "checkers")}
+    for path, expected in reviewed_rules().items():
+        if path.startswith("uaes/") and (path not in archived or reviewed_contract(archived[path]) != expected):
+            raise ValueError(f"{path}: UAES oracle does not match its frozen v0.0 m1 rule contract")
+    current = {suite.source_path: suite for suite in predefined_directory_suites() if suite.customer != "UAES"}
+    return {**current, **archived}
+
+
 def suite_sources() -> dict[str, StandardSuite]:
-    """Exact leaf paths, never a current/latest Suite lookup."""
-    return {suite.source_path: suite for suite in predefined_directory_suites()}
+    """Resolve the frozen v0.0 m1 UAES leaves for the existing human truths."""
+    return dict(_judged_sources())
+
+
+@contextmanager
+def presets_as_judged(customer: str) -> Iterator[None]:
+    """Recognition reads the presets of the revision its truths were made under."""
+    import audit.presets as presets
+
+    if customer != "UAES":
+        yield
+        return
+    rows = json.loads((UAES_JUDGED_REVISION / "presets.json").read_text(encoding="utf-8"))
+    frozen = tuple(presets.CustomerPreset(**{**row, "clauses": tuple(presets.PresetClause(**clause) for clause in row["clauses"])}) for row in rows)
+    current = presets.customer_presets
+    judged = (*frozen, *(preset for preset in current() if preset.customer != customer))
+    presets.customer_presets = lambda: judged  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        presets.customer_presets = current  # type: ignore[assignment]
 
 
 def reviewed_contract(suite: StandardSuite) -> dict:
@@ -241,8 +277,9 @@ def recognize_references(case: OracleCase) -> dict[str, dict]:
     from worker.intake.file_analysis import analyze_file
 
     customer = case_customer(case)
-    rules = customer_rules(customer)
-    return {file.file_id: analyze_file(file.filename, file.path.read_bytes(), rules, customer_preference=customer, scoped=True, reference_only=True) for file in case.files if file.role == "reference"}
+    with presets_as_judged(customer):
+        rules = customer_rules(customer)
+        return {file.file_id: analyze_file(file.filename, file.path.read_bytes(), rules, customer_preference=customer, reference_only=True) for file in case.files if file.role == "reference"}
 
 
 def build_round(case: OracleCase, recognized: dict[str, dict] | None = None) -> tuple[ExecutionSnapshot, dict[str, bytes], dict[str, int]]:

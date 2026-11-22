@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
-import {apiUrl, connect, readLocalUpload, request, requestTrace, upload, uploadLocalVersion, UploadResultUnknown, type Material} from './api.ts'
+import {apiUrl, connect, readLocalUpload, request, requestTrace, uploadLocalVersion} from './api.ts'
 
 const originalFetch = globalThis.fetch
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
@@ -191,27 +191,24 @@ test('a lost create reply reads the same upload without sending bytes or another
   assert.deepEqual(calls.map(call => call.init?.method), ['POST', 'GET'])
 })
 
-test('legacy upload preserves its staged material and reads a lost blob reply by the same request', async () => {
+test('a lost blob reply reads the same upload request instead of sending the bytes again', async () => {
   const file = new File(['abc'], 'control.xlsx')
   const sha256 = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
-  let id = ''
-  const staged: Material[] = []
+  const id = '7c0d2a3e-55b1-4d0f-9a64-2f1f0b5a8c11'
+  const staged: string[] = []
   const version = () => ({id, file_id: 'file', original_filename: file.name, byte_size: 3, content_type: 'application/octet-stream', status: 'staging', sha256: null})
   const calls = installFetch((url, init) => {
     if (init?.method === 'POST') {
-      const input = JSON.parse(String(init.body))
-      assert.match(input.request_id, /^[a-f0-9-]{36}$/)
-      assert.equal(input.sha256, sha256)
-      id = input.request_id
+      assert.equal(JSON.parse(String(init.body)).sha256, sha256)
       return jsonResponse(version())
     }
     if (init?.method === 'PUT') throw new TypeError('blob reply lost')
     assert.equal(url, `${apiUrl}/file-uploads/${id}`)
     return jsonResponse({request_id: id, state: 'ready', file: {...version(), status: 'ready', sha256}, reason: null, retry_allowed: false})
   })
-  const material = await upload(file, 'target', next => staged.push(next))
-  assert.deepEqual(material, {file_id: 'file', file_version_id: id, original_filename: file.name, role: 'target', rule_version_id: null})
-  assert.deepEqual(staged, [material])
+  const receipt = await uploadLocalVersion(file, id, next => staged.push(next.id))
+  assert.equal(receipt.state, 'ready')
+  assert.deepEqual(staged, [id])
   assert.deepEqual(calls.map(call => call.init?.method), ['POST', 'PUT', 'GET'])
 })
 
@@ -225,23 +222,17 @@ test('changed input under the same upload request is a conflict, not permission 
   assert.deepEqual(calls.map(call => call.init?.method), ['POST'])
 })
 
-test('a lost blob reply and failed readback retain the known staged material', async () => {
+test('a lost blob reply and failed readback stay unknown with the staged version and no retry', async () => {
   const file = new File(['abc'], 'control.xlsx')
-  let id = ''
-  let staged: Material | undefined
+  const id = 'd3b1f6a2-0c4e-4a8b-9f71-6e2a5c9d0b47'
   const calls = installFetch((_url, init) => {
-    if (init?.method === 'POST') {
-      id = JSON.parse(String(init.body)).request_id
-      return jsonResponse({id, file_id: 'file', original_filename: file.name, byte_size: 3, content_type: 'application/octet-stream', status: 'staging', sha256: null})
-    }
+    if (init?.method === 'POST') return jsonResponse({id, file_id: 'file', original_filename: file.name, byte_size: 3, content_type: 'application/octet-stream', status: 'staging', sha256: null})
     throw new TypeError('connection lost')
   })
-  await assert.rejects(upload(file, 'reference', next => {staged = next}), error => {
-    assert.ok(error instanceof UploadResultUnknown)
-    assert.deepEqual(error.material, staged)
-    assert.equal(error.requestId, id)
-    return true
-  })
+  const receipt = await uploadLocalVersion(file, id)
+  assert.equal(receipt.state, 'unknown')
+  assert.equal(receipt.file?.id, id)
+  assert.equal(receipt.retry_allowed, false)
   assert.deepEqual(calls.map(call => call.init?.method), ['POST', 'PUT', 'GET'])
 })
 

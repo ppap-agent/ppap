@@ -22,7 +22,7 @@ def checked(tmp_path, rows, *, merge_number=False):
     book.save(path)
     book.close()
     body = preset_rule_body("UAES", "U12")
-    agent = UaesSpecialCharacteristicsAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="rule", **{name: value for name, value in body.items() if name != "kind"}))
+    agent = UaesSpecialCharacteristicsAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput.of(body, rule_id="rule"))
     return agent.check(1)
 
 

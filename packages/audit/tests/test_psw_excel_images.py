@@ -12,8 +12,8 @@ from openpyxl.drawing.image import Image as WorkbookImage
 from PIL import Image, ImageDraw
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2PswAgent), ("v3", V3PswAgent)], ids=["v2", "v3"])
-def test_unread_graphic_cannot_prove_both_a_company_seal_and_a_supplier_signature(tmp_path, monkeypatch, profile, agent_type):
+@pytest.mark.parametrize("agent_type", [V2PswAgent, V3PswAgent], ids=["v2", "v3"])
+def test_unread_graphic_cannot_prove_both_a_company_seal_and_a_supplier_signature(tmp_path, monkeypatch, agent_type):
     for key in ("PPAP_MODEL_VISION_MODEL", "PPAP_MODEL_VISION_API_KEY", "PPAP_MODEL_VISION_BASE_URL"):
         monkeypatch.setenv(key, "")
     path = tmp_path / "psw.xlsx"
@@ -28,7 +28,7 @@ def test_unread_graphic_cannot_prove_both_a_company_seal_and_a_supplier_signatur
     sheet.add_image(WorkbookImage(buffer), "D25")
     workbook.save(path)
     workbook.close()
-    agent = agent_type(AuditInput(audit_id="psw-images", file_url=str(path)), RuleInput(rule_id="psw", rule_profile=profile, type="零件提交保证书", rules=[]))
+    agent = agent_type(AuditInput(audit_id="psw-images", file_url=str(path)), RuleInput(rule_id="psw", type="零件提交保证书", rules=[]))
     try:
         with bind_runtime(None):
             results = [agent.check(index) for index in (2, 4)]
@@ -38,9 +38,9 @@ def test_unread_graphic_cannot_prove_both_a_company_seal_and_a_supplier_signatur
         agent.close()
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2PswAgent), ("v3", V3PswAgent)], ids=["v2", "v3"])
+@pytest.mark.parametrize("agent_type", [V2PswAgent, V3PswAgent], ids=["v2", "v3"])
 @pytest.mark.parametrize("missing,expected", [(True, "NG"), (False, "UNABLE")])
-def test_required_field_defect_is_preserved_when_later_field_is_unknown(tmp_path, profile, agent_type, missing, expected):
+def test_required_field_defect_is_preserved_when_later_field_is_unknown(tmp_path, agent_type, missing, expected):
     path = tmp_path / "required-fields.xlsx"
     native_psw_fields(path, unknown=("零件提交保证书", "B19"))
     if missing:
@@ -48,7 +48,7 @@ def test_required_field_defect_is_preserved_when_later_field_is_unknown(tmp_path
         workbook["零件提交保证书"]["B8"] = None
         workbook.save(path)
         workbook.close()
-    agent = agent_type(AuditInput(audit_id="native-partial", file_url=str(path)), RuleInput(rule_id="required", rule_profile=profile, type="零件提交保证书", rules=[]))
+    agent = agent_type(AuditInput(audit_id="native-partial", file_url=str(path)), RuleInput(rule_id="required", type="零件提交保证书", rules=[]))
     try:
         with bind_runtime(None):
             result = agent.check(5)
@@ -60,14 +60,14 @@ def test_required_field_defect_is_preserved_when_later_field_is_unknown(tmp_path
         agent.close()
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2PswAgent), ("v3", V3PswAgent)], ids=["v2", "v3"])
-def test_corrupt_native_psw_workbook_is_an_execution_error_without_invented_evidence(tmp_path, profile, agent_type):
+@pytest.mark.parametrize("agent_type", [V2PswAgent, V3PswAgent], ids=["v2", "v3"])
+def test_corrupt_native_psw_workbook_is_an_execution_error_without_invented_evidence(tmp_path, agent_type):
     path = tmp_path / "broken.xlsx"
     original = b"not a readable workbook"
     path.write_bytes(original)
     agent = agent_type(
         AuditInput(audit_id="psw-corrupt", file_url=str(path)),
-        RuleInput(rule_id="confirmed-psw-rules", rule_profile=profile, type="零件提交保证书", rules=[]),
+        RuleInput(rule_id="confirmed-psw-rules", type="零件提交保证书", rules=[]),
     )
 
     try:
@@ -123,7 +123,7 @@ def native_psw_fields(path, *, unknown=None):
     workbook.close()
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2PswAgent), ("v3", V3PswAgent)], ids=["v2", "v3"])
+@pytest.mark.parametrize("agent_type", [V2PswAgent, V3PswAgent], ids=["v2", "v3"])
 @pytest.mark.parametrize(
     ("unknown", "expected"),
     [
@@ -135,13 +135,11 @@ def native_psw_fields(path, *, unknown=None):
     ],
     ids=["all-native-known", "unrelated-unknown-footer", "unknown-weight", "unknown-supplier", "unknown-attachment"],
 )
-def test_native_psw_unknown_cells_do_not_become_filled_values_or_erase_known_rules(tmp_path, profile, agent_type, unknown, expected):
+def test_native_psw_unknown_cells_do_not_become_filled_values_or_erase_known_rules(tmp_path, agent_type, unknown, expected):
     path = tmp_path / "native-partial.xlsx"
     native_psw_fields(path, unknown=unknown)
     original = path.read_bytes()
-    agent = agent_type(
-        AuditInput(audit_id="native-partial", file_url=str(path)), RuleInput(rule_id="psw-known-native", rule_profile=profile, type="零件提交保证书", rules=[{"id": str(i)} for i in range(1, 11)])
-    )
+    agent = agent_type(AuditInput(audit_id="native-partial", file_url=str(path)), RuleInput(rule_id="psw-known-native", type="零件提交保证书", rules=[{"id": str(i)} for i in range(1, 11)]))
     try:
         with bind_runtime(None):
             results = [agent.check(index) for index in (0, 1, 3, 5)]

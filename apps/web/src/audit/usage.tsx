@@ -36,7 +36,7 @@ function timeText(value: string, timezone: string) {
   return `${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}`
 }
 const known = (metric?: UsageMetric): metric is UsageMetric & {value: number} => metric?.value !== null && metric?.value !== undefined
-export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, sharingAdapter, renderOriginal, onOpenTask, onSupport, headerActions}: {active: boolean; adapter?: AuditUsageAdapter; archiveAdapter?: AuditArchiveAdapter; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; onSupport: (notice: string) => void; headerActions?: HTMLElement | null}) {
+export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, sharingAdapter, renderOriginal, onOpenTask, onSupport, headerActions}: {active: boolean; adapter: AuditUsageAdapter; archiveAdapter: AuditArchiveAdapter; reportAdapter: AuditReportAdapter; sharingAdapter: AuditSharingAdapter; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; onSupport: (notice: string) => void; headerActions?: HTMLElement | null}) {
   const [query, setQuery] = useState(() => readUsageQuery(location.search)), [search, setSearch] = useState(query.search), [page, setPage] = useState<UsagePage | null>(null)
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0), [address, setAddress] = useState(() => readArchiveAddress(location.search)), [route, setRoute] = useState(0)
   const epoch = useRef(0), organization = useRef('')
@@ -54,7 +54,6 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
   useEffect(() => {
     const run = ++epoch.current
     if (!active) {setLoading(false); return}
-    if (!adapter) {setPage(null); setLoading(false); setError('用量暂不可用，请稍后重试。'); return}
     setLoading(true); setError('')
     void adapter.readUsage(structuredClone(query)).then(next => {
       if (epoch.current !== run) return
@@ -65,13 +64,13 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
   }, [active, adapter, query, reload])
   // The Feishu balance is read beside the ledger; a failed read hides the line rather than showing a guessed number.
   useEffect(() => {
-    if (!active || !adapter?.readBalance) return
+    if (!active || !adapter.readBalance) return
     let current = true
     void adapter.readBalance().then(value => {if (current) setBalance(value)}).catch(() => {if (current) setBalance(undefined)})
     return () => {current = false}
   }, [active, adapter, reload])
   async function exportEntries() {
-    if (!adapter?.exportUsage || exporting) return
+    if (!adapter.exportUsage || exporting) return
     setExporting(true); setExportError('')
     let url = ''
     try {
@@ -81,10 +80,10 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
     finally {if (url) URL.revokeObjectURL(url); setExporting(false)}
   }
   function filter(update: Partial<UsageQuery>) {const next = {...query, ...update, page: update.page || 1}; epoch.current += 1; setQuery(next); writeUsageQuery(next)}
-  function navigate(documentId: string | null, reference: typeof address.reference, report = false, replace = false) {writeArchiveAddress(documentId, reference, report, replace, 'usage'); setAddress(readArchiveAddress(location.search))}
+  function navigate(documentId: string | null, reference: typeof address.reference, report = false, replace = false) {writeArchiveAddress(documentId, reference, report, replace); setAddress(readArchiveAddress(location.search))}
   if (!active) return null
   const detailRequested = Boolean(address.documentId || address.reference || address.invalid || address.report)
-  if (detailRequested) return !address.invalid && address.documentId && address.reference && archiveAdapter ? <ArchiveHistory key={`${address.documentId}:${route}`} document={null} documentId={address.documentId} initialAddress={address} adapter={archiveAdapter} onNavigate={(reference, report, replace) => navigate(address.documentId, reference, report, replace)} onBack={() => navigate(null, null)} backLabel="返回用量记录" onOpenTask={onOpenTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal}/> : <Alert><AlertTitle>这次消费的审核记录暂不可用</AlertTitle><AlertDescription><p>无法打开这次审核，请返回用量记录。</p><Button variant="outline" size="sm" onClick={() => navigate(null, null)}>返回用量记录</Button></AlertDescription></Alert>
+  if (detailRequested) return !address.invalid && address.documentId && address.reference ? <ArchiveHistory key={`${address.documentId}:${route}`} document={null} documentId={address.documentId} initialAddress={address} adapter={archiveAdapter} onNavigate={(reference, report, replace) => navigate(address.documentId, reference, report, replace)} onBack={() => navigate(null, null)} backLabel="返回用量记录" onOpenTask={onOpenTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal}/> : <Alert><AlertTitle>这次消费的审核记录暂不可用</AlertTitle><AlertDescription><p>无法打开这次审核，请返回用量记录。</p><Button variant="outline" size="sm" onClick={() => navigate(null, null)}>返回用量记录</Button></AlertDescription></Alert>
   const current = page && sameSnapshot(page.query, query) ? page : null, summary = page?.summary
   // Each charge is a fixed number of points per file; the price line shows only when a row says what it is.
   // Every file costs 500; history from before V3.33 may hold 750 deep-mode rows, so only a uniform page names one price.
@@ -98,7 +97,7 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
     {title: '免费额度', value: `${used === null ? '—' : used.toLocaleString('zh-CN')} / ${metricText(summary.free_total)}`, unit: '点', note: summary.free_remaining.reason || summary.free_total.reason, meter: used !== null && known(summary.free_total) && summary.free_total.value ? Math.min(100, used / summary.free_total.value * 100) : undefined},
   ] : []
   const refresh = <Button variant="outline" type="button" size="icon-sm" aria-label="刷新用量" disabled={loading} onClick={() => setReload(value => value + 1)}><Icon icon={iconArrowsRotate} className={cn(loading && 'animate-spin motion-reduce:animate-none')}/></Button>
-  const exportButton = adapter?.exportUsage && <Button variant="outline" type="button" disabled={exporting || !current?.total} onClick={() => void exportEntries()}><Icon icon={iconDownload}/>{exporting ? '正在导出…' : '导出明细'}</Button>
+  const exportButton = adapter.exportUsage && <Button variant="outline" type="button" disabled={exporting || !current?.total} onClick={() => void exportEntries()}><Icon icon={iconDownload}/>{exporting ? '正在导出…' : '导出明细'}</Button>
   return <section className="min-w-0 space-y-4 rounded-lg bg-card p-5" aria-label="企业用量记录">
     {headerActions && exportButton && createPortal(exportButton, headerActions)}
     <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1"><h1 className="sr-only">用量记录</h1><p className="text-xs text-muted-foreground">记录每份文件的审核消耗，可按时间范围筛选并导出明细</p></div>{!headerActions && exportButton}</header>
@@ -121,7 +120,7 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
           <TableCell className="max-w-56 whitespace-normal"><Badge variant={stateTone[row.settlement.state]}>{states[row.settlement.state]}</Badge>{row.settlement.reason && <p className="mt-1 text-xs text-muted-foreground">{row.settlement.reason}</p>}</TableCell>
           <TableCell>{row.initiator}</TableCell>
           <TableCell className="whitespace-normal text-right"><p className="tabular-nums">{row.points}</p><p className="text-xs text-muted-foreground">{row.allocation.free_points !== null && row.allocation.paid_points !== null ? `免费 ${row.allocation.free_points} · 付费 ${row.allocation.paid_points}` : row.allocation.reason}</p></TableCell>
-          <TableCell className="max-w-48 whitespace-normal text-right"><Button variant="link" size="sm" disabled={loading || Boolean(error) || !archiveAdapter || !row.document_id} onClick={() => navigate(row.document_id, row.reference)}>查看</Button></TableCell>
+          <TableCell className="max-w-48 whitespace-normal text-right"><Button variant="link" size="sm" disabled={loading || Boolean(error) || !row.document_id} onClick={() => navigate(row.document_id, row.reference)}>查看</Button></TableCell>
         </TableRow>)}</TableBody>
       </Table> : <p className="py-12 text-center text-sm text-muted-foreground">当前筛选下没有消费记录。</p>}</div>}
       <Pager total={current.total} page={query.page} disabled={loading || Boolean(error)} onPage={value => filter({page: value})}/>

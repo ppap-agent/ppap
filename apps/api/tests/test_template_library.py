@@ -51,15 +51,17 @@ def test_catalog_lists_clean_names_and_only_present_files(tmp_path):
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-store"
     customers = {row["id"]: row for row in response.json()["customers"]}
-    assert [(customers[key]["full_name"], customers[key]["short_name"]) for key in ("li", "nio", "uaes")] == [("理想汽车", "理想"), ("蔚来汽车", "蔚来"), ("联合汽车电子有限公司", "UAES")]
+    assert [customers[key]["name"] for key in ("li", "nio", "uaes")] == ["理想/Li Auto", "蔚来/Nio", "联电科技/UAES"]
     present = {customer.id: {template.id for template in customer.templates} - {"nio-control-plan"} for customer in library.CUSTOMERS}
     assert {key: {template["id"] for template in row["templates"]} for key, row in customers.items()} == present
     approval = next(row for row in customers["uaes"]["templates"] if row["id"] == "uaes-sample-approval")
     size = len("模板:uaes-sample-approval".encode())
     # The part number and " (1)" copy suffix stay in the original only.
-    expected = {"id": "uaes-sample-approval", "name": "样品认可报告", "document_type": "样品认可报告", "extension": ".xls", "filename": "样品认可报告.xls", "byte_size": size}
-    # The sample approval report is the U19 顾客工程批准 template (PPAP-00-A §4.4.1).
+    # The sample approval report is the U19 顾客工程批准 template (PPAP-00-A §4.4.1); its type is named by the register.
+    expected = {"id": "uaes-sample-approval", "name": "样品认可报告", "document_type": "顾客工程批准", "extension": ".xls", "filename": "样品认可报告.xls", "byte_size": size}
     assert approval == {**expected, "type_code": "E11"}
+    pgqp = next(row for row in customers["uaes"]["templates"] if row["id"] == "uaes-pgqp")
+    assert (pgqp["type_code"], pgqp["document_type"]) == ("E12", "采购件质量计划（PGQP1）")
 
 
 def test_template_coverage_counts_available_templates_against_the_customer_type_set(tmp_path):
@@ -89,7 +91,7 @@ def test_customer_archive_holds_every_template_under_its_clean_name(tmp_path):
     response = client.get("/template-library/uaes/archive")
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/zip"
-    assert "filename*=UTF-8''" + quote("联合汽车电子有限公司模板.zip") in response.headers["content-disposition"]
+    assert "filename*=UTF-8''" + quote("联电科技-UAES模板.zip") in response.headers["content-disposition"]
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         names = sorted(archive.namelist())
         assert names == sorted(template.filename for template in library.find_customer("uaes").templates)

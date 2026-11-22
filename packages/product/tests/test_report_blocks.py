@@ -82,8 +82,8 @@ class ReportBlocksTests(unittest.TestCase):
             "人工复核：接受",
             "理由：已核实",
             "下一步：补签",
-            "来源：audit.xlsx（待审）；位置：Sheet1!A1；原文摘录：缺少签字",
-            "来源：reference.xlsx（参考）；位置：签字页!B2；原文摘录：签字栏",
+            "来源：audit.xlsx（待审）；位置：工作表「Sheet1」A1；原文摘录：缺少签字",
+            "来源：reference.xlsx（参考）；位置：工作表「签字页」B2；原文摘录：签字栏",
             "参考资料（不单独审核）：reference.xlsx",
             "匹配规则：客户规则",
             "https://example.test/?round=1",
@@ -111,7 +111,7 @@ class ReportBlocksTests(unittest.TestCase):
         blocks = report_blocks(body)
         text = "\n".join(part["text_run"]["content"] for block in blocks for value in block.values() if isinstance(value, dict) for part in value["elements"])
         self.assertIn("audit.pdf（待审）", text)
-        self.assertIn("位置：第 3 页 · 表格行 12 · 列 4", text)
+        self.assertIn("位置：第 3 页表格第 12 行第 4 列", text)
         self.assertIn("原文摘录：缺少签字", text)
         self.assertNotIn("Sheet", text)
         self.assertEqual(body["findings"][0]["status"], "NG")
@@ -186,7 +186,7 @@ class ReportBlocksTests(unittest.TestCase):
             "UNABLE · R1 · 条款",
             "修订后的频次要求",
             "flow.pdf（参考）",
-            "位置：第 3 页 · 文本块 2",
+            "位置：第 3 页第 2 段",
             "原文摘录：流程记录",
             "无法判断原因：unresolved_relation",
         ):
@@ -266,11 +266,11 @@ class ReportBlocksTests(unittest.TestCase):
             self.assertEqual(text.count(rule_text), 1)
         for expected in (
             "R3 · 特殊要求：无对应内置检查，需人工核对",
-            "控制计划!B2",
-            "控制计划!C3:D8",
-            "第 4 页 · 文本块 7",
-            "段落 9",
-            "表格 2 · 行 3 · 列 4",
+            "工作表「控制计划」B2",
+            "工作表「控制计划」C3:D8",
+            "第 4 页第 7 段",
+            "第 9 段",
+            "第 2 个表格第 3 行第 4 列",
             "flow.pdf（参考）",
             "原文摘录：核对单元格",
             "未检查范围：flow.pdf（参考资料，不单独审核）",

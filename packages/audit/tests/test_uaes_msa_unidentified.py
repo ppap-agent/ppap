@@ -16,9 +16,9 @@ def _agent(tmp_path, monkeypatch, related, kappas, target_book=None):
 
     @contextmanager
     def reading(self, ctx, item, document):
-        from audit.checker_lib.nio.cross_file_extractors import _load_workbook_auto
+        from audit.checker_lib.excel import load_workbook_auto
 
-        with ctx.reading(_load_workbook_auto(str(path)), "related"):
+        with ctx.reading(load_workbook_auto(str(path)), "related"):
             yield ctx
 
     monkeypatch.setattr(UaesMsaAgent, "only", lambda self, kind, label: "related")
@@ -26,7 +26,7 @@ def _agent(tmp_path, monkeypatch, related, kappas, target_book=None):
     monkeypatch.setattr(UaesMsaAgent, "reading", reading)
     monkeypatch.setattr(UaesMsaAgent, "kappas", lambda self, ctx: kappas)
     body = preset_rule_body("UAES", "U05")
-    agent = UaesMsaAgent(AuditInput(audit_id="msa", file_url=str(target)), RuleInput(rule_id="u05", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesMsaAgent(AuditInput(audit_id="msa", file_url=str(target)), RuleInput.of(body, rule_id="u05"))
     names = [name for name, _ in agent.declared_rules()]
     return lambda method: agent.check(names.index(method))
 

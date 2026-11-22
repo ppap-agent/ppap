@@ -20,7 +20,7 @@ def checked(tmp_path, rows):
     book.save(path)
     book.close()
     body = preset_rule_body("UAES", "U05")
-    agent = UaesMsaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="rule", **{name: value for name, value in body.items() if name != "kind"}))
+    agent = UaesMsaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput.of(body, rule_id="rule"))
     return agent.check(0)
 
 

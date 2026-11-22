@@ -49,6 +49,15 @@ ON a.user_id=b.user_id AND a.tenant_id=b.tenant_id AND a.provider=b.provider AND
 AND a.subject=b.subject AND a.credential_hash=b.credential_hash
 WHERE s.token_hash=b.token_hash;
 
+-- 0088 drops the old credential columns. A replay re-adds them empty, as 0004 does
+-- for sessions, so the statements below run unchanged; on a new database this is a no-op.
+ALTER TABLE product.mcp_grants
+    ADD COLUMN IF NOT EXISTS access_token text,
+    ADD COLUMN IF NOT EXISTS refresh_token text,
+    ADD COLUMN IF NOT EXISTS access_expires_at timestamptz,
+    ADD COLUMN IF NOT EXISTS refresh_expires_at timestamptz,
+    ADD COLUMN IF NOT EXISTS provider_refresh_state text NOT NULL DEFAULT 'ready';
+
 -- The pre-release MCP candidate copied credentials. Preserve only exact
 -- matches to a browser authorization; uncertain old copies require consent.
 UPDATE product.mcp_grants g SET provider_authorization_id=a.id
@@ -66,7 +75,7 @@ AND g.app_id=a.app_id AND g.subject=a.subject AND g.refresh_token=a.refresh_toke
 AND a.refresh_token<>'' AND g.provider_refresh_state<>'ready';
 UPDATE product.sessions SET revoked_at=now() WHERE provider_authorization_id IS NULL AND revoked_at IS NULL;
 UPDATE product.mcp_grants SET revoked_at=now() WHERE provider_authorization_id IS NULL AND revoked_at IS NULL;
--- Keep the old nullable columns for schema rollback, without credential copies.
+-- No credential copies stay outside provider_authorizations; 0088 drops these columns.
 UPDATE product.sessions SET access_token=NULL, refresh_token=NULL, access_expires_at=NULL, refresh_expires_at=NULL;
 UPDATE product.mcp_grants SET access_token=NULL, refresh_token=NULL, access_expires_at=NULL, refresh_expires_at=NULL;
 CREATE INDEX IF NOT EXISTS sessions_provider_authorization_idx ON product.sessions(provider_authorization_id);

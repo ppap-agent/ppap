@@ -21,15 +21,16 @@ def file(id_, name, *, validation="valid", reasons=(), state="matched", gaps=(),
 
 def test_each_file_gets_one_level_and_blocks_fail_the_batch():
     task = {
+        "customer_preference": "UAES",
         "files": [
             file("ok", "PSW.xlsx", doc_type="零件提交保证书"),
             file("locked", "加密.xlsx", validation="invalid", reasons=["文件加密或异常，无法识别"], state=None),
-            file("who", "未知.pdf", state="unmatched", gaps=["matching_customer_required"]),
+            file("who", "未知.pdf", state="unmatched", gaps=["matching_document_type_required"], doc_type=None),
             file("norule", "8D.pdf", state="unmatched", gaps=["matching_document_type_rules_missing"]),
             file("scan", "流程图.pdf", doc_type="过程流程图", gaps=["empty_document_text", "metadata_blank_part_number"], part_number=""),
             file("ref", "图纸.pdf", state="reference", reference_only=True),
             file("off", "旧.xlsx", selection="removed"),
-        ]
+        ],
     }
     result = precheck_task(task)
     levels = {row["file_version_id"]: row["level"] for row in result["files"]}
@@ -44,16 +45,16 @@ def test_each_file_gets_one_level_and_blocks_fail_the_batch():
 def test_copies_with_one_name_of_one_part_are_each_b02_and_drafts_with_different_names_are_not():
     """附件 R-03 (用户裁定): same part + the very same file name + two or more copies → every copy B02."""
     twins = [file("a", "A40-粗糙度仪-Cgk.xls", doc_type="MSA"), file("b", "A40-粗糙度仪-Cgk.xls", doc_type="MSA")]
-    result = precheck_task({"files": twins})
+    result = precheck_task({"customer_preference": "UAES", "files": twins})
     assert [(item["file_version_id"], item["code"]) for item in result["blocks"]] == [("a", "B02"), ("b", "B02")] and result["conclusion"] == "fail"
     # Another part's file of the same name, differently named drafts and an unreadable part number do not group.
     other = [file("a", "MSA.xls", doc_type="MSA"), file("b", "MSA.xls", doc_type="MSA", part_number="P2")]
     drafts = [file("a", "控制计划-V1.6.xlsx"), file("b", "控制计划-V1.7.xlsx")]
     unknown = [file("a", "MSA.xls", doc_type="MSA", part_number=""), file("b", "MSA.xls", doc_type="MSA", part_number="")]
     for batch in (other, drafts, unknown):
-        assert not [item for item in precheck_task({"files": batch})["blocks"] if item["code"] == "B02"]
+        assert not [item for item in precheck_task({"customer_preference": "UAES", "files": batch})["blocks"] if item["code"] == "B02"]
     replaced = [file("a", "控制计划.xlsx"), file("b", "控制计划.xlsx", replacement_of_file_version_id="a")]
-    assert precheck_task({"files": replaced})["conclusion"] == "pass"
+    assert precheck_task({"customer_preference": "UAES", "files": replaced})["conclusion"] == "pass"
 
 
 def test_the_b02_evidence_says_whether_the_copies_agree():
@@ -74,7 +75,7 @@ def test_the_b02_evidence_says_whether_the_copies_agree():
         for row, digest in zip(rows, digests):
             row["file"]["sha256"] = digest
         content = {"a": first, "b": second}
-        result = precheck_task({"files": rows}, read=lambda row: content[row["file"]["id"]])
+        result = precheck_task({"customer_preference": "UAES", "files": rows}, read=lambda row: content[row["file"]["id"]])
         assert {item["evidence"] for item in result["blocks"]} == {result["blocks"][0]["evidence"]}
         return result["blocks"][0]["evidence"]
 
@@ -83,14 +84,14 @@ def test_the_b02_evidence_says_whether_the_copies_agree():
     assert evidence(book("1.6"), book("3.2")) == "2 份同名文件「Cgk.xlsx」为同一对象的两个版本，第 1 份与第 2 份共 1 处不同：Cgk!B1：1.6 → 3.2"
     assert "工作表「Cgk」只在第 1 份中" in evidence(book("1.6"), book("1.6", title="其他"))
     rows = [file(id_, "Cgk.xlsx", doc_type="MSA") for id_ in ("a", "b")]
-    assert precheck_task({"files": rows})["blocks"][0]["evidence"] == "2 份同名文件「Cgk.xlsx」字节不同，内容未逐格比对"
+    assert precheck_task({"customer_preference": "UAES", "files": rows})["blocks"][0]["evidence"] == "2 份同名文件「Cgk.xlsx」字节不同，内容未逐格比对"
 
 
 def test_unfinished_recognition_is_not_run_rather_than_passed():
-    result = precheck_task({"files": [file("a", "PFMEA.xlsx", state="matching")]})
+    result = precheck_task({"customer_preference": "UAES", "files": [file("a", "PFMEA.xlsx", state="matching")]})
     assert result["conclusion"] == "not_run"
     assert result["statuses"][0]["code"] == "未执行"
-    assert precheck_task({"files": []})["conclusion"] == "not_run"
+    assert precheck_task({"customer_preference": "UAES", "files": []})["conclusion"] == "not_run"
 
 
 def _status(result, code):
@@ -100,11 +101,12 @@ def _status(result, code):
 def test_a_type_outside_the_customer_set_is_out_of_scope_and_only_a_type_inside_without_a_rule_is_not_adapted():
     result = precheck_task(
         {
+            "customer_preference": "UAES",
             "files": [
                 file("gauge", "检具验收报告.xlsx", state="unmatched", gaps=["matching_document_type_rules_missing"], doc_type="检具验收报告"),
                 file("pgqp", "PGQP1.xlsx", state="reference", doc_type="E12"),
                 file("cp", "控制计划.xlsx", state="unmatched", gaps=["matching_customer_rules_missing"], doc_type="控制计划"),
-            ]
+            ],
         }
     )
     assert {item["file_version_id"] for item in _status(result, "S01")} == {"gauge", "pgqp"}
@@ -118,25 +120,24 @@ def test_the_inspection_report_type_is_t01_for_li_and_t01a_for_nio_so_neither_is
 
     # PRD §1.5: one recognized type, two dictionary members by customer; UAES has neither in its M.
     assert (type_code("全功能检验报告", "理想"), type_code("全功能检验报告", "蔚来"), type_code("T01a")) == ("T01", "T01a", "T01a")
-    rows = []
+    codes = {}
     for customer in ("理想", "蔚来", "UAES"):
         row = file(customer, f"{customer}-尺寸报告.xlsx", state="unmatched", gaps=["matching_document_type_rules_missing"], doc_type="全功能检验报告")
-        row["match"]["rule"]["body"]["customers"] = [customer]
-        rows.append(row)
-    result = precheck_task({"files": rows})
-    assert [item["file_version_id"] for item in _status(result, "S01") if "scope" not in item] == ["UAES"]
-    assert {item["file_version_id"] for item in _status(result, "S02") if "scope" not in item} == {"理想", "蔚来"}
+        result = precheck_task({"customer_preference": customer, "files": [row]})
+        codes[customer] = [item["code"] for item in result["statuses"] if "scope" not in item]
+    assert codes == {"理想": ["S02"], "蔚来": ["S02"], "UAES": ["S01"]}
 
 
 def test_a_missing_counterpart_is_s04_with_its_w01_and_a_mismatched_one_is_s07_with_its_facts():
     result = precheck_task(
         {
+            "customer_preference": "UAES",
             "files": [
                 file("pfmea", "PFMEA.xlsx", doc_type="潜在过程失效模式及后果分析", part_number="P1"),
                 file("list", "特殊特性清单.xlsx", doc_type="过程特殊特性清单", part_number="P1"),
                 file("cpk", "过程能力.xlsx", doc_type="过程能力研究", part_number="P1"),
                 file("pgqp", "PGQP1.xlsx", state="reference", reference_only=True, doc_type="E12", part_number="P2"),
-            ]
+            ],
         }
     )
     # PFMEA has its 特殊特性清单; its only PGQP1 belongs to no submitted part but names another one.
@@ -153,7 +154,7 @@ def test_a_missing_counterpart_is_s04_with_its_w01_and_a_mismatched_one_is_s07_w
     # S07 never blocks or warns the file it belongs to.
     assert result["warnings"] == [] and result["conclusion"] == "pass"
 
-    alone = precheck_task({"files": [file("cpk", "过程能力.xlsx", doc_type="过程能力研究", part_number="P1")]})
+    alone = precheck_task({"customer_preference": "UAES", "files": [file("cpk", "过程能力.xlsx", doc_type="过程能力研究", part_number="P1")]})
     assert [item["code"] for item in alone["statuses"]] == ["S04"]
     assert alone["statuses"][0]["missing"] == {"document": "采购件质量计划（PGQP1）", "document_type": "E12", "part_number": "P1"}
     assert [item["code"] for item in alone["warnings"]] == ["W01"]
@@ -166,30 +167,33 @@ def test_a_counterpart_of_another_submitted_part_is_not_associated_and_an_unread
         file("b", "过程能力-B.xlsx", doc_type="过程能力研究", part_number="P2"),
         file("pgqp", "PGQP1-B.xlsx", state="reference", reference_only=True, doc_type="E12", part_number="P2"),
     ]
-    result = precheck_task({"files": batch})
+    result = precheck_task({"customer_preference": "UAES", "files": batch})
     assert [(item["file_version_id"], item["code"]) for item in result["statuses"]] == [("a", "S04")]
 
     def pgqp(part):
         return file("pgqp", "PGQP1.xlsx", state="reference", reference_only=True, doc_type="E12", part_number=part)
 
-    unreadable = precheck_task({"files": [file("a", "过程能力.xlsx", doc_type="过程能力研究", part_number="P1"), pgqp("待填")]})
+    unreadable = precheck_task({"customer_preference": "UAES", "files": [file("a", "过程能力.xlsx", doc_type="过程能力研究", part_number="P1"), pgqp("待填")]})
     assert unreadable["statuses"] == [] and unreadable["warnings"] == []
-    no_part = precheck_task({"files": [file("a", "过程能力.xlsx", doc_type="过程能力研究", part_number=""), pgqp("P2")]})
+    no_part = precheck_task({"customer_preference": "UAES", "files": [file("a", "过程能力.xlsx", doc_type="过程能力研究", part_number=""), pgqp("P2")]})
     assert not _status(no_part, "S04") and not _status(no_part, "S07")
     # The counterpart is itself a submitted file with a readable part number (ppap-test, 2026-11-19): a control
     # plan whose own part number is unreadable is not told its flow chart is missing.
     plan_unread = precheck_task(
         {
+            "customer_preference": "UAES",
             "files": [
                 file("cp", "控制计划.xlsx", doc_type="控制计划", part_number=""),
                 file("pfd", "过程流程图.xls", doc_type="过程流程图", part_number="F01R10DP4Z"),
-            ]
+            ],
         }
     )
     assert not [item for item in plan_unread["statuses"] if item["file_version_id"] == "cp" and item.get("missing", {}).get("document") == "过程流程图"]
     assert not [item for item in plan_unread["warnings"] if item["file_version_id"] == "cp" and "过程流程图" in item.get("message", "")]
     # An untyped file could be the counterpart: the missing counterpart is not established.
-    untyped = precheck_task({"files": [file("a", "过程能力.xlsx", doc_type="过程能力研究"), file("x", "附件.pdf", state="failed", gaps=["document_classification_failed"], doc_type=None)]})
+    untyped = precheck_task(
+        {"customer_preference": "UAES", "files": [file("a", "过程能力.xlsx", doc_type="过程能力研究"), file("x", "附件.pdf", state="failed", gaps=["document_classification_failed"], doc_type=None)]}
+    )
     assert not _status(untyped, "S04")
 
 
@@ -206,7 +210,7 @@ def test_the_counterpart_graph_is_the_one_ppap_00_a_registers():
 
 
 def test_rules_are_found_by_the_task_customer_and_the_customer_a_file_writes_is_only_shown():
-    """裁定 R-12: GEELY / 吉利 / UEAS written in a file never route rules; the task's (else the rule's) customer does."""
+    """裁定 R-12: GEELY / 吉利 / UEAS written in a file never route rules; the task's chosen customer does."""
     rows = [file("cp", "控制计划-776.xlsx"), file("pfd", "流程图776.xlsx", doc_type="过程流程图")]
     for row, written in zip(rows, ("GEELY", None)):
         row["match"]["metadata"]["customer"] = written
@@ -214,9 +218,8 @@ def test_rules_are_found_by_the_task_customer_and_the_customer_a_file_writes_is_
     result = precheck_task({"customer_preference": "UAES", "files": rows}, {"cp": [], "pfd": []})
     assert "S02" not in [item["code"] for item in result["statuses"]]
     assert {row["file_version_id"]: (row["entry_key"], row["customer"]) for row in result["files"]} == {"cp": ("U08", "GEELY"), "pfd": ("U16", None)}
-    # Without a task customer the matched rule's customer routes; with neither, nothing does.
-    assert precheck_task({"customer_preference": None, "files": [file("cp", "控制计划.xlsx")]})["files"][0]["entry_key"] == "U08"
-    assert [item["code"] for item in precheck_task({"customer_preference": None, "files": rows[:1]})["statuses"]] == ["S02"]
+    # A task from before every task named its rule set routes nothing, whatever rule its file matched.
+    assert precheck_task({"customer_preference": None, "files": [file("cp", "控制计划.xlsx")]})["files"][0]["entry_key"] is None
 
 
 def test_an_identity_field_is_w02_only_when_written_empty_or_a_placeholder():
@@ -264,7 +267,7 @@ def test_a_criterion_handed_to_the_formal_audit_is_s03_and_an_entry_not_fully_de
         _criterion("S-01", "S03", "超差判断移交正式审核"),
         _criterion("R-02", "S02", "该客户无此要求"),
     ]
-    result = precheck_task({"files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}, {"psw": criteria})
+    result = precheck_task({"customer_preference": "UAES", "files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}, {"psw": criteria})
     s03, s06 = _status(result, "S03"), _status(result, "S06")
     assert [item["note"] for item in s03] == ["S-01 判据 S-01：超差判断移交正式审核"]
     # S02 and S03 are not the precheck's to decide: 8 of the 10 due criteria were judged.
@@ -274,21 +277,21 @@ def test_a_criterion_handed_to_the_formal_audit_is_s03_and_an_entry_not_fully_de
     # Statuses never change the file level or the conclusion.
     assert [row["level"] for row in result["files"]] == ["warn"] and result["conclusion"] == "pass"
 
-    decided = precheck_task({"files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}, {"psw": [_criterion("M-01", "满足"), _criterion("R-02", "S02")]})
+    decided = precheck_task({"customer_preference": "UAES", "files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}, {"psw": [_criterion("M-01", "满足"), _criterion("R-02", "S02")]})
     assert decided["statuses"] == [] and decided["unreviewed"] == 0
     # Without content results the caller did not run the content level: no coverage is claimed either way.
-    assert not _status(precheck_task({"files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}), "S06")
+    assert not _status(precheck_task({"customer_preference": "UAES", "files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}), "S06")
 
 
 def test_an_unreadable_original_is_not_s06():
     """总纲 v0.21 §3.1: S06 is only 「该判而没判完」; 「读不出」 is W05, not S06."""
-    result = precheck_task({"files": [file("cp", "控制计划.xlsx")]}, {})
+    result = precheck_task({"customer_preference": "UAES", "files": [file("cp", "控制计划.xlsx")]}, {})
     assert _status(result, "S06") == []
     criteria = [
         {"criterion_id": "A", "criterion": "a", "result": "满足"},
         {"criterion_id": "B", "criterion": "b", "result": "未执行", "reason": "文件无可读文字", "unread": True},
     ]
-    result = precheck_task({"files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}, {"psw": criteria})
+    result = precheck_task({"customer_preference": "UAES", "files": [file("psw", "PSW.xlsx", doc_type="零件提交保证书")]}, {"psw": criteria})
     # 总纲 §3.1 硬约束 4 注: what the precheck had no means to read is no S06 and no level, but it is 未审.
     assert _status(result, "S06") == [] and result["unreviewed"] == 1 and result["blocks"] == []
 
@@ -331,8 +334,8 @@ def test_image_type_files_are_one_batch_note_that_changes_no_count_level_or_conc
         file("drop", "旧照片.png", selection="removed"),
     ]
     content = {"scan": [{"criterion_id": "A", "criterion": "a", "result": "未执行", "reason": NO_TEXT, "unread": True}]}
-    plain = precheck_task({"files": batch[:1] + [file("x", "扫描.pdf", doc_type="零件提交保证书")]}, {"x": [{"criterion_id": "A", "criterion": "a", "result": "满足"}]})
-    result = precheck_task({"files": batch}, content)
+    plain = precheck_task({"customer_preference": "UAES", "files": batch[:1] + [file("x", "扫描.pdf", doc_type="零件提交保证书")]}, {"x": [{"criterion_id": "A", "criterion": "a", "result": "满足"}]})
+    result = precheck_task({"customer_preference": "UAES", "files": batch}, content)
     assert result["image_files"] == [{"file_version_id": "photo", "filename": "样品照片.JPG"}, {"file_version_id": "scan", "filename": "扫描.pdf"}]
     assert not [item for item in result["warnings"] if item["code"] == "W01"]
     assert [row["level"] for row in result["files"]] == ["ok", "ok", "ok"] and result["conclusion"] == "pass"
@@ -345,7 +348,7 @@ def test_unreviewed_counts_s03_to_s07_and_never_s01_or_s02():
         file("cp", "控制计划.xlsx", state="unmatched", gaps=["matching_customer_rules_missing"]),
         file("cpk", "过程能力.xlsx", doc_type="过程能力研究", part_number="P1"),
     ]
-    result = precheck_task({"files": batch})
+    result = precheck_task({"customer_preference": "UAES", "files": batch})
     assert sorted(item["code"] for item in result["statuses"]) == ["S01", "S02", "S04"]
     assert result["unreviewed"] == 1
 

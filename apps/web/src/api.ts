@@ -5,48 +5,17 @@ type JsonBody<Name extends keyof operations> = operations[Name] extends {request
   ? Body extends {content: {'application/json': infer Json}} ? Json : never
   : never
 
-export type Rule = Schema<'Rule'>
-export type BoundRule = Schema<'BoundRule'>
-export type RuleCoverageItem = Schema<'RuleCoverageItem'>
-export type Finding = Schema<'Finding'>
+type BoundRule = Schema<'BoundRule'>
 export type SemanticSource = Schema<'SemanticSource'>
-export type SemanticEvidence = Schema<'SemanticEvidence'>
-export type WritebackTarget = Schema<'WritebackTarget'>
-export type QuotaEstimate = Schema<'QuotaEstimate'>
-export type Round = Schema<'Round'>
-export type Draft = Schema<'Draft'>
-export type RuleParseJob = Schema<'RuleParseJob'>
-export type PublicConfig = Schema<'PublicConfig'>
+type PublicConfig = Schema<'PublicConfig'>
 export type PrincipalPublic = Schema<'PrincipalPublic'>
-export type FileVersion = Schema<'FileVersion'>
-export type UploadReceipt = Schema<'AuditUploadItem'>
-export type DraftList = Schema<'DraftList'>
-export type RoundList = Schema<'RoundList'>
-export type RoundSummary = Schema<'RoundSummary'>
-export type UsageEvent = Schema<'UsageEvent'>
-export type UsageList = Schema<'UsageList'>
+type FileVersion = Schema<'FileVersion'>
+type UploadReceipt = Schema<'AuditUploadItem'>
 export type RulesList = Schema<'RulesList'>
-export type DriveFile = Schema<'DriveFile'>
-export type DriveFilesList = Schema<'DriveFilesList'>
-export type DocLink = Schema<'DocLink'>
-export type DocLinksResponse = Schema<'DocLinksResponse'>
-export type PreviewResponse = Schema<'PreviewResponse'>
 export type OfficePreviewResponse = Schema<'OfficePreviewResponse'>
-export type ReportEnvelope = Schema<'ReportEnvelope'>
-export type ReportExport = Schema<'ReportExport'>
-export type WritebackResponse = Schema<'WritebackResponse'>
-export type RuleTypes = Schema<'RuleTypes'>
-export type RuleDetail = Schema<'RuleDetail'>
-export type RuleBody = Schema<'EngineRuleBody'>
-export type RuleItem = Schema<'RuleItem'>
-export type RuleCandidate = Schema<'RuleCandidate'>
-export type RuleSources = Schema<'RuleSources'>
 export type HostLoginRequest = JsonBody<'login_feishu_host_login_feishu_host_post'>
-export type FileCreateRequest = JsonBody<'files_create_files_post'>
+type FileCreateRequest = JsonBody<'files_create_files_post'>
 export type FeishuFileImportRequest = JsonBody<'feishu_files_import_integrations_feishu_files_import_post'>
-export type DraftCreateRequest = JsonBody<'drafts_create_drafts_post'>
-export type DraftSaveRequest = JsonBody<'drafts_save_drafts__draft_id__put'>
-export type DraftAcceptRequest = JsonBody<'drafts_accept_drafts__draft_id__accept_post'>
 export type ReviewRequest = JsonBody<'rounds_review_rounds__round_id__reviews_put'>
 
 type MaterialWire = Schema<'MaterialWire'>
@@ -55,15 +24,6 @@ export type Material = Omit<MaterialWire, 'rule' | 'status'> & {
   status?: string
 }
 
-export class UploadResultUnknown extends Error {
-  material: Material
-  requestId?: string
-  constructor(material: Material, requestId?: string) {
-    super(`上传结果未确认：${material.original_filename}。请核对该文件版本，避免重复上传。`)
-    this.material = material
-    this.requestId = requestId
-  }
-}
 export let apiUrl = ''
 export let profile = ''
 export let feishuAppId = ''
@@ -180,19 +140,6 @@ export async function uploadLocalVersion(file: File, requestId: string, onStaged
       return {request_id: requestId, state: 'unknown', file: staged, reason: '未取得明确传输结果，文件可能已接收。请查看原请求，不要重新上传。', retry_allowed: false}
     }
   }
-}
-export async function upload(file: File, role: Material['role'], onStaged?: (material: Material) => void): Promise<Material> {
-  const requestId = crypto.randomUUID()
-  let staged: Material | undefined
-  const receipt = await uploadLocalVersion(file, requestId, version => {
-    staged = {file_id: version.file_id, file_version_id: version.id, original_filename: version.original_filename, role, rule_version_id: null}
-    onStaged?.(staged)
-  })
-  if (receipt.state === 'ready' && staged) return staged
-  if (staged && ['unknown', 'uploading'].includes(receipt.state)) throw new UploadResultUnknown(staged, requestId)
-  const error = new Error(receipt.reason || `上传结果未确认：${file.name}。请查看原传输请求，不要重新上传。`)
-  Object.assign(error, {requestId})
-  throw error
 }
 export function originalUrl(file: Material, roundId?: string) {
   return `${apiUrl}${roundId ? `/rounds/${encodeURIComponent(roundId)}` : ''}/files/${encodeURIComponent(file.file_id)}/versions/${encodeURIComponent(file.file_version_id)}/download`

@@ -18,17 +18,17 @@ export const SupportEntryContext = createContext<((snapshot: SupportSnapshot) =>
 // The support group, hours and response time are the product's own service promise and need no configuration read.
 const supportGroup = 'PPAP Audit 用户支持群'
 
-export function AuditSupport({adapter, snapshot, pageReference, returnTargets, onClose}: {adapter?: AuditSupportAdapter; snapshot: SupportSnapshot; pageReference: string; returnTargets: readonly (HTMLElement | null)[]; onClose: () => void}) {
+export function AuditSupport({adapter, snapshot, pageReference, returnTargets, onClose}: {adapter: AuditSupportAdapter; snapshot: SupportSnapshot; pageReference: string; returnTargets: readonly (HTMLElement | null)[]; onClose: () => void}) {
   const {scenario, traceId, facts = []} = snapshot
   const [info, setInfo] = useState<components['schemas']['AuditSupportInfo'] | null>(null), [loading, setLoading] = useState(true), [retry, setRetry] = useState(0)
   const [qr, setQr] = useState(''), [zoom, setZoom] = useState(false), [notice, setNotice] = useState(''), [failed, setFailed] = useState(false)
   useEffect(() => {
     let current = true, url = ''
     setLoading(true); setQr(''); setZoom(false); setNotice(''); setFailed(false)
-    void (adapter?.read() || Promise.resolve(null)).then(async result => {
+    void adapter.read().then(async result => {
       if (!current) return
       setInfo(result)
-      if (result?.state === 'configured' && result.config_version && result.qr_available && adapter) {
+      if (result?.state === 'configured' && result.config_version && result.qr_available) {
         try {
           const blob = await adapter.readQr(result.config_version)
           if (!current) return

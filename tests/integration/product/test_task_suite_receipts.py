@@ -39,7 +39,17 @@ def system(auth_store_factory, core_system):
         yield client, worker, admin, principal
 
 
-def prepare(system, core_system, customer, entry, *, reference=False, photo=False, choose_customer=True, copies=1, last_reference=False):
+def rounds_of(system):
+    _, _, admin, principal = system
+    return admin.list_rounds(principal)
+
+
+def usage_of(system):
+    _, _, admin, principal = system
+    return admin.list_usage_events(principal)
+
+
+def prepare(system, core_system, customer, entry, *, reference=False, photo=False, copies=1, last_reference=False):
     client, worker, admin, principal = system
     core_system.adopt_standard(admin, principal, f"{customer}:{entry}")
     selected = []
@@ -73,7 +83,7 @@ def prepare(system, core_system, customer, entry, *, reference=False, photo=Fals
                 "reference_only": reference or last_reference and index == copies - 1,
             }
         )
-    command = {"request_id": str(uuid.uuid4()), "customer_preference": customer if choose_customer else None, "files": selected}
+    command = {"request_id": str(uuid.uuid4()), "customer_preference": customer, "files": selected}
     response = client.post("/audit-tasks", json=command)
     assert response.status_code == 202, response.text
 
@@ -88,6 +98,18 @@ def prepare(system, core_system, customer, entry, *, reference=False, photo=Fals
     return "/audit-tasks/" + response.json()["id"], command
 
 
+def changed(releases, principal, base, files):
+    """The enterprise's Suite revision changing `files` on top of the resolved base."""
+    return releases.suites.create_revision(
+        tenant_id=principal.tenant_id,
+        suite_key=base.revision.suite_key,
+        files=files,
+        created_by=principal.user_id,
+        base_revision_id=base.revision.id,
+        related_suite_keys=base.revision.related_suite_keys,
+    )
+
+
 def publish_edit(system, key):
     _, _, admin, principal = system
     releases = SuiteReleaseStore(admin.settings, admin.objects, role="api")
@@ -95,8 +117,8 @@ def publish_edit(system, key):
     suite = releases.suites.resolve_suite(active["current_revision_id"], principal.tenant_id)
     rules = json.loads(suite.files["rules.json"])
     rules["rules"][0]["rule_to_check"] += "（企业已采用修订）"
-    candidate = releases.save_candidate(principal, active["current_revision_id"], {"rules.json": json.dumps(rules, ensure_ascii=False)})
-    releases.publish(principal, key, candidate["id"], active["revision"], str(uuid.uuid4()), force_unverified=True)
+    candidate = changed(releases, principal, suite, {"rules.json": json.dumps(rules, ensure_ascii=False).encode()})
+    releases.publish(principal, key, candidate.id, active["revision"], str(uuid.uuid4()), force_unverified=True)
     return candidate
 
 
@@ -146,8 +168,8 @@ def test_publish_after_preview_does_not_misrepresent_new_round_as_old_rules(syst
     command = {"request_id": str(uuid.uuid4()), "expected_revision": before["input_revision"], "expected_confirmation_basis_digest": before["confirmation_basis_digest"]}
     response = client.post(path + "/confirm", json=command)
     assert response.status_code == 409 and response.json() == {"error": "task_confirmation_changed"}
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(system) == []
+    assert usage_of(system) == []
     restored = client.get(path, params={"request_id": command["request_id"]}).json()
     assert restored["acceptance"]["state"] == "rejected"
     assert restored["confirmation_basis_digest"] == current["confirmation_basis_digest"] != before["confirmation_basis_digest"]
@@ -164,7 +186,7 @@ def test_publish_after_preview_does_not_misrepresent_new_round_as_old_rules(syst
     frozen = client.get("/rounds/" + accepted["round_id"]).json()
     with admin._conn() as conn:
         execution = conn.execute("SELECT rule_execution FROM product.round_inputs WHERE round_id=%s AND role='target'", (frozen["id"],)).fetchone()[0]
-    assert execution["suite_revision_id"] == published["id"]
+    assert execution["suite_revision_id"] == published.id
     assert client.get(path, params={"request_id": command["request_id"]}).json() == accepted
 
 
@@ -182,7 +204,7 @@ def test_scoped_photo_keeps_customer_scope_and_reference_boundaries(system, core
         conn.execute("UPDATE product.audit_drafts SET customer_preference='蔚来' WHERE id=%s", (before["id"],))
     refused = client.post(path + "/confirm", json=command)
     assert refused.status_code == 409 and refused.json()["error"] == "customer_scope_conflict"
-    assert client.get("/rounds").json()["rounds"] == []
+    assert rounds_of(system) == []
     with admin._conn() as conn:
         conn.execute("UPDATE product.audit_drafts SET customer_preference='UAES' WHERE id=%s", (before["id"],))
     accepted = client.post(path + "/confirm", json=command)
@@ -198,8 +220,8 @@ def test_reference_only_task_cannot_become_a_paid_target_from_suite_projection(s
     assert task["files"][0]["match"]["rule"] is None and task["estimated_points"] == 0
     rejected = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": task["confirmation_basis_digest"]})
     assert rejected.status_code == 400 and rejected.json() == {"error": "invalid_task_confirmation"}
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(system) == []
+    assert usage_of(system) == []
 
 
 def confirmation(task, *, request_id=None):
@@ -212,8 +234,8 @@ def confirmation(task, *, request_id=None):
 
 def assert_no_admission(system):
     client, _, admin, _ = system
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(system) == []
+    assert usage_of(system) == []
     with admin._conn() as conn:
         assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='audit'").fetchone()[0] == 0
 
@@ -238,8 +260,8 @@ def test_changed_code_with_identical_visible_rules_requires_fresh_confirmation(s
     releases = SuiteReleaseStore(admin.settings, admin.objects, role="api")
     active = releases.active(principal, "UAES:U12")
     source = releases.suites.resolve_suite(active["current_revision_id"], principal.tenant_id)
-    candidate = releases.save_candidate(principal, source.revision.id, {"checker.py": source.files["checker.py"].decode() + "\n# reviewed code revision\n"})
-    releases.publish(principal, "UAES:U12", candidate["id"], active["revision"], str(uuid.uuid4()), force_unverified=True)
+    candidate = changed(releases, principal, source, {"checker.py": source.files["checker.py"] + b"\n# reviewed code revision\n"})
+    releases.publish(principal, "UAES:U12", candidate.id, active["revision"], str(uuid.uuid4()), force_unverified=True)
     current = client.get(path).json()
     assert current["files"][0]["match"]["rule"] == before["files"][0]["match"]["rule"]
     assert current["confirmation_basis_digest"] != before["confirmation_basis_digest"]
@@ -264,8 +286,8 @@ def test_related_suite_publication_changes_basis_without_rewriting_target_rules(
 
 def test_validation_risk_change_alone_changes_confirmation_basis(system, core_system):
     from audit.checker_core import checker_digest
+    from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
     from audit.standard_suites import library_revision
-    from product.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 
     client, _, admin, principal = system
     path, _ = prepare(system, core_system, "UAES", "U12")
@@ -459,7 +481,7 @@ def test_http_acceptance_and_card_enqueue_serialize_one_original_intent(system, 
         assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='audit'").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM engine.jobs WHERE id=%s AND kind='task_confirmation'", (command["request_id"],)).fetchone()[0] == 1
-    assert client.get("/usage").json()["events"] == []
+    assert usage_of(system) == []
 
 
 def test_sent_card_intent_is_immutable_even_before_callback_is_enqueued(system, core_system):
@@ -546,8 +568,8 @@ def test_background_worker_preserves_real_guest_clause_deadlines(system, core_sy
 def verify_current_suite(system, key):
     """Controlled passing host proof for the admission/recovery product journey."""
     from audit.checker_core import checker_digest
+    from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
     from audit.standard_suites import library_revision
-    from product.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
     from product.store.suite_releases import current_selection
 
     _, _, admin, principal = system
@@ -663,8 +685,8 @@ def test_round_discloses_accepted_samples_not_rerun_after_later_validation(syste
     import hashlib
 
     from audit.checker_core import checker_digest
+    from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
     from audit.standard_suites import library_revision
-    from product.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 
     client, _, _, principal = system
     path, _ = prepare(system, core_system, "UAES", "U12")

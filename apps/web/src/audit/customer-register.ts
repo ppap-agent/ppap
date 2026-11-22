@@ -1,16 +1,20 @@
 import type {components} from '../generated/openapi'
 
-/** A registered customer as GET /audit-customers lists it: id, full and short name, and its type set M with both coverage numerators. */
+/** The customer register as GET /audit-customers returns it: the customers, and the one name of every document type code. */
+export type CustomerCatalog = components['schemas']['AuditCustomerCatalog']
+/** A registered customer: id, the one name shown, the key rules carry and a customer choice submits, and its type set M with both coverage numerators. */
 export type RegisteredCustomer = components['schemas']['AuditCustomer']
+export type TypeNames = CustomerCatalog['type_names']
 
-/** The registered customer a recorded value names exactly (full or short name); nothing is matched by prefix, brackets or case. */
-export function registeredCustomer(customers: readonly RegisteredCustomer[] | null | undefined, value: string | null | undefined): RegisteredCustomer | undefined {
-  const text = value?.trim()
-  return text ? customers?.find(customer => customer.full_name === text || customer.short_name === text) : undefined
-}
+/** The registered customer whose rule set a key names (a task's choice, a rule's customers); a company name a file writes is never looked up. */
+export const registeredCustomer = (customers: readonly RegisteredCustomer[] | null | undefined, key: string | null | undefined): RegisteredCustomer | undefined =>
+  key ? customers?.find(customer => customer.key === key) : undefined
 
-/** The full name for display areas that need it; an unregistered value is shown as recorded. */
-export const customerFullName = (customers: readonly RegisteredCustomer[] | null | undefined, value: string | null | undefined) => registeredCustomer(customers, value)?.full_name ?? value?.trim() ?? ''
+/** The name people read for a chosen rule set: the registered name by its key; an enterprise's own rule set is named by itself. */
+export const customerName = (customers: readonly RegisteredCustomer[] | null | undefined, key: string) => registeredCustomer(customers, key)?.name ?? key
 
-/** The short name for narrow areas; an unregistered value is shown as recorded. */
-export const customerShortName = (customers: readonly RegisteredCustomer[] | null | undefined, value: string | null | undefined) => registeredCustomer(customers, value)?.short_name ?? value?.trim() ?? ''
+/** A document type's name from the register's one table; before the register is read, or for an unlisted type, it is shown as recorded. */
+export const documentTypeName = (typeNames: TypeNames | null | undefined, type: string) => typeNames?.[type] ?? type
+
+/** Sample photos are checked only by this customer's U13 preset; the customer is named by its key, as a choice submits it. */
+export const photoScope = {customer_preference: 'UAES', preset_key: 'U13'} as const

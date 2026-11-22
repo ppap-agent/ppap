@@ -25,7 +25,7 @@ export default defineConfig([
       'shadcn/no-restyle': ['error', {allow: ['layout'], contracts: [{pattern: '^Icon$', allow: ['layout', 'color', 'motion']}]}],
     },
   },
-  // Primitives own appearance (docs/DESIGN_SYSTEM.md): their visual values come from tokens too. Layout and motion are not
+  // Primitives own appearance (tokens/README.md): their visual values come from tokens too. Layout and motion are not
   // visual decisions; one primitive composing another is not a page restyling it; transform carries runtime geometry.
   {
     files: ['src/components/ui/**/*.{ts,tsx}'],
@@ -35,9 +35,8 @@ export default defineConfig([
     },
     plugins: {shadcn},
     rules: {
-      // Canvas/CanvasText are system colours that keep native <option> lists readable in either theme;
-      // rounded-[inherit] follows the parent's radius. Neither is a design value.
-      'shadcn/no-arbitrary-values': ['error', {allow: ['layout', 'motion', 'bg-[Canvas]', 'text-[CanvasText]', 'rounded-[inherit]']}],
+      // rounded-[inherit] follows the parent's radius; it is not a design value.
+      'shadcn/no-arbitrary-values': ['error', {allow: ['layout', 'motion', 'rounded-[inherit]']}],
       'shadcn/no-inline-styles': ['error', {allow: ['transform']}],
       'shadcn/no-raw-colors': 'error',
       'shadcn/require-static-classes': 'error',

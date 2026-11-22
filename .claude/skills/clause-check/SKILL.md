@@ -7,7 +7,7 @@ description: 离线检查审核条款的语义歧义、缺口和真实冲突。�
 
 目标是减少无效客户问题。只有原文和明确确认的通用判定政策不足以决定某个具体场景时，才把问题交给客户。Agent 自身的误读、漏读和建模困难不属于条款缺陷。**工具校验成功不能证明自然语言理解正确。**
 
-本技能不使用 OWL、ROBOT、HermiT、Java，不生成形式化文件或推理缓存。不修改规则原件、审核程序、真值表，也不代替客户作出答复。原有线上问卷不在本技能改造中修改。
+本技能不使用 OWL、ROBOT、HermiT、Java，不生成形式化文件或推理缓存。不修改规则原件、审核程序、真值表，也不代替客户作出答复。
 
 ## 输入输出
 
@@ -95,13 +95,13 @@ description: 离线检查审核条款的语义歧义、缺口和真实冲突。�
 
 执行 check.py，仔细阅读它生成的白话报告。脚本检查条款 ID、引用、输入结构、问题与例子的完整性以及读法判定差异，**不检查解释是否符合自然语言逻辑**。这一步必须靠上面的全文审查，并用「才／就」「局部豁免」「多必要条件」「强制项缺充分条件」等已知误报作为回归。
 
-需要客户确认时，沿用问卷整理与 SQL 导入流程，但 questionnaire.py build 现在读取 *.report.json 而不是解析 Markdown 或 .ofn：
+需要客户确认时，用问卷整理与 SQL 导入流程；questionnaire.py build 读取 *.report.json：
 
     python3 <技能目录>/scripts/questionnaire.py build <工作目录> <工作目录>/问卷整理.json <工作目录>/问卷导入.json
 
-问卷整理仍用 customer_id、rule_version、title、common、relayed、applied、conclusion、general、clause_order 等字段；items 引用发现 ID（如 CP:8#1）。已被排除的旧问题必须同时从整理配置中删除，不能恢复误报只为了凑齐旧列表。
+问卷整理用 customer_id、rule_version、title、common、relayed、applied、conclusion、general、clause_order 等字段，另加 rulebook_version、rulebook_revision 写明问卷针对规则库的哪个修订（如 v1.0、0；rule_version 须以该版本结尾），规则页按这两个字段把问卷挂到修订上；items 引用发现 ID（如 CP:8#1）。已被排除的旧问题必须同时从整理配置中删除，不能恢复误报只为了凑齐旧列表。
 
-现有 load/export/close SQL 命令保持不变，需用迁移身份运行；**不要在同一企业的同一规则版本上直接重新导入**。线上问卷与已保存答复的替换是独立的迁移任务，本技能不自动删除或覆盖。产品负责人确认后才可发布新的问题数据。
+load/export/close SQL 命令需用迁移身份运行；**不要在同一企业的同一规则库修订上直接重新导入**。线上问卷与已保存答复的替换是独立的迁移任务，本技能不自动删除或覆盖。产品负责人确认后才可发布新的问题数据。
 
 导出答复后运行：
 

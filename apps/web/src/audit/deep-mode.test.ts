@@ -6,14 +6,16 @@ import {billableFileCount, deepModeControl, deepModeDescription, deepReviewNotic
 const file = (id: string, state: 'matched' | 'unmatched' | 'reference') => ({file: {id}, selection: 'selected', match: {state}}) as never
 const scope = {target_file_version_ids: ['a', 'b'], reference_file_version_ids: [], excluded_files: []}
 
-test('the points basis is 500 per file in every mode, with no multiplier', () => {
-  const standard = pointsBasis({confirmation_scope: scope, files: [], deep_mode: false} as never)
-  const deep = pointsBasis({confirmation_scope: scope, files: [], deep_mode: true} as never)
+test('the points basis follows the server estimate and is the same in every mode', () => {
+  const standard = pointsBasis({confirmation_scope: scope, files: [], deep_mode: false, estimated_points: 1200} as never)
+  const deep = pointsBasis({confirmation_scope: scope, files: [], deep_mode: true, estimated_points: 1200} as never)
   assert.equal(deep, standard)
-  assert.match(deep, /500 点\/份 × 2 份/)
-  assert.doesNotMatch(deep, /倍|1\.5|深度/)
-  assert.doesNotMatch(deepModeDescription, /倍计|点数|1\.5/)
-  assert.match(deepModeDescription, /规则范围与标准审核相同/)
+  assert.match(deep, /600 点\/份 × 2 份/)
+  assert.doesNotMatch(deep, /倍|深度/)
+  assert.doesNotMatch(deepModeDescription, /倍计|点数/)
+  // Without a server estimate the basis states the listed price instead of guessing from nothing.
+  const listed = pointsBasis({confirmation_scope: scope, files: [], estimated_points: null} as never)
+  assert.match(listed, /\d+ 点\/份 × 2 份/)
 })
 
 test('without a confirmation scope only matched selected files are counted', () => {

@@ -22,6 +22,7 @@ import uvicorn
 from api import create_app
 from openpyxl import Workbook
 from product import build_product_store
+from product.customers import customer_name
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from worker import process_claimed
@@ -210,9 +211,9 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
             picker = page.get_by_role("combobox", name="审核客户", exact=True)
             expect(picker).to_be_visible()
             picker.click()
-            page.get_by_role("option", name="理想" if customer != "理想" else "蔚来", exact=True).click()
+            page.get_by_role("option", name=customer_name("理想" if customer != "理想" else "蔚来"), exact=False).click()
             picker.click()
-            page.get_by_role("option", name=customer, exact=True).click()
+            page.get_by_role("option", name=customer_name(customer), exact=False).click()
             default = page.request.get(web + "/api/audit-customers/default")
             assert default.status == 200 and default.json()["customer_preference"] is None
             if customer == "UAES":
@@ -226,12 +227,12 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
                 saved_default = page.request.get(web + "/api/audit-customers/default").json()
                 assert saved_default == {"customer_preference": "UAES", "revision": 1}
                 page.goto(web + "/tasks/new")
-                expect(picker).to_contain_text("UAES")
+                expect(picker).to_contain_text(customer_name("UAES"))
                 picker.click()
-                page.get_by_role("option", name="理想", exact=True).click()
+                page.get_by_role("option", name=customer_name("理想"), exact=False).click()
                 assert page.request.get(web + "/api/audit-customers/default").json() == saved_default
                 picker.click()
-                page.get_by_role("option", name="UAES", exact=True).click()
+                page.get_by_role("option", name=customer_name("UAES"), exact=False).click()
             source_bytes = original(customer)
             with page.expect_file_chooser() as choose:
                 page.get_by_role("button", name="选择本地文件", exact=True).click()
@@ -285,9 +286,9 @@ def test_customer_intake_to_original_issue(running_product, core_system, request
                 fresh = context.new_page()
                 asset_diagnostics.append(observe_browser_assets(fresh, web))
                 fresh.goto(web + "/tasks/new")
-                expect(fresh.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text("UAES")
+                expect(fresh.get_by_role("combobox", name="审核客户", exact=True)).to_contain_text(customer_name("UAES"))
                 fresh.get_by_role("combobox", name="审核客户", exact=True).click()
-                fresh.get_by_role("option", name="理想", exact=True).click()
+                fresh.get_by_role("option", name=customer_name("理想"), exact=False).click()
                 fresh.get_by_role("button", name="设为企业默认", exact=True).click()
                 fresh.get_by_role("button", name="确认更改", exact=True).click()
                 expect(fresh.get_by_role("status")).to_contain_text("已保存企业默认")

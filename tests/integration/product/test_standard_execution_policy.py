@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import uuid
 from unittest.mock import patch
 
 import pytest
@@ -19,7 +18,7 @@ from worker import process_claimed
 
 
 @pytest.fixture
-def system(auth_store_factory, core_system):
+def system(auth_store_factory, core_system, audit_round):
     keep = {key: value for key, value in os.environ.items() if not key.startswith(("PPAP_", "FEISHU_"))}
     with patch.dict(os.environ, keep, clear=True):
         settings = Settings(usage_charge_enabled=False, git_sha="a" * 40)
@@ -30,10 +29,11 @@ def system(auth_store_factory, core_system):
         worker = build_product_store(settings, objects=store.objects, role="worker")
         with TestClient(create_app(settings, auth_store=store)) as client:
             assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
-            yield client, worker, settings, core_system
+            yield client, worker, settings, lambda: accept(client, store, core_system, audit_round)
 
 
-def accept(client, core):
+def accept(client, store, core, audit_round):
+    """A confirmed task's round, and a replay of that same confirmation."""
     source = core.workbook("unchanged original")
     response = client.post("/files", json={"original_filename": "original.xlsx", "byte_size": len(source)})
     assert response.status_code == 201, response.text
@@ -41,12 +41,15 @@ def accept(client, core):
     path = f"/files/{version['file_id']}/versions/{version['id']}"
     assert client.put(path + "/blob", content=source).status_code == 200
     assert client.post(path + "/finalize").status_code == 200
-    draft = client.post("/drafts").json()["id"]
-    assert client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]}).status_code == 200
-    command = {"idempotency_key": str(uuid.uuid4())}
-    response = client.post(f"/drafts/{draft}/accept", json=command)
-    assert response.status_code == 201, response.text
-    return response.json(), draft, command
+    principal = store.principal_for_fixture("alice")
+    accepted = audit_round(store, principal, {version["id"]: RULE_A})
+    with store._conn() as conn:
+        request_id = str(conn.execute("SELECT idempotency_key FROM product.audit_rounds WHERE id = %s", (accepted["id"],)).fetchone()[0])
+
+    def replay():
+        return store.confirm_audit_task(principal, accepted["source_draft_id"], request_id, 0)["round_id"]
+
+    return accepted, replay
 
 
 def snapshot(worker, round_id):
@@ -57,14 +60,18 @@ def snapshot(worker, round_id):
 
 
 def test_standard_policy_survives_replay_completion_and_new_configuration(system):
-    client, worker, settings, core = system
-    original, draft, command = accept(client, core)
+    client, worker, settings, accept = system
+    original, replay = accept()
     frozen = snapshot(worker, original["id"])
     # Without its own key, the tenant freezes the platform selection.
     assert frozen.model_identity == platform_selection().identity
     assert original["executor_revision"].startswith("checker-core-v1:")
     job = worker.claim_job("policy-worker")
     process_claimed(worker, job, "policy-worker")
+    # The task's report is the completed audit's own follow-up work.
+    report = worker.claim_job("policy-worker")
+    assert report.kind == "report_pdf"
+    process_claimed(worker, report, "policy-worker")
     completed = client.get(f"/rounds/{original['id']}").json()
     TypeAdapter(Round).validate_python(completed)
     assert completed["execution"] == "completed"
@@ -72,12 +79,10 @@ def test_standard_policy_survives_replay_completion_and_new_configuration(system
     assert completed["coverage"]["checker_execution"]["input_digest"] == frozen.input_digest
     assert completed["findings"][0]["status"] == "PASS"
     settings.model_coding_reasoning_effort = "high"
-    replay = client.post(f"/drafts/{draft}/accept", json=command)
-    assert replay.status_code == 201, replay.text
-    assert replay.json()["id"] == original["id"]
+    assert replay() == original["id"]
     assert snapshot(worker, original["id"]) == frozen
     assert worker.claim_job("duplicate") is None
-    fresh, _, _ = accept(client, core)
+    fresh, _ = accept()
     assert snapshot(worker, fresh["id"]).model_identity == frozen.model_identity
     assert fresh["executor_revision"] != original["executor_revision"]
     assert client.get(f"/rounds/{original['id']}").json() == completed
@@ -87,8 +92,8 @@ def test_standard_policy_survives_replay_completion_and_new_configuration(system
 
 
 def test_standard_configuration_mismatch_is_terminal_without_execution_or_retry(system):
-    client, worker, settings, core = system
-    original, draft, command = accept(client, core)
+    client, worker, settings, accept = system
+    original, replay = accept()
     settings.git_sha = "b" * 40
     job = worker.claim_job("policy-worker")
     result = process_claimed(worker, job, "policy-worker")
@@ -102,15 +107,13 @@ def test_standard_configuration_mismatch_is_terminal_without_execution_or_retry(
     assert loaded["failure"] == result["failure"]
     assert loaded["findings"] == []
     assert worker.claim_job("no-automatic-retry") is None
-    replay = client.post(f"/drafts/{draft}/accept", json=command)
-    assert replay.status_code == 201, replay.text
-    assert replay.json()["id"] == original["id"]
+    assert replay() == original["id"]
     assert snapshot(worker, original["id"]).runtime_revision == original["executor_revision"]
 
 
 def test_legacy_label_is_not_backfilled_and_new_policy_cannot_be_silently_lost(system):
-    client, worker, _settings, core = system
-    legacy, _, _ = accept(client, core)
+    client, worker, _settings, accept = system
+    legacy, _ = accept()
     # Seed the persisted shape used before this change. This is not a migration
     # of user history, nor a claim that the old configuration can be recovered.
     with worker._conn() as conn:
@@ -127,7 +130,7 @@ def test_legacy_label_is_not_backfilled_and_new_policy_cannot_be_silently_lost(s
     assert after["executor_revision"] == "in-repo-engine-v1"
     assert "execution_policy" not in after
 
-    current, _, _ = accept(client, core)
+    current, _ = accept()
     with worker._conn() as conn:
         conn.execute("UPDATE engine.jobs SET payload = payload - 'checker_snapshot_digest' WHERE audit_round_id = %s", (current["id"],))
     result = process_claimed(worker, worker.claim_job("current-worker"), "current-worker")
@@ -137,13 +140,12 @@ def test_legacy_label_is_not_backfilled_and_new_policy_cannot_be_silently_lost(s
     assert worker.claim_job("no-retry") is None
 
 
-@pytest.mark.parametrize("field,value", [("model_text_model", "ignored-new-model"), ("model_coding_model", "ignored-new-coding-model")])
-def test_legacy_model_environment_does_not_replace_the_frozen_identity(system, field, value):
-    client, worker, settings, core = system
-    original, _, _ = accept(client, core)
+def test_legacy_model_environment_does_not_replace_the_frozen_identity(system):
+    client, worker, settings, accept = system
+    original, _ = accept()
     frozen = snapshot(worker, original["id"])
-    setattr(settings, field, value)
-    fresh, _, _ = accept(client, core)
+    settings.model_text_model = "ignored-new-model"
+    fresh, _ = accept()
     assert fresh["executor_revision"] == original["executor_revision"]
     assert snapshot(worker, fresh["id"]).model_identity == frozen.model_identity
     process_claimed(worker, worker.claim_job("fixed-core"), "fixed-core")

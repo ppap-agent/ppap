@@ -8,7 +8,7 @@ export const shareUnresolved = (job?: Pick<ReportShare, 'receipt' | 'deliveries'
 export const shareRetryAllowed = (job: Pick<ReportShare, 'receipt' | 'deliveries'> & {request: Pick<ShareRequest, 'organization_id'>}, delivery: ReportShare['deliveries'][number]) => job.receipt.state === 'accepted' && delivery.state === 'failed' && delivery.retry_allowed && delivery.target.eligibility === 'eligible' && delivery.target.organization_id === job.request.organization_id
 
 /** Closing the dialog does not cancel the operation or erase its request. */
-export function useShareActions<Request extends ShareInput = ShareRequest>(job: ShareOperation<Request> | null | undefined, onChange: (job: ShareOperation<Request>) => void, validContent: (input: Omit<Request, 'request_id'>) => boolean, adapter?: ShareTransport<Request>) {
+export function useShareActions<Request extends ShareInput = ShareRequest>(job: ShareOperation<Request> | null | undefined, onChange: (job: ShareOperation<Request>) => void, validContent: (input: Omit<Request, 'request_id'>) => boolean, adapter: ShareTransport<Request>) {
   const current = useRef(job), change = useRef(onChange), alive = useRef(true), reading = useRef<object | null>(null)
   current.current = job; change.current = onChange
   const [busyRead, setBusyRead] = useState(false), [error, setError] = useState('')
@@ -41,7 +41,7 @@ export function useShareActions<Request extends ShareInput = ShareRequest>(job: 
     }
   }
   async function send(input: Omit<Request, 'request_id'>, targets: ShareTarget[]) {
-    if (!adapter || shareUnresolved(current.current)) return
+    if (shareUnresolved(current.current)) return
     if (!validContent(input) || !targets.length || new Set(targets.map(targetKey)).size !== targets.length || targets.some(target => target.eligibility !== 'eligible' || target.organization_id !== input.organization_id) || !sameSnapshot(input.targets, targets.map(({kind, id}) => ({kind, id})))) {setError('分享内容或接收范围不再匹配。未发送，请关闭后重新核对。'); return}
     const request = structuredClone({...input, request_id: crypto.randomUUID()}) as Request
     const observation: ShareOperation<Request> = {request, receipt: {request_id: request.request_id, state: 'pending', reason: '发送提交结果尚未知。'}, deliveries: targets.map(target => ({target: structuredClone(target), attempt_id: request.request_id, state: 'unknown', reason: '尚未取得本次发送结果。', retry_allowed: false}))}
@@ -49,14 +49,14 @@ export function useShareActions<Request extends ShareInput = ShareRequest>(job: 
   }
   async function read() {
     const job = current.current
-    if (!adapter || !job || reading.current) return
+    if (!job || reading.current) return
     const token = {}; reading.current = token; setBusyRead(true)
     try {await observe(structuredClone(job), () => adapter.read({request_id: job.request.request_id, attempts: job.deliveries.map(row => ({target: {kind: row.target.kind, id: row.target.id}, attempt_id: row.attempt_id}))}))}
     finally {if (reading.current === token) {reading.current = null; if (alive.current) setBusyRead(false)}}
   }
   async function retry(target: components['schemas']['AuditShareTargetReference']) {
     const job = current.current, delivery = job?.deliveries.find(row => targetKey(row.target) === targetKey(target))
-    if (!adapter || !job || !delivery || !shareRetryAllowed(job, delivery)) return
+    if (!job || !delivery || !shareRetryAllowed(job, delivery)) return
     const attemptId = crypto.randomUUID()
     const observation: ShareOperation<Request> = {...job, deliveries: job.deliveries.map(row => row === delivery ? {...row, attempt_id: attemptId, state: 'unknown', retry_allowed: false, reason: '重试结果未知，只读取本次发送结果。'} : row)}
     await observe(observation, () => adapter.retryFailed(job.request.request_id, {kind: target.kind, id: target.id}, attemptId), job)

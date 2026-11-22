@@ -1,4 +1,4 @@
-"""Bounded failure diagnostics for live OCR and real-stack browser gates."""
+"""Shared system-test fixtures: audit acceptance, and bounded failure diagnostics for live OCR and real-stack browser gates."""
 
 import inspect
 import itertools
@@ -262,3 +262,79 @@ def _observe_page(page, origin):
 @pytest.fixture
 def observe_browser_assets():
     return lambda page, web: _observe_page(page, urlsplit(web))
+
+
+def claim_exactly(worker, job_id, ident="test-worker"):
+    """Claim this job; work the test queued earlier stays where it is."""
+    with worker._conn() as hold, hold.transaction():
+        hold.execute("SELECT 1 FROM engine.jobs WHERE id <> %s AND status IN ('queued', 'leased') FOR UPDATE", (job_id,))
+        claimed = worker.claim_job(ident)
+    assert claimed is not None and claimed.id == job_id, "another job was taken first"
+    return claimed
+
+
+@pytest.fixture
+def claim_job_exactly():
+    return claim_exactly
+
+
+def accept_audit_round(store, principal, files, *, customer="理想", predecessor_id=None, writeback_target=None, usage_policy=None, confirm=True):
+    """Accept an audit as a person does and return its round.
+
+    ``files`` maps each file version to the rule chosen for it, or to ``None`` for a reference. Every file is
+    checked, a task is started under the chosen rule group, recognition runs with the model answering each
+    file's type, and the shown basis is confirmed. Only the model is stood in for. With ``confirm=False``
+    the recognized task is returned unconfirmed.
+    """
+    import uuid
+
+    from documents.ai import AIResult
+    from product import build_product_store
+    from worker import process_claimed
+
+    worker = build_product_store(store.settings, objects=store.objects, role="worker")
+
+    def run(job_id, document_type=None):
+        model = lambda operation, **_request: AIResult({"document_type": document_type} if operation == "document_classification" else {})  # noqa: E731
+        return process_claimed(worker, claim_exactly(worker, job_id, "audit-round"), "audit-round", rule_ai=model)
+
+    with store._conn() as conn:
+        rules = {str(row[0]): row[1] for row in conn.execute("SELECT id, body FROM product.rule_versions WHERE id = ANY(%s::uuid[])", ([rule for rule in files.values() if rule],))}
+        sources = {str(row[0]): str(row[1]) for row in conn.execute("SELECT id, file_id FROM product.file_versions WHERE id = ANY(%s::uuid[])", (list(files),))}
+    # A rule group with preset rules takes references as declared; otherwise recognition finds them by type.
+    declared = any(rule.get("rule_profile") == "v4" and customer in (rule.get("customers") or []) for rule in store.list_rules(principal.tenant_id))
+    reference = {"reference_only": True} if declared else {}
+    chosen = []
+    for version, rule in files.items():
+        validation = store.accept_file_validation(principal, str(uuid.uuid4()), sources[version], version)["id"]
+        assert run(validation)["state"] == "valid", "the file must pass the upload check"
+        binding = {"preferred_rule_version_id": rule} if rule else reference
+        chosen.append({"file_version_id": version, "validation_id": validation, "selection": "selected", "removal_reason": None, **binding})
+    body = {"request_id": str(uuid.uuid4()), "customer_preference": customer, "files": chosen}
+    body.update({key: value for key, value in (("predecessor_id", predecessor_id), ("writeback_target", writeback_target)) if value})
+    task = store.create_audit_task(principal, body, usage_policy=usage_policy)
+    with store._conn() as conn:
+        analyses = dict(conn.execute("SELECT file_version_id::text, analysis_job_id::text FROM product.draft_items WHERE draft_id = %s", (task["id"],)).fetchall())
+    for version, rule in files.items():
+        run(analyses[version], rules[rule]["type"] if rule else "过程特殊特性清单")
+    task = store.get_audit_task(principal, task["id"])
+    if not confirm:
+        return task
+    matches = {row["file"]["id"]: row["match"]["state"] for row in task["files"]}
+    assert matches == {version: "matched" if rule else "reference" for version, rule in files.items()}, matches
+    task = store.confirm_audit_task(
+        principal,
+        task["id"],
+        str(uuid.uuid4()),
+        task["input_revision"],
+        usage_policy=usage_policy,
+        expected_confirmation_basis_digest=task["confirmation_basis_digest"],
+        require_confirmation_basis=True,
+    )
+    return store.get_round(task["round_id"])
+
+
+@pytest.fixture
+def audit_round():
+    """Accept an audit through task confirmation, the only way a round is created."""
+    return accept_audit_round

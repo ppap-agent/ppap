@@ -25,6 +25,8 @@ e2e = [
 
 [tool.uv]
 package = false
+# The one uv version for CI (setup-uv reads it) and every developer machine.
+required-version = "==0.9.26"
 
 [tool.uv.workspace]
 members = [

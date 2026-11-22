@@ -11,7 +11,6 @@ def test_giant_measurement_failure_names_an_actual_out_of_tolerance_record(reque
     source = original("1-全功能检验报告_巨一.pdf")
     rules = RuleInput(
         rule_id="reviewed-v2-rules",
-        rule_profile="v2",
         type=DimensionMeasurementPDFAgent.DOC_TYPE.get_type_name(),
         rules=[{"id": str(number), "category": "原件检查", "rule_to_check": f"规则{number}"} for number in range(1, 9)],
     )

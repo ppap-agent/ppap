@@ -1,6 +1,7 @@
 import {apiUrl, request, uploadLocalVersion, withResponseTrace} from '../api.ts'
 import type {components} from '../generated/openapi.ts'
 import type {TemplateLibraryAdapter} from './template-library.tsx'
+import {dispositionName} from './native-adapter.ts'
 
 type SubmissionFile = {file_id: string; version_id: string}
 
@@ -10,7 +11,7 @@ async function readBlob(path: string, failure: string) {
     if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
     throw withResponseTrace(new Error(failure), response)
   }
-  return response.blob()
+  return new File([await response.blob()], dispositionName(response))
 }
 
 /** Transport only. `personalDriveUpload` is PublicConfig.personal_drive_upload (Feishu login active). */

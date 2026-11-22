@@ -21,7 +21,7 @@ def _agent(tmp_path, rows, merged=()):
     path = tmp_path / "cp.xlsx"
     book.save(path)
     body = preset_rule_body("UAES", "U08")
-    rule = RuleInput(rule_id="u08", **{key: value for key, value in body.items() if key != "kind"})
+    rule = RuleInput.of(body, rule_id="u08")
     return UaesControlPlanAgent(AuditInput(audit_id="cp", file_url=str(path)), rule)
 
 

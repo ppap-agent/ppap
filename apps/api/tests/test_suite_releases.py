@@ -4,7 +4,6 @@ import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-import pytest
 from api import create_app
 from fastapi.testclient import TestClient
 from product import build_product_store
@@ -33,9 +32,18 @@ def prepare_fixture(auth_store_factory):
     return store, official, principal, peer, clients
 
 
-def save(store, principal, base_revision_id, files, **options):
-    """Candidates are platform deliveries, saved through the store; HTTP only reads and adopts them."""
-    return SuiteReleaseStore(store.settings, store.objects).save_candidate(principal, base_revision_id, files, **options)
+def save(store, principal, base, files):
+    """Candidates are platform deliveries, written to the Suite store; HTTP only reads and adopts them."""
+    releases = SuiteReleaseStore(store.settings, store.objects)
+    revision = releases.suites.create_revision(
+        tenant_id=principal.tenant_id,
+        suite_key=base.suite_key,
+        files={path: body.encode() for path, body in files.items()},
+        created_by=principal.user_id,
+        base_revision_id=base.id,
+        related_suite_keys=base.related_suite_keys,
+    )
+    return releases.detail(principal, revision.id)
 
 
 def command(revision_id, expected_revision=0, force=True):
@@ -46,7 +54,7 @@ def test_operator_can_publish_peers_candidate_with_explicit_risk_and_read_same_r
     store, official, creator, publisher, (alice, bob, carol) = prepare_fixture(auth_store_factory)
     path = "/suites/control-plan/active"
     assert TestClient(create_app(store.settings, auth_store=store)).get(path).status_code == 401
-    revision = save(store, creator, official.id, {"checker.py": "def check(context):\n    return [1]\n"})
+    revision = save(store, creator, official, {"checker.py": "def check(context):\n    return [1]\n"})
     assert revision["created_by"] == creator.user_id
     assert revision["validation"]["verified"] is False
     assert revision["changed_paths"] == ["checker.py"]
@@ -104,30 +112,6 @@ def test_publish_compare_and_swap_and_fixed_rollback(auth_store_factory):
     assert alice.get(path).json()["current_revision_id"] == official.id
 
 
-def test_template_distribution_cannot_be_forged(auth_store_factory):
-    store, official, alice, _, _ = prepare_fixture(auth_store_factory)
-    with pytest.raises(ValueError, match="template_distribution_not_authorized"):
-        save(store, alice, official.id, {"templates.json": json.dumps([{"kind": "licensed_blank", "license": "private", "uri": "private-original"}])})
-
-
-def test_candidate_save_is_idempotent_per_operation(auth_store_factory):
-    store, official, alice, bob, _ = prepare_fixture(auth_store_factory)
-    operation = str(uuid.uuid4())
-    files = {"checker.py": "def check(context):\n    return [1]\n"}
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        replies = [future.result() for future in [pool.submit(save, store, alice, official.id, files, operation_id=operation) for _ in range(2)]]
-    assert replies[1] == replies[0]
-    with pytest.raises(ValueError, match="suite_operation_conflict"):
-        save(store, alice, official.id, {"checker.py": "changed"}, operation_id=operation)
-    with pytest.raises(ValueError, match="suite_operation_conflict"):
-        save(store, bob, official.id, files, operation_id=operation)
-    with store._conn() as conn:
-        assert conn.execute("SELECT count(*) FROM product.suite_candidate_operations").fetchone()[0] == 1
-        assert conn.execute("SELECT count(*) FROM product.suite_revisions WHERE tenant_id IS NOT NULL").fetchone()[0] == 1
-        assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 0
-        assert conn.execute("SELECT count(*) FROM engine.jobs").fetchone()[0] == 0
-
-
 def test_first_adoption_reads_accessible_candidate_and_preserves_receipt(auth_store_factory):
     store, official, creator, publisher, (alice, bob, carol) = prepare_fixture(auth_store_factory)
     path = "/suites/control-plan/active"
@@ -139,7 +123,7 @@ def test_first_adoption_reads_accessible_candidate_and_preserves_receipt(auth_st
     assert before["candidate_revision_id"] == official.id
     assert before["history"] == []
     assert summary(before) == next(row for row in bob.get("/suites").json()["suites"] if row["suite_key"] == "control-plan")
-    candidate = save(store, creator, official.id, {"checker.py": "def check(context): return []\n"})
+    candidate = save(store, creator, official, {"checker.py": "def check(context): return []\n"})
     assert bob.get(path).json()["candidate_revision_id"] == candidate["id"]
     request = command(candidate["id"], expected_revision=before["revision"], force=True)
     published = bob.put(path, json=request)

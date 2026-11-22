@@ -236,7 +236,8 @@ class McpStore:
 
     def _delegation(self, conn, grant_id: str) -> Delegation:
         row = conn.execute(
-            """SELECT g.*, a.access_token,a.refresh_token,a.access_expires_at,a.refresh_expires_at,
+            """SELECT g.id,g.client_id,g.user_id,g.tenant_id,g.provider,g.app_id,g.subject,g.scopes,g.expires_at,g.provider_authorization_id,
+                      a.access_token,a.refresh_token,a.access_expires_at,a.refresh_expires_at,
                       m.role, i.display_name, i.tenant_key FROM product.mcp_grants g
                JOIN product.provider_authorizations a ON a.id=g.provider_authorization_id
                  AND a.user_id=g.user_id AND a.tenant_id=g.tenant_id AND a.provider=g.provider

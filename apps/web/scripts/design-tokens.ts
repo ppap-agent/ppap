@@ -3,7 +3,7 @@ import { lint } from "@google/design.md/linter";
 import { build, defineConfig, parse, type TokenNormalized, type TokenNormalizedSet } from "@terrazzo/parser";
 import css from "@terrazzo/plugin-css";
 
-// One projection serves the runtime theme and the token frontmatter of design.md (docs/DESIGN_SYSTEM.md).
+// One projection serves the runtime theme and the token frontmatter of design.md (tokens/README.md).
 const resolver = new URL("../tokens/web.resolver.json", import.meta.url);
 
 function variableName(token: TokenNormalized): string {

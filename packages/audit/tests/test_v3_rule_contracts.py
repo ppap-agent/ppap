@@ -109,7 +109,6 @@ def input_rules(agent_class, categories, *, ids=None):
         ids = [str(index) for index in range(1, len(categories) + 1)]
     return RuleInput(
         rule_id="confirmed-contract",
-        rule_profile="v3",
         type=agent_class.DOC_TYPE.get_type_name(),
         rules=[{"id": rule_id, "category": category, "rule_to_check": f"规则 {index}"} for index, (rule_id, category) in enumerate(zip(ids, categories), 1)],
     )

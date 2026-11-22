@@ -4,7 +4,7 @@
 
 ## 运行
 
-在本目录运行 `pnpm install --frozen-lockfile`、`pnpm dev` 或 `pnpm build`。isolated-dev 先设置 `PPAP_BUILD_SHA=${PPAP_BUILD_SHA:-local}` 并执行 `docker buildx bake`，再用 `docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait` 启动。开发服务器从本地 4173 端口代理读取 runtime-config；Docker 构建运行同一套类型检查与 Vite 构建，将产物交给 nginx。
+在本目录运行 `pnpm install --frozen-lockfile`、`pnpm dev` 或 `pnpm build`。isolated-dev 的构建与启动见 [deploy/isolated-dev](../../deploy/isolated-dev/README.md)。开发服务器从本地 4173 端口代理读取 runtime-config；Docker 构建运行同一套类型检查与 Vite 构建，将产物交给 nginx。
 
 `pnpm typecheck`、`pnpm test`、`pnpm lint` 与 `pnpm build` 是前端合并门槛。页面直接使用 `src/components/ui` 中的 shadcn/ui 源码组件和 Tailwind v4 主题；`src/components/*.tsx` 只放 PPAP 共用的组合（加载提示、折叠、分页等）。跨栈浏览器路径由仓库根目录的 Python Playwright（`tests/e2e`）执行。
 

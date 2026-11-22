@@ -134,6 +134,7 @@ const errorText: Record<string, string> = {
   invalid_review: '复核内容不完整或过长，请检查后再保存。',
   validation_failed: '有附件无法读取，请检查文件后重试。',
   task_revision_conflict: '审核内容刚发生变化，请核对后再确认。',
+  customer_required: '请先选择审核客户。',
   task_not_zero_match: '还有可以审核的资料，不能直接结束。',
   release_not_needed: '结论已是“符合”，写回后流程会自动进入下一步，不需要放行。',
   release_older_round: '只能放行这个工作项最近一轮的审核。',

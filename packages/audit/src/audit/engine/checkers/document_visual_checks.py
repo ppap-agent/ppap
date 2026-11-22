@@ -181,7 +181,7 @@ def generic_image_check(agent: Any, rule: Any) -> AuditResultItem:
         elif source.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
             page_count = 1
         else:
-            return _custom_result(rule, "UNABLE", "此载体尚不能提供带原件位置的图形观察。")
+            return _custom_result(rule, "UNABLE", "这种格式的原件不能给出带位置的图形核对结果，需人工核对。")
         if page_count == 0:
             return _custom_result(rule, "UNABLE", "原件没有可读取的页面。")
         fragments, complete = [], True

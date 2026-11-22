@@ -50,10 +50,9 @@ def original_pdf(tmp_path):
     return path
 
 
-def psw_rules(profile, *, count=10):
+def psw_rules(*, count=10):
     return RuleInput(
         rule_id="confirmed-psw-rules",
-        rule_profile=profile,
         type="零件提交保证书",
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, count + 1)],
     )
@@ -62,7 +61,7 @@ def psw_rules(profile, *, count=10):
 def run_psw(path, profile, audit_id, count):
     """Run each PSW clause through the company agent's own ``check(index)``."""
     agent_type = V2PswPDFAgent if profile == "v2" else V3PswPDFAgent
-    agent = agent_type(AuditInput(audit_id=audit_id, file_url=str(path)), psw_rules(profile, count=count))
+    agent = agent_type(AuditInput(audit_id=audit_id, file_url=str(path)), psw_rules(count=count))
     try:
         return [agent.check(index) for index in range(count)]
     finally:
@@ -187,7 +186,7 @@ def test_low_level_empty_rule_input_never_silently_returns_no_results(original_p
     use_external_conversion(monkeypatch, original_pdf, artifact)
     agent_type = V2PswPDFAgent if profile == "v2" else V3PswPDFAgent
     with bind_runtime(None):
-        agent = agent_type(AuditInput(audit_id="psw-empty-rules", file_url=str(original_pdf)), psw_rules(profile, count=0))
+        agent = agent_type(AuditInput(audit_id="psw-empty-rules", file_url=str(original_pdf)), psw_rules(count=0))
         try:
             results = asyncio.run(agent.run())
         finally:
@@ -375,7 +374,7 @@ def psw_checker(monkeypatch, path, profile):
     # converter is isolated so this verifies original-page fact selection.
     use_external_conversion(monkeypatch, path, ConversionArtifact(success=False, diagnostics={"error_code": "ocr_table_unconfirmed"}))
     agent_type = V2PswPDFAgent if profile == "v2" else V3PswPDFAgent
-    return agent_type(AuditInput(audit_id="frozen-native-psw", file_url=str(path)), psw_rules(profile))
+    return agent_type(AuditInput(audit_id="frozen-native-psw", file_url=str(path)), psw_rules())
 
 
 def ocr_response_boundary(monkeypatch, response):

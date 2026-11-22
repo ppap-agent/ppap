@@ -17,7 +17,7 @@ def _check(tmp_path, rows, rule):
     path = tmp_path / "msa.xlsx"
     book.save(path)
     body = preset_rule_body("UAES", "U05")
-    agent = UaesMsaAgent(AuditInput(audit_id="msa", file_url=str(path)), RuleInput(rule_id="u05", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesMsaAgent(AuditInput(audit_id="msa", file_url=str(path)), RuleInput.of(body, rule_id="u05"))
     return agent.check([name for name, _ in agent.declared_rules()].index(rule))
 
 

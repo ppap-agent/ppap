@@ -10,7 +10,6 @@ from openpyxl import Workbook
 def rules(agent_type, count):
     return RuleInput(
         rule_id="reviewed-v2-rules",
-        rule_profile="v2",
         type=agent_type.DOC_TYPE.get_type_name(),
         rules=[{"id": str(number), "category": "原件检查", "rule_to_check": f"规则{number}"} for number in range(1, count + 1)],
     )

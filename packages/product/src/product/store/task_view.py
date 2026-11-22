@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from audit.models import public_locator
+from documents.location import location_label
+
 
 def has_execution_error(execution: str, coverage: dict, findings: list[dict]) -> bool:
     """Execution faults are separate from terminal state and business verdicts."""
@@ -40,12 +43,6 @@ def _clause_result(round: dict, version_id: str, clause_id: str) -> tuple[dict |
     return coverage[0] if coverage else None, findings[0] if findings else None, None
 
 
-def _typed_locator(locator: object) -> dict | None:
-    from audit.models import public_locator
-
-    return public_locator(locator)
-
-
 def _evidence(round: dict, finding: dict | None, version_id: str, rule_id: str, clause_id: str) -> tuple[list[dict], dict | None, str | None]:
     if not finding:
         return [], None, None
@@ -69,11 +66,12 @@ def _evidence(round: dict, finding: dict | None, version_id: str, rule_id: str, 
         if not isinstance(source, dict) or source.get("file_version_id") not in versions:
             notice = "有来源不在本轮冻结文件中，未作为本条证据。"
             continue
-        locator = _typed_locator(source.get("locator"))
+        locator = public_locator(source.get("locator"))
         evidence.append(
             {
                 "file_version_id": source["file_version_id"],
                 "locator": locator,
+                "label": location_label(locator) if locator else None,
                 "excerpt": source.get("excerpt") if isinstance(source.get("excerpt"), str) else "",
                 "location_gap": None if locator else "原审核结果缺少有效的原件定位。",
                 "rendition": "original",

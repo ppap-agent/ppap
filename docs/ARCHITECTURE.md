@@ -46,7 +46,7 @@ PostgreSQL 中 `product` 保存产品事实，`engine` 保存执行任务/尝试
 
 Worker 用短数据库事务 claim 工作（含过期 `leased` 重试，同一 round 只增加 attempt），事务外执行，并用当前 attempt/claim 提交结果。技术重试不创建新产品轮次；用户主动重审才创建新轮次。
 
-审核由 Worker 执行 job 中冻结的 `ppap-checker-core` 与 Suite 快照；任务选了深度模式时，job 另带 `analysis_mode: "deep"`，一轮在一个 guest 中执行，同组上下文（已解析的原件、模型读取结果）为全部文件共享；每份文件各自计时：先逐份执行 Suite 程序（每份 3 分钟，超时则该份未完成的条款为技术错误），深度模式再由 Pi 逐份复核程序结论（每份 6 分钟，不修改、不调用程序）；订正的证据由 guest 对照冻结原件逐条核对，宿主再校验结构后合并，某份文件复核失败或超时即保留该文件的程序结果（见 [DATA_MODEL](DATA_MODEL.md) 深度模式一节）。一轮没有整体时限：guest 每开始一个任务就报告进度，宿主为每个新任务重新给一个任务时长并续期模型授权，超过一个任务时长没有新进度才终止；Worker 同样只在超过单个任务时长没有进度时判定卡死。Worker 经 bounded UDS 调用独立 Controller；缺快照或执行修订不符即失败。整次执行失败时写回结构化 failure 并将 job/round 标为 failed，不伪造业务判定，不回退到其他执行器。取消、预算或整体协议故障不转为局部成功。Controller 协议 `extra=forbid`，不接受 host path、command、mount、image 或 env；Worker 不持有 Docker socket。`PPAP_DEEP_CONTROLLER_SOCKET` 只表示 Deep capability 是否配置；Core `/ready` 仍只探 PostgreSQL 与对象存储。
+审核由 Worker 执行 job 中冻结的 `ppap-checker-core` 与 Suite 快照；任务选了深度模式时，job 另带 `analysis_mode: "deep"`，一轮在一个 guest 中执行，同组上下文（已解析的原件、模型读取结果）为全部文件共享；每份文件各自计时（时限见 [Deep 部署说明](../deploy/deep/README.md)）：先逐份执行 Suite 程序（超时则该份未完成的条款为技术错误），深度模式再由 Pi 逐份复核程序结论（不修改、不调用程序）；订正的证据由 guest 对照冻结原件逐条核对，宿主再校验结构后合并，某份文件复核失败或超时即保留该文件的程序结果（见 [DATA_MODEL](DATA_MODEL.md) 深度模式一节）。一轮没有整体时限：guest 每开始一个任务就报告进度，宿主为每个新任务重新给一个任务时长并续期模型授权，超过一个任务时长没有新进度才终止；Worker 同样只在超过单个任务时长没有进度时判定卡死。Worker 经 bounded UDS 调用独立 Controller；缺快照或执行修订不符即失败。整次执行失败时写回结构化 failure 并将 job/round 标为 failed，不伪造业务判定，不回退到其他执行器。取消、预算或整体协议故障不转为局部成功。Controller 协议 `extra=forbid`，不接受 host path、command、mount、image 或 env；Worker 不持有 Docker socket。`PPAP_DEEP_CONTROLLER_SOCKET` 只表示 Deep capability 是否配置；Core `/ready` 仍只探 PostgreSQL 与对象存储。
 
 Controller 进程是 `python -m agent`。生产工厂要求显式设置 `PPAP_DEEP_RUNTIME=container-only`，并将 `PPAP_DEEP_SANDBOX_PROFILE` 设为 `off` 或 `ppap`，没有默认 process/checker 后端。`CoreRuntime` 消费冻结的有效规则和文件版本，通过 `ContainerRuntime` 与可信模型 gateway 执行；guest 命令、模型 endpoint 和 provider key 不来自 Worker RPC。`off` 是降权容器执行，不保证独立文件系统或 egress 隔离，不能称为 gVisor/VM。具体运行与限制见 [Deep 部署说明](../deploy/deep/README.md)；启动或 UDS 可用不证明审核质量或强隔离。
 
@@ -62,7 +62,7 @@ Deep 的受理端和执行端以 `audit.policy.DeepExecutionPolicy` 共用实际
 
 飞书项目（Meego）插件是第一方宿主界面，不是 Agent 委托。飞书项目身份（插件、飞书项目租户、`user_key`）必须经用户在 PPAP 浏览器确认页确认，才绑定到一份已有的飞书 provider authorization。飞书项目租户到飞书租户的对应关系由 `PPAP_MEEGO_TENANT_MAP` 显式配置。绑定后签发 `channel='meego'` 的短期会话，只接受 `Authorization: Bearer`，Cookie 会话不接受这种令牌。业务路由按普通 Session 处理，不需要 MCP 的 `ApprovedCall`，因为确认就发生在插件界面里。附件由 API 用插件凭证加绑定人的 `X-User-Key` 读取，复用导入接收流程。审核结论以评论形式写回工作项，评论带轮次标记；先读回再写，结果未知时只读回，不重写。飞书项目的 `out_id` 与 PPAP 应用的 union_id 分属不同开发者，不作为同一人的证明。
 
-#169 通知接入须区分可恢复的发送前准备与不可盲重试的外部发送。发送前必须以当前 claim/attempt 做数据库条件更新，持久记录已经进入发送边界；过期 Worker 不得继续发送。进入该边界后，超时或进程退出不能证明未送达，不能沿用普通审核任务的过期租约重跑规则。未知结果保留原意图，只有可靠回执或确认未发送的外部证据才能改变恢复资格。
+通知接入须区分可恢复的发送前准备与不可盲重试的外部发送。发送前必须以当前 claim/attempt 做数据库条件更新，持久记录已经进入发送边界；过期 Worker 不得继续发送。进入该边界后，超时或进程退出不能证明未送达，不能沿用普通审核任务的过期租约重跑规则。未知结果保留原意图，只有可靠回执或确认未发送的外部证据才能改变恢复资格。
 
 任务通知复用 `engine.jobs/attempts`，数据库按租户、任务及节点唯一；待确认、开始审核和首次报告终结的通知意图与对应业务事务一起提交。普通审核 Worker 不领取通知，也不持有飞书发送凭据；API 进程领取后，在发送前重新检查创建人、租户、源文件权限和完成通知设置，再以当前 claim/attempt 持久化发送边界。发送前准备可接管；发送后未知不可接管。有效消息 ID 才能记录发送成功，不表示用户已阅读。尚无可靠外部证据时，未知状态保留，不能声称具备自动恢复或外部绝对去重保证。
 

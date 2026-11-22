@@ -63,9 +63,9 @@ def reaudit_routes(page, *, accept=False):
                 }
             )
         elif path == "/audit-customers":
-            route.fulfill(json={"customers": []})
+            route.fulfill(json={"customers": [{"customer_id": "uaes", "name": "UAES", "key": "UAES", "coverage": None}], "unregistered": [], "type_names": {}})
         elif path == f"/rounds/{ROUND}/reaudit-inputs":
-            route.fulfill(json={"predecessor_id": ROUND, "customer_preference": None, "files": files})
+            route.fulfill(json={"predecessor_id": ROUND, "customer_preference": "UAES", "files": files})
         elif path == "/audit-tasks" and request.method == "GET":
             route.fulfill(json={"tasks": [], "next_offset": None})
         elif path == "/drafts" and request.method == "POST":

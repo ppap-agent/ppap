@@ -19,6 +19,6 @@ def test_a_readable_list_without_the_columns_or_rows_fails(tmp_path, title, rows
         book.active.append(row)
     book.save(path)
     body = preset_rule_body("UAES", "U12")
-    agent = UaesSpecialCharacteristicsAgent(AuditInput(audit_id="u12", file_url=str(path)), RuleInput(rule_id="u12", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesSpecialCharacteristicsAgent(AuditInput(audit_id="u12", file_url=str(path)), RuleInput.of(body, rule_id="u12"))
     result = agent.check([name for name, _ in agent.declared_rules()].index("rule_2"))
     assert result.status == "NG" and said in result.suggestions

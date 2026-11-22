@@ -14,7 +14,8 @@ export type Locator =
   | { kind: 'docx_paragraph'; paragraph: number }
   | { kind: 'docx_cell'; table: number; row: number; column: number };
 
-export type Evidence = { file_version_id: string; locator: Locator | null; excerpt: string; location_gap: string | null };
+// label: the server's one wording of the locator, null exactly when the locator is.
+export type Evidence = { file_version_id: string; locator: Locator | null; label: string | null; excerpt: string; location_gap: string | null };
 export type Citation = { file_version_id: string; location: string; excerpt: string };
 export type Review = { judgment: string; rationale: string; next_step: string; version: number; citations?: Citation[] };
 export type FindingStatus = 'PASS' | 'NG' | 'UNABLE' | 'ERR' | 'NA';
@@ -38,7 +39,7 @@ export type Check = {
 };
 export type Confirmation = { status: FindingStatus; suggestions: string; confirmed_by: string[]; confirmed_at: string };
 /** An original fact the machine could not read, asked of the task's creator; answering recomputes its clauses without a model. */
-export type FactQuestion = { file_version_id: string; field: string; prompt: string; answer_type: 'boolean' | 'text'; locator: Locator | null; item_keys: string[]; fingerprint: string; answered: boolean };
+export type FactQuestion = { file_version_id: string; field: string; prompt: string; answer_type: 'boolean' | 'text'; locator: Locator; label: string; item_keys: string[]; fingerprint: string; answered: boolean };
 export type FactView = { round_id: string; revision: number; questions: FactQuestion[] };
 
 export type Report = { state: 'not_eligible' | 'pending' | 'generating' | 'ready' | 'failed'; report_id: string | null; artifact: { artifact_id: string; filename: string } | null; regenerate_allowed?: boolean; reason?: string | null };
@@ -141,9 +142,6 @@ export const judgmentLabel: Record<string, string> = {
   'manual-unsatisfied': '人工确认不满足要求',
 };
 
-// UAES source documents are stored as codes; people only ever read their names (as in the web app).
-const sourceDocumentNames: Record<string, string> = { E01: '初始样品检验报告', E02: '测量比较报告', E03: '包装方案', E04: '实验室资质证书', E05: '材料规范', E06: '样品阶段履历', E07: '生产件样品照片', E08: '订货规范', E09: '试装单', E10: '零件追溯说明', E11: '顾客工程批准', E12: '采购件质量计划' };
-export const documentTypeLabel = (type: string) => sourceDocumentNames[type] ?? type;
 
 export type Bucket = FindingStatus | 'uncovered' | 'running';
 
@@ -177,26 +175,6 @@ export function observation(check: Check): string {
   if (check.execution === 'queued' || check.execution === 'running') return '本项审核中…';
   const notice = programNotice(check) ? null : check.scope_notice === 'manual-only' || check.scope_notice === 'unsupported' ? '本条要求未完成自动检查，请核对原件并记录人工复核。' : check.scope_notice;
   return [...new Set([check.finding?.suggestions || check.finding?.classification, notice].filter(Boolean))].join('；') || '未取得判定理由。';
-}
-
-export function locationLabel(locator: Locator | null): string {
-  if (!locator) return '';
-  switch (locator.kind) {
-    case 'xlsx_cell':
-      return `工作表「${locator.sheet}」${locator.cell}`;
-    case 'xlsx_range':
-      return `工作表「${locator.sheet}」${locator.start}:${locator.end}`;
-    case 'pdf_page':
-      return `第 ${locator.page} 页`;
-    case 'pdf_block':
-      return `第 ${locator.page} 页 第 ${locator.block} 段`;
-    case 'pdf_cell':
-      return `第 ${locator.page} 页 表格第 ${locator.row} 行第 ${locator.column} 列`;
-    case 'docx_paragraph':
-      return `第 ${locator.paragraph} 段`;
-    case 'docx_cell':
-      return `第 ${locator.table} 个表格 第 ${locator.row} 行第 ${locator.column} 列`;
-  }
 }
 
 export function when(raw: string | null | undefined): string {

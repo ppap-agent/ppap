@@ -73,8 +73,6 @@ class UiA11yTests(unittest.TestCase):
             )
             page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
-            page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": ["控制计划"]}))
-            page.route("**/api/suites", lambda route: route.fulfill(json={"suites": [], "predefined": []}))
             session = context.new_cdp_session(page)
             session.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
             page.goto(WEB)
@@ -162,8 +160,6 @@ class UiA11yTests(unittest.TestCase):
                 ),
             )
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
-            page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": ["控制计划"]}))
-            page.route("**/api/suites", lambda route: route.fulfill(json={"suites": [], "predefined": []}))
             page.route("**/api/audit-customers", lambda route: route.fulfill(status=403, json={"error": "access_denied"}))
             page.goto(WEB + "/requirements")
             expect(page.get_by_role("alert")).to_contain_text("没有访问这份资料的权限。")

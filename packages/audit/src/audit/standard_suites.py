@@ -246,8 +246,6 @@ def _load_leaf(root: Path, directory: str, group: Path) -> StandardSuite:
     if not _defines_create_audit(files["checker.py"]):
         raise ValueError("predefined_checker_entrypoint_missing")
     suite_key = f"{customer}:{group.name}"
-    # The leaf declares its own business dependencies. _RELATED is the legacy
-    # carrier map and is not a fallback, a transitive walk, or a v4 import.
     _require_coverage(rules, binding, clause_ids)
     document_type = rules.get("type") if isinstance(rules.get("type"), str) else ""
     return StandardSuite(

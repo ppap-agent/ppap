@@ -50,14 +50,15 @@ def equipment_document(*, supplier=True, auxiliary=False, empty_template=False, 
     return document
 
 
-@pytest.fixture(params=["v2", "v3"])
+@pytest.fixture(params=["li/L13", "nio/N13"])
 def audit(request, run_checks):
     def check(location):
         runtime = NoConversionRuntime()
         with bind_runtime(runtime):
             results = run_checks(
                 AuditInput(audit_id="equipment-word", file_url=str(location)),
-                RuleInput(rule_id="confirmed-equipment-rules", rule_profile=request.param, type=PpapDocumentType.EQUIPMENT_LIST.get_type_name(), rules=[{"id": "1"}, {"id": "2"}]),
+                RuleInput(rule_id="confirmed-equipment-rules", type=PpapDocumentType.EQUIPMENT_LIST.get_type_name(), rules=[{"id": "1"}, {"id": "2"}]),
+                leaf=request.param,
             )
         assert runtime.calls == []
         return results

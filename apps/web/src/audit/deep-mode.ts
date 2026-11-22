@@ -14,9 +14,14 @@ export function billableFileCount(task: Pick<Task, 'confirmation_scope' | 'files
   return task.files.filter(row => row.selection === 'selected' && row.match?.state === 'matched').length
 }
 
-/** How the server's estimate was made; the number itself always comes from the server. Every mode costs the same per file. */
-export function pointsBasis(task: Pick<Task, 'confirmation_scope' | 'files'>): string {
-  return `按 500 点/份 × ${billableFileCount(task)} 份可送审文件计算；${backgroundNote}`
+/** The published price per file, stated only when the server has not estimated this task. */
+const listedPointsPerFile = 500
+
+/** How the server's estimate was made: the price per file is read from the server's total; every mode costs the same per file. */
+export function pointsBasis(task: Pick<Task, 'confirmation_scope' | 'files' | 'estimated_points'>): string {
+  const files = billableFileCount(task), total = task.estimated_points
+  const perFile = total != null && files > 0 && Number.isSafeInteger(total / files) ? total / files : listedPointsPerFile
+  return `按 ${perFile} 点/份 × ${files} 份可送审文件计算；${backgroundNote}`
 }
 
 /** The switch is usable only while the task can still change and the server offers deep mode. */

@@ -341,11 +341,36 @@ def test_real_generations_of_one_document_type_do_not_block_each_other(selector,
     assert "oracle_rules_changed" not in plan.reasons
 
 
-def test_corpus_selector_is_the_installed_u08_leaf():
-    from audit.standard_suites import predefined_directory_suites
+def test_corpus_selector_is_the_leaf_its_truths_were_judged_under(monkeypatch):
+    from audit.standard_suites import load_predefined_checkers, predefined_directory_suites
 
-    directory = next(suite for suite in predefined_directory_suites() if suite.source_path == "uaes/U08")
-    assert oracle.suite_sources()["uaes/U08"] is directory or oracle.suite_sources()["uaes/U08"] == directory
+    installed = {suite.source_path: suite for suite in predefined_directory_suites()}
+    frozen = {suite.source_path: suite for suite in load_predefined_checkers(oracle.UAES_JUDGED_REVISION / "checkers")}
+    path = "uaes/U08"
+    # Even when the rule text is unchanged, use the historical leaf rather than the live program.
+    live_files = {**installed[path].files, "checker.py": installed[path].files["checker.py"] + b"\n# Live checker changed.\n"}
+    installed[path] = replace(installed[path], files=live_files)
+    monkeypatch.setattr(oracle, "predefined_directory_suites", lambda: tuple(installed.values()))
+    oracle._judged_sources.cache_clear()
+    try:
+        sources = oracle.suite_sources()
+        assert sources[path] == frozen[path] != installed[path]
+        assert oracle.reviewed_rules()[path] == oracle.reviewed_contract(sources[path])
+        assert all(sources[path] == installed[path] for path in installed if not path.startswith("uaes/"))
+    finally:
+        oracle._judged_sources.cache_clear()
+
+
+def test_frozen_uaes_presets_preserve_repeated_docx_source_numbers():
+    from audit.presets import preset_rule
+
+    with oracle.presets_as_judged("UAES"):
+        sample = preset_rule("UAES", "U01")
+        assert [clause.source_number for clause in sample.clauses] == ["1", "2", "3", "1"]
+        assert [clause.id for clause in sample.clauses] == ["U01:1-1", "U01:2", "U01:3", "U01:1-2"]
+        assert sample.clauses[0].category == "尺寸测量报告覆盖性检查"
+        assert "实测值的列数是否是3或3的倍数" in sample.clauses[0].text
+        assert "气泡图独立文件" in sample.clauses[3].text
 
 
 def test_corpus_table_path_is_not_stored_as_directory_identity():

@@ -111,7 +111,6 @@ def test_standard_workbook_keeps_rule_decisions_and_source_messages(tmp_path, ru
         AuditInput(audit_id="measurement-contract", file_url=str(path)),
         RuleInput(
             rule_id="measurement-rules",
-            rule_profile="v2",
             type=DimensionMeasurementExcelAgent.DOC_TYPE.get_type_name(),
             rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 8)],
         ),

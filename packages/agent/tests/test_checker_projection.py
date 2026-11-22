@@ -12,7 +12,6 @@ from openpyxl import Workbook
 def rule_input(*items: tuple[str, str]) -> RuleInput:
     return RuleInput(
         rule_id="confirmed-clauses",
-        rule_profile="v3",
         type=PpapDocumentType.PROCESS_FLOW_CHART.get_type_name(),
         rules=[{"id": clause_id, "category": category, "rule_to_check": category} for clause_id, category in items],
     )

@@ -10,7 +10,7 @@ export const auditAddressChanged = 'ppap-audit-address-changed'
 /** The rules page moved between its list and a rule's page; only the page header follows it. */
 export const ruleAddressChanged = 'ppap-rule-address-changed'
 /** The rules page's own address keys; they never follow the person to another page. */
-export const rulesAddressKeys = ['template', 'systemRule', 'ruleQuestions']
+export const rulesAddressKeys = ['template', 'systemRule', 'ruleQuestions', 'rulebook']
 
 /** Observe local address edits without treating them as browser back/forward or rereading a task. */
 export function writeAuditAddress(url: URL | string, mode: 'push' | 'replace' = 'replace', state: unknown = history.state) {
@@ -23,7 +23,7 @@ export function writeAuditAddress(url: URL | string, mode: 'push' | 'replace' = 
 export function requestAddress(url: URL, taskId: string, kind: 'recognitionRequest' | 'acceptRequest', requestId: string): string {
   const next = new URL(url)
   next.pathname = taskAddress(taskId); next.searchParams.delete('task')
-  next.searchParams.delete('view'); next.searchParams.set(kind, requestId)
+  next.searchParams.set(kind, requestId)
   return next.pathname + next.search + next.hash
 }
 export function rememberRequest(taskId: string, kind: 'recognitionRequest' | 'acceptRequest', requestId: string) {

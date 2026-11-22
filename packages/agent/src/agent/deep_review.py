@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from audit.checker_core import ExecutionSnapshot, FrozenTarget
+from audit.models import public_locator
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -33,14 +34,8 @@ CORRECTED_PREFIX = "深度复核订正"
 PROGRAM_STATUS_LABEL = {"PASS": "符合", "NG": "不符合", "UNABLE": "无法判断", "ERR": "技术错误", "NA": "不适用"}
 _IMAGES = frozenset({"png", "jpg", "jpeg", "webp"})
 _WORKBOOKS = frozenset({"xlsx", "xls", "xlsm"})
-_LOCATOR_KINDS: dict[str, dict[str, type]] = {
-    "xlsx_cell": {"sheet": str, "cell": str},
-    "xlsx_range": {"sheet": str, "start": str, "end": str},
-    "pdf_page": {"page": int},
-    "docx_paragraph": {"paragraph": int},
-    "docx_cell": {"table": int, "row": int, "column": int},
-}
-_CELL = re.compile(r"^[A-Z]{1,3}[1-9][0-9]{0,6}$")
+# The public locators the original reader can open here; a pdf_page region is not one.
+_REVIEW_LOCATOR_KINDS = frozenset({"xlsx_cell", "xlsx_range", "pdf_page", "docx_paragraph", "docx_cell"})
 
 
 class CitedEvidence(BaseModel):
@@ -168,18 +163,10 @@ class OriginalReader:
 
 
 def _typed_locator(raw: Mapping[str, Any]) -> dict[str, Any] | None:
-    fields = _LOCATOR_KINDS.get(str(raw.get("kind")))
-    if fields is None or set(raw) != {"kind", *fields}:
+    kind = raw.get("kind")
+    if not isinstance(kind, str) or kind not in _REVIEW_LOCATOR_KINDS or "region" in raw:
         return None
-    for key, expected in fields.items():
-        value = raw[key]
-        if type(value) is not expected or isinstance(value, int) and value < 1 or isinstance(value, str) and not value.strip():
-            return None
-    if raw["kind"] == "xlsx_cell" and not _CELL.fullmatch(raw["cell"]):
-        return None
-    if raw["kind"] == "xlsx_range" and not (_CELL.fullmatch(raw["start"]) and _CELL.fullmatch(raw["end"])):
-        return None
-    return dict(raw)
+    return public_locator(dict(raw))
 
 
 def check_evidence(item: CitedEvidence, reader: OriginalReader, unavailable: frozenset[str]) -> tuple[dict[str, Any] | None, str]:
@@ -337,7 +324,13 @@ def review_targets(
         for index, target in enumerate(snapshot.targets):
             on_task(index)
             program = {str(item["clause_id"]): item for item in findings if item["file_version_id"] == target.file_version_id}
-            if target.file_version_id in unavailable or not program:
+            if target.file_version_id in unavailable:
+                states[target.file_version_id] = {"state": "degraded", "reason": "deep_input_missing"}
+                continue
+            if not target.binding.entrypoints:
+                states[target.file_version_id] = {"state": "not_applicable"}
+                continue
+            if not program:
                 states[target.file_version_id] = {"state": "degraded", "reason": "deep_input_missing"}
                 continue
             started, before = time.monotonic(), (runner.input_tokens, runner.output_tokens)
@@ -457,9 +450,10 @@ def _corrected_item(finding: Mapping[str, Any], record: Mapping[str, Any], filen
 def merge_reviews(snapshot: ExecutionSnapshot, result: dict[str, Any], raw: object) -> tuple[dict[str, Any], dict[str, dict[str, str]], dict[tuple[str, str], dict[str, Any]]]:
     """Apply checked corrections to the validated program result.
 
-    Returns the merged result, each target's deep state (completed/degraded) and the
-    per-clause review records. A target whose review output is malformed keeps its
-    program result and is reported as not deep-reviewed.
+    Returns the merged result, applicable deep states and per-clause review records.
+    A target with no bound clauses and an available original has no result to review.
+    A target whose review output is malformed keeps its program result and is
+    reported as not deep-reviewed.
     """
     from audit.checker_core import validate_results
 
@@ -468,10 +462,16 @@ def merge_reviews(snapshot: ExecutionSnapshot, result: dict[str, Any], raw: obje
         raise ValueError("deep_output_invalid")
     known = {item.file_version_id for item in snapshot.inputs}
     filenames = {item.file_version_id: item.filename for item in snapshot.inputs}
+    unavailable = set(result.get("unavailable_sources", ()))
     states: dict[str, dict[str, str]] = {}
     records: dict[tuple[str, str], dict[str, Any]] = {}
     findings: list[dict[str, Any]] = []
     for version, target in targets.items():
+        if not target.binding.entrypoints:
+            # The host derives applicability from the frozen binding and validated availability, not the guest's state.
+            if version in unavailable:
+                states[version] = {"state": "degraded", "reason": "deep_input_missing"}
+            continue
         program = [dict(item) for item in result["findings"] if item["file_version_id"] == version]
         state = raw[version]
         if isinstance(state, dict) and isinstance(state.get("usage"), dict):

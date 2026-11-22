@@ -38,7 +38,7 @@ def _require_pdf_spec(audit: Any, context: Any) -> None:
 
     from documents.pdf import PdfSpec, validate_pdf_spec
 
-    from audit.checker_lib.nio.excel_agent import ExcelAgent
+    from audit.checker_lib.excel_agent import ExcelAgent
     from audit.checker_lib.uaes.native import UaesSourceAgent
 
     # Native readers and plain callable checkers need no grid specification.

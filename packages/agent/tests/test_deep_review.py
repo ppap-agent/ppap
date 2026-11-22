@@ -8,6 +8,7 @@ import io
 import json
 import time
 import uuid
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -132,9 +133,12 @@ def controlled_pi(monkeypatch, write, deadlines=None):
 
 
 def run(tmp_path, snapshot, sources, spec, suite, guest=None):
-    controller = Controller(
-        CoreRuntime(guest or Guest(tmp_path), lambda _spec: snapshot, lambda *_: suite), lambda identity, limit: sources[identity], executor_revision="runtime", protocol_revision="protocol"
-    )
+    def read_source(identity, limit):
+        if identity not in sources:
+            raise FileNotFoundError(identity)
+        return sources[identity]
+
+    controller = Controller(CoreRuntime(guest or Guest(tmp_path), lambda _spec: snapshot, lambda *_: suite), read_source, executor_revision="runtime", protocol_revision="protocol")
     return controller.handle(spec)
 
 
@@ -144,6 +148,55 @@ def by_clause(result):
 
 def confirm(target, rows, stage):
     return [{"clause_id": row["clause_id"], "decision": "confirmed", "reason": "原件与程序结论相符"} for row in rows]
+
+
+@pytest.mark.parametrize("analysis_mode", ["standard", "deep"])
+@pytest.mark.parametrize("missing_original", [False, True])
+def test_unbound_targets_are_not_execution_errors_or_deep_review_failures(tmp_path, monkeypatch, analysis_mode, missing_original):
+    snapshot, sources, spec, suite = build()
+    snapshot = replace(snapshot, targets=tuple(replace(target, binding=replace(target.binding, entrypoints={})) for target in snapshot.targets))
+    spec = spec.model_copy(update={"analysis_mode": analysis_mode, "checker_snapshot_digest": snapshot.input_digest})
+    if missing_original:
+        sources.pop("file-a")
+
+    seen = controlled_pi(monkeypatch, confirm)
+    result = run(tmp_path, snapshot, sources, spec, suite)
+
+    assert not seen
+    assert result.findings == [] and result.coverage.checked == []
+    assert result.coverage.unchecked == [
+        "ref.pdf（参考资料，不单独作完整审核）",
+        "cp.xlsx（原件不可用，未检查）" if missing_original else "cp.xlsx（未登记检查程序，暂未检查）",
+        "b.txt（未登记检查程序，暂未检查）",
+    ]
+    assert result.coverage.locator_gap is False
+    assert {(row["file_version_id"], row["rule_item_id"]) for row in result.coverage.rule_items} == {(name, clause) for name in ("file-a", "file-b") for clause in ("A", "B")}
+    for row in result.coverage.rule_items:
+        assert row["coverage"] == "unsupported"
+        assert row["reason"] == "未登记检查程序，暂未检查。"
+        assert not {"status", "item_key", "verification_scope"} & row.keys()
+    execution = result.coverage.checker_execution
+    assert execution["unavailable_file_version_ids"] == (["file-a"] if missing_original else [])
+    reviews = {row["file_version_id"]: row.get("deep_review") for row in execution["targets"]}
+    assert reviews == {
+        "file-a": {"state": "degraded", "reason": "deep_input_missing"} if analysis_mode == "deep" and missing_original else None,
+        "file-b": None,
+    }
+
+
+def test_unbound_clause_does_not_prevent_review_of_a_bound_clause(tmp_path, monkeypatch):
+    snapshot, sources, spec, suite = build()
+    first, second = snapshot.targets
+    snapshot = replace(snapshot, targets=(replace(first, binding=replace(first.binding, entrypoints={})), replace(second, binding=replace(second.binding, entrypoints={"A": "checker:check"}))))
+    spec = spec.model_copy(update={"checker_snapshot_digest": snapshot.input_digest})
+
+    seen = controlled_pi(monkeypatch, confirm)
+    result = run(tmp_path, snapshot, sources, spec, suite)
+
+    assert seen == [("file-b", ["UNABLE"])]
+    assert result.coverage.checked == ["b.txt"]
+    assert set(by_clause(result)) == {("file-b", "A")}
+    assert {row["file_version_id"]: row.get("deep_review") for row in result.coverage.checker_execution["targets"]} == {"file-a": None, "file-b": {"state": "completed"}}
 
 
 def test_a_checked_correction_replaces_the_verdict_and_keeps_the_program_one(tmp_path, monkeypatch):

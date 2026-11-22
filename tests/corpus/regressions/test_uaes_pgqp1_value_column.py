@@ -18,6 +18,6 @@ def test_unmarked_special_characteristics_fail_as_unidentifiable(request, report
     plan = AuditInput(audit_id="pgqp1", file_url=str(next(root.glob("比对文件/采购件质量计划/*776.xlsx"))))
     group = GroupContextInput(by_audit_id={"cpk": cpk, "pgqp1": plan}, by_doc_type={"E12": [plan]})
     body = preset_rule_body("UAES", "U06")
-    agent = UaesCapabilityAgent(cpk, RuleInput(rule_id="u06", **{key: value for key, value in body.items() if key != "kind"}), group)
+    agent = UaesCapabilityAgent(cpk, RuleInput.of(body, rule_id="u06"), group)
     result = agent.check([name for name, _ in agent.declared_rules()].index("rule_4"))
     assert result.status == "NG" and "无法辨识" in result.suggestions

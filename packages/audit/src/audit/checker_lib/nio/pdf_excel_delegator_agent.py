@@ -10,7 +10,7 @@ import logging
 from functools import partial
 from typing import Any, List, Optional, Type
 
-from audit.checker_lib.li.base_agent import BaseAgent
+from audit.checker_lib.base_agent import BaseAgent
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.contracts import AuditResultItem as AuditResult
 

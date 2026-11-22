@@ -312,7 +312,7 @@ def test_confirmation_card_displays_only_server_admission_scope_and_exclusion_re
     assert len(callbacks) == (0 if all_blocked else 1)
 
 
-def test_card_body_names_the_customer_by_its_registered_full_name() -> None:
+def test_card_body_names_the_chosen_rule_set_by_its_registered_name() -> None:
     task = {"id": "task-a", "number": "001", "customer_preference": "UAES", "files": []}
-    assert "客户：联合汽车电子有限公司" in _text(task_notification_card(task, "started", "https://ppap.example.test"))
+    assert "审核客户：联电科技/UAES" in _text(task_notification_card(task, "started", "https://ppap.example.test"))
     assert "客户" not in _text(task_notification_card({**task, "customer_preference": None}, "started", "https://ppap.example.test"))

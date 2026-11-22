@@ -3,11 +3,13 @@
 import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 
 import pytest
 from api.rule_routes import register_rule_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 from product import build_product_store
 from product.settings import Settings
 from product.store.suite_releases import SuiteReleaseStore
@@ -21,14 +23,15 @@ def rule_body(text="必须填写批号", document_type="供应商自定义追溯
         "rule_profile": "v3",
         "type": document_type,
         "rules": [{"id": "R1", "category": "追溯", "priority": "P0", "rule_to_check": text, "type_of_rule": "table"}],
-        "customers": ["自定义客户"],
+        # A task's rule group is a registered customer the rule applies to.
+        "customers": ["理想"],
         "models": [],
         "parts": [],
     }
 
 
 @pytest.fixture
-def custom(auth_store_factory):
+def custom(auth_store_factory, audit_round):
     store = auth_store_factory(Settings(feishu_app_id="custom-suite-tests", usage_charge_enabled=False, git_sha="a" * 40, platform_operators="custom-enterprise:alice"))
     alice = store.upsert_feishu_identity("custom-enterprise", "alice", "Alice")
     bob = store.upsert_feishu_identity("custom-enterprise", "bob", "Bob")
@@ -38,6 +41,7 @@ def custom(auth_store_factory):
     source = store.finalize_version(store.put_blob(version, b"{}"))
     suites = SuiteStore(store.settings, store.objects)
     releases = SuiteReleaseStore(store.settings, store.objects)
+    store.audit_round = audit_round
     return store, alice, bob, foreign, source, suites, releases
 
 
@@ -46,10 +50,29 @@ def publish(custom, *, body=None, predecessor=None, request=None):
     return store.publish_rule(alice, "企业追溯规则", body or rule_body(), source.id, predecessor, request or str(uuid.uuid4()))
 
 
+def changed(custom, base_revision_id, files):
+    """Alice's Suite revision changing `files` on top of the base, kept in the base's Suite."""
+    _, alice, _, _, _, suites, _ = custom
+    base = suites.get_revision(base_revision_id, alice.tenant_id)
+    return suites.create_revision(
+        tenant_id=alice.tenant_id,
+        suite_key=base.suite_key,
+        files={path: body.encode() for path, body in files.items()},
+        created_by=alice.user_id,
+        base_revision_id=base.id,
+        related_suite_keys=base.related_suite_keys,
+    )
+
+
 def accept(custom, rule):
-    store, alice, _, _, source, suites, _ = custom
-    draft = store.create_draft(alice, items=[{"file_version_id": source.id, "role": "target", "rule_version_id": rule["id"]}])
-    accepted = store.accept_draft(alice, draft["id"], "accept:" + draft["id"])
+    store, alice, _, _, _, suites, _ = custom
+    book = Workbook()
+    book.active.append(["追溯记录", str(uuid.uuid4())])
+    stream = BytesIO()
+    book.save(stream)
+    book.close()
+    record = store.finalize_version(store.put_blob(store.create_staging(alice, "trace.xlsx", "application/octet-stream", len(stream.getvalue())), stream.getvalue()))
+    accepted = store.audit_round(store, alice, {record.id: rule["id"]})
     return accepted, suites.read_snapshot(accepted["id"], alice.tenant_id)
 
 
@@ -62,7 +85,7 @@ def counts(custom):
 def test_api_new_type_publishes_baseless_suite_that_cannot_be_audited_until_generated(custom):
     store, alice, bob, _, source, suites, releases = custom
     app = FastAPI()
-    register_rule_routes(app, store, lambda request: alice, None)
+    register_rule_routes(app, store, lambda request: alice)
     client = TestClient(app)
     request = {"request_id": str(uuid.uuid4()), "title": "企业追溯规则", "body": rule_body(), "source_file_version_id": source.id}
     response = client.post("/rules", json=request)
@@ -81,7 +104,7 @@ def test_api_new_type_publishes_baseless_suite_that_cannot_be_audited_until_gene
     assert active["validation"]["total_samples"] == 0
     assert counts(custom) == (1, 1, 1, 1)
     # The starter is never run: the rule is offered for audit only after its program is generated.
-    with pytest.raises(ValueError, match="checker_not_generated"):
+    with pytest.raises(ValueError, match="rule_candidate_expired"):
         accept(custom, rule)
     with store._conn() as conn:
         assert conn.execute("SELECT count(*) FROM product.suite_validations").fetchone()[0] == 0
@@ -93,9 +116,9 @@ def generated(custom, rule):
     _, alice, _, _, _, _, releases = custom
     rules = json.loads(releases.detail(alice, rule["body"]["suite_revision_id"])["files"]["rules.json"])
     rules["checker_binding"] = {"R1": "checker:check"}
-    program = releases.save_candidate(alice, rule["body"]["suite_revision_id"], {"rules.json": json.dumps(rules), "checker.py": "def check(context): return []\n"})
-    releases.publish(alice, rule["body"]["suite_key"], program["id"], 1, str(uuid.uuid4()), True)
-    return program["id"]
+    program = changed(custom, rule["body"]["suite_revision_id"], {"rules.json": json.dumps(rules), "checker.py": "def check(context): return []\n"})
+    releases.publish(alice, rule["body"]["suite_key"], program.id, 1, str(uuid.uuid4()), True)
+    return program.id
 
 
 def test_successor_is_same_suite_and_old_admission_and_retries_never_drift(custom):
@@ -123,7 +146,7 @@ def test_successor_is_same_suite_and_old_admission_and_retries_never_drift(custo
         execution = conn.execute("SELECT rule_execution FROM product.round_inputs WHERE round_id=%s", (unchanged.round_id,)).fetchone()[0]
         assert execution["rule_version_mismatch"] is True
     releases.publish(alice, changed.revision.suite_key, changed.revision.id, 2, str(uuid.uuid4()), True)
-    _, current = accept(custom, first)
+    _, current = accept(custom, second)
     assert current.targets[0].rules["rules"][0]["rule_to_check"] == "批号与原始记录一致"
     assert releases.active(alice, changed.revision.suite_key)["rule_update"] is None
     releases.publish(alice, changed.revision.suite_key, program, 3, str(uuid.uuid4()), True)
@@ -183,13 +206,13 @@ def test_concurrent_successors_cannot_overwrite_newer_published_rules(custom):
 def test_empty_binding_alone_does_not_authorize_code_or_implicit_adoption(custom):
     _, alice, _, _, _, _, releases = custom
     first = publish(custom)
-    candidate = releases.save_candidate(alice, first["body"]["suite_revision_id"], {"checker.py": "raise RuntimeError('must not run')\n"})
+    candidate = changed(custom, first["body"]["suite_revision_id"], {"checker.py": "raise RuntimeError('must not run')\n"})
     with pytest.raises(ValueError, match="suite_confirmation_required"):
-        releases.publish(alice, first["body"]["suite_key"], candidate["id"], 1, str(uuid.uuid4()))
+        releases.publish(alice, first["body"]["suite_key"], candidate.id, 1, str(uuid.uuid4()))
     # Normal Suite publication can explicitly adopt a generated implementation.
-    rules = json.loads(candidate["files"]["rules.json"])
+    rules = json.loads(releases.detail(alice, candidate.id)["files"]["rules.json"])
     rules["checker_binding"] = {"R1": "checker:check"}
-    executable = releases.save_candidate(alice, candidate["id"], {"rules.json": json.dumps(rules), "checker.py": "def check(context): return []\n"})
+    executable = releases.detail(alice, changed(custom, candidate.id, {"rules.json": json.dumps(rules), "checker.py": "def check(context): return []\n"}).id)
     with pytest.raises(ValueError, match="suite_confirmation_required"):
         releases.publish(alice, first["body"]["suite_key"], executable["id"], 1, str(uuid.uuid4()))
     releases.publish(alice, first["body"]["suite_key"], executable["id"], 1, str(uuid.uuid4()), True)
@@ -199,6 +222,6 @@ def test_empty_binding_alone_does_not_authorize_code_or_implicit_adoption(custom
     assert rule_candidate["files"]["checker.py"] == executable["files"]["checker.py"]
     assert json.loads(rule_candidate["files"]["rules.json"])["checker_binding"] == {"R1": "checker:check"}
     assert releases.active(alice, first["body"]["suite_key"])["current_revision_id"] == executable["id"]
-    _, snapshot = accept(custom, first)
+    _, snapshot = accept(custom, updated)
     assert snapshot.targets[0].binding.entrypoints == {"R1": "checker:check"}
     assert snapshot.targets[0].verification == "unverified"

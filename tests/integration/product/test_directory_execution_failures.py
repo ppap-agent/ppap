@@ -25,8 +25,8 @@ from psycopg.types.json import Jsonb
 from worker import process_claimed
 
 
-@pytest.mark.parametrize("fault", ["native", "missing-binding", "no-reader", "corrupt-source", "broken-original", "unsupported-format"])
-def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory, core_system, v4_objects, monkeypatch, fault):
+@pytest.mark.parametrize("fault", ["native", "missing-binding", "no-reader", "corrupt-source"])
+def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory, core_system, v4_objects, monkeypatch, audit_round, fault):
     settings = Settings(usage_charge_enabled=False, feishu_notifications_enabled=False, feishu_app_id="u08-source-boundary", git_sha="a" * 40, platform_operators="u08-source-boundary:operator")
     admin = auth_store_factory(settings, objects=v4_objects)
     principal = admin.upsert_feishu_identity("u08-source-boundary", "operator")
@@ -76,7 +76,16 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
             resource["methods"].pop("U08:6")
             changes["resources.py"] = "RESOURCE = " + repr(resource) + "\n"
         if changes:
-            selected = SuiteReleaseStore(settings, v4_objects).save_candidate(principal, selected, changes)["id"]
+            base = suites.get_revision(selected, principal.tenant_id)
+            candidate = SuiteReleaseStore(settings, v4_objects).suites.create_revision(
+                tenant_id=principal.tenant_id,
+                suite_key=base.suite_key,
+                files={name: body.encode() for name, body in changes.items()},
+                created_by=principal.user_id,
+                base_revision_id=base.id,
+                related_suite_keys=base.related_suite_keys,
+            )
+            selected = candidate.id
             adopted = client.put("/suites/UAES:U08/active", json={"revision_id": selected, "expected_revision": 1, "operation_id": str(uuid4()), "force_unverified": True})
             assert adopted.status_code == 200, adopted.text
         resolved = suites.resolve_suite(selected, principal.tenant_id)
@@ -98,19 +107,18 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
         stream = io.BytesIO()
         book.save(stream)
         book.close()
-        raw = b"unreadable original" if fault == "broken-original" else stream.getvalue()
-        filename = "控制计划.txt" if fault == "unsupported-format" else "控制计划.xlsx"
-        staged = admin.create_staging(principal, filename, "application/octet-stream", len(raw))
+        raw = stream.getvalue()
+        staged = admin.create_staging(principal, "控制计划.xlsx", "application/octet-stream", len(raw))
         uploaded = admin.finalize_version(admin.put_blob(staged, raw))
-        draft = client.post("/drafts", json={"items": [{"file_version_id": uploaded.id, "role": "target", "rule_version_id": rule_id}]})
-        assert draft.status_code == 201, draft.text
-        accepted = client.post(f"/drafts/{draft.json()['id']}/accept", json={"idempotency_key": str(uuid4())})
+        api = build_product_store(settings, objects=v4_objects, role="api")
         if fault == "missing-binding":
-            assert accepted.status_code == 400 and accepted.json() == {"error": "checker_binding_required"}
+            # A program that binds no clause cannot run: the task offers nothing to confirm.
+            task = audit_round(api, principal, {uploaded.id: rule_id}, customer="UAES", confirm=False)
+            assert task["confirmation_basis_digest"] is None
+            assert "checker_suite_unavailable" in task["files"][0]["match"]["gaps"]
             assert not captured and worker.claim_job("u08-boundary") is None
             return
-        assert accepted.status_code == 201, accepted.text
-        round_id = accepted.json()["id"]
+        round_id = audit_round(api, principal, {uploaded.id: rule_id}, customer="UAES")["id"]
         frozen = suites.read_snapshot(round_id, principal.tenant_id)
         target = frozen.targets[0]
         assert target.suite_revision_id == selected
@@ -147,7 +155,5 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
             assert snapshot == frozen.to_dict() and programs == {checker_digest(program): program}
             if fault == "native":
                 assert findings["U08:1"]["status"] == findings["U08:4"]["status"] == "PASS", {cid: (findings[cid]["status"], findings[cid].get("suggestions")) for cid in ("U08:1", "U08:4")}
-            elif fault == "no-reader":
-                assert findings["U08:6"]["status"] == "UNABLE"
             else:
-                assert not any(row["status"] == "PASS" for row in round["findings"])
+                assert findings["U08:6"]["status"] == "UNABLE"

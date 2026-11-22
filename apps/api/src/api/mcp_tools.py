@@ -13,6 +13,7 @@ from uuid import UUID
 
 from mcp.types import ToolAnnotations
 from product import workflow
+from product.customers import by_key
 from product.mcp import MAX_RESULT_BYTES, SCOPES, McpError
 from pydantic import Field
 
@@ -39,6 +40,7 @@ _SAY = {
     "provider_reauthorization_required": "飞书授权已失效。请用户重新登录飞书并重新连接 PPAP。",
     "denied_by_user": "用户在确认页拒绝了这次操作。",
     "request_conflict": "这个 request_id 已经用于另一次不同的请求。请为新的请求生成一个新的随机 UUID。",
+    "customer_required": "还没有选定审核客户。请让用户从 get_account 列出的客户中选一个，把它的 key 作为 customer 传入。",
     "round_has_errors": "这次审核有检查项没有检查完，不能生成飞书报告。可以对同一份资料复审，结论确定后再交付。",
 }
 
@@ -195,7 +197,14 @@ def register_tools(mcp, gateway, authority, runtime):
     async def prepare_audit(
         request_id: UUID,
         source: Annotated[str, Field(min_length=1, max_length=2000, description="The Feishu folder link the user gave (or its token); a single Feishu file link also works.")],
-        customer: Annotated[str, Field(min_length=1, max_length=500)] | None = Field(default=None, description="The customer whose requirements apply, when the user named one."),
+        customer: Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=500,
+                description="Required. The `key` of the customer rule set the user chose, from the customers `get_account` lists; never a company name read from a file.",
+            ),
+        ],
         deep_mode: bool = Field(default=False, description="Deep audit instead of standard; changes the price."),
         follows_task_id: UUID | None = Field(default=None, description="The earlier audit this resubmission follows; history stays linked and nothing is overwritten."),
     ) -> Outcome:
@@ -207,6 +216,8 @@ def register_tools(mcp, gateway, authority, runtime):
             actor = await authority()
             for scope in ("files:read", "files:write", "audits:write"):
                 actor.require(scope)
+            if by_key(customer) is None:
+                raise workflow.Rejected("customer_required")
             tid = workflow.task_id_for(actor.session.principal.user_id, rid)
             options = {"customer": customer, "deep_mode": deep_mode, "follows_task_id": str(follows_task_id) if follows_task_id else None}
             await runtime.prepare(actor, tid, workflow.parse_source(source), options)

@@ -63,6 +63,22 @@ class SchemaUpgradeTests(unittest.TestCase):
                 ),
                 "save distinct operation intents before migration replay",
             )
+            # Recognition is written only in the shape task acceptance gives it.
+            recognition = "INSERT INTO engine.jobs(id,tenant_id,kind,payload,status) VALUES (gen_random_uuid(),'" + tenant_id + "','file_analysis','{}','queued')"
+            for payload in ('{"task_id":"t","task_revision":0}', '{"task_id":"t","task_revision":"0","candidate_rules":[]}', '{"task_revision":0,"candidate_rules":[]}'):
+                rejected = self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), empty, "-c", recognition.replace("'{}'", f"'{payload}'"))
+                self.assertNotEqual(rejected.returncode, 0, payload)
+                self.assertIn(b"file_analysis_task_bound", rejected.stderr or b"")
+            self.schema.require(
+                self.schema.psql(
+                    self.schema.migrator_user(),
+                    self.schema.migrator_password(),
+                    empty,
+                    "-c",
+                    recognition.replace("'{}'", """'{"task_id":"t","task_revision":2,"candidate_rules":[]}'"""),
+                ),
+                "save task-bound recognition before migration replay",
+            )
             second_apply = self.schema.apply(empty)
             self.schema.require(second_apply, "re-apply empty")
             repeated = [line.removeprefix("applying ") for line in (second_apply.stdout or b"").decode().splitlines() if line.startswith("applying ")]
@@ -156,7 +172,19 @@ class SchemaUpgradeTests(unittest.TestCase):
             self.assertIn("usage_events", names)
             self.assertIn("jobs", names)
             # Replayed creations of retired tables end dropped again.
-            self.assertTrue(names.isdisjoint({"rule_formalizations", "rule_formalization_operations", "rule_formalization_confirmations", "suite_upgrade_operations", "suite_official_update_views"}))
+            self.assertTrue(
+                names.isdisjoint(
+                    {
+                        "rule_formalizations",
+                        "rule_formalization_operations",
+                        "rule_formalization_confirmations",
+                        "suite_upgrade_operations",
+                        "suite_official_update_views",
+                        "suite_candidate_operations",
+                        "template_feedback",
+                    }
+                )
+            )
             # Checker history import columns, triggers and functions end dropped again.
             for database in (empty, previous):
                 history = self.schema.psql(
@@ -171,6 +199,17 @@ class SchemaUpgradeTests(unittest.TestCase):
                 )
                 self.schema.require(history, f"read retired history objects in {database}")
                 self.assertEqual(history.stdout.strip(), b"0", database)
+                # Credential copies outside provider_authorizations end dropped again.
+                copies = self.schema.psql(
+                    self.schema.migrator_user(),
+                    self.schema.migrator_password(),
+                    database,
+                    "-Atc",
+                    "SELECT count(*) FROM information_schema.columns WHERE table_schema='product' AND table_name IN ('sessions','mcp_grants')"
+                    " AND column_name IN ('access_token','refresh_token','access_expires_at','refresh_expires_at','provider_refresh_state')",
+                )
+                self.schema.require(copies, f"read credential copy columns in {database}")
+                self.assertEqual(copies.stdout.strip(), b"0", database)
         finally:
             for name in (empty, previous):
                 self.schema.psql(

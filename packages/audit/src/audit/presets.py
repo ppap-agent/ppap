@@ -129,16 +129,3 @@ def validate_preset_body(body: dict) -> CustomerPreset:
     if sorted(str(row.get("id")) for row in actual) != sorted(clause.id for clause in preset.clauses):
         raise ValueError("invalid_preset_clauses")
     return preset
-
-
-def preset_source_bindings(preset: CustomerPreset) -> dict[str, str]:
-    """Clause → implementation method declared by the preset's checker leaf."""
-    import ast
-
-    from audit.standard_suites import _CHECKERS_ROOT, customer_directory
-
-    source = (_CHECKERS_ROOT / customer_directory(preset.customer) / preset.entry_id / "resources.py").read_text(encoding="utf-8")
-    (resource,) = [
-        ast.literal_eval(node.value) for node in ast.parse(source).body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RESOURCE" for target in node.targets)
-    ]
-    return {clause.id: resource["methods"][clause.id] for clause in preset.clauses if clause.id in resource["methods"]}

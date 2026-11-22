@@ -204,38 +204,6 @@ class RulesList(TypedDict):
     rules: list[Rule]
 
 
-class RuleLibraryScope(TypedDict):
-    customer: str
-    part: str
-    revision: str
-    allCustomers: bool
-    allParts: bool
-    allRevisions: bool
-
-
-class RuleLibraryEntry(TypedDict):
-    id: str
-    title: str
-    version: str
-    scope: RuleLibraryScope
-    reason: str
-    created_at: str
-    predecessor_id: str | None
-    clause_count: int
-    document_type: str
-    document_type_aliases: list[str]
-    suite_key: str | None
-    source_review: Literal["unchecked", "partial", "checked"]
-
-
-class RuleLibrary(TypedDict):
-    versions: list[RuleLibraryEntry]
-
-
-class RuleTypes(TypedDict):
-    types: list[str]
-
-
 class RuleParseRequest(TypedDict):
     request_id: str
     source_file_id: str
@@ -385,18 +353,9 @@ class AuditUploadPreparation(TypedDict):
     files: list[AuditRecognitionInput]
 
 
-class DraftCreateRequest(TypedDict, total=False):
+class DraftCreateRequest(TypedDict):
     request_id: str
-    predecessor_id: str | None
-    items: list[DraftInputItem]
-    case_context: CaseContext
     upload_preparation: AuditUploadPreparation
-
-
-class DraftInputItem(TypedDict):
-    file_version_id: str
-    role: MaterialRole
-    rule_version_id: str | None
 
 
 class WritebackTargetRequest(TypedDict):
@@ -405,23 +364,10 @@ class WritebackTargetRequest(TypedDict):
     object_ref: str
 
 
-class DraftSaveRequest(TypedDict, total=False):
-    items: list[DraftInputItem]
-    writeback_target: WritebackTargetRequest | None
-    case_context: CaseContext
+class DraftSaveRequest(TypedDict):
     upload_preparation: AuditUploadPreparation
     expected_revision: int
-
-
-class DraftAcceptRequest(TypedDict):
-    idempotency_key: str
-    expected_model_revision: NotRequired[str | None]
-    predecessor_id: NotRequired[str | None]
-
-
-class DraftList(TypedDict):
-    drafts: list[Draft]
-    next_offset: int | None
+    writeback_target: NotRequired[WritebackTargetRequest | None]
 
 
 class XlsxCellLocator(TypedDict):
@@ -660,7 +606,6 @@ class Round(TypedDict):
     coverage: Coverage
     predecessor_id: str | None
     source_draft_id: str | None
-    preparation_allowed: NotRequired[bool]
     result_attempt: int | None
     result_job_id: NotRequired[str | None]
     created_at: str | None
@@ -682,36 +627,6 @@ class RoundSummaryRule(TypedDict):
     title: str
 
 
-class RoundSummaryInput(TypedDict):
-    role: MaterialRole
-    original_filename: str
-    file_version_id: str
-    rule: RoundSummaryRule | None
-
-
-class RoundSummary(TypedDict):
-    id: str
-    source_draft_id: NotRequired[str | None]
-    task_id: NotRequired[str | None]
-    execution: str
-    has_execution_error: NotRequired[bool]
-    predecessor_id: str | None
-    created_at: str | None
-    updated_at: NotRequired[str | None]
-    inputs: list[RoundSummaryInput]
-    result_counts: dict[str, int]
-    reviewed_count: int
-    uncovered_count: NotRequired[int]
-    case_title: str
-    case_scope: str
-    deep_mode: NotRequired[bool]
-
-
-class RoundList(TypedDict):
-    rounds: list[RoundSummary]
-    next_offset: int | None
-
-
 class ReviewRequest(TypedDict):
     item_key: str
     judgment: str
@@ -719,25 +634,6 @@ class ReviewRequest(TypedDict):
     next_step: str
     version: int
     citations: NotRequired[list[ReviewCitation]]
-
-
-class UsageEvent(TypedDict):
-    id: str
-    created_at: str
-    consumed_points: int
-    is_free_trial: bool
-    round_id: NotRequired[str | None]
-    file_version_id: NotRequired[str | None]
-    external_status: NotRequired[str]
-    external_record_id: NotRequired[str | None]
-    external_confirmed_at: NotRequired[str | None]
-    ai_item_id: NotRequired[str]
-    charge: NotRequired[Literal["audit", "deep_surcharge"]]
-
-
-class UsageList(TypedDict):
-    events: list[UsageEvent]
-    next_offset: int | None
 
 
 class AuditDurationInterval(TypedDict):
@@ -905,6 +801,8 @@ class AuditCompletionEstimate(TypedDict):
 class AuditEvidenceReference(TypedDict):
     file_version_id: str
     locator: SemanticLocator | None
+    # The locator in the one wording people read; absent exactly when the locator is.
+    label: str | None
     excerpt: str
     location_gap: str | None
     rendition: Literal["original", "derived"]
@@ -1260,6 +1158,7 @@ class AuditTaskIdentity(TypedDict):
     creator: AuditTaskCreator
     source_draft_id: str | None
     round_id: str | None
+    # The chosen rule set's key; None only on tasks from before every task named one (they are re-recognized under a chosen one).
     customer_preference: str | None
     completion_reason: Literal["no_matching_rules", "processed"] | None
     estimated_points: int | None
@@ -1282,7 +1181,8 @@ class AuditRecognitionInput(TypedDict):
 
 class AuditRecognitionRequest(TypedDict):
     request_id: str
-    customer_preference: str | None
+    # The registered customer key whose rule set the task uses; a task without one is refused with customer_required.
+    customer_preference: str
     files: list[AuditRecognitionInput]
     task_id: NotRequired[str]
     expected_revision: NotRequired[int]
@@ -1484,18 +1384,12 @@ class AuditArchivePart(TypedDict):
 
 
 class AuditArchiveCustomer(TypedDict):
-    """One customer's documents as the same vehicle/part tree; filter by `customer` = `id` plus a category id.
+    """The documents whose files write one customer, as the same vehicle/part tree; filter by `customer` = `name` plus a category id.
 
-    A registered customer is one node whichever registered name its documents recorded (`id` is its customer id).
-    A recorded value matching no registered customer is its own node, `registered` false, shown as recorded.
-    `values` are the recorded customer values in this node.
+    `name` is the customer value exactly as the files recorded it; it is never matched to a rule set or renamed.
     """
 
-    id: str
-    registered: bool
-    full_name: str
-    short_name: str
-    values: list[str]
+    name: str
     count: int
     categories: list[AuditArchiveCategory]
 
@@ -1521,7 +1415,6 @@ class AuditArchivePage(TypedDict):
     categories: list[AuditArchiveCategory]
     customer_groups: list[AuditArchiveCustomer]
     document_types: list[str]
-    customers: list[str]
     initiators: list[str]
 
 
@@ -1651,7 +1544,7 @@ class AuditUsageUnattributed(TypedDict):
 
 
 class CustomerTypeEntry(TypedDict):
-    """One document type of a customer's type set M: its PPAP code and the type name rules use."""
+    """One document type of a customer's type set M: its PPAP code and the type name rules use; `type_names` names it."""
 
     code: str
     rule_type: str
@@ -1668,12 +1561,14 @@ class CustomerCoverage(TypedDict):
 
 
 class AuditCustomer(TypedDict):
-    """A registered customer. `name` is the name rules and the customer preference use; null coverage means M is not configured."""
+    """A registered customer. `name` is the only name shown; `key` is what rules carry and a customer preference submits, never shown.
+
+    Null coverage means M is not configured.
+    """
 
     customer_id: str
     name: str
-    full_name: str
-    short_name: str
+    key: str
     coverage: CustomerCoverage | None
 
 
@@ -1683,16 +1578,18 @@ class AuditCustomerDefault(TypedDict):
 
 
 class AuditCustomerDefaultRequest(TypedDict):
-    customer_preference: Literal["UAES", "理想", "蔚来"] | None
+    customer_preference: Literal["UAES", "理想", "蔚来"]
     expected_revision: int
     confirmed: Literal[True]
 
 
 class AuditCustomerCatalog(TypedDict):
-    """Registered customers, and customer names on current rules that match no registered customer, exactly as recorded."""
+    """Registered customers, customer names on current rules that match no registered customer (as recorded), and the
+    one name of every document type code the product shows."""
 
     customers: list[AuditCustomer]
     unregistered: list[str]
+    type_names: dict[str, str]
 
 
 class AuditSupportInfo(TypedDict):
@@ -1707,7 +1604,7 @@ class AuditSupportInfo(TypedDict):
 
 
 class LibraryTemplate(TypedDict):
-    """One built-in customer template; `filename` is the clean download name."""
+    """One built-in customer template; `filename` is the clean download name and `document_type` names `type_code`."""
 
     id: str
     name: str
@@ -1715,7 +1612,7 @@ class LibraryTemplate(TypedDict):
     extension: str
     filename: str
     byte_size: int
-    type_code: str | None
+    type_code: str
 
 
 class TemplateCoverage(TypedDict):
@@ -1729,8 +1626,7 @@ class TemplateCoverage(TypedDict):
 
 class LibraryCustomer(TypedDict):
     id: str
-    full_name: str
-    short_name: str
+    name: str
     templates: list[LibraryTemplate]
     # Null when the customer's type set M is not configured; no ratio is shown then.
     coverage: TemplateCoverage | None

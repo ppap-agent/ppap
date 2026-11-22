@@ -29,8 +29,10 @@ from audit.audits import DEEP_PROTOCOL_REVISION, ClaimedJob
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest, runtime_revision
 from audit.standard_suites import library_revision
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 from product.db import connect
 from product.fixtures import RULE_A, RULE_B
+from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from product.storage import S3Objects
 from product.store.suites import SuiteStore
@@ -38,12 +40,25 @@ from pydantic import ValidationError
 from worker import process_claimed
 from worker.deep_controller import open_store
 
+
+def _workbook(value: str) -> bytes:
+    book = Workbook()
+    book.active["A1"] = value
+    stream = BytesIO()
+    book.save(stream)
+    book.close()
+    return stream.getvalue()
+
+
+# Built once, so the checker can name these exact bytes.
+TARGET_BYTES = _workbook("target-bytes")
+
 # This source checks only the exact synthetic fixture bytes. It is deliberately
 # not a PPAP business checker or a replacement for provider-semantic acceptance.
-FIXTURE_CHECKER = """from audit.contracts import AuditResultItem
+FIXTURE_CHECKER = f"""from audit.contracts import AuditResultItem
 
 def check(context):
-    matches = context.sources[context.audit_file.audit_id] == b"target-bytes"
+    matches = context.sources[context.audit_file.audit_id] == {TARGET_BYTES!r}
     return AuditResultItem(classification="fixture", item="Fixture bytes", priority="P0",
                            status="PASS" if matches else "NG", suggestions="Synthetic byte check",
                            clause_id=context.clause_id, checks_performed=1)
@@ -79,7 +94,7 @@ class ControlledCoreGuest:
     ids=["platform-unconfigured", "tenant-key"],
 )
 def test_controlled_guests_bind_full_frozen_model_identity(tmp_path, core_system, identity):
-    sources = {"target": b"target-bytes"}
+    sources = {"target": TARGET_BYTES}
     programs = {"checker.py": FIXTURE_CHECKER.encode()}
     digest = checker_digest(programs)
     rules = {"type": "控制计划", "rules": [{"id": "presence", "rule_to_check": "Fixture bytes"}]}
@@ -139,7 +154,8 @@ class DeepProtocolTests(unittest.TestCase):
 
 class CoreControllerTests(unittest.TestCase):
     @pytest.fixture(autouse=True)
-    def _owner_store(self, auth_store_factory, core_system):
+    def _owner_store(self, auth_store_factory, core_system, audit_round):
+        self.audit_round = audit_round
         self.auth_store = auth_store_factory
         self.core = core_system
 
@@ -187,19 +203,13 @@ class CoreControllerTests(unittest.TestCase):
         self.assertEqual(ready.status_code, 200)
         return ready.json()
 
-    def _accept(self, *uploads: dict, key: str = "core-1", rule_version_id: str = RULE_A) -> str:
-        draft = self.client.post("/drafts").json()["id"]
-        items = []
-        for index, row in enumerate(uploads):
-            if len(uploads) > 1 and index == len(uploads) - 1:
-                items.append({"file_version_id": row["id"], "role": "reference"})
-            else:
-                items.append({"file_version_id": row["id"], "role": "target", "rule_version_id": rule_version_id})
-        saved = self.client.put(f"/drafts/{draft}", json={"items": items})
-        self.assertEqual(saved.status_code, 200, saved.text)
-        accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": key})
-        self.assertEqual(accepted.status_code, 201, accepted.text)
-        return accepted.json()["id"]
+    def _accept(self, *uploads: dict, rule_version_id: str = RULE_A) -> str:
+        """Audit the uploads with the rule; with several, the last one is a reference."""
+        files = {row["id"]: rule_version_id for row in uploads}
+        if len(uploads) > 1:
+            files[uploads[-1]["id"]] = None
+        principal = self.store.load_session(self.client.cookies.get(SESSION_COOKIE)).principal
+        return self.audit_round(self.store, principal, files)["id"]
 
     def _start_controller(self) -> str:
         # Only RPC transport and the external object SDK are substituted. Tenant,
@@ -262,16 +272,16 @@ class CoreControllerTests(unittest.TestCase):
 
     def test_controller_rejects_changed_identity_and_frozen_inputs_before_object_reads(self):
         self._login()
-        target = self._upload("report.xlsx", b"target-bytes")
-        reference = self._upload("context.txt", b"reference-bytes")
-        round_id = self._accept(target, reference, key="core-authorized")
+        target = self._upload("report.xlsx", TARGET_BYTES)
+        reference = self._upload("context.xlsx", _workbook("reference-bytes"))
+        round_id = self._accept(target, reference)
         claimed = self.store.claim_job("deep-worker")
         spec = self._claimed_spec(claimed)
         original = spec.model_dump()
 
         self.assertEqual(self.client.post("/isolated-dev/sessions", json={"subject": "carol"}).status_code, 200)
-        other_file = self._upload("other-tenant.xlsx", b"other-tenant-bytes")
-        other_round = self._accept(other_file, key="core-other-tenant", rule_version_id=RULE_B)
+        other_file = self._upload("other-tenant.xlsx", _workbook("other-tenant-bytes"))
+        other_round = self._accept(other_file, rule_version_id=RULE_B)
         other_claimed = self.store.claim_job("other-worker")
         other_spec = self._claimed_spec(other_claimed)
         client = DeepClient(self._start_controller())
@@ -327,8 +337,8 @@ class CoreControllerTests(unittest.TestCase):
 
     def test_controller_checks_stored_bytes_against_the_authorized_frozen_digest(self):
         self._login()
-        target = self._upload("report.xlsx", b"target-bytes")
-        self._accept(target, key="core-corrupted-object")
+        target = self._upload("report.xlsx", TARGET_BYTES)
+        self._accept(target)
         claimed = self.store.claim_job("deep-worker")
         spec = self._claimed_spec(claimed)
         client = DeepClient(self._start_controller())
@@ -347,9 +357,9 @@ class CoreControllerTests(unittest.TestCase):
 
     def test_technical_retry_fencing_rejects_stale_attempt(self):
         self._login()
-        target = self._upload("report.xlsx", b"target-bytes")
+        target = self._upload("report.xlsx", TARGET_BYTES)
         self.settings.deep_controller_socket = self._start_controller()
-        round_id = self._accept(target, key="core-fence")
+        round_id = self._accept(target)
         first = self.store.claim_job("w1")
         self.assertEqual(first.attempt, 1)
         self.assertIsNone(self.store.claim_job("w2"))
@@ -392,8 +402,8 @@ class CoreControllerTests(unittest.TestCase):
 
     def test_progress_uses_current_lease_and_survives_failure_completion(self):
         self._login()
-        target = self._upload("report.xlsx", b"target-bytes")
-        round_id = self._accept(target, key="core-progress")
+        target = self._upload("report.xlsx", TARGET_BYTES)
+        round_id = self._accept(target)
         first = self.store.claim_job("w1")
         progress = {"phase": "checking", "completed_count": 1, "total_count": 3}
         self.assertFalse(self.store.audit_progress(first, "w2", progress))

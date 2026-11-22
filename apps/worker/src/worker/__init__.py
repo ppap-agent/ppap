@@ -34,15 +34,6 @@ def worker_id(explicit: str) -> str:
     return explicit or f"{socket.gethostname()}-{os.getpid()}"
 
 
-def run_claimed_job(kind: str, payload: dict) -> dict:
-    """Execute one claimed job with in-repo checkers. Round jobs are completed by process_claimed."""
-    if kind != "audit":
-        return {"error": "unsupported_job_kind", "note": "unsupported_job_kind"}
-    if payload.get("round_id"):
-        return {"note": "round_audit", "round_id": payload.get("round_id")}
-    return {"error": "checker_snapshot_required", "note": "checker_snapshot_required"}
-
-
 def process_file_job(store, claimed, ident, ai=None) -> dict:
     from product.files import READY
     from product.rules import RuleParseError
@@ -63,29 +54,30 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
     try:
         try:
             payload = claimed.payload
-            if claimed.kind == "file_analysis" and payload.get("task_id") and not store.recognition_job_current(claimed):
-                obsolete = {"error": "recognition_superseded"}
-                accepted = store.complete_job(claimed, ident, obsolete, "failed")
-                emit("job_completed" if accepted else "job_result_discarded", outcome="failed", note="recognition_superseded")
-                return obsolete
+            if claimed.kind == "file_analysis":
+                # Only task acceptance creates recognition: its task, revision and frozen candidates.
+                if not (isinstance(payload.get("task_id"), str) and type(payload.get("task_revision")) is int and isinstance(payload.get("candidate_rules"), list)):
+                    raise RuleParseError("recognition_task_required")
+                if not store.recognition_job_current(claimed):
+                    obsolete = {"error": "recognition_superseded"}
+                    accepted = store.complete_job(claimed, ident, obsolete, "failed")
+                    emit("job_completed" if accepted else "job_result_discarded", outcome="failed", note="recognition_superseded")
+                    return obsolete
             version = store.get_version(payload["source_file_id"], payload["source_file_version_id"])
             if version is None or version.tenant_id != claimed.tenant_id or version.status != READY:
                 raise RuleParseError("file_not_ready")
             if claimed.kind == "file_validation":
                 result = validate_file(version.original_filename, store.version_bytes(version), scope=payload.get("scope"))
             elif claimed.kind == "file_analysis":
-                scoped = payload.get("matching_scope") == "customer_document_type"
-                candidates = payload["candidate_rules"] if scoped else store.list_rules(claimed.tenant_id)
                 result = (
                     dict(payload["confirmed_match"])
-                    if payload.get("confirmed_match") and scoped
+                    if payload.get("confirmed_match")
                     else analyze_file(
                         version.original_filename,
                         store.version_bytes(version),
-                        candidates,
+                        payload["candidate_rules"],
                         ai=ai,
-                        customer_preference=payload.get("customer_preference"),
-                        scoped=scoped,
+                        customer_preference=payload["customer_preference"],
                         reference_only=bool(payload.get("reference_only")),
                         validation_scope=payload.get("validation_scope"),
                     )
@@ -131,11 +123,12 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
         if claimed.kind in FILE_PREPARATION_KINDS:
             return process_file_job(store, claimed, ident, rule_ai)
         if claimed.kind != "audit" or not claimed.round_id:
-            diagnostic = run_claimed_job(claimed.kind, claimed.payload or {})
-            outcome = "failed" if diagnostic.get("error") else "succeeded"
-            accepted = store.complete_job(claimed, ident, {**diagnostic, "findings": [], "coverage": {}}, outcome)
-            emit("job_completed" if accepted else "job_result_discarded", outcome=outcome, note=diagnostic.get("note"))
-            return diagnostic
+            # An unknown kind, or an audit without a frozen round, fails; nothing runs.
+            error = "unsupported_job_kind" if claimed.kind != "audit" else "checker_snapshot_required"
+            result: dict = {"error": error, "note": error}
+            accepted = store.complete_job(claimed, ident, result, "failed")
+            emit("job_completed" if accepted else "job_result_discarded", outcome="failed", note=error)
+            return result
         work = store.round_work(claimed.round_id)
         if work is None:
             result = {"note": "missing_round", "findings": [], "coverage": {}}
@@ -154,7 +147,6 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
 
 def process_report_job(store, claimed, ident) -> dict:
     from documents.audit_pdf import render_audit_pdf
-    from product.customers import full_name
 
     try:
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -162,7 +154,7 @@ def process_report_job(store, claimed, ident) -> dict:
             if claimed.kind == "report_zip":
                 result = store.build_report_package(claimed, generated_at, cancelled)
             else:
-                body = render_audit_pdf({**claimed.payload["report_input"], "generated_at": generated_at}, customer_name=full_name)
+                body = render_audit_pdf({**claimed.payload["report_input"], "generated_at": generated_at})
                 if cancelled.is_set():
                     raise ValueError("report_lease_unknown")
                 result = store.write_audit_report(claimed, body, generated_at)
@@ -218,13 +210,11 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
     from audit.checker_core import runtime_revision
     from audit.standard_suites import library_revision
 
-    settings = getattr(store, "settings", None)
+    settings = store.settings
     payload = claimed.payload if isinstance(claimed.payload, dict) else {}
     executor = payload.get("executor")
     revision = payload.get("executor_revision")
     try:
-        if settings is None:
-            raise ValueError("settings_required")
         expected_revision = runtime_revision(settings.deep_execution_revision(payload.get("model_identity")), library_revision())
     except (ValueError, AttributeError, KeyError, TypeError):
         return failure_result("executor_revision_mismatch"), "failed"
@@ -232,7 +222,7 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
         return failure_result("checker_snapshot_required"), "failed"
     if revision != expected_revision:
         return failure_result("executor_revision_mismatch"), "failed"
-    socket_path = str(getattr(settings, "deep_controller_socket", "") if settings else "").strip()
+    socket_path = settings.deep_controller_socket.strip()
     if not socket_path:
         return failure_result("deep_runtime_unavailable"), "failed"
     try:

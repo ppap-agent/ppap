@@ -11,7 +11,7 @@ from agent.protocol import ExecuteRequest, ExecuteResponse
 def core_response(
     spec: ExecuteRequest, snapshot: ExecutionSnapshot, result: dict, *, deep: dict[str, dict[str, str]] | None = None, reviews: dict[tuple[str, str], dict] | None = None
 ) -> ExecuteResponse:
-    """``deep`` is given exactly for a deep-mode round: each target's deep review state.
+    """``deep`` is given exactly for a deep-mode round: the review state of each target for which deep review applies.
 
     ``reviews`` holds the deep reviewer's record per (file, clause): confirmed, corrected
     (the finding already carries the corrected verdict) or rejected (the program verdict stays).
@@ -19,9 +19,15 @@ def core_response(
     targets = {target.file_version_id: target for target in snapshot.targets}
     executed = [(item, [finding for finding in result["findings"] if finding["file_version_id"] == item.file_version_id]) for item in spec.files if item.role == "target"]
     usage = {key: result[key] for key in ("input_tokens", "output_tokens", "model_requests") if type(result.get(key)) is int and result[key] >= 0}
-    response = checker_response(spec, executed, usage=usage, usage_source="provider" if len(usage) == 3 else "unknown")
-    unsupported = {(row["file_version_id"], row["clause_id"]) for row in result["coverage"] if row["coverage"] == "unsupported"}
-    response.findings = [item for item in response.findings if ((item.locator or {}).get("file_version_id"), (item.locator or {}).get("rule_item_id")) not in unsupported]
+    unsupported = frozenset((row["file_version_id"], row["clause_id"]) for row in result["coverage"] if row["coverage"] == "unsupported")
+    response = checker_response(
+        spec,
+        executed,
+        unsupported=unsupported,
+        unavailable_sources=frozenset(result.get("unavailable_sources", ())),
+        usage=usage,
+        usage_source="provider" if len(usage) == 3 else "unknown",
+    )
     for finding in response.findings:
         version = (finding.locator or {}).get("file_version_id")
         if version in targets:
@@ -32,16 +38,11 @@ def core_response(
                 # Kept apart from human review; evidence of a correction is already the finding's sources.
                 finding.locator["semantic"]["deep_review"] = {key: value for key, value in record.items() if key not in {"clause_id", "evidence"}}
     for row in response.coverage.rule_items:
-        version, clause = row["file_version_id"], row["rule_item_id"]
-        target = targets[version]
+        target = targets[row["file_version_id"]]
         row["suite_revision_id"] = target.suite_revision_id
         row["checker_digest"] = target.binding.checker_digest
         row["verification_status"] = target.verification
         row["samples_not_rerun"] = target.samples_not_rerun
-        if (version, clause) in unsupported:
-            row.update(coverage="unsupported", reason="未检查：这条没有对应的检查，由人判断。")
-            row.pop("item_key", None)
-            row.pop("status", None)
     response.coverage.checker_execution = {
         "input_digest": spec.checker_snapshot_digest,
         "execution_input_digest": result["input_digest"],
@@ -56,7 +57,7 @@ def core_response(
                 "checker_digest": target.binding.checker_digest,
                 "verification_status": target.verification,
                 "samples_not_rerun": target.samples_not_rerun,
-                **({"deep_review": dict(deep[target.file_version_id])} if deep is not None else {}),
+                **({"deep_review": dict(deep[target.file_version_id])} if deep is not None and target.file_version_id in deep else {}),
             }
             for target in snapshot.targets
         ],

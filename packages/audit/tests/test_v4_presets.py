@@ -1,6 +1,7 @@
 """Independent V4 source identities; these tests do not certify Checker coverage."""
 
 import pytest
+from audit.kinds import PpapDocumentType
 from audit.presets import preset_rule, preset_rule_body
 
 
@@ -46,26 +47,25 @@ def test_sources_without_summary_column_keep_the_rule_not_the_example():
 
 
 def test_customer_resolver_never_borrows_another_customer_identity():
-    from audit.checker_lib.nio.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent
-    from audit.engine.routing import resolve_engine_agent_class
-    from audit.kinds import PpapDocumentType
-
-    kind = PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST
-    assert resolve_engine_agent_class(kind, "source.xlsx", "v4", preset_key="N04", preset_customer="蔚来") is ProcessSpecialCharacteristicAgent
     with pytest.raises(ValueError, match="unknown_customer_rule"):
-        resolve_engine_agent_class(kind, "source.xlsx", "v4", preset_key="N04", preset_customer="UAES")
-    with pytest.raises(ValueError, match="preset_document_type_mismatch"):
-        resolve_engine_agent_class(PpapDocumentType.CONTROL_PLAN, "source.xlsx", "v4", preset_key="N04", preset_customer="蔚来")
+        preset_rule("UAES", "N04")
 
 
-def test_missing_v3_overlay_does_not_select_v2(monkeypatch):
-    from audit.checker_lib.li.control_plan_agent import ControlPlanAgent
-    from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent
-    from audit.engine import routing
-    from audit.kinds import PpapDocumentType
-
-    kind = PpapDocumentType.CONTROL_PLAN
-    monkeypatch.delitem(routing.V3_OVERLAY_EXCEL_AGENTS, kind)
-    assert routing.resolve_engine_agent_class(kind, "control.xlsx", "v3") is None
-    assert routing.resolve_engine_agent_class(kind, "control.xlsx", "v2") is ControlPlanAgent
-    assert routing.resolve_engine_agent_class(kind, "control.xlsx", "v4", preset_key="U08", preset_customer="UAES") is UaesControlPlanAgent
+@pytest.mark.parametrize(
+    ("rule_type", "expected"),
+    [
+        ("控制计划", PpapDocumentType.CONTROL_PLAN),
+        ("Control plan", PpapDocumentType.CONTROL_PLAN),
+        ("PFMEA", PpapDocumentType.PFMEA),
+        ("全功能检验报告", PpapDocumentType.DIMENSION_MEASUREMENT_REPORT),
+        ("尺寸检验报告", PpapDocumentType.DIMENSION_MEASUREMENT_REPORT),
+        ("特殊特性清单", PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST),
+        ("检具认可报告", PpapDocumentType.CHECKING_FIXTURE_APPROVAL_REPORT),
+        ("测量系统分析报告", PpapDocumentType.MSA_REPORT),
+        ("CP", PpapDocumentType.CONTROL_PLAN),
+        ("not-exists", PpapDocumentType.UNKNOWN),
+        ("", PpapDocumentType.UNKNOWN),
+    ],
+)
+def test_document_type_names_and_aliases(rule_type: str, expected: PpapDocumentType) -> None:
+    assert PpapDocumentType.from_string(rule_type) is expected

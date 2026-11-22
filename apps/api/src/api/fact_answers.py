@@ -10,6 +10,7 @@ from product.mcp import Delegation, McpError
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 
 from api.mcp_confirmation import require_approved_source
+from api.web_contract import SemanticLocator
 
 
 class FactQuestionView(BaseModel):
@@ -17,7 +18,8 @@ class FactQuestionView(BaseModel):
     field: str
     prompt: str
     answer_type: Literal["boolean", "text"]
-    locator: dict[str, Any]
+    locator: SemanticLocator
+    label: str
     clause_ids: list[str]
     item_keys: list[str]
     fingerprint: str

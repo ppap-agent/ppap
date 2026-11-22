@@ -20,7 +20,7 @@ def _check(tmp_path, monkeypatch, book: Workbook, remarks: str, remark_at: tuple
     monkeypatch.setattr(UaesApprovalAgent, "identity", lambda self, ctx, sheet: ("F01RD0YC50", "机加工壳体"))
     monkeypatch.setattr(UaesApprovalAgent, "deviation_lists", lambda self, ctx, part, name: [None])
     body = preset_rule_body("UAES", "U19")
-    agent = UaesApprovalAgent(AuditInput(audit_id="u19", file_url=str(path)), RuleInput(rule_id="u19", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesApprovalAgent(AuditInput(audit_id="u19", file_url=str(path)), RuleInput.of(body, rule_id="u19"))
     return agent.check([name for name, _ in agent.declared_rules()].index("rule_1"))
 
 

@@ -34,9 +34,10 @@ export function templateKey(rule: Rule): string {
   return customer ? `customer:${customer}` : PENDING_TEMPLATE;
 }
 
-export function templateName(key: string): string {
+/** A template's name; a customer's built-in rules are named by the customer's registered name. */
+export function templateName(key: string, customers: RegisteredCustomer[] | null): string {
   if (key === SHARED_TEMPLATE) return '通用规则';
-  if (key.startsWith('system:')) return `${key.slice('system:'.length)} 规则`;
+  if (key.startsWith('system:')) return `${customerName(customers, key.slice('system:'.length))} 规则`;
   return key.replace(/^customer:/, '');
 }
 
@@ -59,7 +60,7 @@ export function templates(rules: Rule[]): Map<string, Rule[]> {
 
 /** The template a task is using: one whose customer is the task's, the space's last choice first. */
 export function currentTemplate(all: Map<string, Rule[]>, customer: string | null, remembered: string | null): string | null {
-  const owned = [...all.keys()].filter(key => customer && templateOwner(key) && sameCustomer(templateOwner(key)!, customer));
+  const owned = [...all.keys()].filter(key => customer && templateOwner(key) === customer.trim());
   return remembered && owned.includes(remembered) ? remembered : owned.find(key => key.startsWith('system:')) ?? owned[0] ?? null;
 }
 
@@ -198,24 +199,18 @@ export function standing(latest: Task | null, previous: Task | null): Standing {
   return { issues, resolved };
 }
 
-const plain = (name: string) => name.trim().toLowerCase().replace(/[（(].*?[)）]/g, '').replace(/汽车$/, '');
-/** "理想" and "理想汽车" name one customer, as in the web app. */
-const sameCustomer = (left: string, right: string) => {
-  const a = plain(left);
-  const b = plain(right);
-  return Boolean(a && b) && (a === b || a.startsWith(b) || b.startsWith(a));
-};
+/** A registered customer as GET /audit-customers lists it: the one name shown, the key rules and a customer choice carry, and its document type set. */
+export type RegisteredCustomer = { customer_id: string; name: string; key: string; coverage: { types: { code: string; rule_type: string }[] } | null };
+/** GET /audit-customers: the registered customers and the one name of every document type code. */
+export type CustomerCatalog = { customers: RegisteredCustomer[]; type_names: Record<string, string> };
 
-/** A registered customer as GET /audit-customers lists it: full and short name, and its document type set. */
-export type RegisteredCustomer = { customer_id: string; name: string; full_name: string; short_name: string; coverage: { types: { code: string; rule_type: string }[] } | null };
+/** The registered customer whose rule set a key names (a task's choice, a rule's customers); a company name a file writes is never looked up. */
+export const registeredCustomer = (customers: RegisteredCustomer[] | null, key: string | null) => (key ? customers?.find(customer => customer.key === key) : undefined);
+/** The name people read for a chosen rule set: the registered name by its key; an enterprise's own rule set is named by itself. */
+export const customerName = (customers: RegisteredCustomer[] | null, key: string) => registeredCustomer(customers, key)?.name ?? key;
 
-/** The registered customer a recorded value names exactly (full or short name, or its rule name); nothing is matched by prefix. */
-export const registeredCustomer = (customers: RegisteredCustomer[] | null, value: string | null) => {
-  const text = value?.trim();
-  return text ? customers?.find(customer => customer.full_name === text || customer.short_name === text || customer.name === text) : undefined;
-};
-/** The registered full name; an unregistered value is shown as recorded. */
-export const customerFullName = (customers: RegisteredCustomer[] | null, value: string | null) => registeredCustomer(customers, value)?.full_name ?? value?.trim() ?? '';
+/** A document type's name from the register's one table; an unlisted type, or one before the register is read, is shown as recorded. */
+export const documentTypeName = (typeNames: Record<string, string> | null, type: string) => typeNames?.[type] ?? type;
 
 /** The document types of the customer's registered type set; the customer type decides what a part must submit. */
 export function requiredTypes(customers: RegisteredCustomer[] | null, customer: string | null): string[] {

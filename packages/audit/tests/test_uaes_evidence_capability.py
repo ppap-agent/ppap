@@ -17,7 +17,7 @@ def _check(tmp_path, rows, rule):
     path = tmp_path / "capability.xlsx"
     book.save(path)
     body = preset_rule_body("UAES", "U06")
-    agent = UaesCapabilityAgent(AuditInput(audit_id="capability", file_url=str(path)), RuleInput(rule_id="u06", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesCapabilityAgent(AuditInput(audit_id="capability", file_url=str(path)), RuleInput.of(body, rule_id="u06"))
     return agent.check([name for name, _ in agent.declared_rules()].index(rule))
 
 

@@ -16,7 +16,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from audit.checker_lib.nio.excel_agent import rule
+from audit.checker_lib.excel_agent import rule
 from audit.engine.rule_engine import GuardStop, RuleContext
 
 from .excel import UaesExcelAgent, compact, unable
@@ -270,14 +270,10 @@ class _XlsWarrant:
 class UaesWarrantAgent(UaesExcelAgent):
     DOCUMENT_MODULE = resources
     EXTRA_RESOURCE = combine(resources.DOCUMENT)
-
-    def _load_workbook(self):
-        # Nothing on a warrant is read as a table, so the original is not converted.
-        if self._workbook_cache is None:
-            from openpyxl import Workbook
-
-            self._workbook_cache = Workbook()
-        return self._workbook_cache
+    # Nothing on a warrant is read as a table, so the original is not converted; a layout the
+    # warrant reader has not declared (any DOCX among them) is UNABLE in its transcription.
+    SUPPORTED_EXTENSIONS = frozenset({".xlsx", ".xls", ".xlsm", ".docx", ".pdf"})
+    TABLES = False
 
     def transcription(self) -> dict[str, Any]:
         """The warrant as the warrant schema, read once for all clauses."""

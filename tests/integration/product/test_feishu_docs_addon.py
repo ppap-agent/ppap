@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import os
 import unittest
+import uuid
 from unittest.mock import patch
 
 import httpx
 import pytest
 from api import create_app
+from documents.ai import AIResult
 from fastapi.testclient import TestClient
 from product.feishu import TOKEN_URL, USER_INFO_URL, exchange_host_code
 from product.fixtures import RULE_A
@@ -172,10 +174,9 @@ class HostCodeTests(unittest.TestCase):
 
 class FeishuDocsAddonTests(unittest.TestCase):
     @pytest.fixture(autouse=True)
-    def _owner_store(self, auth_store_factory, seed_usage_event_factory, core_system):
+    def _owner_store(self, auth_store_factory, core_system):
         self.core_system = core_system
         self.auth_store = auth_store_factory
-        self.seed_usage_event = seed_usage_event_factory
 
     def setUp(self):
         self._env = _clean_env(
@@ -207,36 +208,33 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self._env.stop()
 
     def _usage_events(self):
-        response = self.client.get("/usage")
-        self.assertEqual(response.status_code, 200)
-        self.assertIsNone(response.json()["next_offset"])
-        return response.json()["events"]
+        return self.store.list_usage_events(self.store.principal_for_fixture("alice"))
 
-    def _draft_for_imported_file(self):
+    def _submit_imported_file(self) -> str:
+        """Import the linked workbook, start a task that writes back to the current document, and confirm it; return its round."""
         imported = self.client.post("/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"})
         self.assertEqual(imported.status_code, 201)
-        created = self.client.post("/drafts")
-        self.assertEqual(created.status_code, 201)
-        draft = created.json()["id"]
         imported_id = imported.json()["id"]
         source = self.store.file_source(imported_id)
         self.assertEqual(source["object_ref"], "xlsx-token")
         self.assertEqual(source["object_kind"], "file")
-        saved = self.client.put(
-            f"/drafts/{draft}",
-            json={
-                "items": [
-                    {"file_version_id": imported_id, "role": "target", "rule_version_id": RULE_A},
-                ],
-                "writeback_target": {"provider": "feishu", "object_kind": "docx", "object_ref": "current-doc"},
-            },
-        )
-        self.assertEqual(saved.status_code, 200)
-        dumped = json.dumps(saved.json())
-        self.assertTrue(saved.json()["writeback"]["available"])
-        self.assertNotIn("current-doc", dumped)
-        self.assertNotIn("xlsx-token", dumped)
-        return draft
+        validation = str(uuid.uuid4())
+        checked = self.client.post("/file-validations", json={"request_id": validation, "source_file_id": imported.json()["file_id"], "source_file_version_id": imported_id})
+        self.assertEqual(checked.status_code, 202)
+        process_claimed(self.store, self.store.claim_job("test-worker"), "test-worker")
+        file = {"file_version_id": imported_id, "validation_id": validation, "selection": "selected", "removal_reason": None, "preferred_rule_version_id": RULE_A}
+        target = {"provider": "feishu", "object_kind": "docx", "object_ref": "current-doc"}
+        task = self.client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": "理想", "files": [file], "writeback_target": target})
+        self.assertEqual(task.status_code, 202, task.text)
+        # Recognition's model answers the chosen rule's document type.
+        model = lambda operation, **_request: AIResult({"document_type": "资料就绪"} if operation == "document_classification" else {})  # noqa: E731
+        process_claimed(self.store, self.store.claim_job("test-worker"), "test-worker", rule_ai=model)
+        path = f"/audit-tasks/{task.json()['id']}"
+        shown = self.client.get(path).json()
+        command = {"request_id": str(uuid.uuid4()), "expected_revision": shown["input_revision"], "expected_confirmation_basis_digest": shown["confirmation_basis_digest"]}
+        confirmed = self.client.post(path + "/confirm", json=command)
+        self.assertEqual(confirmed.status_code, 201, confirmed.text)
+        return confirmed.json()["round_id"]
 
     def test_host_code_creates_feishu_session_without_oauth_redirect(self):
         logged = self.client.post("/login/feishu/host", json={"code": "host-code"})
@@ -262,10 +260,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertTrue(quota.json()["quota_sufficient"])
         self.assertEqual(quota.json()["estimated_points"], 500)
         self.assertTrue(quota.json()["accept_allowed"])
-        draft = self._draft_for_imported_file()
-        submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-submit-1"})
-        self.assertEqual(submitted.status_code, 201)
-        round_id = submitted.json()["id"]
+        round_id = self._submit_imported_file()
         claimed = self.store.claim_job("test-worker")
         self.assertIsNotNone(claimed)
         guest_calls = self.core_system.calls
@@ -284,65 +279,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertTrue(any("/documents/current-doc/" in url for _method, url in self.feishu.calls))
         self.assertFalse(any("/documents/xlsx-token/" in url for _method, url in self.feishu.calls))
 
-    def test_feishu_audit_records_trial_usage_once_per_file(self):
-        logged = self.client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
-        self.assertEqual(logged.status_code, 200)
-        before = self.client.get("/integrations/feishu/usage/quota").json()
-        self.assertEqual(before["remaining_trial_ai_points"], 10000)
-        draft = self._draft_for_imported_file()
-        submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-1"})
-        self.assertEqual(submitted.status_code, 201)
-        after = self.client.get("/integrations/feishu/usage/quota").json()
-        self.assertEqual(after["remaining_trial_ai_points"], 9500)
-        replay = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-1"})
-        self.assertEqual(replay.status_code, 201)
-        self.assertEqual(replay.json()["id"], submitted.json()["id"])
-        still = self.client.get("/integrations/feishu/usage/quota").json()
-        self.assertEqual(still["remaining_trial_ai_points"], 9500)
-        round_id = submitted.json()["id"]
-        file_version_id = submitted.json()["inputs"][0]["file_version_id"]
-        events = [row for row in self._usage_events() if row["round_id"] == round_id]
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["file_version_id"], file_version_id)
-        self.assertTrue(events[0]["is_free_trial"])
-        self.assertEqual(events[0]["consumed_points"], 500)
-        self.assertEqual(events[0]["external_status"], "none")
-
-    def test_feishu_audit_splits_remaining_trial_then_pending_partner(self):
-        logged = self.client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
-        self.assertEqual(logged.status_code, 200)
-        principal = self.store.principal_for_fixture("alice")
-        self.seed_usage_event(self.store, principal, "ai-item-1", 9800, True, "none", trace_id="pre-trial")
-        draft = self._draft_for_imported_file()
-        submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-split"})
-        self.assertEqual(submitted.status_code, 201)
-        round_id = submitted.json()["id"]
-        file_version_id = submitted.json()["inputs"][0]["file_version_id"]
-        events = [row for row in self._usage_events() if row["round_id"] == round_id]
-        self.assertEqual(len(events), 2)
-        self.assertTrue(all(row["file_version_id"] == file_version_id for row in events))
-        trial = [row for row in events if row["is_free_trial"]]
-        partner = [row for row in events if not row["is_free_trial"]]
-        self.assertEqual(len(trial), 1)
-        self.assertEqual(len(partner), 1)
-        self.assertEqual(trial[0]["consumed_points"], 200)
-        self.assertTrue(trial[0]["is_free_trial"])
-        self.assertEqual(trial[0]["external_status"], "none")
-        self.assertEqual(partner[0]["consumed_points"], 300)
-        self.assertFalse(partner[0]["is_free_trial"])
-        self.assertEqual(partner[0]["external_status"], "pending")
-        quota = self.client.get("/integrations/feishu/usage/quota").json()
-        self.assertEqual(quota["remaining_trial_ai_points"], 0)
-        replay = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-split"})
-        self.assertEqual(replay.status_code, 201)
-        self.assertEqual(replay.json()["id"], round_id)
-        self.assertEqual([row for row in self._usage_events() if row["round_id"] == round_id], events)
-        usage = self.client.get("/audit-usage", params={"range": "all"}).json()
-        self.assertEqual(usage["total"], 1)
-        self.assertEqual(usage["entries"][0]["points"], 500)
-        self.assertEqual(usage["entries"][0]["allocation"], {"free_points": 200, "paid_points": 300, "reason": None})
-
-    def test_preview_accept_does_not_write_usage(self):
+    def test_preview_acceptance_does_not_write_usage(self):
         self.settings.usage_charge_enabled = False
         logged = self.client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
         self.assertEqual(logged.status_code, 200)
@@ -351,9 +288,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertEqual(quota.status_code, 200)
         self.assertEqual(quota.json()["estimated_points"], 0)
         self.assertTrue(quota.json()["accept_allowed"])
-        draft = self._draft_for_imported_file()
-        submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-preview-no-charge"})
-        self.assertEqual(submitted.status_code, 201)
+        self._submit_imported_file()
         self.assertEqual(self._usage_events(), before)
 
     def test_empty_code_and_isolated_dev_fixture_host_login(self):

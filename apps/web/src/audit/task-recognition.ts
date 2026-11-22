@@ -7,26 +7,26 @@ import {rememberRequest} from './routes.ts'
 type Task = components['schemas']['AuditTask']
 export type AuditRecognitionRead = components['schemas']['AuditRecognitionRead']
 export type AuditRecognitionAdapter = {
-  match: (files: Task['files'], customer: string | null, previous: Task | null, requestId: string, predecessorId?: string, preparation?: {id: string; revision: number}) => Promise<Task>
+  match: (files: Task['files'], customer: string, previous: Task | null, requestId: string, predecessorId?: string, preparation?: {id: string; revision: number}) => Promise<Task>
   readRecognition: (taskId: string, requestId: string) => Promise<AuditRecognitionRead>
 }
-type RecognitionInput = {files: Task['files']; customer: string | null; previous: Task | null; predecessorId?: string; preparation?: {id: string; revision: number}}
+type RecognitionInput = {files: Task['files']; customer: string; previous: Task | null; predecessorId?: string; preparation?: {id: string; revision: number}}
 export type RecognitionObservation = {requestId: string; taskId: string; phase: 'sending' | 'reading' | 'unknown' | 'accepted' | 'rejected' | 'conflict'; message: string; traceId?: string; currentRevision?: number; currentState?: Task['state']}
 /** A matched rule is labelled with its rule set (the customer requirements it audits against); the customer a file writes stays one of the file's own recognized facts. */
 export function ruleCustomer(rule: NonNullable<Task['files'][number]['match']>['rule']): string {
   return rule?.body.kind === 'engine' ? rule.body.customers?.[0] ?? '' : ''
 }
 /**
- * The rules a person may point a file at by hand. With a rule set chosen only that set's rules and the explicitly
- * unrestricted ones qualify (any other set would be refused when the audit starts); in 自动识别 every rule is offered,
- * each titled with its rule set so two rules of the same name stay apart.
+ * The rules a person may point a file at by hand: the task's chosen rule set and the explicitly unrestricted rules
+ * (any other set would be refused when the audit starts). A task without a chosen rule set offers none.
  */
 export function ruleChoicesFor<T extends {id: string; title: string; customers?: string[]; customer_scope?: string}>(choices: T[], customer: string | null | undefined): {id: string; title: string}[] {
   const chosen = customer?.trim().toLowerCase()
+  if (!chosen) return []
   const sets = (rule: T) => (rule.customers ?? []).map(name => name.trim()).filter(Boolean)
   return choices
-    .filter(rule => !chosen || (rule.customer_scope === 'all' && !sets(rule).length) || sets(rule).some(name => name.toLowerCase() === chosen))
-    .map(rule => ({id: rule.id, title: !chosen && sets(rule).length ? `${sets(rule).join('、')} · ${rule.title}` : rule.title}))
+    .filter(rule => (rule.customer_scope === 'all' && !sets(rule).length) || sets(rule).some(name => name.toLowerCase() === chosen))
+    .map(rule => ({id: rule.id, title: rule.title}))
 }
 const unknownMessage = '识别请求结果尚未确认。文件与选择已保留；请查看原请求结果，不要重复开始识别。'
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from urllib.parse import urlencode
 
-from product.customers import full_name
+from product.customers import customer_name
 from product.feishu_drive import OPEN_API
 
 _MARKDOWN_ESCAPES = {ord(char): f"&#{ord(char)};" for char in "&<>*_~[]()\\#!`+-|{}:'\""}
@@ -93,9 +93,9 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
             if audit.get("counts"):
                 detail += " " + _counts_text(audit["counts"])
             blocks.append("**" + _markdown(row["file"]["original_filename"]) + "**<br>" + detail)
-    # The card body names the customer by its registered full name; automatic mode names none.
+    # The card body names the chosen rule set by its registered name; automatic mode names none.
     if stage != "zip_ready" and task.get("customer_preference"):
-        blocks.insert(1, "客户：" + _markdown(full_name(task["customer_preference"])))
+        blocks.insert(1, "审核客户：" + _markdown(customer_name(task["customer_preference"])))
     if stage != "zip_ready" and references:
         blocks.append("**比对资料**<br>" + "<br>".join(_markdown(row["file"]["original_filename"]) for row in references) + "<br><font color='grey'>已固定版本，不单独审核。</font>")
     params = {"view": "archive"} if archive_package else {"task": task["id"]}

@@ -20,7 +20,6 @@ def check_workbook(tmp_path: Path, agent_class, workbook: Workbook, rule_number:
         AuditInput(audit_id="target", file_url=str(path)),
         RuleInput(
             rule_id="confirmed-document-rules",
-            rule_profile="v3",
             type=agent_class.DOC_TYPE.get_type_name(),
             rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, rule_number + 1)],
         ),

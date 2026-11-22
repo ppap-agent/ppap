@@ -1,7 +1,7 @@
 """Rule clarification questionnaires: question cards found offline on a customer's rules, and the customer's answers.
 
-A questionnaire belongs to one enterprise (the tenant it was loaded for) and names one version of one registered
-customer's rules. It is loaded, closed and exported offline through the database (clause-check's questionnaire script);
+A questionnaire belongs to one enterprise (the tenant it was loaded for) and names one revision of one registered
+customer's rulebook. It is loaded, closed and exported offline through the database (clause-check's questionnaire script);
 here every member of the enterprise reads it and answers. Each member's answer to a card is their own and keeps its
 history; several members may answer the same card and no answer is final. Nothing here calls a model or touches rules,
 checkers or audit results.
@@ -36,12 +36,20 @@ def _member(conn, principal, *, write: bool = False) -> None:
 def _questionnaire(conn, principal, questionnaire_id: str) -> dict:
     """The enterprise's own questionnaire; another enterprise's, or none, is the same "missing"."""
     row = conn.execute(
-        "SELECT id,customer_id,rule_version,title,imported_at,closed_at FROM product.rule_questionnaires WHERE id=%s AND tenant_id=%s",
+        "SELECT id,customer_id,rule_version,title,imported_at,closed_at,rulebook_version,rulebook_revision FROM product.rule_questionnaires WHERE id=%s AND tenant_id=%s",
         (questionnaire_id, principal.tenant_id),
     ).fetchone()
     if row is None:
         raise KeyError("missing")
-    return {"id": str(row[0]), "customer_id": row[1], "rule_version": row[2], "title": row[3], "imported_at": row[4].isoformat(), "closed_at": row[5].isoformat() if row[5] else None}
+    return {
+        "id": str(row[0]),
+        "customer_id": row[1],
+        "rule_version": row[2],
+        "rulebook": {"version": row[6], "revision": row[7]},
+        "title": row[3],
+        "imported_at": row[4].isoformat(),
+        "closed_at": row[5].isoformat() if row[5] else None,
+    }
 
 
 def _summary(conn, principal, head: dict) -> dict:
@@ -54,7 +62,7 @@ def _summary(conn, principal, head: dict) -> dict:
     customer = customers.find(head["customer_id"])
     return {
         **head,
-        "customer_name": customer.short_name if customer else head["customer_id"],
+        "customer_name": customer.name if customer else head["customer_id"],
         "closed": head["closed_at"] is not None,
         "total": counts[0],
         "answered": counts[1],

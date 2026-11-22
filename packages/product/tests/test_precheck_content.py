@@ -194,14 +194,15 @@ def test_task_merges_content_findings_and_registers_uncovered_types():
         }
 
     content = {"cp": [{"criterion_id": "M-04", "criterion": "必列齐备", "result": "不满足", "code": "B05", "location": "Sheet1 第 1 行", "evidence": "已有列：工序号", "reason": "缺必列：反应计划"}]}
-    result = precheck_task({"files": [row("cp", "理想", "控制计划"), row("gauge", "蔚来", "检具验收报告")]}, content)
+    result = precheck_task({"customer_preference": "理想", "files": [row("cp", "理想", "控制计划")]}, content)
     assert [(item["code"], item["location"]) for item in result["blocks"]] == [("B05", "cp.xlsx › Sheet1 第 1 行")]
-    # 检具验收报告 (T05) is outside 蔚来's type set M: S01, never S02 (总纲 v0.21 §3.1).
-    assert [(item["code"], item["scope"], item["file_version_id"]) for item in result["statuses"]] == [("S01", "content", "gauge")]
-    levels = {item["file_version_id"]: (item["level"], item["entry_key"]) for item in result["files"]}
-    assert levels == {"cp": ("block", "L08"), "gauge": ("ok", None)}
+    assert [(item["file_version_id"], item["level"], item["entry_key"]) for item in result["files"]] == [("cp", "block", "L08")]
     assert result["files"][0]["criteria"] == content["cp"] and result["conclusion"] == "fail"
     assert entry_criteria("L08")[0].startswith("PPAP-10")
+    # 检具验收报告 (T05) is outside 蔚来's type set M: S01, never S02 (总纲 v0.21 §3.1).
+    outside = precheck_task({"customer_preference": "蔚来", "files": [row("gauge", "蔚来", "检具验收报告")]}, content)
+    assert [(item["code"], item["scope"], item["file_version_id"]) for item in outside["statuses"]] == [("S01", "content", "gauge")]
+    assert [(item["file_version_id"], item["level"], item["entry_key"]) for item in outside["files"]] == [("gauge", "ok", None)]
 
 
 def test_an_asterisk_marking_a_special_characteristic_is_not_a_template_placeholder():

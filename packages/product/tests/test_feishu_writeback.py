@@ -86,7 +86,7 @@ def test_core_assertions_allow_writeback_without_fabricating_scan_scope():
     assert writeback_state(body) == "ready"
     assert "审核结果：PASS" in history_text(body)
     text = json.dumps(report_blocks(body), ensure_ascii=False)
-    assert "Sheet1!A1" in text
+    assert "工作表「Sheet1」A1" in text
     assert "条款核验记录" not in text
     assert "scope" not in body["findings"][0]["locator"]["semantic"]
 

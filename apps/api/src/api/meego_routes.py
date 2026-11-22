@@ -20,13 +20,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from product.feishu import authorize_url
 from product.files import ObjectMissing
-from product.identity import SESSION_COOKIE, can_modify, new_token
+from product.identity import SESSION_COOKIE, new_token
 from product.logs import emit
 from product.meego import MAX_DOWNLOAD_BYTES, MeegoClient, MeegoError, WorkItemRef, work_item
 from product.meego_writeback import CONCLUSION_LABEL, marker, report_names, summary, task_link
 from product.store.meego import MeegoConnectError, MeegoStore
 from product.store.store import _as_uuid
 
+from api.access import object_denied
 from api.mcp_auth import page
 
 CONNECT_MESSAGES = {
@@ -400,9 +401,8 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
         session, binding, denied = host(request)
         if denied:
             return denied
-        resource = store.resource(round_id)
-        if resource is None or not can_modify(session.principal, resource):
-            return JSONResponse({"error": "access_denied"}, status_code=403)
+        if denied := object_denied(store, session.principal, round_id, modify=True):
+            return denied
         round_body = store.get_round(round_id)
         if round_body is None:
             return JSONResponse({"error": "access_denied"}, status_code=403)

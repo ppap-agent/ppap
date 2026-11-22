@@ -109,8 +109,9 @@ class RuleParsingTests(unittest.TestCase):
 
 class RuleApiTests(unittest.TestCase):
     @pytest.fixture(autouse=True)
-    def _owner_store(self, auth_store_factory):
+    def _owner_store(self, auth_store_factory, audit_round):
         self.auth_store = auth_store_factory
+        self.audit_round = audit_round
 
     def setUp(self):
         from api import create_app
@@ -227,13 +228,12 @@ class RuleApiTests(unittest.TestCase):
 
     def test_publishing_a_new_version_keeps_the_old_rule_and_round_unchanged(self):
         source = self.upload()
-        original = self.client.post("/rules", json={"title": "控制计划", "body": rule_body(), "source_file_version_id": source["id"]}).json()
+        # A task's rule group is a registered customer the rule applies to.
+        body = {**rule_body(), "customers": ["理想"]}
+        original = self.client.post("/rules", json={"title": "控制计划", "body": body, "source_file_version_id": source["id"]}).json()
         target = self.upload("控制计划.xlsx")
-        draft = self.client.post("/drafts").json()["id"]
-        self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": original["id"]}]})
-        round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "old-rule-round"}).json()["id"]
-        changed = rule_body()
-        changed["rules"][0]["rule_to_check"] = "新版要求"
+        round_id = self.audit_round(self.store, self.store.principal_for_fixture("alice"), {target["id"]: original["id"]})["id"]
+        changed = {**body, "rules": [{**body["rules"][0], "rule_to_check": "新版要求"}]}
         successor = self.client.post("/rules", json={"title": "控制计划", "body": changed, "source_file_version_id": source["id"], "predecessor_id": original["id"]})
         self.assertEqual(successor.status_code, 201)
         self.assertNotEqual(successor.json()["id"], original["id"])

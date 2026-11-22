@@ -21,7 +21,6 @@ from audit.audits import (
     ClaimedJob,
     RoundInput,
     RoundWork,
-    normalize_idempotency_key,
     normalize_review,
     normalize_role,
     request_fingerprint,
@@ -32,6 +31,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from product.checker_verification import frozen_checker_verification
+from product.customers import by_key
 from product.db import connect
 from product.feishu import CardAction, UserTokens
 from product.feishu_notifications import task_notification_card
@@ -84,13 +84,11 @@ from product.identity import (
 from product.rules import (
     FILE_PREPARATION_KINDS,
     customer_scope,
-    document_type_aliases,
     latest_rule_versions,
     normalize_rule_body,
     rule_parse_request,
     rule_parse_view,
     rule_title,
-    source_review,
 )
 from product.settings import Settings
 from product.storage import S3Objects
@@ -99,7 +97,6 @@ from product.store.task_view import file_round_audit, has_execution_error, repor
 from product.store.upload_preparation import PREPARATION_KEY, normalize_preparation, preparation_inputs, validate_preparation_update
 from product.writeback_targets import normalize_external_ref, public_target
 
-_MODEL_REVISION_UNSPECIFIED = object()
 # Display corrections cover these recognized fields. Receipts saved before
 # `project` existed keep their four keys; their project reads back as None.
 DISPLAY_FIELDS = ("customer", "model", "project", "part_number", "part")
@@ -504,9 +501,10 @@ class AuthStore:
                             conn=conn,
                         )
                         releases.publish(principal, body["suite_key"], program.id, 1, str(uuid.uuid5(uuid.NAMESPACE_URL, "isolated-dev-program:" + rule_id)), True, conn=conn)
+                    # A presence check that applies to every customer, so any task's rule group can use it.
                     conn.execute(
-                        "INSERT INTO product.rule_versions (id,tenant_id,title,body) VALUES (%s,%s,%s,%s)",
-                        (rule_id, tenant_id, "资料就绪", Jsonb(body)),
+                        "INSERT INTO product.rule_versions (id,tenant_id,title,body,case_context) VALUES (%s,%s,%s,%s,%s)",
+                        (rule_id, tenant_id, "资料就绪", Jsonb(body), Jsonb({"customer_scope": "all"})),
                     )
 
     def principal_for_fixture(self, name: str) -> Principal:
@@ -1227,8 +1225,11 @@ class AuthStore:
         predecessor = _as_uuid(str(body.get("predecessor_id") or ""))
         if body.get("predecessor_id") and not predecessor:
             raise ValueError("invalid_task_request")
-        if not request_id or not task_id or not isinstance(files, list) or not files or (customer is not None and (not isinstance(customer, str) or not customer.strip() or len(customer) > 500)):
+        if not request_id or not task_id or not isinstance(files, list) or not files:
             raise ValueError("invalid_task_request")
+        # Every task names the rule set a person chose; nothing is inferred from the files.
+        if by_key(customer) is None:
+            raise ValueError("customer_required")
         if revising and (type(expected) is not int or expected < 0):
             raise ValueError("invalid_task_revision")
         normalized: list[dict[str, Any]] = []
@@ -1341,8 +1342,6 @@ class AuthStore:
                 submitted = {key: value for key, value in inputs.items() if key not in {"source_draft_id", "expected_draft_revision"}}
                 if preparation_inputs(preparation) != submitted:
                     raise ValueError("upload_preparation_input_conflict")
-                if conn.execute("SELECT 1 FROM product.audit_rounds WHERE source_draft_id = %s", (task_id,)).fetchone():
-                    raise ValueError("draft_already_accepted")
                 if request_id != task_id and conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (request_id,)).fetchone():
                     raise ValueError("idempotency_conflict")
             elif conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (task_id,)).fetchone():
@@ -1427,7 +1426,7 @@ class AuthStore:
             replacement = row.get("replacement_of_file_version_id")
             inherited = predecessor["inputs"].get(replacement or row["file_version_id"]) if predecessor else None
             reference_only = row.get("reference_only", False)
-            v4_reference = bool(customer and any(rule.get("rule_profile") == "v4" and customer.casefold() in {name.casefold() for name in rule.get("customers") or []} for rule in candidates))
+            v4_reference = any(rule.get("rule_profile") == "v4" and customer in (rule.get("customers") or []) for rule in candidates)
             if reference_only and (preferred or not (v4_reference or inherited and inherited["role"] == "reference")):
                 raise ValueError("invalid_reference_binding")
             reuse = bool(inherited and (reference_only or preferred and preferred == inherited["rule_id"]))
@@ -1449,7 +1448,6 @@ class AuthStore:
                     "candidate_rules": [chosen] if chosen else candidates,
                     "customer_preference": customer,
                     "reference_only": reference_only,
-                    "matching_scope": "customer_document_type",
                     "validation_scope": validation_scopes.get(row["file_version_id"]),
                 }
                 if replacement:
@@ -1817,10 +1815,8 @@ class AuthStore:
                 conn,
                 principal,
                 confirmation["request_id"],
-                source_draft_id=task_id,
-                predecessor_id=None,
-                items=None,
-                task_revision=confirmation["expected_revision"],
+                task_id,
+                confirmation["expected_revision"],
                 usage_policy=usage_policy,
                 expected_confirmation_basis_digest=confirmation.get("expected_confirmation_basis_digest"),
                 require_confirmation_basis=True,
@@ -1982,8 +1978,7 @@ class AuthStore:
             LEFT JOIN LATERAL (SELECT j.result->'metadata' AS metadata, j.result->>'document_type' AS document_type
                 WHERE j.status IN ('succeeded', 'failed', 'cancelled')
                 AND j.payload->>'task_id' = d.id::text
-                AND COALESCE(jsonb_typeof(j.payload->'task_revision'), 'number') = 'number'
-                AND COALESCE(j.payload->>'task_revision', '0') = d.input_revision::text
+                AND j.payload->>'task_revision' = d.input_revision::text
                 AND j.payload->>'source_file_version_id' = i.file_version_id::text
                 AND j.result->>'source_file_version_id' = i.file_version_id::text) matched ON true
             LEFT JOIN LATERAL (SELECT display_values, created_at FROM product.audit_display_requests x
@@ -2046,11 +2041,9 @@ class AuthStore:
 
     @staticmethod
     def _analysis_snapshot_bound(payload: dict, result: dict, task_id: str, revision: int, version_id: str) -> bool:
-        snapshot_revision = payload.get("task_revision", 0)
         return (
             payload.get("task_id") == task_id
-            and type(snapshot_revision) is int
-            and snapshot_revision == revision
+            and payload.get("task_revision") == revision
             and payload.get("source_file_version_id") == version_id
             and result.get("source_file_version_id") == version_id
         )
@@ -2213,10 +2206,8 @@ class AuthStore:
                         conn,
                         principal,
                         key,
-                        source_draft_id=parsed_task,
-                        predecessor_id=None,
-                        items=None,
-                        task_revision=expected_revision,
+                        parsed_task,
+                        expected_revision,
                         usage_policy=usage_policy,
                         expected_confirmation_basis_digest=expected_confirmation_basis_digest,
                         require_confirmation_basis=require_confirmation_basis,
@@ -2389,7 +2380,7 @@ class AuthStore:
                 WHERE d.id = %s AND d.tenant_id = %s AND d.status = 'open'
                 AND d.task_completion_reason IS NULL AND d.input_revision = %s
                 AND i.analysis_job_id = %s AND i.selection = 'selected'""",
-                    (claimed.payload["task_id"], claimed.tenant_id, claimed.payload.get("task_revision", 0), claimed.id),
+                    (claimed.payload["task_id"], claimed.tenant_id, claimed.payload["task_revision"], claimed.id),
                 ).fetchone()
                 is not None
             )
@@ -2449,7 +2440,7 @@ class AuthStore:
         retained_replacements = {
             file_id: original_id
             for row in rows
-            if (row["analysis_payload"] or {}).get("task_id") == task_id and (row["analysis_payload"] or {}).get("task_revision", 0) == draft["input_revision"]
+            if (row["analysis_payload"] or {}).get("task_id") == task_id and (row["analysis_payload"] or {}).get("task_revision") == draft["input_revision"]
             for file_id, original_id in (row["analysis_payload"] or {}).get("retained_replacements", {}).items()
         }
         self._prepared_items(conn, principal, [{"file_version_id": str(row["file_version_id"]), "role": "reference"} for row in rows])
@@ -2817,6 +2808,8 @@ class AuthStore:
                 removed[vid] = reason.strip()
             if task["completion_reason"] == "no_matching_rules":
                 return task
+            if not task["customer_preference"]:
+                raise ValueError("customer_required")
             selected = [row for row in task["files"] if row["selection"] == "selected" and row["file"]["id"] not in unselected]
             if task["state"] != "pending_confirm" or any((row["match"] or {}).get("state") not in {"unmatched", "reference"} for row in selected):
                 raise ValueError("task_not_zero_match")
@@ -2843,7 +2836,7 @@ class AuthStore:
 
     def set_customer_default(self, principal: Principal, customer, expected_revision, confirmed) -> dict:
         """Compare-and-swap one tenant default; lost replies are recovered by readback."""
-        if customer not in (None, "UAES", "理想", "蔚来") or type(expected_revision) is not int or expected_revision < 0 or confirmed is not True:
+        if by_key(customer) is None or type(expected_revision) is not int or expected_revision < 0 or confirmed is not True:
             raise ValueError("invalid_customer_default")
         with self._conn() as conn, conn.transaction():
             row = conn.execute(
@@ -2895,51 +2888,6 @@ class AuthStore:
                 item["clause_count"] = len(clauses) if isinstance(clauses, list) else 0
             out.append(item)
         return out
-
-    def list_rule_library(self, tenant_id: str) -> list[dict]:
-        with self._conn() as conn:
-            rows = conn.execute(
-                """SELECT id, title, created_at, predecessor_id, body->'customers', body->'parts', case_context,
-                    CASE WHEN jsonb_typeof(body->'rules') = 'array' THEN jsonb_array_length(body->'rules') ELSE 0 END,
-                    body->>'type', body->>'suite_key'
-                FROM product.rule_versions WHERE tenant_id = %s AND body->>'kind' = 'engine' AND source_file_version_id IS NOT NULL
-                ORDER BY created_at DESC, id DESC""",
-                (tenant_id,),
-            ).fetchall()
-        versions = []
-        for row in rows:
-            customers, parts, context = row[4] or [], row[5] or [], row[6] or {}
-            try:
-                registration = json.loads(context.get("registration") or "{}")
-            except (TypeError, ValueError):
-                registration = {}
-            registration = registration if isinstance(registration, dict) else {}
-            stored_scope = registration.get("scope") or {}
-            stored_scope = stored_scope if isinstance(stored_scope, dict) else {}
-            scope = {"customer": customers[0] if customers else "", "part": parts[0] if parts else "", "revision": "", "allParts": not parts, "allRevisions": True}
-            scope.update({key: stored_scope[key] for key in ("customer", "part", "revision") if isinstance(stored_scope.get(key), str)})
-            scope.update({key: stored_scope[key] for key in ("allParts", "allRevisions") if isinstance(stored_scope.get(key), bool)})
-            scope["allCustomers"] = customer_scope({"customers": customers}, context) == "all"
-            basis = registration.get("basis")
-            source = basis.get("source") if isinstance(basis, dict) else None
-            version = source.get("version") if isinstance(source, dict) else None
-            versions.append(
-                {
-                    "id": str(row[0]),
-                    "title": row[1],
-                    "version": version if isinstance(version, str) else row[2].isoformat()[:16].replace("T", " "),
-                    "scope": scope,
-                    "reason": registration.get("reason") if isinstance(registration.get("reason"), str) else "",
-                    "created_at": row[2].isoformat(),
-                    "predecessor_id": str(row[3]) if row[3] else None,
-                    "clause_count": row[7],
-                    "document_type": row[8] if isinstance(row[8], str) else "",
-                    "document_type_aliases": document_type_aliases(row[8] if isinstance(row[8], str) else ""),
-                    "suite_key": row[9] if isinstance(row[9], str) and row[9] else None,
-                    "source_review": source_review(context),
-                }
-            )
-        return versions
 
     def get_rule(self, tenant_id: str, rule_version_id: str) -> dict | None:
         parsed = _as_uuid(rule_version_id)
@@ -3020,15 +2968,6 @@ class AuthStore:
                 )
         return cast(dict, self.get_rule(principal.tenant_id, rule_id))
 
-    def _reject_task_predecessor(self, conn, predecessor_id: str | None) -> None:
-        if (
-            predecessor_id
-            and conn.execute(
-                "SELECT 1 FROM product.audit_rounds r JOIN product.audit_drafts d ON d.id = r.source_draft_id WHERE r.id = %s AND d.task_fingerprint IS NOT NULL", (predecessor_id,)
-            ).fetchone()
-        ):
-            raise ValueError("task_input_locked")
-
     def _require_preparation_owner(self, conn, principal: Principal, draft_id: str) -> None:
         if not conn.execute(
             """SELECT 1 FROM product.audit_drafts d JOIN product.resources r ON r.id = d.id
@@ -3047,101 +2986,38 @@ class AuthStore:
                     raise ValueError("file_validation_required")
         return prepared
 
-    def create_draft(
-        self,
-        principal: Principal,
-        predecessor_id: str | None = None,
-        *,
-        request_id: str | None = None,
-        items: list[dict] | None = None,
-        case_context: dict | None = None,
-        upload_preparation: dict | None = None,
-    ) -> dict:
-        draft_id = str(uuid.uuid4()) if request_id is None else _as_uuid(request_id) if isinstance(request_id, str) else None
-        if not draft_id or items is not None and not isinstance(items, list):
+    def create_draft(self, principal: Principal, request_id, upload_preparation) -> dict:
+        """The upload a person is preparing, before it becomes a task."""
+        draft_id = _as_uuid(request_id) if isinstance(request_id, str) else None
+        if not draft_id:
             raise ValueError("invalid_draft_request")
-        context = {} if case_context is None else case_context
-        if not isinstance(context, dict) or PREPARATION_KEY in context or len(json.dumps(context, ensure_ascii=False).encode()) > 262144:
-            raise ValueError("invalid_case_context")
-        preparation = normalize_preparation(upload_preparation) if upload_preparation is not None else None
-        if preparation is not None:
-            if items is not None or case_context is not None or predecessor_id or request_id is None:
-                raise ValueError("invalid_upload_preparation")
-            context = {PREPARATION_KEY: preparation}
-        if predecessor_id:
-            resource = self.resource(predecessor_id)
-            if resource is None or resource.kind != "audit_round" or not can_read(principal, resource):
-                raise KeyError("missing")
-            predecessor_id = resource.id
+        preparation = normalize_preparation(upload_preparation)
         with self._conn() as conn:
             with conn.transaction():
                 conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("draft-create:" + draft_id,))
-                self._reject_task_predecessor(conn, predecessor_id)
-                existing = conn.execute("SELECT tenant_id, created_by, predecessor_id FROM product.audit_drafts WHERE id = %s", (draft_id,)).fetchone()
+                existing = conn.execute("SELECT tenant_id, created_by FROM product.audit_drafts WHERE id = %s", (draft_id,)).fetchone()
                 if existing:
                     resource = self.resource(draft_id)
                     if str(existing[0]) != principal.tenant_id or str(existing[1]) != principal.user_id or resource is None or not can_modify(principal, resource):
                         raise KeyError("missing")
                     saved = cast(dict, self._draft_public(conn, draft_id))
-                    if preparation is not None:
-                        if saved.get("upload_preparation") != preparation or saved.get("task_id"):
-                            raise ValueError("idempotency_conflict")
-                        return saved
-                    if saved.get("upload_preparation") is not None:
+                    if saved.get("upload_preparation") != preparation or saved.get("task_id"):
                         raise ValueError("idempotency_conflict")
-                    if (str(existing[2]) if existing[2] else None) != predecessor_id or case_context is not None and saved["case_context"] != context:
-                        raise ValueError("idempotency_conflict")
-                    if items is not None:
-                        requested = self._bound_audit_items(conn, principal, items, require_rules=False)
-
-                        def binding(rows):
-                            return sorted((row["file_version_id"], row["role"], row["rule_version_id"]) for row in rows)
-
-                        if binding(requested) != binding(saved["items"]):
-                            raise ValueError("idempotency_conflict")
                     return saved
                 if conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (draft_id,)).fetchone():
                     raise KeyError("missing")
-                prepared = self._preparation_items(conn, principal, preparation) if preparation is not None else self._bound_audit_items(conn, principal, items or [], require_rules=False)
+                prepared = self._preparation_items(conn, principal, preparation)
                 conn.execute(
                     "INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'audit_draft')",
                     (draft_id, principal.tenant_id),
                 )
                 conn.execute(
-                    """
-                    INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, predecessor_id, case_context)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN, predecessor_id, Jsonb(context)),
+                    "INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, case_context) VALUES (%s, %s, %s, %s, %s)",
+                    (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN, Jsonb({PREPARATION_KEY: preparation})),
                 )
-                if predecessor_id:
-                    writeback = self._target_row(conn, "round_writeback_targets", "round_id", predecessor_id)
-                    if writeback:
-                        self.save_draft_writeback(conn, draft_id, writeback)
                 for row in prepared:
-                    conn.execute(
-                        "INSERT INTO product.draft_items (draft_id, file_version_id, role, rule_version_id) VALUES (%s, %s, %s, %s)",
-                        (draft_id, row["file_version_id"], row["role"], row.get("rule_version_id")),
-                    )
+                    conn.execute("INSERT INTO product.draft_items (draft_id, file_version_id, role) VALUES (%s, %s, 'reference')", (draft_id, row["file_version_id"]))
         return cast(dict, self.get_draft(draft_id))
-
-    def list_drafts(self, principal: Principal, limit: int = 20, offset: int = 0, q: str = "") -> list[dict]:
-        needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        with self._conn() as conn:
-            rows = conn.execute(
-                # Open drafts are the person's own unfinished work: the list to resume from is theirs.
-                """SELECT d.id FROM product.audit_drafts d
-                   WHERE d.tenant_id = %s AND d.status = %s AND d.created_by = %s
-                     AND d.task_fingerprint IS NULL
-                     AND (EXISTS (SELECT 1 FROM product.draft_items i WHERE i.draft_id = d.id)
-                          OR jsonb_array_length(COALESCE(d.case_context->'_native_upload_preparation'->'uploads', '[]'::jsonb)) > 0)
-                     AND (%s = '' OR d.case_context::text ILIKE %s OR EXISTS (
-                         SELECT 1 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id
-                         WHERE i.draft_id = d.id AND f.original_filename ILIKE %s))
-                   ORDER BY d.updated_at DESC, d.id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, DRAFT_OPEN, principal.user_id, q, needle, needle, limit, offset),
-            ).fetchall()
-            return [cast(dict, self._draft_public(conn, row[0])) for row in rows]
 
     def get_draft(self, draft_id: str, principal: Principal | None = None) -> dict | None:
         parsed = _as_uuid(draft_id)
@@ -3153,103 +3029,44 @@ class AuthStore:
                 self._require_preparation_owner(conn, principal, parsed)
             return draft
 
-    def save_draft(
-        self,
-        principal: Principal,
-        draft_id: str,
-        items: list[dict] | None,
-        writeback_target=None,
-        case_context: dict | None = None,
-        *,
-        upload_preparation: dict | None = None,
-        expected_revision: int | None = None,
-    ) -> dict:
+    def save_draft(self, principal: Principal, draft_id: str, upload_preparation, expected_revision, writeback_target=None) -> dict:
         parsed = _as_uuid(draft_id)
         if not parsed:
             raise KeyError("missing")
         with self._conn() as conn:
             with conn.transaction():
                 draft = conn.execute(
-                    """
-                    SELECT id, tenant_id, status, task_fingerprint, case_context, input_revision FROM product.audit_drafts
-                    WHERE id = %s FOR UPDATE
-                    """,
+                    "SELECT tenant_id, status, task_fingerprint, case_context, input_revision FROM product.audit_drafts WHERE id = %s FOR UPDATE",
                     (parsed,),
                 ).fetchone()
-                if not draft or str(draft[1]) != principal.tenant_id:
+                if not draft or str(draft[0]) != principal.tenant_id:
                     raise KeyError("missing")
-                if draft[3] is not None:
+                if draft[2] is not None or draft[1] != DRAFT_OPEN:
                     raise ValueError("task_input_locked")
-                if draft[2] != DRAFT_OPEN:
-                    raise ValueError("draft_already_accepted")
-                previous_preparation = (draft[4] or {}).get(PREPARATION_KEY)
-                if upload_preparation is not None or previous_preparation is not None:
-                    self._require_preparation_owner(conn, principal, parsed)
-                    if previous_preparation is None or upload_preparation is None or any(value is not None for value in (items, case_context)):
-                        raise ValueError("invalid_upload_preparation")
-                    if type(expected_revision) is not int or expected_revision < 0:
-                        raise ValueError("invalid_draft_revision")
-                    if draft[5] != expected_revision:
-                        raise ValueError("draft_revision_conflict")
-                    preparation = normalize_preparation(upload_preparation)
-                    validate_preparation_update(previous_preparation, preparation)
-                    prepared = self._preparation_items(conn, principal, preparation)
-                    if writeback_target is not None:
-                        # The target belongs to the same revision as the saved
-                        # inputs. Promotion holds this row lock too, so a late
-                        # save cannot replace the target of an accepted task.
-                        self.save_draft_writeback(conn, parsed, normalize_external_ref(writeback_target) if writeback_target else None)
-                    conn.execute("DELETE FROM product.draft_items WHERE draft_id = %s", (parsed,))
-                    for row in prepared:
-                        conn.execute("INSERT INTO product.draft_items (draft_id, file_version_id, role) VALUES (%s, %s, 'reference')", (parsed, row["file_version_id"]))
-                    conn.execute(
-                        "UPDATE product.audit_drafts SET case_context = %s, input_revision = input_revision + 1, updated_at = now() WHERE id = %s",
-                        (Jsonb({PREPARATION_KEY: preparation}), parsed),
-                    )
-                    return cast(dict, self._draft_public(conn, parsed))
-                if items is not None:
-                    prepared = self._bound_audit_items(conn, principal, items, require_rules=False)
-                    conn.execute("DELETE FROM product.draft_items WHERE draft_id = %s", (parsed,))
-                    for row in prepared:
-                        conn.execute(
-                            """
-                            INSERT INTO product.draft_items (draft_id, file_version_id, role, rule_version_id)
-                            VALUES (%s, %s, %s, %s)
-                            """,
-                            (parsed, row["file_version_id"], row["role"], row["rule_version_id"]),
-                        )
-                if items is not None:
-                    conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
+                self._require_preparation_owner(conn, principal, parsed)
+                previous_preparation = (draft[3] or {}).get(PREPARATION_KEY)
+                if previous_preparation is None or upload_preparation is None:
+                    raise ValueError("invalid_upload_preparation")
+                if type(expected_revision) is not int or expected_revision < 0:
+                    raise ValueError("invalid_draft_revision")
+                if draft[4] != expected_revision:
+                    raise ValueError("draft_revision_conflict")
+                preparation = normalize_preparation(upload_preparation)
+                validate_preparation_update(previous_preparation, preparation)
+                prepared = self._preparation_items(conn, principal, preparation)
                 if writeback_target is not None:
+                    # The target belongs to the same revision as the saved
+                    # inputs. Promotion holds this row lock too, so a late
+                    # save cannot replace the target of an accepted task.
                     self.save_draft_writeback(conn, parsed, normalize_external_ref(writeback_target) if writeback_target else None)
-                    conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
-                if case_context is not None:
-                    if not isinstance(case_context, dict) or PREPARATION_KEY in case_context or len(json.dumps(case_context, ensure_ascii=False).encode()) > 262144:
-                        raise ValueError("invalid_case_context")
-                    conn.execute("UPDATE product.audit_drafts SET case_context = %s, updated_at = now() WHERE id = %s", (Jsonb(case_context), parsed))
-                return cast(dict, self._draft_public(conn, parsed))
-
-    def accept_draft(
-        self, principal: Principal, draft_id: str, idempotency_key: str, predecessor_id: str | None = None, *, usage_policy=None, expected_model_revision: Any = _MODEL_REVISION_UNSPECIFIED
-    ) -> dict:
-        draft = self.get_draft(draft_id)
-        if draft and draft.get("predecessor_id"):
-            if predecessor_id and predecessor_id != draft["predecessor_id"]:
-                raise ValueError("idempotency_conflict")
-            predecessor_id = draft["predecessor_id"]
-        key = normalize_idempotency_key(idempotency_key)
-        parsed = _as_uuid(draft_id)
-        if not parsed:
-            raise KeyError("missing")
-        if predecessor_id:
-            resource = self.resource(predecessor_id)
-            if resource is None or resource.kind != "audit_round" or not can_read(principal, resource):
-                raise KeyError("missing")
-        with self._conn() as conn:
-            with conn.transaction():
-                return self._accept_locked(
-                    conn, principal, key, source_draft_id=parsed, predecessor_id=predecessor_id, items=None, usage_policy=usage_policy, expected_model_revision=expected_model_revision
+                conn.execute("DELETE FROM product.draft_items WHERE draft_id = %s", (parsed,))
+                for row in prepared:
+                    conn.execute("INSERT INTO product.draft_items (draft_id, file_version_id, role) VALUES (%s, %s, 'reference')", (parsed, row["file_version_id"]))
+                conn.execute(
+                    "UPDATE product.audit_drafts SET case_context = %s, input_revision = input_revision + 1, updated_at = now() WHERE id = %s",
+                    (Jsonb({PREPARATION_KEY: preparation}), parsed),
                 )
+                return cast(dict, self._draft_public(conn, parsed))
 
     def read_fact_answers(self, principal: Principal, round_id: str) -> dict:
         from .fact_answers import read_answers
@@ -4272,21 +4089,12 @@ class AuthStore:
             prepared.append({"file_version_id": str(row[0]), "role": role, "file_id": str(row[1]), "original_filename": row[4]})
         return prepared
 
-    def _bound_audit_items(self, conn, principal, items, *, require_rules=True) -> list[dict]:
+    def _bound_audit_items(self, conn, principal, items) -> list[dict]:
         prepared = self._prepared_items(conn, principal, items)
         for row, raw in zip(prepared, items):
-            rule_id = raw.get("rule_version_id")
-            rule = None
-            if row["role"] == "reference" and rule_id:
-                raise ValueError("reference_rule_forbidden")
-            if row["role"] == "target":
-                if not rule_id and require_rules:
-                    raise ValueError("rule_required")
-                if rule_id:
-                    rid = _as_uuid(str(rule_id))
-                    rule = self._rule_for_tenant(conn, rid, principal.tenant_id) if rid else None
-                    if not rule:
-                        raise ValueError("unknown_rule")
+            rule = self._rule_for_tenant(conn, raw["rule_version_id"], principal.tenant_id) if raw["rule_version_id"] else None
+            if raw["rule_version_id"] and not rule:
+                raise ValueError("unknown_rule")
             cast(dict[str, Any], row).update(
                 rule_version_id=str(rule[0]) if rule else None,
                 rule_title=rule[1] if rule else None,
@@ -4301,18 +4109,15 @@ class AuthStore:
         conn,
         principal: Principal,
         key: str,
-        source_draft_id: str | None,
-        predecessor_id: str | None,
-        items: list[dict] | None,
-        task_revision: int | None = None,
+        task_id: str,
+        task_revision: int,
+        *,
         usage_policy=None,
         expected_confirmation_basis_digest: str | None = None,
         require_confirmation_basis: bool = False,
-        expected_model_revision: Any = _MODEL_REVISION_UNSPECIFIED,
     ) -> dict:
         # Serialize one tenant/key before reading existing acceptance, including
-        # competing requests from different drafts. Hash collisions only serialize.
-        self._reject_task_predecessor(conn, predecessor_id)
+        # competing requests from different tasks. Hash collisions only serialize.
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
         existing = conn.execute(
             """
@@ -4321,106 +4126,74 @@ class AuthStore:
             """,
             (principal.tenant_id, key),
         ).fetchone()
-        if existing and str(existing[3]) != source_draft_id and conn.execute("SELECT 1 FROM product.audit_drafts WHERE id = %s AND task_fingerprint IS NOT NULL", (existing[3],)).fetchone():
+        owned = self._task_draft(conn, principal, task_id, modify=True, lock=True)
+        predecessor_id = str(owned["predecessor_id"]) if owned["predecessor_id"] else None
+        if existing and (str(existing[3]) != task_id or str(existing[4]) != principal.user_id):
             raise ValueError("idempotency_conflict")
-        draft_status = None
-        deep_mode = False
-        precheck_task_view: dict | None = None
-        recognized_metadata: dict[str, dict] = {}
-        recognized_types: dict[str, str | None] = {}
-        kept_sources: dict[str, str] = {}
-        if source_draft_id:
-            draft = conn.execute(
-                """
-                SELECT id, tenant_id, status, task_fingerprint, case_context FROM product.audit_drafts
-                WHERE id = %s FOR UPDATE
-                """,
-                (source_draft_id,),
-            ).fetchone()
-            if not draft or str(draft[1]) != principal.tenant_id:
-                raise KeyError("missing")
-            if draft[3] is not None and task_revision is None:
-                raise ValueError("task_input_locked")
-            if draft[3] is None and PREPARATION_KEY in (draft[4] or {}):
-                raise ValueError("task_input_locked")
-            draft_status = draft[2]
-            if task_revision is not None:
-                owned = self._task_draft(conn, principal, source_draft_id, modify=True)
-                predecessor_id = str(owned["predecessor_id"]) if owned["predecessor_id"] else None
-                if existing and (str(existing[3]) != source_draft_id or str(existing[4]) != principal.user_id):
-                    raise ValueError("idempotency_conflict")
-                if owned["input_revision"] != task_revision:
-                    raise ValueError("task_revision_conflict")
-                if owned["task_completion_reason"]:
-                    raise ValueError("task_input_locked")
-                if draft_status == DRAFT_ACCEPTED and not existing:
-                    raise ValueError("draft_already_accepted")
-                deep_mode = bool(owned["deep_mode"])
-                task = self._recognition_public(conn, principal, source_draft_id)
-                # The precheck freezes the task as confirmed, before unmatched files leave the audit.
-                precheck_task_view = task
-                selected = [row for row in task["files"] if row["selection"] == "selected"]
-                kept_sources = {row["file"]["id"]: row.get("replacement_of_file_version_id") or row["file"]["id"] for row in selected}
-                recognized_metadata = {row["file"]["id"]: dict((row.get("match") or {}).get("metadata") or {}) for row in selected}
-                recognized_types = {row["file"]["id"]: (row.get("match") or {}).get("document_type") for row in selected}
-                basis = expected_confirmation_basis_digest
-                basis_ready = isinstance(basis, str) and re.fullmatch(r"[a-f0-9]{64}", basis)
-                if not existing and require_confirmation_basis and not basis_ready:
-                    raise ValueError("invalid_task_confirmation")
-                if not existing and (
-                    task["state"] != "pending_confirm"
-                    or any((row["match"] or {}).get("state") not in {"matched", "reference", "unmatched"} or row["validation"]["state"] != "valid" for row in selected)
-                ):
-                    raise ValueError("task_not_ready")
-                if not existing:
-                    v4_customers = {customer for row in selected for customer in _preset_customers(((row["match"].get("rule") or {}).get("body") or {}))}
-                    if len(v4_customers) > 1 or v4_customers and owned["customer_preference"] and v4_customers != {owned["customer_preference"]}:
-                        raise ValueError("customer_scope_conflict")
-                    for row in selected:
-                        scope = row.get("validation_scope")
-                        rule_body = ((row.get("match") or {}).get("rule") or {}).get("body") or {}
-                        if scope and row["match"]["state"] != "reference" and (owned["customer_preference"] != "UAES" or rule_body.get("suite_key") != "UAES:U13"):
-                            raise ValueError("validation_scope_mismatch")
-                    if require_confirmation_basis and task["confirmation_basis_digest"] != expected_confirmation_basis_digest:
-                        raise ValueError("task_confirmation_changed")
-                    if deep_mode and not task["deep_mode_option"]["available"]:
-                        # Accepting a deep task as standard would be a silent fallback.
-                        raise ValueError("deep_mode_unavailable")
-                items = [
-                    {
-                        "file_version_id": row["file"]["id"],
-                        "role": "reference" if row["match"]["state"] == "reference" else "target",
-                        "rule_version_id": row["match"]["rule"]["id"] if row["match"]["rule"] else None,
-                    }
-                    for row in selected
-                    if (row["match"] or {}).get("state") == "reference" or (row["match"] or {}).get("state") == "matched" and row["match"]["rule"]
-                ]
-                if not existing:
-                    current_rules = {rule["id"] for rule in latest_rule_versions(self._list_rules(conn, principal.tenant_id))}
-                    source = self._reaudit_source(conn, principal, predecessor_id) if predecessor_id else None
-                    inherited = {
-                        (file["file"]["id"], file.get("preferred_rule_version_id"))
-                        for file in selected
-                        if source
-                        and source["customer_preference"] == owned["customer_preference"]
-                        and source["inputs"].get(file.get("replacement_of_file_version_id") or file["file"]["id"], {}).get("rule_id") == file.get("preferred_rule_version_id")
-                    }
-                    if any(item["role"] == "target" and item["rule_version_id"] not in current_rules and (item["file_version_id"], item["rule_version_id"]) not in inherited for item in items):
-                        raise ValueError("rule_candidate_expired")
-                    for row in selected:
-                        if row["match"]["state"] == "unmatched":
-                            conn.execute(
-                                "UPDATE product.draft_items SET selection = 'removed', removal_reason = %s WHERE draft_id = %s AND file_version_id = %s",
-                                ("未匹配到生效规则，未纳入审核", source_draft_id, row["file"]["id"]),
-                            )
-            elif items is None:
-                rows = conn.execute(
-                    "SELECT file_version_id, role, rule_version_id FROM product.draft_items WHERE draft_id = %s",
-                    (source_draft_id,),
-                ).fetchall()
-                items = [{"file_version_id": str(row[0]), "role": row[1], "rule_version_id": str(row[2]) if row[2] else None} for row in rows]
-        if items is None:
-            items = []
+        if owned["input_revision"] != task_revision:
+            raise ValueError("task_revision_conflict")
+        if owned["task_completion_reason"]:
+            raise ValueError("task_input_locked")
+        if owned["status"] == DRAFT_ACCEPTED and not existing:
+            raise ValueError("draft_already_accepted")
+        deep_mode = bool(owned["deep_mode"])
+        task = self._recognition_public(conn, principal, task_id)
+        selected = [row for row in task["files"] if row["selection"] == "selected"]
+        kept_sources = {row["file"]["id"]: row.get("replacement_of_file_version_id") or row["file"]["id"] for row in selected}
+        recognized_metadata = {row["file"]["id"]: dict((row.get("match") or {}).get("metadata") or {}) for row in selected}
+        recognized_types = {row["file"]["id"]: (row.get("match") or {}).get("document_type") for row in selected}
+        basis = expected_confirmation_basis_digest
+        basis_ready = isinstance(basis, str) and re.fullmatch(r"[a-f0-9]{64}", basis)
+        if not existing and require_confirmation_basis and not basis_ready:
+            raise ValueError("invalid_task_confirmation")
+        if not existing and (
+            task["state"] != "pending_confirm" or any((row["match"] or {}).get("state") not in {"matched", "reference", "unmatched"} or row["validation"]["state"] != "valid" for row in selected)
+        ):
+            raise ValueError("task_not_ready")
+        if not existing:
+            # A task from before every task named its rule set is recognized again under a chosen one first.
+            if not owned["customer_preference"]:
+                raise ValueError("customer_required")
+            v4_customers = {customer for row in selected for customer in _preset_customers(((row["match"].get("rule") or {}).get("body") or {}))}
+            if v4_customers - {owned["customer_preference"]}:
+                raise ValueError("customer_scope_conflict")
+            for row in selected:
+                scope = row.get("validation_scope")
+                rule_body = ((row.get("match") or {}).get("rule") or {}).get("body") or {}
+                if scope and row["match"]["state"] != "reference" and (owned["customer_preference"] != "UAES" or rule_body.get("suite_key") != "UAES:U13"):
+                    raise ValueError("validation_scope_mismatch")
+            if require_confirmation_basis and task["confirmation_basis_digest"] != expected_confirmation_basis_digest:
+                raise ValueError("task_confirmation_changed")
+            if deep_mode and not task["deep_mode_option"]["available"]:
+                # Accepting a deep task as standard would be a silent fallback.
+                raise ValueError("deep_mode_unavailable")
+        items = [
+            {
+                "file_version_id": row["file"]["id"],
+                "role": "reference" if row["match"]["state"] == "reference" else "target",
+                "rule_version_id": row["match"]["rule"]["id"] if row["match"]["rule"] else None,
+            }
+            for row in selected
+            if (row["match"] or {}).get("state") == "reference" or (row["match"] or {}).get("state") == "matched" and row["match"]["rule"]
+        ]
+        if not existing:
+            current_rules = {rule["id"] for rule in latest_rule_versions(self._list_rules(conn, principal.tenant_id))}
+            source = self._reaudit_source(conn, principal, predecessor_id) if predecessor_id else None
+            inherited = {
+                (file["file"]["id"], file.get("preferred_rule_version_id"))
+                for file in selected
+                if source
+                and source["customer_preference"] == owned["customer_preference"]
+                and source["inputs"].get(file.get("replacement_of_file_version_id") or file["file"]["id"], {}).get("rule_id") == file.get("preferred_rule_version_id")
+            }
+            if any(item["role"] == "target" and item["rule_version_id"] not in current_rules and (item["file_version_id"], item["rule_version_id"]) not in inherited for item in items):
+                raise ValueError("rule_candidate_expired")
+            for row in selected:
+                if row["match"]["state"] == "unmatched":
+                    conn.execute(
+                        "UPDATE product.draft_items SET selection = 'removed', removal_reason = %s WHERE draft_id = %s AND file_version_id = %s",
+                        ("未匹配到生效规则，未纳入审核", task_id, row["file"]["id"]),
+                    )
         prepared = self._bound_audit_items(conn, principal, items)
         for item in prepared:
             item["frozen_metadata"] = recognized_metadata.get(item["file_version_id"], {})
@@ -4434,8 +4207,6 @@ class AuthStore:
             if existing[1] != fingerprint or (str(existing[2]) if existing[2] else None) != predecessor_id:
                 raise ValueError("idempotency_conflict")
             return cast(dict, self._round_public(conn, str(existing[0])))
-        if source_draft_id and draft_status == DRAFT_ACCEPTED:
-            raise ValueError("draft_already_accepted")
         kept_rows = [
             (item["file_version_id"], kept_sources[item["file_version_id"]], item["rule_version_id"]) for item in prepared if item["role"] == "target" and item["file_version_id"] in kept_sources
         ]
@@ -4447,8 +4218,6 @@ class AuthStore:
         from product.store.suites import SuiteStore, freeze_round_execution
 
         snapshot = freeze_round_execution(self, conn, principal, round_id=round_id, prepared=prepared)
-        if expected_model_revision is not _MODEL_REVISION_UNSPECIFIED and expected_model_revision != snapshot.model_identity.get("revision"):
-            raise ValueError("model_configuration_changed")
         execution_payload: dict[str, Any] = {
             "round_id": round_id,
             "executor": "ppap-checker-core",
@@ -4460,7 +4229,8 @@ class AuthStore:
             # Standard payloads stay byte-identical; only deep jobs name a mode.
             execution_payload["analysis_mode"] = "deep"
         self._check_usage_policy(conn, principal, usage_policy)
-        precheck = self._freeze_precheck(principal, precheck_task_view) if precheck_task_view is not None else None
+        # The task as confirmed, read before unmatched files left the audit.
+        precheck = self._freeze_precheck(principal, task)
         job_id = str(uuid.uuid4())
         conn.execute(
             "INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'audit_round')",
@@ -4479,7 +4249,7 @@ class AuthStore:
                 round_id,
                 principal.tenant_id,
                 principal.user_id,
-                source_draft_id,
+                task_id,
                 predecessor_id,
                 key,
                 fingerprint,
@@ -4503,13 +4273,8 @@ class AuthStore:
                 ),
             )
         SuiteStore(self.settings, self.objects, self.role).save_snapshot(conn, snapshot=snapshot)
-        if source_draft_id:
-            conn.execute(
-                "UPDATE product.audit_rounds SET case_context = (SELECT case_context - %s FROM product.audit_drafts WHERE id = %s) WHERE id = %s", (PREPARATION_KEY, source_draft_id, round_id)
-            )
-        elif predecessor_id:
-            conn.execute("UPDATE product.audit_rounds SET case_context = (SELECT case_context FROM product.audit_rounds WHERE id = %s) WHERE id = %s", (predecessor_id, round_id))
-        target = self.draft_writeback(conn, source_draft_id) if source_draft_id else None
+        conn.execute("UPDATE product.audit_rounds SET case_context = (SELECT case_context - %s FROM product.audit_drafts WHERE id = %s) WHERE id = %s", (PREPARATION_KEY, task_id, round_id))
+        target = self.draft_writeback(conn, task_id)
         if target is None and predecessor_id:
             target = self._target_row(conn, "round_writeback_targets", "round_id", predecessor_id)
         self.copy_writeback_to_round(conn, round_id, target)
@@ -4525,18 +4290,9 @@ class AuthStore:
                 Jsonb(execution_payload),
             ),
         )
-        if source_draft_id:
-            conn.execute(
-                """
-                UPDATE product.audit_drafts
-                SET status = %s, updated_at = now()
-                WHERE id = %s
-                """,
-                (DRAFT_ACCEPTED, source_draft_id),
-            )
+        conn.execute("UPDATE product.audit_drafts SET status = %s, updated_at = now() WHERE id = %s", (DRAFT_ACCEPTED, task_id))
         self._record_round_usage(conn, principal, round_id, prepared)
-        if source_draft_id:
-            self._queue_task_notification(conn, source_draft_id, "started", round_id)
+        self._queue_task_notification(conn, task_id, "started", round_id)
         return cast(dict, self._round_public(conn, round_id))
 
     def _freeze_precheck(self, principal: Principal, task: dict) -> dict | None:
@@ -4830,7 +4586,6 @@ class AuthStore:
             "coverage": coverage,
             "predecessor_id": str(row[3]) if row[3] else None,
             "source_draft_id": str(row[4]) if row[4] else None,
-            "preparation_allowed": row[1] == EXEC_FAILED and not row[8],
             "result_attempt": row[5],
             "result_job_id": str(job[3]) if job else None,
             "created_at": row[6].isoformat() if row[6] is not None else None,

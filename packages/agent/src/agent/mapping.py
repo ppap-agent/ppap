@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Literal, cast
 
 from audit.audits import REFERENCE, TARGET, RoundWork
+from audit.models import public_locator
 
 from agent.client import DeepError
 from agent.protocol import DeepCoverage, DeepFinding, ExecuteRequest, ExecuteResponse, FrozenFile
@@ -63,8 +64,6 @@ def _question_source(source: object, known_versions: set[str]) -> dict | None:
     document_id = str(source.get("document_id") or "").strip()
     if document_id not in known_versions:
         return None
-    from audit.models import public_locator
-
     locator = public_locator(source.get("locator"))
     if locator is None:
         return None
@@ -131,6 +130,8 @@ def checker_response(
     spec: ExecuteRequest,
     executed: list[tuple[FrozenFile, list]],
     *,
+    unsupported: frozenset[tuple[str, str]] = frozenset(),
+    unavailable_sources: frozenset[str] = frozenset(),
     usage: dict[str, int] | None = None,
     usage_source: Literal["unknown", "provider", "controlled"] = "controlled",
 ) -> ExecuteResponse:
@@ -182,6 +183,18 @@ def checker_response(
 
         for clause in clauses:
             clause_id = str(clause.get("id") or "").strip()
+            coverage_row = {
+                "file_version_id": target.file_version_id,
+                "filename": target.filename,
+                "rule_version_id": target.rule_version_id,
+                "rule_item_id": clause_id,
+                "id": clause_id,
+                "category": str(clause.get("category") or "客户规则"),
+                "rule_to_check": clause.get("rule_to_check") or "",
+            }
+            if (target.file_version_id, clause_id) in unsupported:
+                rule_items.append({**coverage_row, "coverage": "unsupported", "reason": "未登记检查程序，暂未检查。"})
+                continue
             bucket = grouped.get(clause_id, [])
             index = consumed.get(clause_id, 0)
             consumed[clause_id] = index + 1
@@ -242,13 +255,7 @@ def checker_response(
             )
             rule_items.append(
                 {
-                    "file_version_id": target.file_version_id,
-                    "filename": target.filename,
-                    "rule_version_id": target.rule_version_id,
-                    "rule_item_id": clause_id,
-                    "id": clause_id,
-                    "category": str(clause.get("category") or "客户规则"),
-                    "rule_to_check": clause.get("rule_to_check") or "",
+                    **coverage_row,
                     "item_key": item_key,
                     "coverage": "executed" if matched_result is not None and status != "ERR" else "execution_error",
                     "status": status,
@@ -355,7 +362,11 @@ def checker_response(
                 )
             )
         clarifications.extend(_merge_clarifications(parsed_results, target.file_version_id, clarifications, set(file_facts)))
-        if any(item.status != "ERR" and item.clause_id in expected_counts for item in parsed_results):
+        if target.file_version_id in unavailable_sources:
+            unchecked.append(f"{target.filename}（原件不可用，未检查）")
+        elif all((target.file_version_id, clause_id) in unsupported for clause_id in expected_ids):
+            unchecked.append(f"{target.filename}（未登记检查程序，暂未检查）")
+        elif any(item.status != "ERR" and item.clause_id in expected_counts for item in parsed_results):
             checked.append(target.filename)
         else:
             unchecked.append(f"{target.filename}（审核执行失败，未执行）")
@@ -401,8 +412,6 @@ def _pdf_page_locator(locator: str) -> dict | None:
         except json.JSONDecodeError:
             return None
         parsed["region"] = region
-    from audit.models import public_locator
-
     if public_locator(parsed) is None:
         return None
     parsed["file_version_id"] = version
@@ -485,7 +494,11 @@ def _checker_finding(
 
 
 def _public_source(source, *, fallback_version: str, file_facts: Mapping[str, tuple[str, str]], frozen_sha256: Mapping[str, str] | None = None) -> dict | None:
-    """Publish only a typed locator for a file that belongs to this round."""
+    """Publish only a typed locator for a file that belongs to this round.
+
+    A JSON locator may name its frozen file (``file_version_id``) and that file's
+    digest (``source_sha256``); the rest must be one ``public_locator``.
+    """
     locator = source.locator
     if not isinstance(locator, str):
         return None
@@ -495,15 +508,22 @@ def _public_source(source, *, fallback_version: str, file_facts: Mapping[str, tu
             value = json.loads(locator)
         except json.JSONDecodeError:
             return None
-        if isinstance(value, dict) and "source_sha256" in value:
+        if not isinstance(value, dict):
+            return None
+        if "source_sha256" in value:
             source_digest = value.pop("source_sha256")
             if not isinstance(source_digest, str) or not source_digest:
                 return None
-            locator = json.dumps(value)
-    parsed = _pdf_page_locator(locator) or _typed_json_locator(locator)
+        version = value.pop("file_version_id", "")
+        if not isinstance(version, str):
+            return None
+        parsed = public_locator(value)
+    else:
+        parsed = _pdf_page_locator(locator)
+        version = parsed.pop("file_version_id") if parsed is not None else ""
     if parsed is None:
         return None
-    version = str(parsed.pop("file_version_id", "") or "").strip() or fallback_version
+    version = version.strip() or fallback_version
     facts = file_facts.get(version)
     if facts is None:
         return None
@@ -523,84 +543,6 @@ def _public_source(source, *, fallback_version: str, file_facts: Mapping[str, tu
         "locator": parsed,
         "excerpt": excerpt[:500],
     }
-
-
-_LOCATOR_FIELDS: dict[str, dict[str, type]] = {
-    "xlsx_cell": {"sheet": str, "cell": str},
-    "xlsx_range": {"sheet": str, "start": str, "end": str},
-    "pdf_block": {"page": int, "block": int},
-    "pdf_cell": {"page": int, "row": int, "column": int},
-    "docx_paragraph": {"paragraph": int},
-    "docx_cell": {"table": int, "row": int, "column": int},
-}
-
-
-def _excel_ref(value: object) -> bool:
-    """Match ExcelCell: one to three letters and a row that does not start at zero."""
-    if not isinstance(value, str):
-        return False
-    letters = 0
-    while letters < len(value) and value[letters].isascii() and value[letters].isupper():
-        letters += 1
-    if letters < 1 or letters > 3:
-        return False
-    digits = value[letters:]
-    return bool(digits) and digits.isdigit() and digits[0] != "0" and len(digits) <= 7
-
-
-def _typed_json_locator(locator: str) -> dict | None:
-    """Accept one public locator. Optional file_version_id selects a frozen file."""
-    if not locator.startswith("{"):
-        return None
-    try:
-        value = json.loads(locator)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(value, dict):
-        return None
-    version = value.get("file_version_id", "")
-    if "file_version_id" in value and not isinstance(version, str):
-        return None
-    kind = value.get("kind")
-    if kind == "pdf_page":
-        page = value.get("page")
-        if type(page) is not int or page < 1:
-            return None
-        allowed = {"kind", "page"}
-        parsed: dict = {"kind": "pdf_page", "page": page}
-        if "region" in value:
-            region = value.get("region")
-            if not isinstance(region, list) or len(region) != 4 or any(item is not None and type(item) not in {int, float} or type(item) is bool for item in region):
-                return None
-            parsed["region"] = list(region)
-            allowed.add("region")
-        if "file_version_id" in value:
-            allowed.add("file_version_id")
-        if set(value) != allowed:
-            return None
-        if version.strip():
-            parsed["file_version_id"] = version.strip()
-        return parsed
-    fields = _LOCATOR_FIELDS.get(kind) if isinstance(kind, str) else None
-    if fields is None:
-        return None
-    allowed = {"kind", *fields}
-    if "file_version_id" in value:
-        allowed.add("file_version_id")
-    if set(value) != allowed:
-        return None
-    for key, expected in fields.items():
-        item = value.get(key)
-        if type(item) is not expected or expected is str and not cast(str, item).strip() or expected is int and cast(int, item) < 1:
-            return None
-    if kind == "xlsx_cell" and not _excel_ref(value.get("cell")):
-        return None
-    if kind == "xlsx_range" and not (_excel_ref(value.get("start")) and _excel_ref(value.get("end"))):
-        return None
-    parsed = {"kind": kind, **{key: value[key] for key in fields}}
-    if isinstance(version, str) and version.strip():
-        parsed["file_version_id"] = version.strip()
-    return parsed
 
 
 def product_result(response: ExecuteResponse, work: RoundWork) -> dict:

@@ -21,7 +21,7 @@ def checked(tmp_path, rows, *, headers=HEADERS):
     book.save(path)
     book.close()
     body = preset_rule_body("UAES", "U06")
-    agent = UaesCapabilityAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="rule", **{name: value for name, value in body.items() if name != "kind"}))
+    agent = UaesCapabilityAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput.of(body, rule_id="rule"))
     return agent.check(2)
 
 

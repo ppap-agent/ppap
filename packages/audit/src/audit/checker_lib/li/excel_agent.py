@@ -16,6 +16,8 @@ from documents.contracts import FileRef
 from documents.excel import load_excel_workbook
 from openpyxl import Workbook
 
+from audit.checker_lib.base_agent import BaseAgent
+from audit.checker_lib.excel_agent import rule
 from audit.contracts import (
     AuditInput,
     GroupContextInput,
@@ -31,24 +33,13 @@ from audit.engine.rule_engine import (
 from audit.engine.rule_engine.contracts import RuleResource
 from audit.kinds import PpapDocumentType
 
-from .base_agent import BaseAgent
-
 logger = logging.getLogger(__name__)
 DEFAULT_NG_COLLECTION_TOPN = 5
 NG_COLLECTION_TOPN_ENV = "PPAP_NG_TOPN"
 RuleEvidencePhase = Literal["decision", "guard", "error"]
 
-
-def rule(description: str) -> Callable[[Any], Any]:
-    """
-    规则装饰器，用于自动注册规则描述和检查器。
-    """
-
-    def decorator(func: Any) -> Any:
-        func.__rule_description__ = description
-        return func
-
-    return decorator
+# ``rule`` is the shared declaration decorator; li agents import it from here.
+__all__ = ["ExcelAgent", "RuleEvidencePhase", "rule"]
 
 
 def override_rule_resource(resource: RuleResource | None, overrides: dict[str, dict[str, Any]]) -> RuleResource | None:

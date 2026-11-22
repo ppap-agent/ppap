@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-/* Palette, font family and radius: generated from tokens/ (docs/DESIGN_SYSTEM.md). */
+/* Palette, font family and radius: generated from tokens/ (tokens/README.md). */
 @import "./generated/tokens.css";
 
 @custom-variant dark (&:is(.dark *));

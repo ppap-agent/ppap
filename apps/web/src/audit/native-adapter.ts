@@ -10,7 +10,8 @@ import type {UploadAdapter} from './uploads'
 import type {AuditArchiveAdapter} from './archive-contract'
 import type {AuditUsageAdapter} from './usage-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
-import {ruleTemplateKey} from './rule-templates.ts'
+import {currentRules, ruleTemplateKey} from './rule-templates.ts'
+import {photoScope} from './customer-register.ts'
 
 export const nativeSharingAdapter: AuditSharingAdapter = {
   listTargets: (query, kind, pageToken) => readWithDeadline(signal => request(`/audit-share-targets?${new URLSearchParams({query, kind, ...(pageToken ? {page_token: pageToken} : {})})}`, 'GET', undefined, signal), '读取组织目录超时，请重新读取目标。'),
@@ -124,7 +125,7 @@ async function readFrozenBlob(path: string, expected: Pick<components['schemas']
 
 const nativeCustomerDefaultAdapter = {
   read: () => request<components['schemas']['AuditCustomerDefault']>('/audit-customers/default'),
-  save: (customer: components['schemas']['AuditCustomerDefault']['customer_preference'], revision: number) => request<components['schemas']['AuditCustomerDefault']>('/audit-customers/default', 'PUT', {customer_preference: customer, expected_revision: revision, confirmed: true}),
+  save: (customer: NonNullable<components['schemas']['AuditCustomerDefault']['customer_preference']>, revision: number) => request<components['schemas']['AuditCustomerDefault']>('/audit-customers/default', 'PUT', {customer_preference: customer, expected_revision: revision, confirmed: true}),
 }
 
 export const readAuditCustomers = () => request<components['schemas']['AuditCustomerCatalog']>('/audit-customers')
@@ -241,11 +242,12 @@ const confirmationRefusals: Record<string, string> = {
   invalid_task_confirmation: '本次确认信息无效，审核没有开始。请核对当前任务。',
   target_required: '没有可进入审核的文件，本次确认未被接收。',
   customer_scope_conflict: '本次文件属于不同客户，审核没有开始。请按客户分开任务后再确认。',
+  customer_required: '还没有选定审核客户，审核没有开始。请返回上传页选择审核客户并重新识别。',
 }
 
 /** This adapter owns transport only. Task, rules and execution remain server facts. */
 /** The file name a Content-Disposition header gives (RFC 5987 ``filename*`` first); empty when none. */
-function dispositionName(response: Response): string {
+export function dispositionName(response: Response): string {
   const header = response.headers.get('Content-Disposition') || ''
   const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header)
   if (encoded) {
@@ -254,14 +256,14 @@ function dispositionName(response: Response): string {
   return /filename="([^"]+)"/i.exec(header)?.[1] ?? ''
 }
 
-export function createNativeAuditAdapter(options: {customers: string[]; personalDriveUpload?: boolean}): AuditIntakeAdapter {
+export function createNativeAuditAdapter(options: {customers: {value: string; label: string}[]; personalDriveUpload?: boolean}): AuditIntakeAdapter {
   const validations = new Map<string, string>()
   type Scope = components['schemas']['FileValidationScope']
   const sameScope = (left?: Scope | null, right?: Scope | null) => (!left && !right) || Boolean(left && right && left.customer_preference === right.customer_preference && left.preset_key === right.preset_key)
-  const validationKey = (version: string, scope?: Scope | null) => `${version}:${scope ? 'UAES:U13' : 'ordinary'}`
+  const validationKey = (version: string, scope?: Scope | null) => `${version}:${scope ? `${photoScope.customer_preference}:${photoScope.preset_key}` : 'ordinary'}`
   function validation(job: ValidationJob, file: AuditTask['files'][number], requestId?: string, scope?: Scope | null, restore = false) {
     if (requestId && job.id !== requestId || !job.id || job.source_file_id !== file.file.file_id || job.source_file_version_id !== file.file.id || !restore && !sameScope(job.scope, scope)) throw new Error('文件检查结果不属于这份文件版本、用途或原请求。')
-    if (job.scope && (job.scope.customer_preference !== 'UAES' || job.scope.preset_key !== 'U13')) throw new Error('文件检查结果的用途无法核实。')
+    if (job.scope && (job.scope.customer_preference !== photoScope.customer_preference || job.scope.preset_key !== photoScope.preset_key)) throw new Error('文件检查结果的用途无法核实。')
     validations.set(validationKey(file.file.id, job.scope), job.id)
     const result = job.result
     const purpose = job.scope ? {validation_scope: job.scope} : {}
@@ -287,9 +289,9 @@ export function createNativeAuditAdapter(options: {customers: string[]; personal
       save: (id, enabled, revision) => request(`${taskPath(id)}/notification`, 'PUT', {enabled, expected_revision: revision}),
     },
     customerDefaults: nativeCustomerDefaultAdapter,
-    customers: options.customers.map(name => ({value: name, label: name})),
+    customers: options.customers,
     // The customer register with each customer's type set M and both coverage numerators, computed by the backend.
-    coverage: signal => request<components['schemas']['AuditCustomerCatalog']>('/audit-customers', 'GET', undefined, signal).then(result => ({customers: result.customers})),
+    coverage: signal => request<components['schemas']['AuditCustomerCatalog']>('/audit-customers', 'GET', undefined, signal),
     drive: {...options.personalDriveUpload ? {rootFolder: () => request<components['schemas']['DriveFile']>('/integrations/feishu/root-folder')} : {}, async list({folderToken, pageToken} = {}) {
       try {return await request(`/integrations/feishu/files?${new URLSearchParams({...folderToken ? {folder_token: folderToken} : {}, ...pageToken ? {page_token: pageToken} : {}})}`)}
       catch (failure) {
@@ -327,10 +329,9 @@ export function createNativeAuditAdapter(options: {customers: string[]; personal
     },
     async ruleChoices(signal) {
       const {rules} = await request<components['schemas']['RulesList']>('/rules', 'GET', undefined, signal)
-      // Recognition accepts only the newest version of a rule: one no other version names as its predecessor.
-      const replaced = new Set(rules.map(rule => rule.predecessor_id))
-      // The same template keys the rules page shows, so a person picks a template by the name they already know.
-      return rules.filter(rule => rule.kind === 'engine' && !replaced.has(rule.id)).map(rule => ({id: rule.id, title: rule.title, type: rule.type ?? undefined, template: ruleTemplateKey(rule), customers: rule.customers ?? [], customer_scope: rule.customer_scope}))
+      // Recognition accepts only the newest version of a rule; the same template keys the rules page shows,
+      // so a person picks a template by the name they already know.
+      return currentRules(rules).map(rule => ({id: rule.id, title: rule.title, type: rule.type ?? undefined, template: ruleTemplateKey(rule), customers: rule.customers ?? [], customer_scope: rule.customer_scope}))
     },
     prepareReaudit: roundId => request(`/rounds/${encoded(roundId)}/reaudit-inputs`),
     match: (files, customer, previous, requestId, predecessorId, preparation) => request<AuditTask>('/audit-tasks', 'POST', {

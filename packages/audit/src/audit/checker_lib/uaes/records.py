@@ -13,7 +13,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from audit.checker_lib.nio.excel_agent import rule
+from audit.checker_lib.excel_agent import rule
 from audit.engine.checkers.date_utils import normalize_excel_date
 from audit.engine.rule_engine import Cell, Decision, RuleContext, Sheet, Table
 
@@ -190,14 +190,10 @@ class UaesPackagingAgent(UaesRecordAgent):
 
 
 class UaesControlledDocumentAgent(UaesRecordAgent):
-    """A controlled stamp is an image fact: no table of the original is read."""
+    """A controlled stamp is an image fact: no table of the original is read, so a DOCX original is read as well."""
 
-    def _load_workbook(self) -> Any:
-        from openpyxl import Workbook
-
-        if self._workbook_cache is None:
-            self._workbook_cache = Workbook()
-        return self._workbook_cache
+    SUPPORTED_EXTENSIONS = frozenset({".xlsx", ".xls", ".xlsm", ".docx", ".pdf"})
+    TABLES = False
 
     @rule("原件实际受控章")
     def rule_1(self, ctx: RuleContext):
@@ -404,7 +400,8 @@ class UaesMeasurementComparisonAgent(UaesRecordAgent):
 
 
 class UaesPhotoAgent(UaesSourceAgent):
-    SUPPORTED_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".pdf"})
+    # U13:1 asks for an image file; a PDF is not one.
+    SUPPORTED_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 
     @rule("可读取照片载体与人工确认提示")
     def rule_1(self):
@@ -419,10 +416,13 @@ class UaesPhotoAgent(UaesSourceAgent):
         return ("ERR" if result["state"] == "error" else "UNABLE"), "；".join(result["reasons"]) + "；" + message
 
 
-# DOCX originals: only the snapshot reader reads Word paragraphs, so these carriers keep it.
+class UaesDocxAgent(UaesSourceAgent):
+    """A DOCX original: only the snapshot reader reads Word paragraphs, so these carriers keep it."""
+
+    SUPPORTED_EXTENSIONS = frozenset({".docx"})
 
 
-class UaesPackagingDocxAgent(UaesSourceAgent):
+class UaesPackagingDocxAgent(UaesDocxAgent):
     @rule("包装方案标题与六个内容块")
     def rule_1(self):
         facts = self.native()
@@ -432,7 +432,7 @@ class UaesPackagingDocxAgent(UaesSourceAgent):
         return "PASS", "已读取包装方案标题及原规则要求的六个内容块。"
 
 
-class UaesEngineeringHistoryDocxAgent(UaesSourceAgent):
+class UaesEngineeringHistoryDocxAgent(UaesDocxAgent):
     @rule("工程更改一览表及五类字段")
     def rule_1(self):
         facts = self.native()
@@ -448,7 +448,7 @@ class UaesEngineeringHistoryDocxAgent(UaesSourceAgent):
         return "PASS", "工程更改表及项目、零件号、变更内容、原因、时间已核实。"
 
 
-class UaesTraceabilityDocxAgent(UaesSourceAgent):
+class UaesTraceabilityDocxAgent(UaesDocxAgent):
     @rule("供应商零件追溯五个区域须有实际内容")
     def rule_1(self):
         facts = self.native()
@@ -458,7 +458,7 @@ class UaesTraceabilityDocxAgent(UaesSourceAgent):
         return "PASS", "已读取供应商零件追溯五个区域的对应内容。"
 
 
-class UaesTrialDocxAgent(UaesSourceAgent):
+class UaesTrialDocxAgent(UaesDocxAgent):
     @rule("试装流转记录和两类实际勾选结论")
     def rule_1(self):
         facts = self.native()
@@ -474,7 +474,7 @@ class UaesTrialDocxAgent(UaesSourceAgent):
         return "PASS", "已核实流程结束/完成和两类通过结论的实际勾选。"
 
 
-class UaesLabQualificationDocxAgent(UaesSourceAgent):
+class UaesLabQualificationDocxAgent(UaesDocxAgent):
     @rule("实验室认可标识和真实截止日期")
     def rule_1(self):
         facts = self.native()
@@ -491,7 +491,7 @@ class UaesLabQualificationDocxAgent(UaesSourceAgent):
         return status, message + visual_message
 
 
-class UaesMeasurementComparisonDocxAgent(UaesSourceAgent):
+class UaesMeasurementComparisonDocxAgent(UaesDocxAgent):
     @rule("测量比较报告四方原件签字")
     def rule_1(self):
         facts = self.native()

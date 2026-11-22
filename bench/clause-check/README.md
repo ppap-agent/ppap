@@ -27,8 +27,6 @@ cases.json 记录各条款、需要对照的真实文件、参照发现（需人
     python3 -m unittest discover -s .claude/skills/clause-check/tests -v
     python3 .claude/skills/clause-check/scripts/check.py .claude/skills/clause-check/examples/X01/X01-1.review.json
 
-不再需要 Java、ROBOT/HermiT 或 OWL 文件。
-
 ## 运行 Agent 基准
 
 需要在 macOS 配置好 pi、已登录的 claude CLI 和 sandbox-exec。每个会话在独立受限目录中仅能读取本条规则与可选的真实文件，不读仓库中的历史报告、真值表或其他会话状态。

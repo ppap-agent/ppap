@@ -24,10 +24,10 @@ import type {AuditSharingAdapter} from './sharing-contract'
 import {useReportPackage} from './report-actions'
 import {ReportPackage} from './report-package'
 import {historyReportReady, historyReportReference, resultKey, readArchiveAddress, writeArchiveAddress, writeArchivePackageAddress, type HistoryEntry} from './archive-contract'
-import type {OriginalRenderer} from './review-content'
+import {useDocumentTypeLabel, type OriginalRenderer} from './review-content'
 import {sameSnapshot} from './result-projection'
 import {readAuditRoute} from './routes'
-import {conclusionLabel, documentTypeLabel, resultTone} from './status-labels'
+import {conclusionLabel, resultTone} from './status-labels'
 import type {ArchiveDocument, ArchiveQuery, AuditArchiveAdapter} from './archive-contract'
 
 const initialQuery: ArchiveQuery = {search: '', category_id: null, document_type: null, customer: null, initiator: null, from_date: null, through_date: null, result: null, page: 1, page_size: 10}
@@ -46,7 +46,8 @@ const results = [['PASS', conclusionLabel.PASS], ['NG', conclusionLabel.NG], ['U
 const resultName = (value: ArchiveQuery['result']) => results.find(([key]) => key === value)?.[1] ?? null
 const otherLabel = (label: string, kind: string) => label === '其他' ? `未归类${kind}` : label
 
-export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter, sharingAdapter, precheckAdapter, headerTitle, active = true}: {headerTitle?: HTMLElement | null; adapter: AuditArchiveAdapter; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; precheckAdapter?: PrecheckAdapter; active?: boolean; headerActions?: HTMLElement | null}) {
+export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter, sharingAdapter, precheckAdapter, headerTitle, active = true}: {headerTitle?: HTMLElement | null; adapter: AuditArchiveAdapter; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; reportAdapter: AuditReportAdapter; sharingAdapter: AuditSharingAdapter; precheckAdapter?: PrecheckAdapter; active?: boolean; headerActions?: HTMLElement | null}) {
+  const documentTypeLabel = useDocumentTypeLabel()
   const [query, setQuery] = useState(initialQuery), [search, setSearch] = useState(''), [searchOpen, setSearchOpen] = useState(false)
   const [page, setPage] = useState<components['schemas']['AuditArchivePage'] | null>(null)
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0)
@@ -90,7 +91,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
   }, reportAdapter)
   async function restorePackage() {
     const requestId = packageRequestRef.current
-    if (!requestId || !reportAdapter) return
+    if (!requestId) return
     const request = ++packageEpoch.current
     setPackageReading(true); setPackageError('')
     try {
@@ -114,7 +115,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
     } else setChecked(rows => Object.fromEntries(Object.entries(rows).filter(([id]) => id !== document.document_id)))
   }
   async function download(asPackage = false) {
-    if (!reportAdapter || downloading) return
+    if (downloading) return
     setDownloading(true); setDownloadError('')
     let url = ''
     try {
@@ -148,21 +149,19 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
     return () => window.clearTimeout(timer)
   }, [search, query.search])
   const current = page && sameSnapshot(page.query, query) ? page : null
-  // A customer node by its id, or (`recorded`) the node holding a recorded value; this page names every customer in full.
-  const customerGroup = (key: string, recorded = false) => page?.customer_groups.find(group => recorded ? group.values.includes(key.trim()) : group.id === key)
   // Customers lead the tree; the vehicle and part levels open under the chosen customer and vehicle.
   // A count shows only once the read has said it; no placeholder stands in for it.
   const node = (label: string, count: number | undefined, current: boolean, update: Partial<ArchiveQuery>, depth = 0) => <div className={cn(depth === 1 && 'pl-3', depth === 2 && 'pl-6')}><Button variant={current ? 'soft' : 'ghost'} size="sm" className="w-full justify-between" aria-current={current || undefined} onClick={() => filter(update)}><span className="truncate" title={label}>{label}</span>{count !== undefined && <span className="text-xs tabular-nums opacity-70">{count}</span>}</Button></div>
   const tree = <nav className="grid gap-0.5" aria-label="客户与车型">
     {node('全部文件', page?.document_count, !query.customer && !query.category_id, {customer: null, category_id: null})}
-    {/* One node per registered customer, named in full; a value matching no registered customer is its own node, as recorded. */}
-    {(page?.customer_groups || []).map(group => <div key={group.id} className="grid gap-0.5">
-      {node(group.full_name, group.count, query.customer === group.id && !query.category_id, {customer: group.id, category_id: null})}
-      {query.customer === group.id && group.categories.map(category => {
+    {/* One node per customer the files write, named as written. */}
+    {(page?.customer_groups || []).map(group => <div key={group.name} className="grid gap-0.5">
+      {node(group.name, group.count, query.customer === group.name && !query.category_id, {customer: group.name, category_id: null})}
+      {query.customer === group.name && group.categories.map(category => {
         const open = query.category_id === category.id || category.parts.some(part => part.id === query.category_id)
         return <div key={category.id} className="grid gap-0.5">
-          {node(otherLabel(category.label, '车型'), category.count, query.category_id === category.id, {customer: group.id, category_id: category.id}, 1)}
-          {open && category.parts.map(part => <div key={part.id}>{node(otherLabel(part.label, '零件'), part.count, query.category_id === part.id, {customer: group.id, category_id: part.id}, 2)}</div>)}
+          {node(otherLabel(category.label, '车型'), category.count, query.category_id === category.id, {customer: group.name, category_id: category.id}, 1)}
+          {open && category.parts.map(part => <div key={part.id}>{node(otherLabel(part.label, '零件'), part.count, query.category_id === part.id, {customer: group.name, category_id: part.id}, 2)}</div>)}
         </div>
       })}
     </div>)}
@@ -170,10 +169,10 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
   const choices = (label: string, value: string | null, options: string[], key: 'document_type' | 'customer' | 'initiator') => <Select value={value || 'all'} onValueChange={value => filter({[key]: value === 'all' ? null : value})}><SelectTrigger aria-label={label} className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">{label}</SelectItem>{options.map(option => <SelectItem key={option} value={option}>{key === 'document_type' ? documentTypeLabel(option) : option}</SelectItem>)}</SelectContent></Select>
   const range = rangeOf(query)
   const categoryLabel = page?.categories.flatMap(category => [{id: category.id, label: otherLabel(category.label, '车型')}, ...category.parts.map(part => ({id: part.id, label: `${otherLabel(category.label, '车型')} / ${otherLabel(part.label, '零件')}`}))]).find(category => category.id === query.category_id)?.label
-  const applied = ([['search', '搜索', query.search], ['category_id', '分类', query.category_id ? categoryLabel || '已选分类' : null], ['document_type', '文件类型', query.document_type && documentTypeLabel(query.document_type)], ['customer', '客户', query.customer && (customerGroup(query.customer)?.full_name || '已选客户')], ['result', '审核结果', resultName(query.result)], ['initiator', '发起人', query.initiator]] as const).filter(([, , value]) => Boolean(value))
+  const applied = ([['search', '搜索', query.search], ['category_id', '分类', query.category_id ? categoryLabel || '已选分类' : null], ['document_type', '文件类型', query.document_type && documentTypeLabel(query.document_type)], ['customer', '客户', query.customer], ['result', '审核结果', resultName(query.result)], ['initiator', '发起人', query.initiator]] as const).filter(([, , value]) => Boolean(value))
   const clearFilters = () => {setSearch(''); setQuery(initialQuery)}
   const status = (document: ArchiveDocument) => <div className="space-y-1">{document.latest_completed ? <Badge variant={resultTone(document.latest_completed.conclusion)}>{document.latest_completed.conclusion ? conclusionLabel[document.latest_completed.conclusion] ?? '结果未知' : '结果未知'}</Badge> : <span className="text-xs text-muted-foreground">尚无完成审核</span>}{document.latest_completed && <p className="text-xs text-muted-foreground">第 {document.latest_completed.sequence} 次审核</p>}{document.latest_activity && ['queued', 'running'].includes(document.latest_activity.execution) && <p className="text-xs text-muted-foreground">第 {document.latest_activity.sequence} 次审核{document.latest_activity.execution === 'queued' ? '排队中' : '中'}</p>}</div>
-  const selection = chosen.length > 0 && <section aria-label="已选固定报告" className="space-y-3"><div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-sm font-medium">已选择 {chosen.length} 份报告</span>{chosen.length > 1 ? <Button variant="outline" size="sm" disabled={!packaging.canCreatePackage(chosenReferences)} onClick={() => void packaging.createPackage(chosenReferences)}>打包所选 {chosen.length} 份历史报告</Button> : <Button variant="outline" size="sm" disabled={!reportAdapter || downloading} onClick={() => void download()}>下载所选 1 份历史报告</Button>}<Button variant="ghost" size="sm" onClick={() => setChecked({})}>清空选择</Button></div><div className="flex flex-wrap gap-2">{chosen.map(item => <Badge variant="outline" className="max-w-full whitespace-normal text-left" key={resultKey(item.entry.reference)}>{item.title} · 第 {item.entry.sequence} 次审核</Badge>)}</div></section>
+  const selection = chosen.length > 0 && <section aria-label="已选固定报告" className="space-y-3"><div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-sm font-medium">已选择 {chosen.length} 份报告</span>{chosen.length > 1 ? <Button variant="outline" size="sm" disabled={!packaging.canCreatePackage(chosenReferences)} onClick={() => void packaging.createPackage(chosenReferences)}>打包所选 {chosen.length} 份历史报告</Button> : <Button variant="outline" size="sm" disabled={downloading} onClick={() => void download()}>下载所选 1 份历史报告</Button>}<Button variant="ghost" size="sm" onClick={() => setChecked({})}>清空选择</Button></div><div className="flex flex-wrap gap-2">{chosen.map(item => <Badge variant="outline" className="max-w-full whitespace-normal text-left" key={resultKey(item.entry.reference)}>{item.title} · 第 {item.entry.sequence} 次审核</Badge>)}</div></section>
   if (!active) return null
   if (!address.documentId && (address.reference || address.invalid || address.report)) return <Alert><AlertTitle>无法打开这次审核</AlertTitle><AlertDescription><p>链接缺少有效的文件或审核信息。</p><Button variant="outline" size="sm" onClick={closeDocument}>返回审核文件</Button></AlertDescription></Alert>
   // A history read that settles after the person left this document must not write it back into the address.
@@ -200,7 +199,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
     {current && <div className="-mb-3 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-t">
       {/* Wide rows scroll inside this card. Column names and the pager stay in view. */}
       <Table aria-label="审核文件列表" containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead className="w-10"><span className="sr-only">选择报告</span></TableHead><TableHead>文档名称</TableHead><TableHead>审核规则</TableHead><TableHead>审核结果</TableHead><TableHead>文件类型</TableHead><TableHead>发起人</TableHead><TableHead>发起时间</TableHead><TableHead>客户名称</TableHead><TableHead>车型</TableHead><TableHead>零件号</TableHead><TableHead>零件名称</TableHead></TableRow></TableHeader><TableBody>{current.documents.map(document => {
-        const initiator = document.latest_completed?.initiator ?? document.latest_activity?.initiator, rule = document.latest_completed?.rule_title ?? document.latest_activity?.rule_title, at = time(document), customer = document.metadata.customer && (customerGroup(document.metadata.customer, true)?.full_name ?? document.metadata.customer)
+        const initiator = document.latest_completed?.initiator ?? document.latest_activity?.initiator, rule = document.latest_completed?.rule_title ?? document.latest_activity?.rule_title, at = time(document), customer = document.metadata.customer
         return <TableRow key={document.document_id} data-state={checked[document.document_id] ? 'selected' : undefined} className="cursor-pointer" onClick={event => {if (event.target instanceof Element && event.currentTarget.contains(event.target) && !event.target.closest('button, a, [role="checkbox"]')) openDocument(document)}}>
         <TableCell><Checkbox aria-label={`选择 ${document.title}`} checked={Boolean(checked[document.document_id])} disabled={!checked[document.document_id] && (!document.latest_completed || !historyReportReady(document.latest_completed))} onCheckedChange={value => toggle(document, value === true)}/></TableCell>
         <TableCell className="whitespace-normal"><div className="min-w-48 max-w-96"><button type="button" className="rounded-sm text-left text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50" onClick={() => openDocument(document)}><FileName name={document.title} colored/></button></div></TableCell>

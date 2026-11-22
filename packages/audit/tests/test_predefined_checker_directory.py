@@ -63,6 +63,88 @@ def test_every_preset_has_a_complete_leaf_that_names_its_implementation():
         assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
 
 
+def _carriers(leaf_resource, suite) -> list[tuple[str, type]]:
+    import importlib
+
+    found = []
+    for suffix, path in leaf_resource(suite.source_path)["carriers"].items():
+        module, name = path.split(":", 1)
+        found.append((suffix, getattr(importlib.import_module(module), name)))
+    return found
+
+
+def test_every_leaf_carrier_imports(leaf_resource):
+    for suite in predefined_directory_suites():
+        assert _carriers(leaf_resource, suite), suite.source_path
+
+
+def test_li_and_nio_carriers_read_their_suffix_and_the_leaf_document_type(leaf_resource):
+    from audit.checker_lib.excel_agent import ExcelAgent
+    from audit.checker_lib.li.excel_agent import ExcelAgent as LiExcelAgent
+    from audit.engine.checkers.docx_workbook_agent import StructuredDocxWorkbookMixin
+    from audit.kinds import PpapDocumentType
+
+    checked = 0
+    for suite in predefined_directory_suites():
+        if suite.source_path.split("/")[0] not in {"li", "nio"}:
+            continue
+        expected = PpapDocumentType.from_string(json.loads(suite.files["rules.json"])["type"])
+        for suffix, cls in _carriers(leaf_resource, suite):
+            table = getattr(cls, "TARGET_EXCEL_AGENT_CLASS", None) or cls
+            assert issubclass(table, (ExcelAgent, LiExcelAgent)), (suite.source_path, suffix)
+            if issubclass(cls, StructuredDocxWorkbookMixin):
+                assert suffix == ".docx", (suite.source_path, suffix)
+            elif table is not cls:
+                assert suffix == ".pdf", (suite.source_path, suffix)
+            else:
+                assert suffix in {".xlsx", ".xls", ".xlsm"}, (suite.source_path, suffix)
+            # DVP&R and DPVR (and every other type) never borrow another type's reader.
+            assert table.DOC_TYPE is expected, (suite.source_path, suffix)
+            checked += 1
+    assert checked
+
+
+def test_uaes_carriers_declare_the_formats_their_leaves_hand_them(leaf_resource):
+    carried: dict[type, set[str]] = {}
+    for suite in predefined_directory_suites():
+        if suite.source_path.startswith("uaes/"):
+            for suffix, cls in _carriers(leaf_resource, suite):
+                carried.setdefault(cls, set()).add(suffix)
+    assert all(carried[cls] >= cls.SUPPORTED_EXTENSIONS for cls in carried), "a declared format no leaf hands over"
+    unread = {(cls.__name__, suffix) for cls, suffixes in carried.items() for suffix in suffixes - cls.SUPPORTED_EXTENSIONS}
+    # The MSA and control plan leaves hand over a DOCX their table readers do not read: UNABLE (below).
+    assert unread == {("UaesMsaAgent", ".docx"), ("UaesControlPlanAgent", ".docx")}
+
+
+@pytest.mark.parametrize("entry", ["U02", "U03", "U05", "U08", "U09", "U10", "U11", "U14", "U15", "U17", "U18"])
+def test_uaes_docx_is_decided_or_unable_without_a_model(tmp_path, leaf_resource, monkeypatch, entry):
+    import docx
+    from audit.checker_lib.agents import AgentAudit
+    from audit.contracts import AuditInput, RuleInput
+    from audit.presets import preset_rule_body
+
+    def no_model(*args, **kwargs):
+        raise AssertionError("model called")
+
+    monkeypatch.setattr("documents.ai.run_json", no_model)
+    monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", no_model)
+    resource = leaf_resource(f"uaes/{entry}")
+    assert ".docx" in resource["carriers"]
+    path = tmp_path / "original.docx"
+    document = docx.Document()
+    document.add_paragraph("文件")
+    document.add_table(rows=1, cols=2).cell(0, 0).text = "零件号"
+    document.save(path)
+    body = preset_rule_body("UAES", entry)
+    rule = RuleInput.of(body, rule_id=entry)
+    audit = AgentAudit(AuditInput(audit_id=entry, file_url=str(path)), rule, None, resource=resource)
+    results = {clause: audit.evaluate(clause) for clause in resource["methods"]}
+    assert {item.status for item in results.values()} <= {"NG", "UNABLE"}, {clause: (item.status, item.suggestions) for clause, item in results.items()}
+    if entry in {"U05", "U08"}:
+        assert {item.status for item in results.values()} == {"UNABLE"}
+        assert {item.suggestions for item in results.values()} == {"检查程序不能按本条款读取DOCX格式的原件，需人工复核。"}
+
+
 def test_scan_uses_the_filesystem_not_the_customer_registry(tmp_path, monkeypatch):
     monkeypatch.setattr("audit.presets.customer_presets", lambda: (_ for _ in ()).throw(AssertionError("registry read")))
     write_leaf(tmp_path, "示例客户/Z99")
@@ -274,9 +356,8 @@ def test_wheel_and_container_context_keep_the_same_leaf_bytes(tmp_path):
                     assert package.read(archived) == path.read_bytes()
 
 
-def test_u13_accepts_image_formats_only(tmp_path):
+def test_u13_accepts_image_formats_only(tmp_path, leaf_resource):
     # U13:1 "提交文件为图片格式": a PDF is not an image format, so no implementation reads it.
-    import ast
     import io
 
     from audit.checker_lib.agents import AgentAudit
@@ -284,13 +365,9 @@ def test_u13_accepts_image_formats_only(tmp_path):
     from audit.presets import preset_rule_body
     from PIL import Image
 
-    # The leaf's resources are a literal, read the way the preset bindings read them.
-    source = (_CHECKERS_ROOT / "uaes" / "U13" / "resources.py").read_text(encoding="utf-8")
-    (resource,) = [
-        ast.literal_eval(node.value) for node in ast.parse(source).body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RESOURCE" for target in node.targets)
-    ]
+    resource = leaf_resource("uaes/U13")
     body = preset_rule_body("UAES", "U13")
-    rule = RuleInput(rule_id="u13", **{key: value for key, value in body.items() if key != "kind"})
+    rule = RuleInput.of(body, rule_id="u13")
     stream = io.BytesIO()
     Image.new("RGB", (2, 2), "white").save(stream, format="PNG")
     statuses = {}

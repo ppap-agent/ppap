@@ -82,7 +82,7 @@ class Product:
                 "state": "pending_confirm",
                 "files": rows,
                 "input_revision": revision,
-                "customer_preference": body["customer_preference"] or "UAES",
+                "customer_preference": body["customer_preference"],
                 "deep_mode": False,
                 "estimated_points": len(selected),
                 "confirmation_basis_digest": "quote-" + fingerprint(selected)[:8],
@@ -197,15 +197,15 @@ def test_a_folder_link_becomes_a_priced_audit_without_the_client_sequencing_anyt
     world = World("控制计划.xlsx", "PFMEA.xlsx")
     ask = str(uuid4())
     task = task_id_for("u", ask)
-    out = world.call("prepare_audit", request_id=ask, source="https://x.feishu.cn/drive/folder/fld1")
+    out = world.call("prepare_audit", request_id=ask, source="https://x.feishu.cn/drive/folder/fld1", customer="UAES")
     assert out["task_id"] == task and out["result"]["phase"] == "ready_to_confirm"
     assert [stage["state"] for stage in out["result"]["stages"]] == ["completed"] * 4 + ["pending", "completed"]
     assert out["result"]["files"]["total"] == 2 and out["result"]["quote"]["points"] == 2
     assert out["next"]["kind"] == "user_action" and out["next"]["then"]["tool"] == "confirm_audit"
     # The same request again is the same task, with nothing imported twice; another request under its ID is refused.
-    assert world.call("prepare_audit", request_id=ask, source="https://x.feishu.cn/drive/folder/fld1")["result"]["phase"] == "ready_to_confirm"
+    assert world.call("prepare_audit", request_id=ask, source="https://x.feishu.cn/drive/folder/fld1", customer="UAES")["result"]["phase"] == "ready_to_confirm"
     assert world.product.imports == 2
-    conflict = world.call("prepare_audit", request_id=ask, source="https://x.feishu.cn/drive/folder/other")["next"]
+    conflict = world.call("prepare_audit", request_id=ask, source="https://x.feishu.cn/drive/folder/other", customer="UAES")["next"]
     assert conflict["error_code"] == "request_conflict" and "新的随机 UUID" in conflict["message"]
     assert world.call("find_submissions", folder="fld1")["result"]["audits_from_this_folder"] == [{"task_id": task}]
 
@@ -214,7 +214,7 @@ def test_a_failed_file_is_an_issue_with_its_own_choices_and_the_rest_is_kept():
     world = World("a.xlsx", "b.xlsx", "c.xlsx", failing={"c.xlsx"})
     ask = str(uuid4())
     task = task_id_for("u", ask)
-    out = world.call("prepare_audit", request_id=ask, source="fld1")
+    out = world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")
     assert out["result"]["phase"] == "awaiting_decision" and out["result"]["stages"][1] == {"stage": "ingest", "state": "partial", "total": 3, "imported": 2, "failed": 1, "excluded": 0}
     (issue,) = out["issues"]
     assert issue["code"] == "IMPORT_FAILED" and out["next"]["issue_id"] == issue["id"]
@@ -235,7 +235,7 @@ def test_confirming_takes_the_agreed_quote_and_the_users_own_approval():
     world = World("a.xlsx")
     ask = str(uuid4())
     task = task_id_for("u", ask)
-    quote = world.call("prepare_audit", request_id=ask, source="fld1")["result"]["quote"]["quote_id"]
+    quote = world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")["result"]["quote"]["quote_id"]
     assert world.call("confirm_audit", task_id=task, quote_id="an-older-quote", request_id=str(uuid4()))["next"]["reason"] == "quote_changed"
 
     request = str(uuid4())
@@ -253,7 +253,7 @@ def test_a_folder_changed_since_it_was_prepared_is_put_to_the_user_before_anythi
     world = World("a.xlsx")
     ask = str(uuid4())
     task = task_id_for("u", ask)
-    quote = world.call("prepare_audit", request_id=ask, source="fld1")["result"]["quote"]["quote_id"]
+    quote = world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")["result"]["quote"]["quote_id"]
     world.product.folder.append({"token": "tok-late.xlsx", "name": "late.xlsx", "type": "file"})
     assert world.call("confirm_audit", task_id=task, quote_id=quote, request_id=str(uuid4()))["next"]["reason"] == "source_changed"
     seen = world.call("get_task", task_id=task)
@@ -265,9 +265,12 @@ def test_a_folder_changed_since_it_was_prepared_is_put_to_the_user_before_anythi
 
 def test_what_is_not_a_feishu_link_or_not_permitted_is_said_in_words_the_user_can_act_on():
     world = World("a.xlsx")
-    refused = world.call("prepare_audit", request_id=str(uuid4()), source="/Users/me/ppap.xlsx")
+    refused = world.call("prepare_audit", request_id=str(uuid4()), source="/Users/me/ppap.xlsx", customer="UAES")
     assert refused["next"]["error_code"] == "not_a_feishu_link" and "飞书" in refused["next"]["message"]
-    limited = World("a.xlsx", scopes=frozenset({"audits:read", "files:read"})).call("prepare_audit", request_id=str(uuid4()), source="fld1")
+    # Every audit names the rule set the user chose; a company name or "自动识别" is no rule set.
+    unchosen = world.call("prepare_audit", request_id=str(uuid4()), source="fld1", customer="自动识别")
+    assert unchosen["next"]["error_code"] == "customer_required" and "get_account" in unchosen["next"]["message"]
+    limited = World("a.xlsx", scopes=frozenset({"audits:read", "files:read"})).call("prepare_audit", request_id=str(uuid4()), source="fld1", customer="UAES")
     assert limited["next"]["error_code"] == "insufficient_scope" and "「从飞书导入文件」" in limited["next"]["message"] and "重新连接" in limited["next"]["message"]
     assert world.call("get_task", task_id=str(uuid4()))["next"]["error_code"] == "task_not_found"
 
@@ -280,7 +283,7 @@ def test_a_submission_is_read_through_its_subfolders_as_one_audit():
         "fld-cp": [{"token": "tok-cp.pdf", "name": "cp.pdf", "type": "file"}],
         "fld-msa": [{"token": "tok-msa.xls", "name": "msa.xls", "type": "file"}, {"token": "tok-kappa.xlsx", "name": "kappa.xlsx", "type": "file"}],
     }
-    out = world.call("prepare_audit", request_id=str(uuid4()), source="fld-root")
+    out = world.call("prepare_audit", request_id=str(uuid4()), source="fld-root", customer="UAES")
     assert out["result"]["phase"] == "ready_to_confirm" and out["issues"] == [] and out["result"]["quote"]["files_to_audit"] == 3
     assert {row["filename"]: row["folder"] for row in out["result"]["files"]["items"]} == {
         "cp.pdf": "测试文件/10 控制计划",
@@ -293,7 +296,7 @@ def test_a_task_that_cannot_be_read_is_an_error_not_a_wait():
     world = World("a.xlsx")
     ask = str(uuid4())
     task = task_id_for("u", ask)
-    assert world.call("prepare_audit", request_id=ask, source="fld1")["result"]["phase"] == "ready_to_confirm"
+    assert world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")["result"]["phase"] == "ready_to_confirm"
     original = world.product.request
 
     async def broken(actor, method, path, **more):
@@ -310,7 +313,7 @@ def test_an_approval_survives_fields_that_move_on_their_own_and_a_changed_quote_
     world = World("a.xlsx")
     ask = str(uuid4())
     task = task_id_for("u", ask)
-    quote = world.call("prepare_audit", request_id=ask, source="fld1")["result"]["quote"]["quote_id"]
+    quote = world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")["result"]["quote"]["quote_id"]
     request = str(uuid4())
     world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
     world.product.approved = True
@@ -326,7 +329,7 @@ def test_an_approval_survives_fields_that_move_on_their_own_and_a_changed_quote_
     other = World("a.xlsx")
     ask = str(uuid4())
     task = task_id_for("u", ask)
-    quote = other.call("prepare_audit", request_id=ask, source="fld1")["result"]["quote"]["quote_id"]
+    quote = other.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")["result"]["quote"]["quote_id"]
     request = str(uuid4())
     other.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
     other.product.approved = True
@@ -341,7 +344,7 @@ def test_an_unfinished_audit_offers_no_delivery_and_says_why_before_any_approval
     world = World("a.xlsx")
     ask = str(uuid4())
     task = task_id_for("u", ask)
-    world.call("prepare_audit", request_id=ask, source="fld1")
+    world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")
     world.product.audit.update(state="completed", round_id="round-1", conclusion="ERROR")
     seen = world.call("get_task", task_id=task)
     assert seen["result"]["phase"] == "completed" and "publish_report" not in {action["tool"] for action in seen["available_actions"]}
@@ -384,7 +387,7 @@ def test_an_approved_review_is_saved_as_approved_though_the_round_moved_on_meanw
     world = World("a.xlsx")
     ask = str(uuid4())
     task = task_id_for("u", ask)
-    world.call("prepare_audit", request_id=ask, source="fld1")
+    world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")
     world.product.audit.update(state="completed", round_id="round-1", conclusion="NG")
     review = {"task_id": task, "request_id": str(uuid4()), "item_key": "k1", "judgment": "确认机器结果", "rationale": "已核对原件", "next_step": ""}
     asked = world.call("record_review", **review)

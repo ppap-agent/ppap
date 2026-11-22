@@ -1,8 +1,7 @@
-"""The one customer register: a stable id, the registered full and short names, and the customer's document type set M.
+"""The one customer register: a stable id, the identity key, the one name people read, and the customer's document type set M.
 
-A recorded customer value belongs to a registered customer only when it is exactly one of that
-customer's registered names. Nothing is matched by prefix, brackets or case; any other value stays
-unregistered and is shown as recorded, never rewritten.
+A customer's name and key name its rule set. Every task names its rule set by key, chosen by a person. The customer a
+file writes is one of the file's facts: it is shown as recorded and never picks, renames or checks a rule set.
 
 M is versioned. Template coverage (N_t) and rule coverage (N_r) count against the same M with
 independent numerators: N_t counts types with a controlled template, N_r counts types with a current
@@ -28,53 +27,47 @@ class TypeSet:
 @dataclass(frozen=True)
 class RegisteredCustomer:
     id: str
-    full_name: str
-    # Also the name rules, checker suite keys and the customer preference use.
-    short_name: str
+    # The identity value checker resources, suite keys, rule bodies and stored records carry; never shown.
+    key: str
+    # The one name people read.
+    name: str
     type_set: TypeSet | None
-
-    @property
-    def names(self) -> tuple[str, str]:
-        return (self.full_name, self.short_name)
 
 
 _V3_33 = "2026-11-18"
 _T = tuple(f"T{index:02d}" for index in range(1, 18))
 
 CUSTOMERS: tuple[RegisteredCustomer, ...] = (
-    # E12–E14 are counterpart documents only; they are never audited on their own and are not in M.
     RegisteredCustomer(
         "uaes",
-        "联合汽车电子有限公司",
         "UAES",
+        "联电科技/UAES",
         TypeSet("V3.33", _V3_33, ("T04", "T07", "T08", "T09", "T10", "T11", "T12", "T17", *(f"E{index:02d}" for index in range(1, 12)))),
     ),
-    RegisteredCustomer("li", "理想汽车", "理想", TypeSet("V3.33", _V3_33, _T)),
-    RegisteredCustomer("nio", "蔚来汽车", "蔚来", TypeSet("V3.33", _V3_33, ("T01a", "T09", "T10", "T11", "T12"))),
+    RegisteredCustomer("li", "理想", "理想/Li Auto", TypeSet("V3.33", _V3_33, _T)),
+    RegisteredCustomer("nio", "蔚来", "蔚来/Nio", TypeSet("V3.33", _V3_33, ("T01a", "T09", "T10", "T11", "T12"))),
 )
+
+# Counterpart documents: compared against, never audited on their own and in no customer's M.
+COUNTERPARTS = {"E12": "采购件质量计划（PGQP1）"}
 
 
 def find(customer_id: str) -> RegisteredCustomer | None:
     return next((customer for customer in CUSTOMERS if customer.id == customer_id), None)
 
 
-def resolve(value: object) -> RegisteredCustomer | None:
-    """The registered customer this recorded value names exactly; surrounding spaces aside, nothing is guessed."""
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    return next((customer for customer in CUSTOMERS if text and text in customer.names), None)
+def by_key(key: object) -> RegisteredCustomer | None:
+    """The registered customer whose rule set a key names: a task's chosen customer, a rule's customers, a preset's customer."""
+    return next((customer for customer in CUSTOMERS if customer.key == key), None)
 
 
-def full_name(value: object) -> str:
-    """The registered full name for a recorded customer value; an unregistered value is returned as recorded."""
-    customer = resolve(value)
-    return customer.full_name if customer else (value.strip() if isinstance(value, str) else "")
+def customer_name(key: str) -> str:
+    """The name people read for a chosen rule set: a registered customer's name by its key; an enterprise's own rule set is named by itself.
 
-
-def short_name(value: object) -> str:
-    customer = resolve(value)
-    return customer.short_name if customer else (value.strip() if isinstance(value, str) else "")
+    Only rule sets are named here. The customer a file writes is one of its facts and is always shown as recorded.
+    """
+    customer = by_key(key)
+    return customer.name if customer else key
 
 
 def type_code(rule_type: object, customer: object = None) -> str | None:
@@ -89,14 +82,27 @@ def type_code(rule_type: object, customer: object = None) -> str | None:
     text = rule_type.strip()
     if len(text) == 3 and text[0] == "E" and text[1:].isdigit():
         return text
-    registered = resolve(customer)
-    own = _standard_codes().get(registered.short_name if registered else None, {})
+    registered = by_key(customer)
+    own = _standard_codes().get(registered.key if registered else None, {})
     return own.get(text) or _standard_codes()[None].get(text)
 
 
 def type_name(code: str) -> str:
     """The document type name rules use for a code (an E code names itself)."""
     return next((name for codes in _standard_codes().values() for name, value in codes.items() if value == code), code)
+
+
+@lru_cache(maxsize=1)
+def type_names() -> dict[str, str]:
+    """The one name people read for each type code the product shows: every type of every M, then the counterparts.
+
+    A customer-only E code reads as its PPAP-00-A dictionary name, any other type as its rule type name.
+    """
+    from product.precheck_content import ENTRIES
+
+    dictionary = {names[0]: names[1] for _customer, names in ENTRIES.values() if names[0].startswith("E")}
+    codes = dict.fromkeys(code for customer in CUSTOMERS if customer.type_set for code in customer.type_set.types)
+    return {**{code: dictionary.get(code) or type_name(code) for code in codes}, **COUNTERPARTS}
 
 
 @lru_cache(maxsize=1)
@@ -128,7 +134,7 @@ def rule_type_codes(customer: RegisteredCustomer, rules: Iterable[dict]) -> set[
         named = rule.get("customers")
         if rule.get("kind") != "engine" or not isinstance(named, list):
             continue
-        if any(resolve(value) is customer for value in named) and (code := type_code(rule.get("type"), customer.short_name)):
+        if customer.key in named and (code := type_code(rule.get("type"), customer.key)):
             codes.add(code)
     return codes
 
@@ -139,8 +145,8 @@ def in_type_set(rule: dict) -> bool:
     Rules of other types stay stored and keep their history (for example 蔚来 N06–N17 outside its five types); an
     unregistered customer or an unrecognised type is not judged here.
     """
-    named = [customer for value in rule.get("customers") or [] if (customer := resolve(value))]
-    codes = [(customer, type_code(rule.get("type"), customer.short_name)) for customer in named]
+    named = [customer for value in rule.get("customers") or [] if (customer := by_key(value))]
+    codes = [(customer, type_code(rule.get("type"), customer.key)) for customer in named]
     if not named or any(code is None for _customer, code in codes):
         return True
     return any(customer.type_set and code in customer.type_set.types for customer, code in codes)

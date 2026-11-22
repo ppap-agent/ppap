@@ -106,7 +106,7 @@ class WordVisualRuntime:
         raise AssertionError(f"Native DOCX must not use external conversion or rendering: {name}")
 
 
-@pytest.fixture(params=["v2", "v3"])
+@pytest.fixture(params=["li/L17", "nio/N17"])
 def audit(request, monkeypatch, run_checks):
     monkeypatch.setattr("documents.ai.run_json", lambda *args, **kwargs: pytest.fail("DOCX must not call the text model"))
 
@@ -114,7 +114,8 @@ def audit(request, monkeypatch, run_checks):
         with bind_runtime(runtime):
             results = run_checks(
                 AuditInput(audit_id="psw-word", file_url=str(path)),
-                RuleInput(rule_id="confirmed-psw-rules", rule_profile=request.param, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),
+                RuleInput(rule_id="confirmed-psw-rules", type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),
+                leaf=request.param,
             )
         assert runtime.unexpected_calls == []
         return results
@@ -252,8 +253,8 @@ def add_graphic_footnote(document):
     return result.getvalue()
 
 
-@pytest.mark.parametrize("profile", ["v2", "v3"])
-def test_unparsed_graphic_footnote_does_not_prove_an_absent_stamp(tmp_path, monkeypatch, run_checks, profile):
+@pytest.mark.parametrize("leaf", ["li/L17", "nio/N17"])
+def test_unparsed_graphic_footnote_does_not_prove_an_absent_stamp(tmp_path, monkeypatch, run_checks, leaf):
     from documents.word import extract_docx_structure
 
     path = tmp_path / "footnote-seal.docx"
@@ -265,7 +266,8 @@ def test_unparsed_graphic_footnote_does_not_prove_an_absent_stamp(tmp_path, monk
         monkeypatch.setenv(name, "")
     results = run_checks(
         AuditInput(audit_id="word-with-opaque-footnote", file_url=str(path)),
-        RuleInput(rule_id="psw-footnote", rule_profile=profile, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(i)} for i in range(1, 11)]),
+        RuleInput(rule_id="psw-footnote", type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(i)} for i in range(1, 11)]),
+        leaf=leaf,
     )
     assert results[2].status == "UNABLE"
     assert results[4].status == "UNABLE"

@@ -18,7 +18,7 @@ const keyOf = (reference: DisplayReference) => JSON.stringify([reference.task_id
 const unresolved = (draft: Draft) => ['sending', 'reading', 'unknown'].includes(draft.phase)
 
 /** Requests outlive file/task chrome. Confirmed values remain in the Task projection. */
-export function useDisplayEditor(adapter: AuditDisplayAdapter | undefined, tasks: Task[], scope: string, onInfo: (reference: DisplayReference, info: DisplayInfo) => void) {
+export function useDisplayEditor(adapter: AuditDisplayAdapter, tasks: Task[], scope: string, onInfo: (reference: DisplayReference, info: DisplayInfo) => void) {
   const drafts = useRef(new Map<string, Draft>())
   const trigger = useRef<HTMLElement | null>(null)
   const latest = useRef(tasks); latest.current = tasks
@@ -54,7 +54,7 @@ export function useDisplayEditor(adapter: AuditDisplayAdapter | undefined, tasks
   // Display info belongs to the task: only the task's creator corrects it.
   const editable = Boolean(draft && currentTask(draft.reference)?.creator.mine)
   async function observe(current: Draft, read: boolean) {
-    if (!adapter || !current.request) return
+    if (!current.request) return
     const observation = ++current.observation, request = structuredClone(current.request)
     current.phase = read ? 'reading' : 'sending'; current.message = ''; refresh()
     try {
@@ -83,7 +83,7 @@ export function useDisplayEditor(adapter: AuditDisplayAdapter | undefined, tasks
     refresh()
   }
   function save() {
-    if (!draft || unresolved(draft) || draft.phase === 'conflict' || !adapter) return
+    if (!draft || unresolved(draft) || draft.phase === 'conflict') return
     const file = currentFile(draft.reference)
     if (!editable || !file || !validDisplayInfo(file.display_info)) return
     if (!sameSnapshot(file.display_info, draft.base)) {
@@ -98,6 +98,6 @@ export function useDisplayEditor(adapter: AuditDisplayAdapter | undefined, tasks
       {!editable && <p role="status" className="text-sm text-muted-foreground">只有任务发起人可以更正显示信息。</p>}
       {draft.message && <Alert><AlertTitle>{draft.phase === 'conflict' ? '请核对最新显示信息' : draft.phase === 'rejected' ? '保存未执行' : '保存结果待确认'}</AlertTitle><AlertDescription>{draft.message}</AlertDescription></Alert>}
       {draft.phase === 'conflict' && draft.conflict && <section aria-label="最新显示信息" className="space-y-3 text-sm"><dl>{displayFields.map(([field, label]) => <div key={field} className="grid grid-cols-[5rem_minmax(0,1fr)] gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="break-words">{draft.conflict!.values[field] || '—'}</dd></div>)}</dl><Button type="button" variant="outline" disabled={!editable} onClick={() => {draft.base = structuredClone(draft.conflict!); draft.phase = 'editing'; draft.request = undefined; draft.conflict = undefined; draft.message = ''; refresh()}}>以最新版本继续更正</Button></section>}
-      <DialogFooter><Button type="button" variant="outline" onClick={() => close(true)}>{unresolved(draft) ? '关闭，稍后核对' : '取消'}</Button>{unresolved(draft) ? <Button type="button" disabled={draft.phase === 'sending' || draft.phase === 'reading'} onClick={() => void observe(draft, true)}>{draft.phase === 'sending' ? '正在保存…' : draft.phase === 'reading' ? '正在核对…' : '核对保存结果'}</Button> : <Button type="submit" disabled={locked || !editable || !adapter}>保存显示信息</Button>}</DialogFooter>
+      <DialogFooter><Button type="button" variant="outline" onClick={() => close(true)}>{unresolved(draft) ? '关闭，稍后核对' : '取消'}</Button>{unresolved(draft) ? <Button type="button" disabled={draft.phase === 'sending' || draft.phase === 'reading'} onClick={() => void observe(draft, true)}>{draft.phase === 'sending' ? '正在保存…' : draft.phase === 'reading' ? '正在核对…' : '核对保存结果'}</Button> : <Button type="submit" disabled={locked || !editable}>保存显示信息</Button>}</DialogFooter>
     </form>}</DialogContent></Dialog>}
 }

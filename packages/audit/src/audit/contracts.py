@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from audit.fact_questions import BooleanFactEvaluation, FactQuestion
 from audit.kinds import PpapDocumentType
@@ -13,15 +14,21 @@ from audit.kinds import PpapDocumentType
 class RuleInput(BaseModel):
     """Engine-side rule input without ORM dependency."""
 
+    model_config = ConfigDict(extra="forbid")
+
     rule_id: str
-    rule_profile: str = "v2"
-    preset_key: Optional[str] = None
     type: Optional[str] = None
     rules: List[Dict[str, Any]] = Field(default_factory=list)
     appendix: List[Dict[str, Any]] = Field(default_factory=list)
     customers: List[str] = Field(default_factory=list)
     models: List[str] = Field(default_factory=list)
     parts: List[str] = Field(default_factory=list)
+
+    @classmethod
+    def of(cls, body: Mapping[str, Any], *, rule_id: str, appendix: List[Dict[str, Any]] | None = None) -> RuleInput:
+        """Build from a rule body; its other fields belong to the checker directory and never enter the engine."""
+        data = {key: value for key, value in body.items() if key in cls.model_fields}
+        return cls.model_validate({**data, "rule_id": rule_id, **({} if appendix is None else {"appendix": appendix})})
 
 
 class RuleItem(BaseModel):

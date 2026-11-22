@@ -18,11 +18,18 @@ HEADERS = {"Cache-Control": "private, no-store"}
 CONFLICTS = {"idempotency_conflict", "questionnaire_closed", "answer_revision_conflict"}
 
 
+class RuleQuestionnaireRulebook(BaseModel):
+    version: str
+    revision: int
+
+
 class RuleQuestionnaireSummary(BaseModel):
     id: str
     customer_id: str
     customer_name: str
     rule_version: str
+    # The rulebook revision it was asked on.
+    rulebook: RuleQuestionnaireRulebook
     title: str
     imported_at: str
     closed_at: str | None

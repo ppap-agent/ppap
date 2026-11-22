@@ -1,6 +1,6 @@
 // Reading one work item's PPAP picture: its attachments, the enterprise's audits of it, and what
 // decides the expected document types. Shared by the detail tab and the node card.
-import type { RegisteredCustomer, Rule } from './ledger';
+import type { CustomerCatalog, RegisteredCustomer, Rule } from './ledger';
 import type { Attachment, AuditSummary, FactView, Task } from './model';
 import { call } from './ppap';
 
@@ -12,7 +12,7 @@ export type AiNode = { status: 'idle' | 'running' | 'done' | 'stopped' | 'comple
 export const outsideText = '这个节点是在飞书项目里直接完成的，没有经过 PPAP 的写回或人工放行。';
 // A person's release of a round's PPAP node; kept apart from the round's own conclusion.
 export type Release = { by: string; reason: string; at: string };
-export type Data = { attachments: Attachment[]; fields: Record<string, string>; tasks: Task[]; written: string[] | null; sources: Record<string, string>; rules: Rule[]; customers: RegisteredCustomer[] | null; defaultCustomer: string | null; aiNode: AiNode; releases: Record<string, Release>; facts: FactView | null };
+export type Data = { attachments: Attachment[]; fields: Record<string, string>; tasks: Task[]; written: string[] | null; sources: Record<string, string>; rules: Rule[]; customers: RegisteredCustomer[] | null; typeNames: Record<string, string> | null; defaultCustomer: string | null; aiNode: AiNode; releases: Record<string, Release>; facts: FactView | null };
 
 // A work item rarely has more audits than this; older ones remain in PPAP.
 const RECENT = 8;
@@ -26,7 +26,7 @@ export async function loadWorkItem(item: Item, names: Record<string, string>): P
     call<{ audits: AuditSummary[]; written_round_ids: string[] | null; sources: Record<string, string>; ai_node?: AiNode; releases?: Record<string, Release> }>(`${itemPath(item)}/audits`),
     call<{ rules: Rule[] }>('/rules').catch(() => ({ rules: [] as Rule[] })),
     call<{ customer_preference: string | null }>('/audit-customers/default').catch(() => ({ customer_preference: null })),
-    call<{ customers: RegisteredCustomer[] }>('/audit-customers').then(reply => reply.customers, () => null),
+    call<CustomerCatalog>('/audit-customers').catch(() => null),
   ]);
   // A draft that was never confirmed only matters while it is the latest thing here.
   const wanted = audits.audits.filter((audit, index) => audit.round_id || index === 0).slice(0, RECENT);
@@ -41,5 +41,5 @@ export async function loadWorkItem(item: Item, names: Record<string, string>): P
       names[key] = await window.JSSDK.Field.load({ spaceId: item.project_key, workObjectId: item.work_item_type_key, fieldId: key }).then(field => field.name, () => '');
     }
   }
-  return { attachments: files.files, fields: { ...names }, tasks, written: audits.written_round_ids, sources: audits.sources ?? {}, rules: rules.rules, customers: register, defaultCustomer: customer.customer_preference, aiNode: audits.ai_node ?? null, releases: audits.releases ?? {}, facts };
+  return { attachments: files.files, fields: { ...names }, tasks, written: audits.written_round_ids, sources: audits.sources ?? {}, rules: rules.rules, customers: register?.customers ?? null, typeNames: register?.type_names ?? null, defaultCustomer: customer.customer_preference, aiNode: audits.ai_node ?? null, releases: audits.releases ?? {}, facts };
 }

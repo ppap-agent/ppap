@@ -32,7 +32,6 @@ def _body(**extra: object) -> dict:
         ("", RULE_PROFILE_V2),
         ("default", RULE_PROFILE_V2),
         ("v2", RULE_PROFILE_V2),
-        ("modern_v2", RULE_PROFILE_V2),
         ("v3", RULE_PROFILE_V3),
     ],
 )
@@ -45,7 +44,7 @@ def test_normalize_rule_profile_rejects_unknown() -> None:
         normalize_rule_profile("legacy")
 
 
-@pytest.mark.parametrize("raw", [None, "", "default", "v2", "modern_v2"])
+@pytest.mark.parametrize("raw", [None, "", "default", "v2"])
 def test_published_body_uses_v2_when_profile_is_default(raw: str | None) -> None:
     body = _body()
     if raw is not None:

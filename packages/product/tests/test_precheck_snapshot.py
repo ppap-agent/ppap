@@ -38,9 +38,9 @@ def test_content_passes_the_user_choice_and_keys_its_cache_by_it(monkeypatch):
     precheck_snapshot._CACHE.clear()
     store = Store({"a": b"x", "b": b"x"})
     # Same bytes, entry and customer: a hand-picked rule still reads separately from a recognized one.
-    precheck_snapshot._content(store, "alice", {"files": [row("a", preferred="rule-1")]})
-    precheck_snapshot._content(store, "alice", {"files": [row("b")]})
-    precheck_snapshot._content(store, "alice", {"files": [row("b")]})
+    precheck_snapshot._content(store, "alice", {"customer_preference": "理想", "files": [row("a", preferred="rule-1")]})
+    precheck_snapshot._content(store, "alice", {"customer_preference": "理想", "files": [row("b")]})
+    precheck_snapshot._content(store, "alice", {"customer_preference": "理想", "files": [row("b")]})
     assert calls == [True, False]
     assert {principal for principal, *_ in store.reads} == {"alice"}
 
@@ -65,3 +65,11 @@ def test_file_warnings_are_the_audited_files_own_and_absent_without_a_snapshot()
     snapshot = {"precheck": {"warnings": [{"file_version_id": "a", "code": "W02"}, {"file_version_id": "b", "code": "W01"}]}}
     assert precheck_snapshot.file_warnings(snapshot, "a") == [{"file_version_id": "a", "code": "W02"}]
     assert precheck_snapshot.file_warnings(None, "a") == []
+
+
+def test_the_cover_customer_is_the_one_the_files_write_never_the_chosen_rule_set():
+    written, silent = row("a"), row("b")
+    written["match"]["metadata"] = {"customer": "联合汽车电子有限公司", "part_number": "P1", "part": "壳体"}
+    silent["match"]["metadata"] = {"customer": None, "part_number": "P1", "part": "壳体"}
+    assert precheck_snapshot.cover_recognition({"customer_preference": "UAES", "files": [written, silent]})["customer"] == "联合汽车电子有限公司"
+    assert precheck_snapshot.cover_recognition({"customer_preference": "UAES", "files": [silent]})["customer"] is None

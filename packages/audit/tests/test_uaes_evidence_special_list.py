@@ -17,7 +17,7 @@ def _check(tmp_path, rows, rule):
         book.active.append(row)
     book.save(path)
     body = preset_rule_body("UAES", "U12")
-    agent = UaesSpecialCharacteristicsAgent(AuditInput(audit_id="u12", file_url=str(path)), RuleInput(rule_id="u12", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesSpecialCharacteristicsAgent(AuditInput(audit_id="u12", file_url=str(path)), RuleInput.of(body, rule_id="u12"))
     return agent.check([name for name, _ in agent.declared_rules()].index(rule))
 
 

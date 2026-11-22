@@ -3,34 +3,25 @@
 import type {components} from '../generated/openapi'
 import {clauseObservation, pendingCount, pendingNote} from '../audit/result-projection.ts'
 import {needsAttention} from '../audit/review-navigation.ts'
-import {conclusionLabel, resultLabel, uncoveredLabel} from '../audit/status-labels.ts'
+import {checkStatusLabel, conclusionLabel, executionLabel} from '../audit/status-labels.ts'
 
 export type Task = components['schemas']['AuditTask']
 export type TaskFile = components['schemas']['AuditTaskFile']
 export type Check = components['schemas']['AuditClauseEvaluation']
 export type Verdict = 'PASS' | 'NG' | 'UNKNOWN' | 'ERROR' | 'NONE' | 'RUNNING'
 
-export const verdictLabel: Record<Verdict, string> = {PASS: '符合', NG: '不符合', UNKNOWN: '待审核', ERROR: '审核异常', NONE: '未审核', RUNNING: '审核中'}
-
 export const audited = (task: Task) => task.files.filter(row => row.selection === 'selected' && row.audit)
 
-/** A failed or unfinished audit is never stated as conforming. */
+/** The round's one conclusion is the server's (a person's confirmation over the machine's); the add-on only tells
+ * a round with no rules or still running apart, and never derives a conclusion of its own. */
 export function verdict(task: Task): Verdict {
   if (task.completion_reason === 'no_matching_rules') return 'NONE'
   if (task.state !== 'completed' || task.execution !== 'completed' && task.execution !== 'failed') return 'RUNNING'
-  const audits = audited(task).map(row => row.audit!)
-  if (task.execution === 'failed' || task.has_execution_error || audits.some(audit => audit.execution === 'review_failed')) return 'ERROR'
-  if (!audits.length || audits.some(audit => !audit.conclusion)) return 'UNKNOWN'
-  if (audits.some(audit => audit.conclusion === 'NG')) return 'NG'
-  return audits.some(audit => audit.conclusion === 'UNKNOWN') ? 'UNKNOWN' : 'PASS'
+  return task.conclusion ?? 'UNKNOWN'
 }
 
-export function statusOf(check: Check): string {
-  if (check.execution === 'failed' || check.finding?.status === 'ERR') return resultLabel.ERR
-  if (check.coverage !== 'executed') return uncoveredLabel
-  if (!check.finding || check.finding.status === 'UNABLE') return resultLabel.UNABLE
-  return resultLabel[check.finding.status as keyof typeof resultLabel] ?? check.finding.status
-}
+/** The overall conclusion in the web app's words. */
+export const verdictText = (overall: Verdict) => overall === 'NONE' ? '未审核' : overall === 'RUNNING' ? executionLabel.running : conclusionLabel[overall]
 
 const urgency = (check: Check) => check.finding?.status === 'NG' ? 0 : check.execution === 'failed' || check.finding?.status === 'ERR' ? 1 : check.coverage !== 'executed' ? 3 : 2
 
@@ -82,7 +73,7 @@ export function resultMarkdown(task: Task, link: string): string {
   const lines = [
     `## ${marker(task)}`,
     '',
-    `**总体结论：${verdictLabel[overall]}**　不符合 ${sum.ng} 项，待审核 ${sum.pending} 项${sum.errors ? `，审核异常 ${sum.errors} 项` : ''}。审核时间：${when(task.round_started_at ?? task.created_at)}`,
+    `**总体结论：${conclusionLabel[overall]}**　不符合 ${sum.ng} 项，待审核 ${sum.pending} 项${sum.errors ? `，审核异常 ${sum.errors} 项` : ''}。审核时间：${when(task.round_started_at ?? task.created_at)}`,
     '',
     '| 文件 | 结论 | 不符合 |',
     '| --- | --- | --- |',
@@ -91,7 +82,7 @@ export function resultMarkdown(task: Task, link: string): string {
   ]
   if (open.length) {
     lines.push('### 待处理项', '')
-    for (const {row, check} of open.slice(0, 50)) lines.push(`- [ ] 【${statusOf(check)}】${cell(row.file.original_filename)}：${brief(check.rule_item.rule_to_check, 120)}——${brief(clauseObservation(check), 160)}`)
+    for (const {row, check} of open.slice(0, 50)) lines.push(`- [ ] 【${checkStatusLabel(check)}】${cell(row.file.original_filename)}：${brief(check.rule_item.rule_to_check, 120)}——${brief(clauseObservation(check), 160)}`)
     if (open.length > 50) lines.push('', `其余 ${open.length - 50} 项请在 PPAP 中查看。`)
     lines.push('')
   }

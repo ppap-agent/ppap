@@ -110,7 +110,7 @@ def run_batch(batch: Batch) -> list[dict[str, Any]]:
     from agent.execution.audit_runtime import run_audit
     from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
     from audit.standard_suites import library_revision
-    from product.precheck import precheck_task, rule_customer
+    from product.precheck import precheck_task
     from product.precheck_content import entry_key, precheck_content
     from worker.intake.file_analysis import analyze_file
     from worker.intake.file_validation import validate_file
@@ -127,7 +127,7 @@ def run_batch(batch: Batch) -> list[dict[str, Any]]:
         validation = validate_file(path.name, data)
         match: dict[str, Any] | None = None
         if validation["state"] == "valid":
-            result = analyze_file(path.name, data, rules, customer_preference="UAES", scoped=True, reference_only=reference)
+            result = analyze_file(path.name, data, rules, customer_preference="UAES", reference_only=reference)
             state = result.get("matching_status")
             state = state if state in {"matched", "reference", "unmatched", "failed"} else "failed"
             match = {
@@ -150,7 +150,7 @@ def run_batch(batch: Batch) -> list[dict[str, Any]]:
         found: dict[str, Any] = row["match"] or {}
         if found.get("state") != "matched" or row.get("reference_only"):
             continue
-        customer = rule_customer(task, row)
+        customer = task["customer_preference"]
         key = entry_key(customer, found.get("document_type"))
         if key is None:
             continue

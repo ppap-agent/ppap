@@ -40,7 +40,6 @@ def check_workbook(tmp_path: Path, agent_class, workbook: Workbook, rule_number:
         saved_file(tmp_path, "target.xlsx", workbook),
         RuleInput(
             rule_id="confirmed-document-rules",
-            rule_profile="v3",
             type=agent_class.DOC_TYPE.get_type_name(),
             rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, rule_number + 1)],
         ),
@@ -444,7 +443,7 @@ def test_n14_ocr_table_rows_are_checked_not_passed(tmp_path, rule_number, change
 def check_psw(tmp_path, workbook: Workbook, rule_number: int) -> AuditResultItem:
     agent = PswExcelAgent(
         saved_file(tmp_path, "psw.xlsx", workbook),
-        RuleInput(rule_id="psw", rule_profile="v3", type="零件提交保证书", rules=[{"id": str(index)} for index in range(1, 11)]),
+        RuleInput(rule_id="psw", type="零件提交保证书", rules=[{"id": str(index)} for index in range(1, 11)]),
     )
     try:
         with bind_runtime(None):
@@ -948,7 +947,7 @@ def test_n17_5_text_typed_into_the_signature_box_is_not_a_signature(tmp_path):
     sheet["A25"] = "经授权的供方代表签字"
     sheet["D25"] = "张三"
     workbook.save(path)
-    agent = NioPswAgent(AuditInput(audit_id="psw-typed", file_url=str(path)), RuleInput(rule_id="psw", rule_profile="v3", type="零件提交保证书", rules=[]))
+    agent = NioPswAgent(AuditInput(audit_id="psw-typed", file_url=str(path)), RuleInput(rule_id="psw", type="零件提交保证书", rules=[]))
     try:
         with bind_runtime(None):
             result = agent.check(4)

@@ -77,7 +77,7 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
                     "page": 1,
                     "page_size": 10,
                 }
-                route.fulfill(json={"query": query, "documents": [], "total": 0, "document_count": 0, "categories": [], "customer_groups": [], "document_types": [], "customers": [], "initiators": []})
+                route.fulfill(json={"query": query, "documents": [], "total": 0, "document_count": 0, "categories": [], "customer_groups": [], "document_types": [], "initiators": []})
             elif path == "/audit-report-packages/original-request":
                 if hold_next_read[0]:
                     hold_next_read[0] = False

@@ -21,7 +21,7 @@ def test_the_drawing_number_comes_from_the_title_block_image(tmp_path, monkeypat
 
     monkeypatch.setattr(UaesMaterialsAgent, "transcribe", transcribe)
     body = preset_rule_body("UAES", "U04")
-    agent = UaesMaterialsAgent(AuditInput(audit_id="list", file_url=str(path)), RuleInput(rule_id="u04", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesMaterialsAgent(AuditInput(audit_id="list", file_url=str(path)), RuleInput.of(body, rule_id="u04"))
     drawing = AuditInput(audit_id="drawing", file_url=str(path))
     assert agent.drawing_shows(None, drawing, part) is expected
     assert agent.drawing_shows(None, drawing, part) is expected

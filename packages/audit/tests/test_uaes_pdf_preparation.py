@@ -36,7 +36,7 @@ def test_uaes_reads_all_native_pdf_continuation_pages(tmp_path, last_resource, e
                 page.draw_circle((240, 130), 10)
         document.save(path)
     original = path.read_bytes()
-    agent = UaesControlPlanAgent(AuditInput(audit_id="frozen-pdf-version", file_url=str(path)), RuleInput(rule_id="uaes-cp", rule_profile="v4", preset_key="U08"))
+    agent = UaesControlPlanAgent(AuditInput(audit_id="frozen-pdf-version", file_url=str(path)), RuleInput(rule_id="uaes-cp"))
     result = agent.check(0)
     assert result.status == expected, result.suggestions
     if expected == "NG":
@@ -61,7 +61,7 @@ def _related_source(tmp_path, name, *rows):
 
 def _control_plan(tmp_path, by_type, unclassified):
     target = _related_source(tmp_path, "cp.xlsx", ["控制计划"], ["零件号", "F01RD0Y776"], ["工序名称/操作描述", "评价/测量技术"], ["压铸", "目视"])
-    agent = UaesControlPlanAgent(target, RuleInput(rule_id="uaes-cp", rule_profile="v4", preset_key="U08"))
+    agent = UaesControlPlanAgent(target, RuleInput(rule_id="uaes-cp"))
     grouped = {kind: [_related_source(tmp_path, name, *rows) for name, rows in items] for kind, items in by_type.items()}
     others = [_related_source(tmp_path, name, *rows) for name, rows in unclassified]
     agent.group_context = GroupContextInput(
@@ -146,7 +146,7 @@ def test_a_page_without_text_cannot_prove_the_msa_plan_is_absent(tmp_path, outli
         page = document.new_page(width=400, height=220)
         page.insert_text((40, 45), "重复性及再现性分析报告", fontname="china-s", fontsize=11)
         document.save(path)
-    agent = UaesMsaAgent(AuditInput(audit_id="msa", file_url=str(path)), RuleInput(rule_id="uaes-msa", rule_profile="v4", preset_key="U05"))
+    agent = UaesMsaAgent(AuditInput(audit_id="msa", file_url=str(path)), RuleInput(rule_id="uaes-msa"))
     assert agent.check(0).status == expected
 
 
@@ -158,5 +158,5 @@ def test_a_page_without_a_reconstructed_grid_cannot_prove_the_capability_summary
         # The summary's text is readable, but no table grid is rebuilt for it.
         document.new_page(width=400, height=220).insert_text((40, 45), "Ppk能力值汇总  PPK结果值  PPK目标值  反应计划", fontname="china-s", fontsize=11)
         document.save(path)
-    agent = UaesCapabilityAgent(AuditInput(audit_id="ppk", file_url=str(path)), RuleInput(rule_id="uaes-ppk", rule_profile="v4", preset_key="U06"))
+    agent = UaesCapabilityAgent(AuditInput(audit_id="ppk", file_url=str(path)), RuleInput(rule_id="uaes-ppk"))
     assert agent.check(2).status == "UNABLE"

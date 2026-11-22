@@ -222,7 +222,7 @@ def _pdf_images(audit, pages: Sequence[int], digest: str, fields=None):
 def _source_identity(audit, cache):
     path = Path(audit.file_url)
     if path.suffix.casefold() not in {".pdf", ".png", ".jpg", ".jpeg", ".webp"}:
-        raise VisualFactsUnavailable("当前载体尚无已定位的原页图像证据。")
+        raise VisualFactsUnavailable("这份原件没有能定位的页面图片证据，需人工核对。")
     with path.open("rb") as source:
         digest = hashlib.file_digest(source, "sha256").hexdigest()
     expected = (audit.file_metadata or {}).get("source_sha256") or (audit.file_metadata or {}).get("sha256")

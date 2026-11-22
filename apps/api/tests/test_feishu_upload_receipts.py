@@ -174,7 +174,7 @@ def test_import_resume_cannot_replace_bytes_captured_before_an_object_failure(au
             assert receipt["resume_allowed"] is False
             assert len(downloads) == 2
         assert client.get("/audit-tasks").json()["tasks"] == []
-        assert client.get("/rounds").json()["rounds"] == []
+        assert store.list_rounds(principal) == []
 
 
 def test_lost_lock_session_cannot_publish_after_another_handler_captures_bytes(auth_store_factory):

@@ -5,10 +5,10 @@ import re
 import unicodedata
 from typing import Callable, Dict, Iterable, List, Optional
 
-from documents.contracts import FileRef
-from documents.conversion import load_workbook_auto as load_workbook_pipeline
 from openpyxl.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
+
+from audit.checker_lib.excel import load_workbook_auto as _load_workbook_auto
 
 logger = logging.getLogger(__name__)
 
@@ -115,27 +115,6 @@ def filter_pfd_process_rows(
             continue
         filtered_rows.append(row)
     return filtered_rows
-
-
-def _load_workbook_auto(file_url: str) -> Workbook:
-    try:
-        from audit.engine.runtime import get_runtime
-
-        runtime = get_runtime()
-        if runtime is not None:
-            workbook = runtime.load_workbook_auto(FileRef(location=file_url))
-        else:
-            workbook = load_workbook_pipeline(
-                file_url,
-                enable_cache=True,
-                cleanup=True,
-            )
-        if not isinstance(workbook, Workbook):
-            raise TypeError(f"Expected openpyxl Workbook, got {type(workbook).__name__}")
-        return workbook
-    except Exception as exc:
-        logger.warning("关联资料加载失败: %s", type(exc).__name__)
-        raise OSError("本轮冻结关联资料无法读取，不能完成本项核对。") from None
 
 
 def _close_workbook(workbook: Workbook) -> None:

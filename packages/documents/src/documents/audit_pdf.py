@@ -5,6 +5,7 @@ from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
 
+from documents.location import location_label
 from documents.report_layout import Chapter, Table, chapter_title, dash, render_report, text
 
 # PRD §2.11 八: PASS / NG are written as they are; a clause without a verdict is 待审核 (never PASS).
@@ -13,7 +14,7 @@ PENDING = frozenset({"UNABLE", "uncovered"})
 CONCLUSION = {"PASS": "PASS", "NG": "NG", "UNKNOWN": "待审核"}
 KIND = "PPAP 审核报告"
 # Cover: recognized fields first (frozen recognition of the accepted task), the check date, then fields the reader completes.
-COVER_FIELDS = (("customer", "客户全称"), ("project", "项目"), ("model", "车型"), ("part_number", "零件号"), ("part", "零件名称"))
+COVER_FIELDS = (("customer", "客户"), ("project", "项目"), ("model", "车型"), ("part_number", "零件号"), ("part", "零件名称"))
 READER_FIELDS = ("供应商名称", "PPAP 版本", "SQE 工程师")
 LEVELS = ("A", "B", "C")
 # PRD §2.11 五: level -> remediation priority, suggested deadline and what fixing it protects.
@@ -40,31 +41,10 @@ def _text(value) -> str:
     return escape(str(value if value is not None else ""))
 
 
-def _location(locator: dict) -> str:
-    kind = locator.get("kind")
-    if kind == "xlsx_cell":
-        return f"{locator['sheet']}!{locator['cell']}"
-    if kind == "xlsx_range":
-        return f"{locator['sheet']}!{locator['start']}:{locator['end']}"
-    if kind == "pdf_block":
-        return f"第 {locator['page']} 页，第 {locator['block']} 块"
-    if kind == "pdf_page" and type(locator.get("page")) is int and locator["page"] >= 1:
-        return f"第 {locator['page']} 页"
-    if kind == "pdf_cell":
-        if set(locator) != {"kind", "page", "row", "column"} or any(type(locator.get(field)) is not int or locator[field] < 1 for field in ("page", "row", "column")):
-            raise ValueError("report_locator_unavailable")
-        return f"第 {locator['page']} 页 · 表格行 {locator['row']} · 列 {locator['column']}"
-    if kind == "docx_paragraph":
-        return f"第 {locator['paragraph']} 段"
-    if kind == "docx_cell":
-        return f"表 {locator['table']}，行 {locator['row']}，列 {locator['column']}"
-    raise ValueError("report_locator_unavailable")
-
-
 def _first_location(source: dict, check: dict) -> str:
     for evidence in check["evidence"]:
         if evidence.get("locator"):
-            return f"{source['originals'][evidence['file_version_id']]} · {_location(evidence['locator'])}"
+            return f"{source['originals'][evidence['file_version_id']]} · {location_label(evidence['locator'])}"
     return source["filename"]
 
 
@@ -72,7 +52,7 @@ def _locations(source: dict, check: dict) -> str:
     places = []
     for evidence in check["evidence"]:
         locator = evidence.get("locator")
-        place = _location(locator) if locator else evidence.get("location_gap") or "未提供具体位置。"
+        place = location_label(locator) if locator else evidence.get("location_gap") or "未提供具体位置。"
         places.append(f"{source['originals'][evidence['file_version_id']]} · {place}")
     return "；".join(places) or "未提供具体位置"
 
@@ -83,7 +63,7 @@ def _evidence(source: dict, check: dict) -> str:
     parts = []
     for evidence in check["evidence"]:
         locator = evidence.get("locator")
-        place = _location(locator) if locator else evidence.get("location_gap") or "未提供具体位置。"
+        place = location_label(locator) if locator else evidence.get("location_gap") or "未提供具体位置。"
         excerpt = evidence.get("excerpt") or ("该位置内容为空。" if locator else "未提供摘录。")
         parts.append(f"{text(source['originals'][evidence['file_version_id']])} · {text(place)}<br/>{text(excerpt)}")
     return "<br/>".join(parts)
@@ -190,11 +170,9 @@ def _warning_row(number: str, warning: dict) -> tuple[str, ...]:
     return (str(number), text(f"预检 {code} · {title}"), f"<span class='strong'>{text(code)}</span>", "C", "—", text(f"预检 {code} {title}"), explanation, text(warning["location"]))
 
 
-def _cover(source: dict, checked_on: str, customer_name) -> str:
-    # The frozen recognition stays as recorded; only its customer value is shown by the registered full name.
-    recognition = dict(source.get("recognition") or {})
-    if recognition.get("customer"):
-        recognition["customer"] = customer_name(recognition["customer"])
+def _cover(source: dict, checked_on: str) -> str:
+    # The frozen recognition as the file wrote it; its customer is the file's, never the chosen rule set.
+    recognition = source.get("recognition") or {}
     rows = [(label, dash(recognition.get(key))) for key, label in COVER_FIELDS]
     rows += [("检查日期", text(checked_on))]
     rows += [(label, "") for label in READER_FIELDS]
@@ -439,11 +417,8 @@ def _shanghai(value: str) -> datetime:
     return datetime.fromisoformat(value).astimezone(ZoneInfo("Asia/Shanghai"))
 
 
-def render_audit_pdf(source: dict, customer_name=lambda value: value) -> bytes:
-    """No model calls, current document reads, human reviews or display edits.
-
-    ``customer_name`` maps the recognized customer to its registered full name (``product.customers.full_name``).
-    """
+def render_audit_pdf(source: dict) -> bytes:
+    """No model calls, current document reads, human reviews or display edits."""
     checked_on = _shanghai(source.get("audited_at") or source["generated_at"]).strftime("%Y-%m-%d")
     chapters = [
         Chapter(chapter_title(1, "结论摘要"), _summary(source)),
@@ -457,4 +432,4 @@ def render_audit_pdf(source: dict, customer_name=lambda value: value) -> bytes:
         Chapter(chapter_title(9, "附录 · 检查项全量结果"), _appendix(source)),
         Chapter(chapter_title(10, "附录 · 分则附加节"), ["<p>本章无附加节。</p>"]),
     ]
-    return render_report(cover=_cover(source, checked_on, customer_name), chapters=chapters, name=source["filename"] + "-审核报告", kind=KIND, date=checked_on)
+    return render_report(cover=_cover(source, checked_on), chapters=chapters, name=source["filename"] + "-审核报告", kind=KIND, date=checked_on)

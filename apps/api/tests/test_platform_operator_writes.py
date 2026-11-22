@@ -64,7 +64,7 @@ def test_member_is_refused_every_rule_and_version_write_but_still_reads(auth_sto
     for response in (parse, publish, adoption):
         assert (response.status_code, response.json()) == REFUSED
     assert publications(store) == 0
-    for path in ("/rules", "/rule-library", "/rule-types", "/suites", PATH, f"/suite-revisions/{official.id}"):
+    for path in ("/rules", "/suites", PATH, f"/suite-revisions/{official.id}"):
         assert member.get(path).status_code == 200, path
     # Unauthenticated callers are still told to sign in, not that they lack the operator role.
     anonymous = TestClient(create_app(store.settings, auth_store=store))
@@ -93,7 +93,11 @@ def test_operator_adopts_idempotently_within_its_own_tenant_only(auth_store_fact
     # Operator body validation still applies.
     assert clients["operator"].post("/rules", json=[]).json() == {"error": "invalid_rule_request"}
     # Another tenant's operator cannot touch tenant A's candidate: object authorization is unchanged.
-    candidate = SuiteReleaseStore(store.settings, store.objects).save_candidate(people["operator"], official.id, {"checker.py": "def check(context):\n    return [1]\n"})
-    foreign = clients["other_operator"].put(PATH, json=adopt(candidate["id"]))
+    operator = people["operator"]
+    suites = SuiteReleaseStore(store.settings, store.objects).suites
+    candidate = suites.create_revision(
+        tenant_id=operator.tenant_id, suite_key=official.suite_key, files={"checker.py": b"def check(context):\n    return [1]\n"}, created_by=operator.user_id, base_revision_id=official.id
+    )
+    foreign = clients["other_operator"].put(PATH, json=adopt(candidate.id))
     assert (foreign.status_code, foreign.json()["error"]) == (403, "access_denied")
     assert clients["other_operator"].get(PATH).json()["current_revision_id"] is None
