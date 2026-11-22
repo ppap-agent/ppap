@@ -216,16 +216,9 @@ python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 
 云效公共 Runner 使用原生 Docker 驱动和 inline 缓存，导出到现有各组件的 `:build-cache` 镜像；缓存 tag 不能作为部署 pin。该节点实际拒绝 `docker-container` BuildKit 启动（`flow not support`），因此不启用依赖该驱动的 registry `mode=max` 中间阶段缓存，也不为缓存新增构建服务。中间阶段（转换沙箱编译、Pi 的 npm 安装、Web 的 pnpm 安装）每次重新执行，但它们的产物都放在依赖层之上，不会引起大层重推。镜像站或仓库连接中断时，构建在流水线内最多重试两次，已完成的步骤走缓存。临时 Runner 的本地 uv cache mount 不保证跨运行持久化；实际缓存收益由构建步骤耗时确认。
 
-默认入口先验证该 SHA 的四个镜像；全部存在且身份正确则直接复用，不读取历史成功运行。仅有镜像明确缺失时查询活动流水线：同源码跟进原 run，不同源码活动时停止；历史运行通过 `--run-id` 显式恢复。查询使用云效 [ListPipelineRuns 的 RUNNING 过滤](https://help.aliyun.com/en/yunxiao/developer-reference/listpipelineruns)，不再逐条读取成功历史。
+默认入口先验证该 SHA 的四个镜像；全部存在且身份正确则直接复用，不读取历史成功运行。仅有镜像明确缺失时查询活动流水线：有任何运行中的 run 就停止并列出它（云效运行详情不含源码 SHA，是否同源码由发起人判断，同源码用 `--run-id` 跟进）；历史运行也通过 `--run-id` 显式恢复。查询使用云效 [ListPipelineRuns 的 RUNNING 过滤](https://help.aliyun.com/en/yunxiao/developer-reference/listpipelineruns)，不再逐条读取成功历史。
 
 每次保留 digest／config 字节、平台及源码身份验证；仓库匿名访问检查移至 TCR 创建或访问权限变更时，由权限维护者确认仓库及镜像不能匿名拉取。日常构建只执行正常认证拉取，不重复申请匿名 token、探测公开权限。网络、认证或身份验证失败不当作“镜像不存在”，不能据此重新触发构建。
-
-
-显式选择备用 unregistry 时，在已有 registry 登录的构建主机运行：
-
-```sh
-python3 deploy/tke/build-current.py <full-source-sha> --provider unregistry
-```
 
 工具先复用已存在且身份匹配的镜像，仅在确认镜像缺失时构建。未知写入结果先读回，不重复发起。云效拉取 Docker Hub 基础镜像时使用 `yunxiao.yaml` 中的镜像代理；这是构建传输设置，不是部署前检查。
 

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BUILD = runpy.run_path(str(ROOT / "deploy/tke/build-current.py"))
 SHA = "a" * 40
 COMPONENTS = BUILD["COMPONENTS"]
-IMAGES = {c: BUILD["PREFIXES"]["yunxiao"] + c + "@sha256:" + "b" * 64 for c in COMPONENTS}
+IMAGES = {c: BUILD["PREFIX"] + c + "@sha256:" + "b" * 64 for c in COMPONENTS}
 CONFIGS = {c: "sha256:" + "c" * 64 for c in COMPONENTS}
 
 
@@ -79,14 +79,16 @@ def test_registry_proves_bytes_platform_and_source_before_pinning(fault, tagged)
     config_digest = BUILD["digest"](config)
     raw = json.dumps({"config": {"digest": config_digest, "size": len(config)}}).encode()
     manifest_digest = BUILD["digest"](raw)
-    images = {c: "unregistry.xixifusi.online/ppap-" + c + (":" + SHA if tagged else "@" + manifest_digest) for c in COMPONENTS}
+    images = {c: BUILD["PREFIX"] + c + (":" + SHA if tagged else "@" + manifest_digest) for c in COMPONENTS}
 
     def get(url, headers):
+        if not headers.get("Authorization"):
+            return 401, {"WWW-Authenticate": ""}, b""
         if "/blobs/" in url:
             return 200, {}, config + (b"corrupt" if fault == "config" else b"")
         return 200, {"Docker-Content-Digest": "wrong" if fault == "manifest" else manifest_digest}, raw
 
-    with patch.dict(operation.__globals__, {"registry_get": get}):
+    with patch.dict(operation.__globals__, {"registry_get": get, "tcr_auth": lambda: "auth", "registry_bearer": lambda *args: "bearer"}):
         if fault:
             with pytest.raises(ValueError):
                 operation(SHA, images)
@@ -117,7 +119,7 @@ def test_build_updates_only_source_and_image_pins_after_verification(tmp_path):
         operation.__globals__,
         {"stale_bases": lambda sha: [], "HERE": tmp_path, "run": run, "yunxiao": lambda *args: IMAGES, "registry_images": checked},
     ):
-        operation(SHA, "yunxiao", tmp_path, 2)
+        operation(SHA, tmp_path, 2)
     text = config.read_text()
     changed = [(a, b) for a, b in zip(original.splitlines(), text.splitlines(), strict=True) if a != b]
     # Source, the app image (API, Worker, ticket sync CronJob), Web and Deep.
@@ -146,7 +148,7 @@ def test_failed_registry_verification_leaves_configuration_unchanged(tmp_path):
         },
     ):
         with pytest.raises(ValueError):
-            operation(SHA, "yunxiao", tmp_path, 2)
+            operation(SHA, tmp_path, 2)
     assert config.read_text() == "sentinel"
 
 
@@ -159,11 +161,10 @@ def test_invalid_source_blocks_build_before_cloud_actions(tmp_path, candidate, a
 
     with patch.dict(operation.__globals__, {"run": lambda *args, **kwargs: actual.encode(), "yunxiao": forbidden}):
         with pytest.raises(ValueError, match="source"):
-            operation(candidate, "yunxiao", tmp_path, None)
+            operation(candidate, tmp_path, None)
 
 
-@pytest.mark.parametrize("provider", ["yunxiao", "unregistry"])
-def test_existing_source_images_skip_all_flow_history_and_build_calls(tmp_path, provider):
+def test_existing_source_images_skip_all_flow_history_and_build_calls(tmp_path):
     operation = BUILD["build"]
     (tmp_path / "current.yaml").write_text((ROOT / "deploy/tke/current.yaml").read_text())
     checks = []
@@ -186,9 +187,9 @@ def test_existing_source_images_skip_all_flow_history_and_build_calls(tmp_path, 
             "cloud": forbidden,
         },
     ):
-        operation(SHA, provider, tmp_path, None)
+        operation(SHA, tmp_path, None)
     assert len(checks) == 1
-    assert checks[0][1] == {c: BUILD["PREFIXES"][provider] + c + ":" + SHA for c in COMPONENTS}
+    assert checks[0][1] == {c: BUILD["PREFIX"] + c + ":" + SHA for c in COMPONENTS}
 
 
 def test_unknown_registry_result_cannot_dispatch_a_new_build(tmp_path):
@@ -212,24 +213,8 @@ def test_unknown_registry_result_cannot_dispatch_a_new_build(tmp_path):
         },
     ):
         with pytest.raises(RuntimeError, match="transport"):
-            operation(SHA, "yunxiao", tmp_path, None)
+            operation(SHA, tmp_path, None)
     assert (tmp_path / "current.yaml").read_text() == "unchanged"
-
-
-def test_backup_reuses_verified_images_without_build_or_duplicate_metadata_reads(tmp_path):
-    operation = BUILD["build"]
-    (tmp_path / "current.yaml").write_text((ROOT / "deploy/tke/current.yaml").read_text())
-    checks = []
-    images = {c: BUILD["PREFIXES"]["unregistry"] + c + "@sha256:" + "b" * 64 for c in COMPONENTS}
-
-    def registry(*args):
-        checks.append(args)
-        return images, CONFIGS
-
-    with patch.dict(operation.__globals__, {"HERE": tmp_path, "source_commit": lambda sha: None, "run": lambda *args: b"", "registry_images": registry}):
-        operation(SHA, "unregistry", tmp_path, None)
-    assert len(checks) == 1
-    assert not (tmp_path / "source.tar").exists() and not (tmp_path / "source").exists()
 
 
 def test_queued_build_waits_for_source_metadata_without_dispatching(tmp_path):
@@ -302,7 +287,7 @@ def test_tcr_verification_uses_authenticated_token_without_anonymous_permission_
             "registry_get": get,
         },
     ):
-        pins, _ = operation(SHA, {c: BUILD["PREFIXES"]["yunxiao"] + c + ":" + SHA for c in COMPONENTS})
+        pins, _ = operation(SHA, {c: BUILD["PREFIX"] + c + ":" + SHA for c in COMPONENTS})
     assert len(tokens) == len(COMPONENTS)
     assert all(ref.endswith("@" + manifest_digest) for ref in pins.values())
 
@@ -334,7 +319,7 @@ def test_confirmed_missing_images_build_once_then_verify_before_pinning(tmp_path
             "stale_bases": lambda sha: [],
         },
     ):
-        operation(SHA, "yunxiao", tmp_path, None)
+        operation(SHA, tmp_path, None)
     assert events == ["registry", "build", "registry"]
     assert all(ref in (tmp_path / "current.yaml").read_text() for ref in IMAGES.values())
 
@@ -360,7 +345,7 @@ def test_a_release_on_stale_base_images_is_refused_before_any_build(tmp_path):
         },
     ):
         with pytest.raises(ValueError, match="base images are stale"):
-            operation(SHA, "yunxiao", tmp_path, None)
+            operation(SHA, tmp_path, None)
 
 
 def test_a_base_level_changes_only_with_its_own_inputs_or_a_level_below():
@@ -398,6 +383,9 @@ def test_run_uses_requested_commit_when_fixed_branch_moves(tmp_path, branch_head
         if path == BUILD["FLOW"]:
             assert method == "GET"
             return {"pipelineConfig": {"pipelineConfigId": 1, "flow": (ROOT / "deploy/tke/yunxiao.yaml").read_text()}}
+        if path == BUILD["FLOW"] + "/runs" and method == "GET":
+            assert query["status"] == "RUNNING"
+            return []
         if method == "POST":
             assert json.loads(body["params"])["envs"]["PPAP_SOURCE_SHA"] == SHA
             return 2
@@ -410,7 +398,7 @@ def test_run_uses_requested_commit_when_fixed_branch_moves(tmp_path, branch_head
     with patch.dict(operation.__globals__, {"cloud": cloud, "source_branch": lambda *args: BUILD["SOURCE_BRANCH"]}):
         assert operation(SHA, tmp_path, None) == IMAGES
     assert sum(method == "POST" for method, _ in calls) == 1
-    assert not any(method == "PUT" or path == BUILD["FLOW"] or path.endswith("/runs") and method == "GET" for method, path in calls)
+    assert not any(method == "PUT" or path == BUILD["FLOW"] for method, path in calls)
 
 
 def test_other_run_receipt_cannot_supply_selected_source_images(tmp_path):
@@ -440,7 +428,7 @@ def test_completed_build_preserves_a_concurrently_changed_manifest(tmp_path):
 
     with patch.dict(operation.__globals__, {"HERE": tmp_path, "source_commit": lambda sha: None, "registry_images": registry}):
         with pytest.raises(ValueError, match="changed during build"):
-            operation(SHA, "yunxiao", tmp_path, None)
+            operation(SHA, tmp_path, None)
     assert config.read_text() == "newer operator selection"
 
 
@@ -471,3 +459,18 @@ def test_fixed_source_branch_supports_advances_and_older_commits(tmp_path):
     assert refs == ["refs/heads/" + BUILD["SOURCE_BRANCH"]]
     assert git("rev-parse", refs[0], cwd=remote) == commits[1]
     assert not (tmp_path / "askpass.py").exists()
+
+
+def test_a_run_in_progress_stops_a_new_build_before_anything_is_pushed(tmp_path):
+    operation = BUILD["yunxiao"]
+
+    def cloud(method, path, body=None, query=None):
+        assert (method, path, query["status"]) == ("GET", BUILD["FLOW"] + "/runs", "RUNNING")
+        return [{"pipelineRunId": 147}]
+
+    def forbidden(*args):
+        pytest.fail("nothing is pushed or dispatched beside a run in progress")
+
+    with patch.dict(operation.__globals__, {"cloud": cloud, "source_branch": forbidden}):
+        with pytest.raises(ValueError, match="147 is in progress"):
+            operation(SHA, tmp_path, None)

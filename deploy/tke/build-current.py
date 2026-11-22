@@ -13,7 +13,6 @@ import re
 import signal
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 import urllib.error
@@ -26,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 # API and Worker run the same "app" image; the deployment selects the process (PPAP_SERVICE).
 COMPONENTS = ("app", "web", "deep")
-PREFIXES = {"yunxiao": "icoastline.tencentcloudcr.com/ppap-feishu/current-", "unregistry": "unregistry.xixifusi.online/ppap-"}
+PREFIX = "icoastline.tencentcloudcr.com/ppap-feishu/current-"
 CODEUP = "https://codeup.aliyun.com/icoastline/integration/4.0/ppap-web.git"
 FLOW = "/flow/organizations/60d54c9a70ab8549fd3e10db/pipelines/5339663"
 NAMESPACE = "ppap-test"
@@ -143,6 +142,10 @@ def recorded_bases(sha: str) -> dict:
 
 def yunxiao(sha: str, attempt: Path, resume_run: int | None, mode: str = "release") -> dict:
     if resume_run is None:
+        # A run in progress may be building this very source; its source is not readable from the run, so a person
+        # decides: follow it with --run-id, or wait for it to finish. Never start a second build beside it.
+        running = cloud("GET", FLOW + "/runs", query={"perPage": 5, "page": 1, "status": "RUNNING"})
+        require(not running, "Yunxiao run " + ", ".join(str(r["pipelineRunId"]) for r in running) + " is in progress: follow it with --run-id if it builds this source, otherwise wait for it")
         branch = source_branch(sha, attempt)
         # No automatic POST retry. Preserve the intent even if the response is lost.
         (attempt / "dispatch-intent.json").write_text(json.dumps({"sha": sha, "branch": branch}))
@@ -193,10 +196,10 @@ def yunxiao(sha: str, attempt: Path, resume_run: int | None, mode: str = "releas
         # Yunxiao truncates a long step log (a slow push floods it with progress lines), so a level may be missing
         # here; build_bases then reads it from the registry by its inputs tag.
         require(source_seen and set(refs) <= set(BASES), "Flow did not report its base source")
-        require(all(re.fullmatch(re.escape(PREFIXES["yunxiao"] + name) + r"@sha256:[0-9a-f]{64}", refs[name]["image"]) for name in refs), "Flow reported an unexpected base repository")
+        require(all(re.fullmatch(re.escape(PREFIX + name) + r"@sha256:[0-9a-f]{64}", refs[name]["image"]) for name in refs), "Flow reported an unexpected base repository")
         return refs
     require(source_seen and set(refs) == set(COMPONENTS), "Flow did not report all fixed-source images")
-    require(all(re.fullmatch(re.escape(PREFIXES["yunxiao"] + c) + r"@sha256:[0-9a-f]{64}", refs[c]) for c in COMPONENTS), "Flow reported an unexpected image repository")
+    require(all(re.fullmatch(re.escape(PREFIX + c) + r"@sha256:[0-9a-f]{64}", refs[c]) for c in COMPONENTS), "Flow reported an unexpected image repository")
     return refs
 
 
@@ -239,7 +242,7 @@ def tcr_auth() -> str:
 
 def tagged_base(level: str, inputs: str) -> str:
     """The pinned image the Flow pushed for this level, read from the registry by its inputs tag."""
-    repository = PREFIXES["yunxiao"] + level
+    repository = PREFIX + level
     host, path = repository.split("/", 1)
     url = f"https://{host}/v2/{path}/manifests/{inputs}"
     headers = {"Accept": "application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"}
@@ -270,12 +273,7 @@ def tcr_pull_secret() -> str:
 def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
     """Resolve tags and verify all manifests/configs before any rollout."""
     configs, pins = {}, {}
-    auth = None
-    if next(iter(images.values())).startswith(PREFIXES["yunxiao"]):
-        name = tcr_pull_secret()
-        secret = json.loads(kube("get", "secret", name, "-o", "json"))
-        cred = json.loads(base64.b64decode(secret["data"][".dockerconfigjson"]))["auths"]["icoastline.tencentcloudcr.com"]
-        auth = cred.get("auth") or base64.b64encode((cred["username"] + ":" + cred["password"]).encode()).decode()
+    auth = tcr_auth()
 
     def check(item: tuple[str, str]) -> tuple[str, str, str]:
         component, ref = item
@@ -285,18 +283,9 @@ def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], d
         url = f"https://{host}/v2/{path}/manifests/{selected}"
         headers = {"Accept": "application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"}
         code, response_headers, raw = registry_get(url, headers)
-        if auth:
-            require(code == 401, "TCR registry did not provide an authentication challenge")
-            challenge = dict(re.findall(r'(realm|service)="([^"]+)"', response_headers.get("WWW-Authenticate", "")))
-            realm = challenge.get("realm", "")
-            require(urllib.parse.urlsplit(realm).scheme == "https" and urllib.parse.urlsplit(realm).hostname == host, "untrusted registry authentication realm")
-            tokenurl = realm + "?" + urllib.parse.urlencode({"service": challenge["service"], "scope": "repository:" + path + ":pull"})
-            tokenurl += "&" + urllib.parse.urlencode({"account": base64.b64decode(auth).decode().split(":", 1)[0]})
-            token_code, _, body = registry_get(tokenurl, {"Authorization": "Basic " + auth, "Cache-Control": "no-cache"})
-            require(token_code == 200, "TCR authentication failed")
-            bearer = json.loads(body)
-            headers["Authorization"] = "Bearer " + (bearer.get("token") or bearer["access_token"])
-            code, response_headers, raw = registry_get(url, headers)
+        require(code == 401, "TCR registry did not provide an authentication challenge")
+        headers["Authorization"] = "Bearer " + registry_bearer(host, path, auth, response_headers.get("WWW-Authenticate", ""))
+        code, response_headers, raw = registry_get(url, headers)
         if code == 404:
             raise RegistryImageMissing("registry image is absent: " + component)
         require(code == 200, "registry manifest is unavailable")
@@ -334,13 +323,12 @@ def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], d
     return pins, configs
 
 
-def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
+def build(sha: str, attempt: Path, run_id: int | None) -> None:
     source_commit(sha)
     config = HERE / "current.yaml"
     original = config.read_text()
-    prefix = PREFIXES[provider]
     pins = None
-    images = {c: prefix + c + ":" + sha for c in COMPONENTS}
+    images = {c: PREFIX + c + ":" + sha for c in COMPONENTS}
     if run_id is None:
         try:
             pins, _ = registry_images(sha, images)
@@ -348,36 +336,13 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
             pass  # Only a confirmed missing image permits a new build.
         else:
             print("Reusing verified images; build skipped.", flush=True)
-    if provider == "yunxiao":
-        if pins is None:
-            # Releases stack on the recorded dependency images; they must come from these exact inputs.
-            require(
-                not stale_bases(sha),
-                "base images are stale for this source: run build-current.py --bases, commit deploy/tke/base-images.json, then release that commit",
-            )
-            images = yunxiao(sha, attempt, run_id)
-    else:
-        require(run_id is None, "--run-id applies only to Yunxiao")
-        if pins is None:
-            # Run this fallback on the unregistry build host with its existing Docker login.
-            # Only tracked files from the selected commit enter the build context.
-            archive = attempt / "source.tar"
-            archive.write_bytes(run(["git", "archive", sha]))
-            source = attempt / "source"
-            source.mkdir()
-            with tarfile.open(archive) as stream:
-                stream.extractall(source, filter="data")
-            archive.unlink()
-            env = {**os.environ, "PPAP_BUILD_SHA": sha, "PPAP_IMAGE_PREFIX": "localhost:5001/ppap-"}
-            result = subprocess.run(
-                ["docker", "buildx", "bake", "release", "--set", "*.platform=linux/amd64", "--provenance=false", "--push"],
-                cwd=source,
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=7200,
-            )
-            require(result.returncode == 0, "unregistry build failed; do not deploy")
+    if pins is None:
+        # Releases stack on the recorded dependency images; they must come from these exact inputs.
+        require(
+            not stale_bases(sha),
+            "base images are stale for this source: run build-current.py --bases, commit deploy/tke/base-images.json, then release that commit",
+        )
+        images = yunxiao(sha, attempt, run_id)
     if pins is None:
         pins, _ = registry_images(sha, images)
     text = original
@@ -414,7 +379,6 @@ def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_args: sys.exit(143))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", help="full application source SHA")
-    parser.add_argument("--provider", choices=tuple(PREFIXES), default="yunxiao")
     parser.add_argument("--run-id", type=int, help="resume an existing Yunxiao run")
     parser.add_argument("--bases", action="store_true", help="build and record the shared dependency images instead of a release")
     args = parser.parse_args()
@@ -423,15 +387,19 @@ def main() -> None:
     attempt = Path(tempfile.mkdtemp(prefix="ppap-build-"))
     print("Build/recovery files: " + str(attempt), flush=True)
     if args.bases:
-        require(args.provider == "yunxiao", "--bases builds on Yunxiao")
         build_bases(args.source, attempt, args.run_id)
     else:
-        build(args.source, args.provider, attempt, args.run_id)
+        build(args.source, attempt, args.run_id)
 
 
 if __name__ == "__main__":
     try:
         main()
+    except ReleaseError as error:
+        # Release errors are written for the operator and carry no remote output or credentials.
+        print("ReleaseError: " + str(error), file=sys.stderr)
+        sys.exit(1)
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
-        print(type(error).__name__ + ": build incomplete; inspect the build recovery directory before retrying.", file=sys.stderr)
+        message = str(error) if isinstance(error, RuntimeError) else ""
+        print(type(error).__name__ + ": build incomplete" + (f" ({message})" if message else "") + "; inspect the build recovery directory before retrying.", file=sys.stderr)
         sys.exit(1)
