@@ -86,8 +86,7 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
   if (detailRequested) return !address.invalid && address.documentId && address.reference ? <ArchiveHistory key={`${address.documentId}:${route}`} document={null} documentId={address.documentId} initialAddress={address} adapter={archiveAdapter} onNavigate={(reference, report, replace) => navigate(address.documentId, reference, report, replace)} onBack={() => navigate(null, null)} backLabel="返回用量记录" onOpenTask={onOpenTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal}/> : <Alert><AlertTitle>这次消费的审核记录暂不可用</AlertTitle><AlertDescription><p>无法打开这次审核，请返回用量记录。</p><Button variant="outline" size="sm" onClick={() => navigate(null, null)}>返回用量记录</Button></AlertDescription></Alert>
   const current = page && sameSnapshot(page.query, query) ? page : null, summary = page?.summary
   // Each charge is a fixed number of points per file; the price line shows only when a row says what it is.
-  // Every file costs 500; history from before V3.33 may hold 750 deep-mode rows, so only a uniform page names one price.
-  const price = current?.entries.length && current.entries.every(row => row.points === current.entries[0].points) ? current.entries[0].points : undefined
+  const price = current?.entries.length ? current.entries[0].points : undefined
   const change = known(summary?.consumption_count) && known(summary?.previous_consumption_count) ? summary.consumption_count.value - summary.previous_consumption_count.value : null
   const used = known(summary?.free_remaining) && known(summary?.free_total) ? summary.free_total.value - summary.free_remaining.value : null
   const metrics: {title: string; value: string; unit: string; note?: string | null; tone?: string; meter?: number}[] = summary ? [

@@ -261,7 +261,7 @@ class AuditCheckerVerification(TypedDict):
 class AuditDeepReview(TypedDict):
     """One target of a deep-mode round: every clause result was reviewed against the
     originals ("completed"), or the review did not complete and the program results
-    stand unreviewed ("degraded"), billed at 500 instead of 750."""
+    stand unreviewed ("degraded"). Either way the file is billed 500."""
 
     state: Literal["completed", "degraded"]
     reason: NotRequired[Literal["deep_timeout", "deep_review_failed", "deep_review_invalid", "deep_input_missing", "deep_runtime_failed"]]
@@ -1512,7 +1512,7 @@ class AuditUsageEntry(TypedDict):
     filename: str
     audit_sequence: int | None
     initiator: str
-    points: Literal[500, 750]
+    points: Literal[500]
     allocation: AuditUsageAllocation
     orders: list[AuditUsageOrder]
     order_reason: str | None

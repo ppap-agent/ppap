@@ -717,11 +717,6 @@ spec:
                 configMapKeyRef:
                   name: ppap-current
                   key: PPAP_MODEL_GROK_4_7_MODEL
-            - name: FEISHU_APP_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: ppap-current
-                  key: FEISHU_APP_SECRET
             - name: PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:

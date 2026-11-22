@@ -2480,7 +2480,7 @@ def test_a_file_whose_deep_review_did_not_complete_keeps_the_standard_result_at_
         assert task["deep_mode"] is True and target["audit"]["execution"] == "completed"
         assert target["deep_review"] == {"state": "degraded", "reason": "deep_review_failed"}
         events = usage_of(worker, client)
-        assert [(row["consumed_points"], row["charge"]) for row in events] == [(500, "audit")]
+        assert [row["consumed_points"] for row in events] == [500]
         assert [row["points"] for row in client.get("/audit-usage").json()["entries"]] == [500]
         assert core_system.audit_jobs[-1].analysis_mode == "deep"
     finally:
@@ -2504,37 +2504,8 @@ def test_a_committed_deep_result_adds_no_charge(matched_task, deep_offered, stat
         assert worker.complete_job(claimed, "deep-commit", result, "succeeded") is True
         round_input = next(row for row in client.get(f"/rounds/{accepted.json()['round_id']}").json()["inputs"] if row["file_version_id"] == version)
         assert round_input["deep_review"] == review
-        assert [(row["consumed_points"], row["charge"]) for row in usage_of(worker, client)] == [(500, "audit")]
+        assert [row["consumed_points"] for row in usage_of(worker, client)] == [500]
         assert [row["points"] for row in client.get("/audit-usage").json()["entries"]] == [500]
-    finally:
-        client.close()
-        http.close()
-
-
-def test_a_historical_deep_surcharge_still_reads_as_recorded(matched_task, deep_offered):
-    # Deep rounds accepted before V3.33 recorded 500 + 250; the ledger keeps them as they are.
-    _client, worker, path, body, _rule = matched_task
-    worker.settings.feishu_free_trial_quota_points = 600
-    client, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 10_000, "ai_package_purchased": True})
-    try:
-        choose_deep(client, path)
-        accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
-        assert accepted.status_code == 201, accepted.text
-        round_id, version = accepted.json()["round_id"], body["files"][0]["file_version_id"]
-        with worker._conn() as conn:
-            tenant_id, user_id, item_id = conn.execute(
-                "SELECT tenant_id, user_id, ai_item_id FROM product.usage_events WHERE round_id = %s AND file_version_id = %s AND charge = 'audit'", (round_id, version)
-            ).fetchone()
-            for amount, trial in ((100, True), (150, False)):
-                conn.execute(
-                    """INSERT INTO product.usage_events
-                       (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial, external_status, trace_id, round_id, file_version_id, charge)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'deep_surcharge')""",
-                    (str(uuid.uuid4()), tenant_id, user_id, item_id, amount, trial, "none" if trial else "pending", f"{round_id}:{version}:deep:{trial}", round_id, version),
-                )
-        entries = client.get("/audit-usage").json()["entries"]
-        assert [row["points"] for row in entries] == [750]
-        assert entries[0]["allocation"] == {"free_points": 600, "paid_points": 150, "reason": None}
     finally:
         client.close()
         http.close()

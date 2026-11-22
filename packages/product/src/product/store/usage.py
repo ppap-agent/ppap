@@ -38,14 +38,11 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
         row = min(slices, key=lambda item: item["created_at"])
         accepted_at = _time(row["accepted_at"])
         acceptance_times = {_time(row["accepted_at"]) for row in slices}
-        # 500 at acceptance. Deep rounds accepted before V3.33 may also hold one historical
-        # 250-point 'deep_surcharge'; it is read as recorded, and no new one is written.
-        audit_points = sum(item["consumed_points"] for item in slices if (item.get("charge") or "audit") == "audit")
-        surcharge_points = sum(item["consumed_points"] for item in slices if item.get("charge") == "deep_surcharge")
-        if accepted_at is None or acceptance_times != {accepted_at} or audit_points != 500 or surcharge_points not in {0, 250} or len({row["ai_item_id"] for row in slices}) != 1:
+        # One file is one 500-point charge at acceptance, split between the free and the paid pool.
+        points = sum(item["consumed_points"] for item in slices)
+        if accepted_at is None or acceptance_times != {accepted_at} or points != 500 or len({row["ai_item_id"] for row in slices}) != 1:
             unattributed.extend(slices)
             continue
-        points = audit_points + surcharge_points
         reference = {"task_id": row["task_id"], "round_id": round_id, "file_version_id": version_id, "result_attempt": row["result_attempt"]}
         history = archive.get((row["task_id"], version_id))
         free_points = sum(item["consumed_points"] for item in slices if item["is_free_trial"])

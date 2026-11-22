@@ -2204,7 +2204,7 @@ export interface components {
          * AuditDeepReview
          * @description One target of a deep-mode round: every clause result was reviewed against the
          *     originals ("completed"), or the review did not complete and the program results
-         *     stand unreviewed ("degraded"), billed at 500 instead of 750.
+         *     stand unreviewed ("degraded"). Either way the file is billed 500.
          */
         AuditDeepReview: {
             /**
@@ -3220,9 +3220,9 @@ export interface components {
             orders: components["schemas"]["AuditUsageOrder"][];
             /**
              * Points
-             * @enum {integer}
+             * @constant
              */
-            points: 500 | 750;
+            points: 500;
             reference: components["schemas"]["AuditResultReference"];
             settlement: components["schemas"]["AuditUsageSettlement"];
             /** Usage Id */
@@ -4610,6 +4610,8 @@ export interface components {
             imported_at: string;
             /** Mine */
             mine: number;
+            /** Notified */
+            notified: number;
             /** Rule Version */
             rule_version: string;
             rulebook: components["schemas"]["RuleQuestionnaireRulebook"];

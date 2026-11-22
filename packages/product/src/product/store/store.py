@@ -4798,7 +4798,6 @@ class AuthStore:
                 "created_at",
                 "round_id",
                 "file_version_id",
-                "charge",
             )
         }
         for key in ("id", "user_id", "round_id", "file_version_id"):

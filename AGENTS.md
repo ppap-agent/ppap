@@ -72,10 +72,10 @@ PostgreSQL  对象存储
 - PostgreSQL 的 `product` 存产品事实，`engine` 存执行工作与尝试，二者不是两套台账；对象存储存文件版本引用的字节。派生工作簿、页面图像或 OCR 结果只在有消费者时缓存，并指向来源文件版本。
 - `product.provider_authorizations` 是飞书凭据的唯一续期入口；浏览器会话与 MCP 委托各自有有效期和撤销，引用同一条凭据记录，不按用户找「最新令牌」替换。Worker 不可读。
 - 有请求 ID 的飞书与飞书项目导入共用 `_receive_import_upload` 和 `file_versions.upload_request`：来源绑定先于外部读取，内容摘要先于对象写入，恢复先核对已有对象。
-- **执行**：Worker 用短事务领取工作（含过期租约重试，同一轮只增加 attempt），事务外执行，用当前 attempt 提交。审核执行 job 中冻结的 `ppap-checker-core` 与 Suite 快照；深度模式在一个 guest 里按文件执行，同组上下文共享，每份文件各自计时，guest 每开始一个任务就报告进度，超过一个任务时长没有进度才判定卡死。Worker 经有界 UDS 调 Controller，不持有 Docker socket；协议 `extra=forbid`，不接受路径、命令、挂载、镜像或环境变量。整次失败写结构化 failure，不伪造判定、不回退。生产要求 `PPAP_DEEP_RUNTIME=container-only` 与 `PPAP_DEEP_SANDBOX_PROFILE`（`off` 是降权容器，不是 gVisor/VM）；细节见 [deploy/deep](deploy/deep/README.md)。
+- **执行**：Worker 用短事务领取工作（含过期租约重试，同一轮只增加 attempt），事务外执行，用当前 attempt 提交。审核执行 job 中冻结的 `ppap-checker-core` 与 Suite 快照；深度模式在一个 guest 里按文件执行，同组上下文共享，每份文件各自计时（`agent.execution.budget`：检查程序 3 分钟，深度复核 6 分钟），guest 每开始一个任务就报告进度，宿主每次再给一个任务时长（两者取大再加 1 分钟，即 7 分钟），超过它没有新进度才判定卡死，Worker 侧再多等 30 秒；一轮没有总时限。Worker 经有界 UDS 调 Controller，不持有 Docker socket；协议 `extra=forbid`，不接受路径、命令、挂载、镜像或环境变量。整次失败写结构化 failure，不伪造判定、不回退。生产要求 `PPAP_DEEP_RUNTIME=container-only` 与 `PPAP_DEEP_SANDBOX_PROFILE`（`off` 是降权容器，不是 gVisor/VM）；细节见 [deploy/deep](deploy/deep/README.md)。
 - 深度与标准受理都把实际执行配置的摘要写进 job（`DeepExecutionPolicy`、`standard-v1:`），执行前由真实 runtime 再核对，配置变化不替换旧轮次的策略；摘要不证明远端模型权重不变。
 - 原件预览可用 OnlyOffice（只读、单文件单租户十分钟凭证，Document Server 属于可信边界），没有时回退到有上限的摘录；`.doc` 在 Worker 里经受限的 LibreOffice 转换，没有运行时就明确失败。
-- **通知**（审核任务、报告 ZIP、规则问卷卡片）复用 `engine.jobs`，意图与业务事务一起提交，只由 API 进程领取和发送，Worker 不领取通知（但 Worker 部署目前也注入了 `FEISHU_APP_SECRET`，见「审核 SOP」的不足）。发送前以当前 claim 持久化发送边界；越过边界后超时不能证明未送达，未知保留，不自动重发。有效消息 ID 才算发送成功，不代表已读。待确认卡片只在完整列出文件、规则、移除原因与预计点数时提供直接确认，回调经原消息与当前创建人身份走同一受理事务。并发模型见 [NotificationDispatch](docs/models/NotificationDispatch.tla)（只证明安全性，不证明送达）。
+- **通知**（审核任务、报告 ZIP、规则问卷卡片）复用 `engine.jobs`，意图与业务事务一起提交，只由 API 进程领取和发送；Worker 不领取通知，也不持有飞书凭据。发送前以当前 claim 持久化发送边界；越过边界后超时不能证明未送达，未知保留，不自动重发。有效消息 ID 才算发送成功，不代表已读。待确认卡片只在完整列出文件、规则、移除原因与预计点数时提供直接确认，回调经原消息与当前创建人身份走同一受理事务。并发模型见 [NotificationDispatch](docs/models/NotificationDispatch.tla)（只证明安全性，不证明送达）。
 - 外部能力（飞书、Partner AI 计费、LLM/OCR、Deep Controller）都是可选能力，不成为 Core 启动或普通 CI 的前置。只有当前需求证明价值时才新增服务、框架或隔离层。
 
 ## 数据
@@ -108,7 +108,7 @@ audit_round
 - **深度模式数据**：`audit_drafts.deep_mode` 受理前可改，冻结到 `audit_rounds.deep_mode`；重审默认关闭；没有 Deep 运行环境或编码模型时拒绝开启和受理（`deep_mode_unavailable`）。订正须附可定位证据，guest 对照冻结原件逐条核对（扫描页不能作证据），宿主再核对；`locator.semantic.deep_review` 记录认可/订正/作废，`checker_execution.targets[].deep_review` 记录文件级完成或 `degraded`。Deep 规则附录是用户确认的解释、映射或标准修改，带文件/条款范围与来源，按 `{document_id, rule_id}` 限定，每次分析冻结完整附录。
 - **报告**：完成事务中为每个文件结果创建唯一 `report_pdf` 工作，固定本轮文件、规则、机器结果，不含人工记录；对象按工作与 attempt 隔离，只有获胜 attempt 可发布。ZIP 复用 `engine.jobs`（`report_zip_request` / `report_zip`），同一规范化集合只关联一个工作，恢复绑定原请求。报告分享冻结已授权报告，只在同组织已登录成员内可读。
 - **授权**：同一企业成员都能查看该企业的任务、轮次、原件和历史；只有创建人能修改它以及挂在上面的一切（确认与开始审核、人工复核、事实确认、显示更正、报告重生成、写回与放行、文件新版本）。创建人取自各表的 `created_by`，不另存授权表；他人可基于同一结果发起自己的重审。UUID 不代表授权。未提交的上传准备只列给创建人；暂存上传完成前不能被受理。「补充模板」记在 `template_submissions`，同一 `request_id` 重放返回同一记录。
-- **用量与计费**：只记录实际业务事件与外部确认状态。收费开启时，受理按匹配且选中的待审文件数 × 500 点生成用量（参考文件不计费），服务端读飞书 AI 开关与发起人额度，至少一池有正余额即可；深度与标准同价（V3.33 前的 250 点 `deep_surcharge` 原样保留）。显式重审产生新消费，技术重试和受理回放不产生。上报先原子领取发送权，发送后未知记为 unknown，不自动重发；飞书用量回执不是扣费凭据，实际扣费凭据（`debit_order_id`、`debited_at`）尚未接入，已扣/待扣在有未知时保持未知。`GET /audit-usage` 把同一轮次、文件版本的免费/付费分片投影为一笔费用（500 点；V3.33 前有深度加价的为 750），按受理月（Asia/Shanghai）归集，补扣不改月份；`external_confirmed_at` 是 PPAP 保存外部回执的时间，不是飞书扣费时间，历史空值不回填。剩余试用 = 配置额度 − 已确认 cut-over baseline − 已消耗试用。
+- **用量与计费**：只记录实际业务事件与外部确认状态。收费开启时，受理按匹配且选中的待审文件数 × 500 点生成用量（参考文件不计费），服务端读飞书 AI 开关与发起人额度，至少一池有正余额即可；深度与标准同价，每个文件一笔 500 点。显式重审产生新消费，技术重试和受理回放不产生。上报先原子领取发送权，发送后未知记为 unknown，不自动重发；飞书用量回执不是扣费凭据，实际扣费凭据（`debit_order_id`、`debited_at`）尚未接入，已扣/待扣在有未知时保持未知。`GET /audit-usage` 把同一轮次、文件版本的免费/付费分片投影为一笔 500 点，按受理月（Asia/Shanghai）归集，补扣不改月份；`external_confirmed_at` 是 PPAP 保存外部回执的时间，不是飞书扣费时间，历史空值不回填。剩余试用 = 配置额度 − 已确认 cut-over baseline − 已消耗试用。
 
 ## 安全
 
@@ -147,7 +147,6 @@ audit_round
 - 飞书回调只支持 HTTPS 下的 Verification Token 校验，不接受加密回调；通知与分享没有长期 exactly-once 保证。
 - 扫描 PDF 不做整份表格转录；多页联合视觉事实（全图一致、所有签章齐全）在多页时保持未知；DOCX 图形事实暂返回 UNABLE。
 - 原件事实确认只对 UAES 单页 PDF 的全满足布尔检查能重算结论。
-- Worker 部署注入了 `FEISHU_APP_SECRET`；Worker 不发送通知，是否还需要这项 Secret 未核实。
 - 审核用的规则仍来自检查程序目录叶子，已澄清的规则库修订不会自动进入审核（见下节）。
 
 ## MCP

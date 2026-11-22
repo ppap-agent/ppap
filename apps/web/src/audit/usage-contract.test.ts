@@ -24,7 +24,6 @@ test('technical result attempts cannot become separate per-file business charges
 test('an entry holds whatever the server charged: a positive whole number its allocation adds up to', () => {
   // The price belongs to the server; an older record at another price is still a valid record.
   assert.equal(validUsagePage({...page, entries: [{...entry, points: 1000, allocation: {...entry.allocation, paid_points: 800}}]}, query, 'org-1'), true)
-  assert.equal(validUsagePage({...page, entries: [{...entry, points: 750, settlement: {state: 'trial', reason: null}, debited_at: null, orders: [], order_reason: '全部使用免费额度，无飞书订单。', allocation: {free_points: 750, paid_points: 0, reason: null}}]}, query), true)
   for (const points of [0, -500, 500.5]) assert.equal(validUsagePage({...page, entries: [{...entry, points}]}, query, 'org-1'), false)
   assert.equal(validUsagePage({...page, entries: [{...entry, points: 1000}]}, query, 'org-1'), false)
 })
