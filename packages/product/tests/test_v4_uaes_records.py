@@ -17,7 +17,7 @@ def checked(tmp_path, agent_cls, entry, rows, *, title="原件"):
     book.save(path)
     book.close()
     body = preset_rule_body("UAES", entry)
-    agent = agent_cls(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = agent_cls(AuditInput(audit_id="version", file_url=str(path)), RuleInput.of(body, rule_id="source-rules"))
     return agent.check(0)
 
 
@@ -71,7 +71,7 @@ def test_expired_laboratory_still_reminds_to_compare_the_test_body(tmp_path):
     book.close()
     body = preset_rule_body("UAES", "U03")
     target = AuditInput(audit_id="version", file_url=str(path))
-    rules = RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"})
+    rules = RuleInput.of(body, rule_id="source-rules")
     result = UaesLabQualificationAgent(target, rules, GroupContextInput(by_audit_id={"version": target, "report": report})).check(0)
     assert result.status == "NG"
     assert "请比对测试机构" in result.suggestions
@@ -102,7 +102,7 @@ def test_photo_success_does_not_claim_correct_part_content(tmp_path):
     path = tmp_path / "photo.png"
     Image.new("RGB", (16, 12), "white").save(path)
     body = preset_rule_body("UAES", "U13")
-    agent = UaesPhotoAgent(AuditInput(audit_id="photo-version", file_url=str(path)), RuleInput(rule_id="photo-rules", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesPhotoAgent(AuditInput(audit_id="photo-version", file_url=str(path)), RuleInput.of(body, rule_id="photo-rules"))
     result = agent.check(0)
     assert result.status == "PASS"
     assert "需人工确认样品照片是否符合要求" in result.suggestions
@@ -161,7 +161,7 @@ def test_materials_only_pairs_current_unique_matching_originals(tmp_path, varian
 
         Path(reference.file_url).write_bytes(b"corrupt supplied source")
     body = preset_rule_body("UAES", "U04")
-    agent = UaesMaterialsAgent(target, RuleInput(rule_id="rules", **{key: value for key, value in body.items() if key != "kind"}), GroupContextInput(by_audit_id=references))
+    agent = UaesMaterialsAgent(target, RuleInput.of(body, rule_id="rules"), GroupContextInput(by_audit_id=references))
     result = agent.check(2)
     assert result.status == expected, result.suggestions
     if expected == "PASS":
@@ -195,7 +195,7 @@ def test_pfmea_scores_use_original_columns_not_action_results(tmp_path):
     book.save(path)
     book.close()
     body = preset_rule_body("UAES", "U07")
-    agent = UaesPfmeaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesPfmeaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput.of(body, rule_id="source-rules"))
     result = agent.check(1)
     # The post-action S/O/D repeat the labels; the original scores still decide.
     assert result.status == "NG", result.suggestions
@@ -217,7 +217,7 @@ def control_plan(tmp_path, rows):
     book.save(path)
     book.close()
     body = preset_rule_body("UAES", "U08")
-    return UaesControlPlanAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+    return UaesControlPlanAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput.of(body, rule_id="source-rules"))
 
 
 def test_control_plan_continuation_rows_belong_to_their_operation(tmp_path):
@@ -244,7 +244,7 @@ def test_pfmea_continuation_rows_have_their_scores_checked(tmp_path):
     book.save(path)
     book.close()
     body = preset_rule_body("UAES", "U07")
-    agent = UaesPfmeaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesPfmeaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput.of(body, rule_id="source-rules"))
     result = agent.check(1)
     assert result.status == "NG", result.suggestions
     assert "1至10" in result.suggestions
@@ -296,7 +296,7 @@ def test_pfmea_blank_failure_mode_reads_its_own_group_not_another(tmp_path):
     book.save(path)
     book.close()
     body = preset_rule_body("UAES", "U07")
-    agent = UaesPfmeaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesPfmeaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput.of(body, rule_id="source-rules"))
     result = agent.check(1)
     # Same cause and controls under different failure modes may score differently.
     assert result.status == "PASS", result.suggestions
@@ -313,7 +313,7 @@ def agent_for(tmp_path, agent_cls, entry, sheets):
     book.save(path)
     book.close()
     body = preset_rule_body("UAES", entry)
-    return agent_cls(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="source-rules", **{key: value for key, value in body.items() if key != "kind"}))
+    return agent_cls(AuditInput(audit_id="version", file_url=str(path)), RuleInput.of(body, rule_id="source-rules"))
 
 
 def test_control_plan_reads_equipment_tooling_as_production_resources(tmp_path):
@@ -454,7 +454,7 @@ def test_cover_signatures_are_the_typed_name_and_date_beside_each_role(tmp_path,
             page.insert_text((x + 60, y), entries[role], fontname="china-s", fontsize=11)
             page.insert_text((x, y + 14), "Date:", fontname="helv", fontsize=9)
         document.save(path)
-    agent = UaesApprovalAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="r", rule_profile="v4", preset_key="U19"))
+    agent = UaesApprovalAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="r"))
     signed = agent.cover_signatures()
     assert {role: name for role, (name, _day) in signed.items()} == expected
     assert [str(day) for _name, day in signed.values()] == ["2026-09-14", "2026-09-14", "2026-09-15"]

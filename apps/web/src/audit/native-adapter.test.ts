@@ -536,10 +536,10 @@ test('native matching sends all provenance and its exact input revision without 
   globalThis.fetch = async (url, init) => {
     assert.equal(String(url), '/audit-tasks')
     assert.equal(init?.method, 'POST')
-    assert.deepEqual(JSON.parse(String(init?.body)), {request_id: 'recognition-a', task_id: 'task-a', expected_revision: 2, customer_preference: null, files: [{file_version_id: 'version-a', validation_id: 'validation-a', selection: 'selected', removal_reason: null}, {file_version_id: 'version-b', validation_id: 'validation-b', selection: 'removed', removal_reason: '文件加密'}]})
+    assert.deepEqual(JSON.parse(String(init?.body)), {request_id: 'recognition-a', task_id: 'task-a', expected_revision: 2, customer_preference: 'UAES', files: [{file_version_id: 'version-a', validation_id: 'validation-a', selection: 'selected', removal_reason: null}, {file_version_id: 'version-b', validation_id: 'validation-b', selection: 'removed', removal_reason: '文件加密'}]})
     return json({...task, files: rows, state: 'matching', input_revision: 3, recognition_request_id: 'recognition-a'})
   }
-  const next = await createNativeAuditAdapter({customers: []}).match(rows, null, task, 'recognition-a')
+  const next = await createNativeAuditAdapter({customers: []}).match(rows, 'UAES', task, 'recognition-a')
   assert.equal(next.id, 'task-a')
   assert.equal(next.input_revision, 3)
   assert.equal(next.files[1].selection, 'removed')
@@ -660,7 +660,7 @@ test('photo validation binds purpose to its own lost-reply identity and cannot r
     assert.equal(url, `/file-validations/${photoId}`)
     return json({id: photoId, scope, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'succeeded', result: {state: 'valid', reasons: []}})
   }
-  const adapter = createNativeAuditAdapter({customers: ['UAES']})
+  const adapter = createNativeAuditAdapter({customers: [{value: 'UAES', label: '联电科技/UAES'}]})
   await assert.rejects(adapter.readValidation(file, scope), /lost/)
   const result = await adapter.readValidation(file, scope)
   assert.equal(result.validation_id, photoId)
@@ -679,7 +679,7 @@ test('a photo receipt cannot authorize ordinary validation or another original',
 test('saved original validation identity restores its server-owned photo scope', async () => {
   const scope = {customer_preference: 'UAES', preset_key: 'U13'} as const
   globalThis.fetch = async () => json({id: 'saved', scope, source_file_id: 'file-a', source_file_version_id: 'version-a', status: 'succeeded', result: {state: 'valid', reasons: []}})
-  const result = await createNativeAuditAdapter({customers: ['UAES']}).readValidation({...file, validation_id: 'saved'})
+  const result = await createNativeAuditAdapter({customers: [{value: 'UAES', label: '联电科技/UAES'}]}).readValidation({...file, validation_id: 'saved'})
   assert.deepEqual(result.validation_scope, scope)
 })
 

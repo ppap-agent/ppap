@@ -10,11 +10,11 @@ export const hasExecutionError = (value: {has_execution_error?: boolean}): boole
 
 type Subject = NonNullable<TaskSummary['subject']>
 /** The task's title in lists: "客户 · 车型 零件名" from the first selected file that names any of them. */
-/** The task subject; `customerName` gives the customer the one name form of the current page (PRD §1.4 ③). */
-export function subjectLabel(subject: Subject | null | undefined, customerName: (value: string) => string = value => value): string {
+/** The customer is the one the file writes, as written; it is never a rule set's name. */
+export function subjectLabel(subject: Subject | null | undefined): string {
   if (!subject) return ''
   const item = [subject.model, subject.part].filter(Boolean).join(' ')
-  return [subject.customer ? customerName(subject.customer) : '', item].filter(Boolean).join(' · ')
+  return [subject.customer ?? '', item].filter(Boolean).join(' · ')
 }
 export function taskSubject(task: Pick<Task, 'files'>): Subject | undefined {
   const values = task.files.filter(row => row.selection === 'selected').map(row => fileDisplayValues(row)).find(row => row.customer || row.model || row.part)

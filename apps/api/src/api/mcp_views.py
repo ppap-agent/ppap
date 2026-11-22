@@ -9,10 +9,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from audit.models import public_locator
+from documents.location import location_label
+from product.customers import customer_name, type_names
+
 FINDING = {"PASS": "符合", "NG": "不符合", "UNABLE": "待审核", "NA": "不适用", "ERR": "没有检查完"}
 FILE = {"PASS": "符合", "NG": "不符合", "UNKNOWN": "待审核", "ERROR": "没有检查完"}
 TASK = {"PASS": "符合", "NG": "不符合", "UNKNOWN": "待审核", "ERROR": "未完成（有检查项没有检查完）"}
 MAX_ROWS = 60
+
+
+def _type(value: str | None) -> str | None:
+    """A document type as people read it; an unlisted type is shown as recorded."""
+    return type_names().get(value, value) if value else value
 
 
 def _rows(rows: list[list[Any]]) -> dict:
@@ -66,7 +75,7 @@ def audit_start(task: dict, precheck: dict | None, folders: dict[str, str]) -> t
                 [
                     name,
                     folders.get(version),
-                    match.get("document_type"),
+                    _type(match.get("document_type")),
                     metadata.get("part_number"),
                     metadata.get("part"),
                     ((match.get("rule") or {}).get("title") or "") + ("（参考，不审核）" if version in references else ""),
@@ -85,7 +94,7 @@ def audit_start(task: dict, precheck: dict | None, folders: dict[str, str]) -> t
     summary = [f"开始审核：送审 {len(targets)} 份文件" + (f"，预计扣 {points} 点。" if points is not None else "。")]
     facts = [
         ("任务", task.get("number")),
-        ("客户", task.get("customer_preference") or "按文件自动识别"),
+        ("审核客户", customer_name(task["customer_preference"]) if task.get("customer_preference") else None),
         ("送审", f"{len(targets)} 份" + (f" · 参考 {len(references)} 份" if references else "") + (f" · 不送审 {len(skipped)} 份" if skipped else "")),
         ("审核方式", mode),
         ("预计点数", f"{points} 点（飞书通用 AI 点数，按 500 点/份 × 送审份数计算）" if points is not None else None),
@@ -104,9 +113,8 @@ def _places(finding: dict) -> list[list[Any]]:
     locator = finding.get("locator") or {}
     rows = []
     for source in ((locator.get("semantic") or {}).get("sources")) or []:
-        place = source.get("locator") or {}
-        where = f"第 {place['page']} 页" if place.get("page") else f"{place.get('sheet')}!{place.get('cell')}" if place.get("cell") else source.get("location_gap") or "未提供具体位置"
-        rows.append([source.get("filename") or locator.get("filename"), where, source.get("excerpt") or "—"])
+        place = public_locator(source.get("locator"))
+        rows.append([source.get("filename") or locator.get("filename"), location_label(place) if place else "未提供具体位置", source.get("excerpt") or "—"])
     return rows
 
 
@@ -155,13 +163,14 @@ def report(task: dict, round_: dict) -> tuple[list[str], list[dict]]:
                 FILE.get(str(audit.get("confirmed_conclusion") or audit.get("conclusion")), "—"),
                 numbers.get("ng_count"),
                 numbers.get("pass_count"),
-                (row.get("match") or {}).get("document_type"),
+                _type((row.get("match") or {}).get("document_type")),
             ]
         )
     conclusion = TASK.get(str(task.get("conclusion")), "—")
+    rule_set = customer_name(task["customer_preference"]) if task.get("customer_preference") else None
     summary = [f"在你的飞书里新建一份审核报告文档：任务 {task.get('number')}，结论{conclusion}。"]
     details: list[dict] = [
-        {"kind": "facts", "rows": [("任务", task.get("number")), ("客户", task.get("customer_preference")), ("结论", conclusion), ("检查项", tally or None)]},
+        {"kind": "facts", "rows": [("任务", task.get("number")), ("审核客户", rule_set), ("结论", conclusion), ("检查项", tally or None)]},
         {"kind": "table", "title": f"文件 · {len(files)} 份", "head": ["文件", "结论", "不符合", "符合", "文件类型"], **_rows(files)},
         {"kind": "note", "text": "文档以你的身份新建在你的飞书云盘，内容是这一轮的审核结论与检查项，包括已记录的人工复核。"},
     ]

@@ -76,7 +76,6 @@ def round_report_routes(page, *, report_state="ready", verification=None):
         "coverage": {},
         "predecessor_id": None,
         "source_draft_id": TASK,
-        "preparation_allowed": False,
         "result_attempt": 1,
         "created_at": "2026-10-20T00:00:00Z",
         "writeback": {"available": False},

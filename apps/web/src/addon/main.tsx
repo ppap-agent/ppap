@@ -3,7 +3,7 @@
 // permissions come from the document host. It drives the same audit-task flow as the web app.
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import {createRoot} from 'react-dom/client'
-import {customerFullName, customerShortName, type RegisteredCustomer} from '../audit/customer-register'
+import {customerName, type RegisteredCustomer} from '../audit/customer-register'
 import {clauseObservation, pendingNote} from '../audit/result-projection'
 import {taskAddress} from '../audit/routes'
 import {newerRuleOf, ruleName, type RuleVersionChoice} from '../audit/reaudit-intent'
@@ -37,6 +37,7 @@ const messages: Record<string, string> = {
   too_large: '有文件超过 200 MB，无法审核。',
   access_denied: '没有权限：同一企业的人可以查看审核，只有发起人可以修改。',
   task_revision_conflict: '审核内容刚发生变化，请核对后再确认。',
+  customer_required: '请先选择审核客户。',
   round_incomplete: '审核尚未全部完成，暂时不能写入文档。',
   round_has_errors: '审核出现技术错误，不能写入文档。',
   feishu_writeback_failed: '写入文档没有成功，请确认你有这篇文档的编辑权限。',
@@ -225,17 +226,22 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
     } else {
       void call<{customer_preference: string | null}>('/audit-customers/default').then(value => setCustomer(value.customer_preference), () => setCustomer(null))
     }
-    // Until the register arrives (or if it cannot), a customer shows as recorded.
-    void call<components['schemas']['AuditCustomerCatalog']>('/audit-customers').then(catalog => setCustomers(catalog.customers), () => undefined)
+    // Until the register arrives (or if it cannot), the chosen rule set shows by its key.
+    void call<components['schemas']['AuditCustomerCatalog']>('/audit-customers').then(catalog => setCustomers(catalog.customers), cause => setFailure(say(cause)))
     return host.onDocumentChange?.(() => void load())
   }, [call, host, load, predecessor])
 
-  // The same document link as last time keeps its previous rule; a linked file is matched by its Feishu token.
+  // Every audit names a registered customer, chosen here: a re-audit keeps the earlier one, a new audit starts from the
+  // enterprise default when one is set. Nothing is read from the files to choose it.
+  const chosenCustomer = customers?.some(row => row.key === customer) ? customer! : null
+  const keptCustomer = Boolean(predecessor && reaudit?.customer_preference)
+  // The same document link as last time keeps its previous rule while the customer stays the same; a linked file is matched by its Feishu token.
   const previous = useMemo(() => new Map((reaudit?.files ?? []).flatMap(file => file.feishu_file_token ? [[file.feishu_file_token, file] as const] : [])), [reaudit])
-  const newerRules = [...new Set((links ?? []).filter(item => chosen.has(item.token)).flatMap(item => { const newer = previous.get(item.token) && newerRuleOf(previous.get(item.token)!); return newer ? [ruleName(newer)] : [] }))]
+  const sameRules = keptCustomer && chosenCustomer === reaudit?.customer_preference
+  const newerRules = sameRules ? [...new Set((links ?? []).filter(item => chosen.has(item.token)).flatMap(item => { const newer = previous.get(item.token) && newerRuleOf(previous.get(item.token)!); return newer ? [ruleName(newer)] : [] }))] : []
 
   const start = useCallback(async () => {
-    if (!links) return
+    if (!links || !chosenCustomer) return
     setFailure(''); setSkipped([])
     try {
       const picked = links.filter(item => chosen.has(item.token))
@@ -259,25 +265,25 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
           file_version_id: version.id, validation_id: checked.id, selection: 'selected', removal_reason: null,
           ...(before && before.file.id !== version.id ? {replacement_of_file_version_id: before.file.id} : {}),
           ...(before?.reference_only ? {reference_only: true} : {}),
-          ...(before?.preferred_rule_version_id ? {preferred_rule_version_id: newer && ruleChoice === 'newer' ? newer.id : before.preferred_rule_version_id} : {}),
+          ...(sameRules && before?.preferred_rule_version_id ? {preferred_rule_version_id: newer && ruleChoice === 'newer' ? newer.id : before.preferred_rule_version_id} : {}),
         })
       }
       setSkipped(left)
       if (!files.length) return
       setProgress('正在识别文件类型和规则…')
       const taskId = newId()
-      await call('/audit-tasks', {method: 'POST', body: {request_id: taskId, customer_preference: customer ?? null, files, ...(predecessor ? {predecessor_id: predecessor} : {})}})
+      await call('/audit-tasks', {method: 'POST', body: {request_id: taskId, customer_preference: chosenCustomer, files, ...(predecessor ? {predecessor_id: predecessor} : {})}})
       await call(`/integrations/feishu/tasks/${taskId}/document`, {method: 'PUT', body: {file_token: doc}})
       await onStarted(taskId)
     } catch (cause) {
       setFailure(say(cause))
       notify('error', say(cause))
     } finally { setProgress('') }
-  }, [call, chosen, customer, doc, links, notify, onStarted, predecessor, previous, ruleChoice])
+  }, [call, chosen, chosenCustomer, doc, links, notify, onStarted, predecessor, previous, ruleChoice, sameRules])
 
   const count = links?.filter(item => chosen.has(item.token)).length ?? 0
   const reading = customer === undefined || Boolean(predecessor) && !reaudit
-  useEffect(() => setPrimary({label: `开始识别（${count} 份）`, disabled: !count || reading, busy: Boolean(progress), run: () => void start()}), [count, progress, reading, setPrimary, start])
+  useEffect(() => setPrimary({label: `开始识别（${count} 份）`, disabled: !count || reading || !chosenCustomer, busy: Boolean(progress), run: () => void start()}), [chosenCustomer, count, progress, reading, setPrimary, start])
 
   return (
     <section aria-label="选择要审核的文件" data-testid="addon-documents">
@@ -311,7 +317,13 @@ function Intake({call, doc, host, predecessor, onStarted, onCancel, setPrimary, 
           </div>
         </section>
       )}
-      {!reading && <p className="text-muted-foreground text-xs">审核客户：{customer ? <span title={customerFullName(customers, customer)}>{customerShortName(customers, customer)}</span> : '自动识别'}{predecessor ? '（与上次审核相同）' : '（企业默认）'}</p>}
+      {!reading && (keptCustomer
+        ? <p className="text-muted-foreground text-xs">审核客户：{customerName(customers, customer!)}（与上次审核相同）</p>
+        : <label className="flex items-center gap-2 text-xs"><span className="text-muted-foreground">审核客户</span>
+          <select value={chosenCustomer ?? ''} disabled={Boolean(progress) || !customers} onChange={event => setCustomer(event.target.value || null)} className="h-7 min-w-0 rounded-md border bg-background px-2 text-xs">
+            <option value="" disabled>请选择审核客户</option>
+            {(customers ?? []).map(row => <option key={row.key} value={row.key}>{row.name}</option>)}
+          </select></label>)}
       {onCancel && <button type="button" className="text-primary underline-offset-4 hover:underline disabled:opacity-50" disabled={Boolean(progress)} onClick={onCancel}>返回上一次审核</button>}
     </section>
   )
@@ -449,7 +461,7 @@ function Result({task, call, host, canEdit, open, onReaudit, setPrimary, notify}
               const file = source ? fileOf(source.file_version_id)!.file : row.file
               return (
                 <li key={row.file.id + check.rule_item.id}>
-                  <button type="button" className="flex w-full flex-col gap-0.5 border-b py-2 text-left hover:bg-muted" title="对照原件查看" onClick={() => setViewing({file, locator: source?.locator ?? null, excerpt: source?.excerpt ?? '', clause: check.rule_item.rule_to_check})}>
+                  <button type="button" className="flex w-full flex-col gap-0.5 border-b py-2 text-left hover:bg-muted" title="对照原件查看" onClick={() => setViewing({file, locator: source?.locator ?? null, label: source?.label ?? null, excerpt: source?.excerpt ?? '', clause: check.rule_item.rule_to_check})}>
                     <span className="flex min-w-0 items-center gap-2"><span className={tag(check.finding?.status === 'NG' ? 'NG' : 'UNKNOWN')}>{checkStatusLabel(check)}</span><span className="text-muted-foreground text-xs min-w-0 truncate" title={row.file.original_filename}>{row.file.original_filename}</span></span>
                     <span className="line-clamp-3">{check.rule_item.rule_to_check}</span>
                     <span className="text-muted-foreground text-xs">{clauseObservation(check)}</span>

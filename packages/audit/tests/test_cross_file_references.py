@@ -173,12 +173,11 @@ def test_actual_pdf_reference_rows_are_compared_and_all_conversion_files_cleaned
     monkeypatch.setattr("documents.conversion.pipeline.convert_pdf_to_excel_auto", convert)
     rules = RuleInput(
         rule_id="confirmed-plan-rules",
-        rule_profile="v3",
         type="控制计划",
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 12)],
     )
 
-    results = run_checks(AuditInput(audit_id="plan", file_url=str(plan_path)), rules, group)
+    results = run_checks(AuditInput(audit_id="plan", file_url=str(plan_path)), rules, group, leaf="nio/N03")
 
     assert len(results) == 11
     comparison = results[1]
@@ -219,12 +218,11 @@ def test_unavailable_context_is_preserved_without_reclassifying_business_absence
     group = GroupContextInput(task_group_id="frozen-group", unavailable_files=unavailable)
     rules = RuleInput(
         rule_id="confirmed-plan-rules",
-        rule_profile="v3",
         type="控制计划",
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 12)],
     )
 
-    results = run_checks(AuditInput(audit_id="plan", file_url=str(plan_path)), rules, group)
+    results = run_checks(AuditInput(audit_id="plan", file_url=str(plan_path)), rules, group, leaf="nio/N03")
 
     assert len(results) == 11
     assert results[1].status == expected
@@ -303,12 +301,12 @@ def test_reference_read_failures_are_preserved_across_direct_loader_consumers(
     monkeypatch.setattr("documents.conversion.pipeline.convert_pdf_to_excel_auto", convert)
     rules = RuleInput(
         rule_id="confirmed-rules",
-        rule_profile="v3",
         type=document_type,
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, rule_count + 1)],
     )
 
-    results = run_checks(AuditInput(audit_id="target", file_url=str(target)), rules, group)
+    leaf = {"控制计划": "nio/N03", "潜在过程失效模式及后果分析": "nio/N02", "过程流程图": "nio/N05"}[document_type]
+    results = run_checks(AuditInput(audit_id="target", file_url=str(target)), rules, group, leaf=leaf)
 
     assert len(results) == rule_count
     expected = "NG" if conversion_state in {"missing-columns", "not-provided"} else "ERR"

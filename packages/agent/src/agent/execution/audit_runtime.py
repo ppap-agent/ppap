@@ -176,17 +176,10 @@ def run_audit(
         root = Path(work)
         paths: dict[str, Path] = {}
         audits: dict[str, AuditInput] = {}
-        rules = {
-            source.file_version_id: RuleInput.model_validate({**source.to_dict()["rules"], "rule_id": source.rule_revision_id, "appendix": source.to_dict()["appendix"]})
-            for source in snapshot.inputs
-            if source.rules is not None
-        }
-        rules.update(
-            {
-                target.file_version_id: RuleInput.model_validate({**target.to_dict()["rules"], "rule_id": target.suite_revision_id, "appendix": target.to_dict()["appendix"]})
-                for target in snapshot.targets
-            }
-        )
+        # A target's Suite revision replaces the rule its input carried.
+        frozen = [(source.file_version_id, source.rule_revision_id, source.to_dict()) for source in snapshot.inputs if source.rules is not None]
+        frozen += [(target.file_version_id, target.suite_revision_id, target.to_dict()) for target in snapshot.targets]
+        rules = {file_id: RuleInput.of(data["rules"], rule_id=revision_id, appendix=data["appendix"]) for file_id, revision_id, data in frozen}
         for index, source in enumerate(snapshot.inputs):
             if source.file_version_id in unavailable_sources:
                 continue

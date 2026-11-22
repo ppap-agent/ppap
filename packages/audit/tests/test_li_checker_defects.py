@@ -25,7 +25,7 @@ def check(tmp_path: Path, agent_class, workbook: Workbook, rule_number: int, *, 
     workbook.close()
     agent = agent_class(
         AuditInput(audit_id="target", file_url=str(path), file_metadata=metadata or {}),
-        RuleInput(rule_id="confirmed", rule_profile="v2", type=agent_class.DOC_TYPE.get_type_name(), rules=[]),
+        RuleInput(rule_id="confirmed", type=agent_class.DOC_TYPE.get_type_name(), rules=[]),
     )
     try:
         result = agent.check(rule_number - 1)
@@ -190,7 +190,7 @@ def test_flow_chart_connectors_that_cannot_be_read_are_unable(tmp_path, source_s
     workbook = flow_chart()
     workbook.save(path)
     workbook.close()
-    agent = ProcessFlowChartExcelAgent(AuditInput(audit_id="flow", file_url=str(path)), RuleInput(rule_id="confirmed", rule_profile="v2", type="过程流程图", rules=[]))
+    agent = ProcessFlowChartExcelAgent(AuditInput(audit_id="flow", file_url=str(path)), RuleInput(rule_id="confirmed", type="过程流程图", rules=[]))
     agent._source_path = str(path.with_suffix(source_suffix)) if source_suffix != ".xlsx" else agent._source_path
     try:
         result = agent.check(5)
@@ -593,7 +593,7 @@ def merged_anchor_rows(tmp_path: Path, agent_class, sheet_title: str, section_na
     sheet.merge_cells(merge)
     path = tmp_path / "merged.xlsx"
     workbook.save(path)
-    agent = agent_class(AuditInput(audit_id="merged", file_url=str(path)), RuleInput(rule_id="confirmed", rule_profile="v2", type=agent_class.DOC_TYPE.get_type_name(), rules=[]))
+    agent = agent_class(AuditInput(audit_id="merged", file_url=str(path)), RuleInput(rule_id="confirmed", type=agent_class.DOC_TYPE.get_type_name(), rules=[]))
     try:
         section = Table(agent.rule_ctx(agent._load_workbook())).sheet(canonical or sheet_title).section(section_name)
         return [row.row_index for row in section.rows_from(section.columns(headers[0]))]

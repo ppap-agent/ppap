@@ -24,7 +24,7 @@ const routeParams = () => {
 }
 
 function RulesWorkspace({active}: {active: boolean}) {
-  const [read, setRead] = useState<{loading: boolean; error: string; customers: components['schemas']['AuditCustomer'][]; rules: RulesList['rules']}>({loading: true, error: '', customers: [], rules: []})
+  const [read, setRead] = useState<{loading: boolean; error: string; catalog: components['schemas']['AuditCustomerCatalog'] | null; rules: RulesList['rules']}>({loading: true, error: '', catalog: null, rules: []})
   const [revision, setRevision] = useState(0)
   // Questions waiting for the customer on a rule version; their own read, so the rules show even if it fails.
   const [questionnaires, setQuestionnaires] = useState<QuestionnaireList | null>(null)
@@ -42,8 +42,8 @@ function RulesWorkspace({active}: {active: boolean}) {
       request<components['schemas']['AuditCustomerCatalog']>('/audit-customers', 'GET', undefined, controller.signal),
       request<RulesList>('/rules', 'GET', undefined, controller.signal),
     ]).then(([catalog, rules]) => {
-      if (!controller.signal.aborted) setRead({loading: false, error: '', customers: catalog.customers, rules: rules.rules})
-    }).catch(cause => {if (!controller.signal.aborted) setRead({loading: false, error: message(cause), customers: [], rules: []})})
+      if (!controller.signal.aborted) setRead({loading: false, error: '', catalog, rules: rules.rules})
+    }).catch(cause => {if (!controller.signal.aborted) setRead({loading: false, error: message(cause), catalog: null, rules: []})})
     return () => controller.abort()
   }, [revision, active])
   useEffect(() => {
@@ -54,17 +54,17 @@ function RulesWorkspace({active}: {active: boolean}) {
       .catch(() => {if (!controller.signal.aborted) setQuestionnaires(null)})
     return () => controller.abort()
   }, [active, route.questions])
-  const entries = customerRules(read.customers, read.rules)
+  const entries = read.catalog ? customerRules(read.catalog.customers, read.catalog.type_names, read.rules) : []
   if (read.error) return <Alert variant="destructive"><AlertTitle>客户规则未能读取</AlertTitle><AlertDescription><p>{read.error}</p><Button variant="outline" size="sm" onClick={() => setRevision(value => value + 1)}>重新读取</Button></AlertDescription></Alert>
   if (route.questions) return <RuleQuestionnairePage questionnaireId={route.questions}/>
   if (route.rulebook) {
     const owner = entries.find(entry => entry.customer.customer_id === route.customer)?.customer
     if (read.loading && !owner) return null
-    return <RulebookRevisionPage customer={{id: route.customer, name: owner?.short_name ?? route.customer}} revision={route.rulebook} questionnaires={questionnaires}/>
+    return <RulebookRevisionPage customer={{id: route.customer, name: owner?.name ?? route.customer}} revision={route.rulebook} questionnaires={questionnaires}/>
   }
   if (route.rule) {
     const owner = entries.find(entry => entry.types?.some(type => type.rules.some(rule => rule.id === route.rule)))?.customer
-    return <RuleDetail ruleId={route.rule} customer={owner && {id: owner.customer_id, name: owner.short_name}}/>
+    return <RuleDetail ruleId={route.rule} customer={owner && {id: owner.customer_id, name: owner.name}}/>
   }
   return <section aria-label="审核规则库" className="flex min-h-0 flex-1 flex-col">
     <CustomerRulesBrowser entries={entries} selectedId={route.customer} loading={read.loading} questions={customerId => <CustomerRulebook customerId={customerId} questionnaires={questionnaires}/>}/>

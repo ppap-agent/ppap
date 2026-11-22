@@ -49,7 +49,7 @@ def usage_of(system):
     return admin.list_usage_events(principal)
 
 
-def prepare(system, core_system, customer, entry, *, reference=False, photo=False, choose_customer=True, copies=1, last_reference=False):
+def prepare(system, core_system, customer, entry, *, reference=False, photo=False, copies=1, last_reference=False):
     client, worker, admin, principal = system
     core_system.adopt_standard(admin, principal, f"{customer}:{entry}")
     selected = []
@@ -83,7 +83,7 @@ def prepare(system, core_system, customer, entry, *, reference=False, photo=Fals
                 "reference_only": reference or last_reference and index == copies - 1,
             }
         )
-    command = {"request_id": str(uuid.uuid4()), "customer_preference": customer if choose_customer else None, "files": selected}
+    command = {"request_id": str(uuid.uuid4()), "customer_preference": customer, "files": selected}
     response = client.post("/audit-tasks", json=command)
     assert response.status_code == 202, response.text
 

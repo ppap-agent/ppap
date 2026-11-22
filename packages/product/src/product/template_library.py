@@ -1,8 +1,8 @@
 """Built-in customer document templates.
 
 The files are read-only customer originals under `<template_root>/<company>/templates`.
-This manifest only gives each one a clean display name and a document-type label;
-the originals are never renamed or rewritten.
+This manifest only gives each one a clean display name and its PPAP type; the type is named
+by the customer register. The originals are never renamed or rewritten.
 """
 
 from __future__ import annotations
@@ -27,9 +27,8 @@ class Template:
     id: str
     source: str
     name: str
-    document_type: str
-    # The PPAP type the template is for: a standard T code, a customer-only E code, or None while undecided.
-    type_code: str | None = None
+    # The PPAP type the template is for: a standard T code or a customer-only E code.
+    type_code: str
 
     @property
     def extension(self) -> str:
@@ -51,45 +50,45 @@ CUSTOMERS: tuple[Customer, ...] = (
     Customer(
         "li",
         (
-            Template("li-design-verification-plan", "APQP-零部件设计验证计划.xlsx", "零部件设计验证计划", "零部件设计验证计划和报告", "T02"),
-            Template("li-material-supplier-list", "APQP-材料、产品及分供方清单.xlsx", "材料、产品及分供方清单", "材料产品及分供清单", "T04"),
-            Template("li-gauge-acceptance", "APQP-检具认可报告.xlsx", "检具认可报告", "检具验收报告", "T05"),
-            Template("li-mould-acceptance", "APQP-模具验收报告.xls", "模具验收报告", "模具验收报告", "T06"),
-            Template("li-msa", "APQP-测量系统分析报告.xlsx", "测量系统分析报告", "测量系统分析评价", "T07"),
-            Template("li-process-capability", "APQP-过程能力分析报告.xlsx", "过程能力分析报告", "过程能力研究", "T08"),
-            Template("li-process-flow", "APQP-过程流程图.xlsx", "过程流程图", "过程流程图", "T09"),
-            Template("li-pfmea", "APQP-潜在过程失效模式及后果分析（PFMEA）.xlsx", "潜在过程失效模式及后果分析（PFMEA）", "潜在过程失效模式及后果分析（PFMEA）", "T10"),
-            Template("li-control-plan", "APQP-生产控制计划.xlsx", "生产控制计划", "控制计划", "T11"),
-            Template("li-special-characteristics", "APQP-过程特殊特性清单.xlsx", "过程特殊特性清单", "过程特殊特性清单", "T12"),
-            Template("li-ccsc", "APQP-产品过程CCSC特性管理清单.xlsx", "产品过程CCSC特性管理清单", "CC/SC 特性管理清单", "T12"),
-            Template("li-equipment", "APQP-设备开发验收清单.xlsx", "设备开发验收清单", "设备清单", "T13"),
-            Template("li-capacity", "APQP-产能评估表.xlsx", "产能评估表", "生产系统产能评估报告", "T14"),
-            Template("li-issue-list", "APQP-项目问题清单.xlsx", "项目问题清单", "APQP项目问题清单", "T15"),
-            Template("li-annual-test", "APQP-零部件年度试验要求.xlsx", "零部件年度试验要求", "零部件年度试验要求", "T16"),
-            Template("li-psw", "APQP-零件提交保证书（PSW签署）.xlsx", "零件提交保证书（PSW签署）", "零件提交保证书", "T17"),
-            Template("li-dimension-report", "APQP-尺寸检验报告.xlsx", "尺寸检验报告", "尺寸检验报告", "T01"),
+            Template("li-design-verification-plan", "APQP-零部件设计验证计划.xlsx", "零部件设计验证计划", "T02"),
+            Template("li-material-supplier-list", "APQP-材料、产品及分供方清单.xlsx", "材料、产品及分供方清单", "T04"),
+            Template("li-gauge-acceptance", "APQP-检具认可报告.xlsx", "检具认可报告", "T05"),
+            Template("li-mould-acceptance", "APQP-模具验收报告.xls", "模具验收报告", "T06"),
+            Template("li-msa", "APQP-测量系统分析报告.xlsx", "测量系统分析报告", "T07"),
+            Template("li-process-capability", "APQP-过程能力分析报告.xlsx", "过程能力分析报告", "T08"),
+            Template("li-process-flow", "APQP-过程流程图.xlsx", "过程流程图", "T09"),
+            Template("li-pfmea", "APQP-潜在过程失效模式及后果分析（PFMEA）.xlsx", "潜在过程失效模式及后果分析（PFMEA）", "T10"),
+            Template("li-control-plan", "APQP-生产控制计划.xlsx", "生产控制计划", "T11"),
+            Template("li-special-characteristics", "APQP-过程特殊特性清单.xlsx", "过程特殊特性清单", "T12"),
+            Template("li-ccsc", "APQP-产品过程CCSC特性管理清单.xlsx", "产品过程CCSC特性管理清单", "T12"),
+            Template("li-equipment", "APQP-设备开发验收清单.xlsx", "设备开发验收清单", "T13"),
+            Template("li-capacity", "APQP-产能评估表.xlsx", "产能评估表", "T14"),
+            Template("li-issue-list", "APQP-项目问题清单.xlsx", "项目问题清单", "T15"),
+            Template("li-annual-test", "APQP-零部件年度试验要求.xlsx", "零部件年度试验要求", "T16"),
+            Template("li-psw", "APQP-零件提交保证书（PSW签署）.xlsx", "零件提交保证书（PSW签署）", "T17"),
+            Template("li-dimension-report", "APQP-尺寸检验报告.xlsx", "尺寸检验报告", "T01"),
         ),
     ),
     Customer(
         "nio",
         (
-            Template("nio-measurement-report", "1-2 尺寸测量报告.xlsm", "尺寸测量报告", "测量报告", "T01a"),
-            Template("nio-process-flow", "8 过程流程图.xlsx", "过程流程图", "过程流程图", "T09"),
-            Template("nio-pfmea", "9 潜在过程失效模式及后果分析.xlsx", "潜在过程失效模式及后果分析", "潜在过程失效模式及后果分析（PFMEA）", "T10"),
-            Template("nio-control-plan", "10 控制计划.xlsx", "控制计划", "控制计划", "T11"),
-            Template("nio-special-characteristics", "11 特殊特性清单.xlsx", "特殊特性清单", "特殊特性清单", "T12"),
+            Template("nio-measurement-report", "1-2 尺寸测量报告.xlsm", "尺寸测量报告", "T01a"),
+            Template("nio-process-flow", "8 过程流程图.xlsx", "过程流程图", "T09"),
+            Template("nio-pfmea", "9 潜在过程失效模式及后果分析.xlsx", "潜在过程失效模式及后果分析", "T10"),
+            Template("nio-control-plan", "10 控制计划.xlsx", "控制计划", "T11"),
+            Template("nio-special-characteristics", "11 特殊特性清单.xlsx", "特殊特性清单", "T12"),
         ),
     ),
     Customer(
         "uaes",
         (
-            Template("uaes-psw", "新-F-PU-206_零件提交保证书_PartSubmissionWarrant_V03 (1).xls", "零件提交保证书（F-PU-206）", "零件提交保证书（PSW）", "T17"),
-            Template("uaes-pgqp", "F-PU-127_采购件质量计划_Purchased Goods Quality Plan PGQP1_V06 (1).xlsx", "采购件质量计划 PGQP1（F-PU-127）", "采购件质量计划", "E12"),
-            Template("uaes-measure-comparison", "F-PU-166_测量比较报告_Measure Comparison Report_V02.xls (1).xls", "测量比较报告（F-PU-166）", "测量比较报告", "E02"),
-            Template("uaes-sample-inspection", "F-PU-207_样品检验报告_Sample Inspection Report_V01-.xls (1).xls", "样品检验报告（F-PU-207）", "初始样品检验报告", "E01"),
-            Template("uaes-sample-approval", "F01RC0YA8601 样品认可报告 (1).xls", "样品认可报告", "样品认可报告", "E11"),
-            Template("uaes-material-supplier-list", "7. 材料及分供方清单模板 (1).xlsx", "材料及分供方清单", "材料产品及分供清单", "T04"),
-            Template("uaes-traceability", "零件追溯检查单-模板 20250609.xlsx", "零件追溯检查单", "零件追溯说明", "E10"),
+            Template("uaes-psw", "新-F-PU-206_零件提交保证书_PartSubmissionWarrant_V03 (1).xls", "零件提交保证书（F-PU-206）", "T17"),
+            Template("uaes-pgqp", "F-PU-127_采购件质量计划_Purchased Goods Quality Plan PGQP1_V06 (1).xlsx", "采购件质量计划 PGQP1（F-PU-127）", "E12"),
+            Template("uaes-measure-comparison", "F-PU-166_测量比较报告_Measure Comparison Report_V02.xls (1).xls", "测量比较报告（F-PU-166）", "E02"),
+            Template("uaes-sample-inspection", "F-PU-207_样品检验报告_Sample Inspection Report_V01-.xls (1).xls", "样品检验报告（F-PU-207）", "E01"),
+            Template("uaes-sample-approval", "F01RC0YA8601 样品认可报告 (1).xls", "样品认可报告", "E11"),
+            Template("uaes-material-supplier-list", "7. 材料及分供方清单模板 (1).xlsx", "材料及分供方清单", "T04"),
+            Template("uaes-traceability", "零件追溯检查单-模板 20250609.xlsx", "零件追溯检查单", "E10"),
         ),
     ),
 )
@@ -135,6 +134,11 @@ def registered(customer: Customer) -> customers.RegisteredCustomer:
     return found
 
 
+def zip_filename(customer: Customer) -> str:
+    # A name may contain "/", which no filename can hold.
+    return registered(customer).name.replace("/", "-") + "模板.zip"
+
+
 def template_coverage(root: Path, customer: Customer) -> dict | None:
     """Template coverage N_t/M: types of M with an available controlled template, each counted once."""
     found = registered(customer)
@@ -149,13 +153,12 @@ def catalog(root: Path) -> dict:
         "customers": [
             {
                 "id": customer.id,
-                "full_name": registered(customer).full_name,
-                "short_name": registered(customer).short_name,
+                "name": registered(customer).name,
                 "templates": [
                     {
                         "id": template.id,
                         "name": template.name,
-                        "document_type": template.document_type,
+                        "document_type": customers.type_names()[template.type_code],
                         "extension": template.extension,
                         "filename": template.filename,
                         "byte_size": size,

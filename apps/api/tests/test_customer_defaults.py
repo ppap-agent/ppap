@@ -31,6 +31,8 @@ def test_members_share_defaults_but_not_other_tenants(auth_store_factory):
     assert initial.json() == {"customer_preference": None, "revision": 0}
     command = {"customer_preference": "UAES", "expected_revision": 0, "confirmed": True}
     assert first.put(path, json={**command, "confirmed": False}).status_code == 400
+    # The default pre-fills a registered customer; there is no "no customer" mode to save.
+    assert first.put(path, json={**command, "customer_preference": None}).status_code == 400
     assert peer.get(path).json() == initial.json()
     assert first.put(path, json=command).json() == {"customer_preference": "UAES", "revision": 1}
     assert peer.get(path).json() == {"customer_preference": "UAES", "revision": 1}

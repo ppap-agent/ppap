@@ -96,7 +96,7 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
                     "metadata": {"customer": None, "model": None, "part": None, "part_number": None},
                     "document_type": "控制计划",
                     "rule": None,
-                    "gaps": ["matching_customer_required"],
+                    "gaps": [],
                 },
             }
         ],
@@ -109,12 +109,13 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
 
     def catalog(route):
         reads.append(route.request.method)
-        customers = [{"customer_id": "customer-new", "name": "新客户", "full_name": "新客户", "short_name": "新客户", "coverage": None}] if len(refreshed) > 1 else []
-        route.fulfill(json={"customers": customers, "unregistered": []})
+        customers = [{"customer_id": "customer-new", "name": "新客户", "key": "新客户", "coverage": None}] if len(refreshed) > 1 else []
+        route.fulfill(json={"customers": customers, "unregistered": [], "type_names": {}})
 
     page.route("**/api/audit-customers", catalog)
     page.goto(WEB + "/audit?task=original-task")
-    page.get_by_role("button", name="返回核对客户", exact=True).click()
+    # A task from before every task named its customer goes back to the upload page to choose one.
+    page.get_by_role("button", name="上一步", exact=True).click()
     customer_picker = page.get_by_role("combobox", name="审核客户", exact=True)
     expect(customer_picker).to_be_visible()
     before = len(reads)
@@ -234,7 +235,7 @@ def test_native_usage_and_logout_keep_the_task_report_address(browser_page):
     page.set_viewport_size({"width": 1280, "height": 720})
     login_config(page)
     page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
-    page.route("**/api/audit-customers", lambda route: route.fulfill(json={"customers": []}))
+    page.route("**/api/audit-customers", lambda route: route.fulfill(json={"customers": [], "unregistered": [], "type_names": {}}))
     page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
     logged_out = []
 

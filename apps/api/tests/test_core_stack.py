@@ -10,7 +10,6 @@ from unittest.mock import patch
 from api import create_app
 from dotenv import dotenv_values
 from product.capabilities import report
-from product.llm import llm_configured
 from product.settings import ISOLATED_DEV_LLM_BASE_URL, ISOLATED_DEV_LLM_MODEL, ISOLATED_DEV_SECRET, Settings
 from pydantic import ValidationError
 
@@ -27,12 +26,12 @@ class SettingsTests(unittest.TestCase):
     def test_isolated_dev_defaults_do_not_require_extra_secrets(self):
         with _clean_env():
             settings = Settings()
+            self.assertEqual(report(settings)["llm"]["state"], "disabled")
         self.assertEqual(settings.profile, "isolated-dev")
         self.assertEqual(settings.pg_api_password, ISOLATED_DEV_SECRET)
         self.assertEqual(settings.model_text_api_key, "")
         self.assertEqual(settings.model_text_base_url, ISOLATED_DEV_LLM_BASE_URL)
         self.assertEqual(settings.model_text_model, ISOLATED_DEV_LLM_MODEL)
-        self.assertFalse(llm_configured(settings))
 
     def test_env_dev_template_carries_no_real_credentials(self):
         path = ROOT / ".env.dev"
@@ -53,10 +52,10 @@ class SettingsTests(unittest.TestCase):
     def test_isolated_dev_with_only_api_key_uses_repository_defaults(self):
         with _clean_env(PPAP_MODEL_TEXT_API_KEY="sk-test"):
             settings = Settings()
+            self.assertEqual(report(settings)["llm"]["state"], "configured")
         self.assertEqual(settings.model_text_api_key, "sk-test")
         self.assertEqual(settings.model_text_base_url, ISOLATED_DEV_LLM_BASE_URL)
         self.assertEqual(settings.model_text_model, ISOLATED_DEV_LLM_MODEL)
-        self.assertTrue(llm_configured(settings))
 
     def test_production_rejects_isolated_dev_credentials(self):
         with _clean_env(PPAP_PROFILE="production"):
@@ -209,7 +208,6 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(caps["feishu"]["state"], "disabled")
         self.assertEqual(caps["llm"]["state"], "disabled")
         self.assertEqual(caps["deep"]["state"], "disabled")
-        self.assertFalse(llm_configured(self.settings))
         self.assertEqual(self.client.get("/health").status_code, 200)
 
     def test_configured_capabilities_do_not_claim_readiness_proof(self):
@@ -220,7 +218,7 @@ class ApiSurfaceTests(unittest.TestCase):
             PPAP_DEEP_CONTROLLER_SOCKET="/tmp/ppap-deep.sock",
         ):
             settings = Settings()
-        caps = report(settings)
+            caps = report(settings)
         self.assertEqual(caps["llm"]["state"], "configured")
         self.assertEqual(caps["feishu"]["state"], "configured")
         self.assertEqual(caps["deep"]["state"], "configured")

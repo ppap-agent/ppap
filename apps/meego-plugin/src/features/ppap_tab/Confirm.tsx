@@ -3,7 +3,7 @@
 import { Banner, Button, Collapse, Dropdown, Input, List, Radio, RadioGroup, Select, Space, Spin, Switch, Tag, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useMemo, useState } from 'react';
 import { currentTemplate, rememberedTemplate, rememberTemplate, templateName, templateOwner, templates } from './ledger';
-import type { Rule } from './ledger';
+import type { RegisteredCustomer, Rule } from './ledger';
 import { checkerUnavailable, matchLabel, newerRuleOf, ruleName, ruleVersionChoice, withRuleVersion } from './model';
 import type { Precheck, PrecheckFinding, RuleVersionChoice, Task, TaskFile } from './model';
 import { call, newId, say, taskLink } from './ppap';
@@ -111,7 +111,7 @@ export function ConfirmRow({ task, row, revise, disabled }: { task: Task; row: T
 }
 
 /** The decision before acceptance: template, depth, precheck, cost; then confirm or end without auditing. */
-export function Confirm({ task, rules, space, revise, refresh, onReselect }: { task: Task; rules: Rule[]; space: string; revise: Revise; refresh: () => Promise<void>; onReselect: () => void }) {
+export function Confirm({ task, rules, customers, space, revise, refresh, onReselect }: { task: Task; rules: Rule[]; customers: RegisteredCustomer[] | null; space: string; revise: Revise; refresh: () => Promise<void>; onReselect: () => void }) {
   const [precheck, setPrecheck] = useState<Precheck | null | 'unavailable'>(null);
   const all = useMemo(() => templates(rules), [rules]);
   const template = currentTemplate(all, task.customer_preference ?? null, rememberedTemplate(space));
@@ -224,8 +224,8 @@ export function Confirm({ task, rules, space, revise, refresh, onReselect }: { t
           style={{ minWidth: 160 }}
           disabled={busy}
           value={template ?? undefined}
-          placeholder="按文件自动匹配"
-          optionList={[...all.keys()].sort((a, b) => templateName(a).localeCompare(templateName(b), 'zh-CN')).map(key => ({ value: key, label: templateName(key) }))}
+          placeholder="请选择审核客户"
+          optionList={[...all.keys()].sort((a, b) => templateName(a, customers).localeCompare(templateName(b, customers), 'zh-CN')).map(key => ({ value: key, label: templateName(key, customers) }))}
           onChange={value => chooseTemplate(String(value))}
         />
         {task.deep_mode_option?.available && (

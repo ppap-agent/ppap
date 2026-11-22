@@ -217,8 +217,8 @@ def freeze_authorized_inputs(conn, principal, prepared: list[dict]) -> tuple[Fro
         ).fetchone()
         if row is None or str(row[2]) != item["file_id"]:
             raise KeyError("snapshot_file_missing")
+        # The document's own facts; the chosen rule group is not the company a file names.
         metadata = item.get("frozen_metadata") or {}
-        customers = (item.get("rule_body") or {}).get("customers") or []
         inputs.append(
             FrozenInput(
                 item["file_version_id"],
@@ -227,7 +227,7 @@ def freeze_authorized_inputs(conn, principal, prepared: list[dict]) -> tuple[Fro
                 row[1],
                 item.get("document_type") or (item.get("rule_body") or {}).get("type"),
                 item["file_id"],
-                metadata.get("customer") or (customers[0] if len(customers) == 1 else None),
+                metadata.get("customer"),
                 metadata.get("model"),
                 metadata.get("part"),
             )

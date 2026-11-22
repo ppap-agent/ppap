@@ -19,7 +19,7 @@ def version(name, sha=None):
 
 def prepared(*names, shas=None):
     """A task whose files are all imported and scheduled for their check."""
-    state = w.apply(w.new_state(FOLDER, {"customer": None, "deep_mode": False}), {"type": "discovered", "files": listed(*names)})
+    state = w.apply(w.new_state(FOLDER, {"customer": "UAES", "deep_mode": False}), {"type": "discovered", "files": listed(*names)})
     for name in names:
         state = w.apply(state, {"type": "imported", "token": "t-" + name, "version": version(name, (shas or {}).get(name))})
         state = w.apply(state, {"type": "check_scheduled", "token": "t-" + name, "validation_id": "c-" + name})
@@ -143,13 +143,17 @@ def test_a_decision_redoes_only_what_depends_on_it():
     assert w.effects(state, after) == []
 
 
-def test_a_customer_is_asked_for_only_when_files_stay_unmatched_without_one():
+def test_a_task_from_before_every_task_named_its_rule_set_is_asked_for_one_even_when_its_files_matched():
     state = w.apply(prepared("a"), {"type": "audit_created"})
-    facts = {**checks(a="valid"), "audit": audit(audit_row("a", match="unmatched"), customer_preference=None), "customers": {"customers": [{"name": "UAES"}, {"name": "蔚来"}]}}
+    state["options"]["customer"] = None
+    customers = [{"key": "UAES", "name": "联电科技/UAES"}, {"key": "蔚来", "name": "蔚来/Nio"}]
+    facts = {**checks(a="valid"), "audit": audit(audit_row("a"), customer_preference=None), "customers": {"customers": customers}}
     view = w.project(TASK, state, facts)
     assert view["phase"] == "awaiting_decision"
     (issue,) = view["issues"]
-    assert issue["code"] == "CUSTOMER_REQUIRED" and [a["id"] for a in issue["allowed_actions"]] == ["set_customer:UAES", "set_customer:蔚来"]
+    # The choice submits the rule set's key and reads as its registered name.
+    assert issue["code"] == "CUSTOMER_REQUIRED"
+    assert [(a["id"], a["label"]) for a in issue["allowed_actions"]] == [("set_customer:UAES", "按「联电科技/UAES」审"), ("set_customer:蔚来", "按「蔚来/Nio」审")]
     assert view["next"] == {"kind": "user_action", "issue_id": issue["id"], "prompt": issue["message"], "resolve_with": "resolve_issue"}
     state = w.apply(state, {"type": "decided", "request_id": "r1", "issue_id": issue["id"], "action_id": "set_customer:蔚来", "subject": None})
     assert w.effects(state, facts)[0]["customer_preference"] == "蔚来"

@@ -10,12 +10,12 @@ import logging
 from functools import partial
 from typing import Any, List, Optional, Type
 
+from audit.checker_lib.base_agent import BaseAgent
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.contracts import AuditResultItem as AuditResult
 from audit.kinds import PpapDocumentType
 
 from .annual_test_requirements_agent import AnnualTestRequirementsAgent
-from .base_agent import BaseAgent
 from .control_plan_agent import ControlPlanAgent
 from .dpvr_excel_agent import DpvrExcelAgent
 from .dvp_r_excel_agent import DvpRExcelAgent

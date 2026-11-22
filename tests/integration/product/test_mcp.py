@@ -37,7 +37,7 @@ RULE_BODY = {
     "kind": "engine",
     "type": "控制计划",
     "rule_profile": "v3",
-    "customers": ["测试客户"],
+    "customers": ["理想"],
     "models": [],
     "parts": [],
     "rules": [{"id": "1", "category": "身份", "priority": None, "rule_to_check": "必须填写零件号", "type_of_rule": "table"}],
@@ -308,7 +308,7 @@ def until(client, token, task, *phases):
 def prepared_folder(client, store, token, core_system, worker, *, adopt=True):
     """prepare_audit on the folder, with the worker doing the checking and recognising it asks for."""
     ask = str(uuid4())
-    seen = call(client, token, "prepare_audit", request_id=ask, source=FOLDER)
+    seen = call(client, token, "prepare_audit", request_id=ask, source=FOLDER, customer="理想")
     task = seen["task_id"]
     assert task != ask  # the task is named for this person, not by the client's request ID alone
     for _ in range(100):
@@ -365,7 +365,7 @@ def test_a_feishu_folder_is_prepared_confirmed_and_audited_and_an_interruption_c
         assert quote["files_to_audit"] == 1 and quote["mode"] == "standard"
         assert ready["next"]["then"] == {"tool": "confirm_audit", "arguments": {"task_id": task, "quote_id": quote["quote_id"]}}
         # prepare_audit again is the same task: nothing is imported or created a second time.
-        again = call(client, token, "prepare_audit", request_id=ask, source=FOLDER)
+        again = call(client, token, "prepare_audit", request_id=ask, source=FOLDER, customer="理想")
         assert again["task_id"] == task and again["result"]["phase"] == "ready_to_confirm"
         assert client.get("/audit-tasks").json()["tasks"][0]["id"] == task and len(client.get("/audit-tasks").json()["tasks"]) == 1
     # A new API process, with no memory of the calls above, reads the same task from what was saved.
@@ -508,7 +508,7 @@ def test_registry_annotations_and_browser_revoke(mcp_app):
         assert tools.keys() == TOOLS
         for tool in tools.values():
             assert tool["inputSchema"]["type"] == "object" and {"result", "issues", "next"} <= tool["outputSchema"]["properties"].keys()
-        assert set(tools["prepare_audit"]["inputSchema"]["required"]) == {"request_id", "source"}
+        assert set(tools["prepare_audit"]["inputSchema"]["required"]) == {"request_id", "source", "customer"}
         assert set(tools["confirm_audit"]["inputSchema"]["required"]) == {"task_id", "quote_id", "request_id"}
         assert set(tools["resolve_issue"]["inputSchema"]["required"]) == {"task_id", "issue_id", "action_id", "expected_revision", "request_id"}
         for name in ("find_submissions", "get_task", "get_issue", "get_results", "get_finding", "find_audits", "get_operation", "get_account"):

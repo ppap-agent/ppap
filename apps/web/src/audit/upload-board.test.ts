@@ -29,7 +29,7 @@ test('the confirm-rules page names each recognition result; a file without one i
 })
 
 test('the reason recognition cannot start is the first thing the person must deal with', () => {
-  const ready = {recognizing: false, saving: false, preparationPending: false, needsCurrent: false, transferBlocked: false, checking: 0, exceptions: 0, selected: 1}
+  const ready = {recognizing: false, saving: false, preparationPending: false, needsCurrent: false, customer: true, transferBlocked: false, checking: 0, exceptions: 0, selected: 1}
   assert.equal(recognitionHold(ready), '')
   assert.equal(recognitionHold({...ready, recognizing: true, checking: 2}), '正在识别，完成后可修改。')
   assert.equal(recognitionHold({...ready, saving: true, checking: 1}), '正在保存本次文件…')
@@ -37,6 +37,7 @@ test('the reason recognition cannot start is the first thing the person must dea
   assert.equal(recognitionHold({...ready, uploading: 3, checking: 1}), '正在上传…（还有 3 份）')
   assert.equal(recognitionHold({...ready, transferBlocked: true, uploading: 1}), '请先处理或移除未完成的传输，再开始识别。')
   assert.equal(recognitionHold({...ready, needsCurrent: true}), '任务已有更新，请先读取当前任务。')
+  assert.equal(recognitionHold({...ready, customer: false, checking: 1}), '请选择审核客户后再开始识别。')
   assert.equal(recognitionHold({...ready, transferBlocked: true, checking: 2}), '请先处理或移除未完成的传输，再开始识别。')
   assert.equal(recognitionHold({...ready, checking: 2, exceptions: 1}), '正在检查文件…（还有 2 份）')
   assert.equal(recognitionHold({...ready, exceptions: 1}), '请先处理或移除异常文件。')

@@ -1,22 +1,3 @@
-import type {SemanticSource} from './api'
-
-function pdfPageLocation(page: number, region?: Array<number | null>) {
-  if (!region) return `第 ${page} 页`
-  const box = region.map(value => value == null ? '未定' : String(value)).join(', ')
-  return `第 ${page} 页 · 区域 ${box}`
-}
-
-export function sourceLocation(source: Pick<SemanticSource, 'locator'>) {
-  const place = source.locator
-  if (place.kind === 'xlsx_cell') return `${place.sheet}!${place.cell}`
-  if (place.kind === 'xlsx_range') return `${place.sheet}!${place.start}:${place.end}`
-  if (place.kind === 'pdf_block') return `第 ${place.page} 页 · 文本块 ${place.block}`
-  if (place.kind === 'pdf_cell') return `第 ${place.page} 页 · 表格行 ${place.row} · 列 ${place.column}`
-  if (place.kind === 'pdf_page') return pdfPageLocation(place.page, place.region)
-  if (place.kind === 'docx_paragraph') return `段落 ${place.paragraph}`
-  return `表格 ${place.table} · 行 ${place.row} · 列 ${place.column}`
-}
-
 const analysisNotices: Record<string, string | null> = {
   photo_content_requires_manual_confirmation: '照片格式已核实。照片中的零件、标识和内容仍需人工确认。',
   empty_document_text: '未读取到文件文字，请核对原件后重新识别。',
@@ -32,8 +13,6 @@ const analysisNotices: Record<string, string | null> = {
   document_classification_failed: '无法确定文件类型，请核对原件后重新识别。',
   rule_matching_failed: '自动匹配失败，请返回检查文件后重新识别。',
   no_available_rules: '暂无可用规则，请查看模板或通过模板文档联系我们。',
-  matching_customer_conflict: '文件内的明确客户标识与本次审核客户不一致。请核对审核客户，异客户资料请分别建立任务。',
-  matching_customer_required: '文件中未识别出客户。请返回上传页面选择客户，再核对文件并重新识别；不会自动采用其他客户或通用规则。',
   matching_document_type_required: '尚未确定文件类型。请返回核对原件，重新识别；不会仅凭现有规则推断文件类型。',
   matching_document_type_rules_missing: '没有此类文件可用的规则。检查程序由平台离线准备，如需准备请联系我们；准备好后返回本任务重新识别。',
   matching_customer_rules_missing: '没有适用于该客户和文件类型的可用规则。请核对客户；检查程序由平台离线准备，如需准备请联系我们，准备好后重新识别。',

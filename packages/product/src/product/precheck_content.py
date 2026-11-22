@@ -1106,7 +1106,7 @@ def _pfmea_tables() -> Check:
     def run(ctx: Ctx, miss: str, last: str) -> Outcome:
         table = ctx.table(keys)
         if table is None or len(table.cols) < 5:
-            return bad("B05", "全文", "、".join(table.titles.values()) if table else "", "未找到 PFMEA 主表（表头含 ≥5 个关键语义列）")
+            return bad("B05", "全文", "、".join(table.titles.values()) if table else "", "未找到潜在过程失效模式及后果分析主表（表头含 ≥5 个关键语义列）")
         if ctx.customer == "UAES":
             return ok(table.grid.ref(table.header), "主表：" + "、".join(table.titles.values()) + "（UAES 变更履历可选）")
         for grid in ctx.doc.grids:

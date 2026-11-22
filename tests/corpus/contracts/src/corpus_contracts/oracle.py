@@ -279,9 +279,7 @@ def recognize_references(case: OracleCase) -> dict[str, dict]:
     customer = case_customer(case)
     with presets_as_judged(customer):
         rules = customer_rules(customer)
-        return {
-            file.file_id: analyze_file(file.filename, file.path.read_bytes(), rules, customer_preference=customer, scoped=True, reference_only=True) for file in case.files if file.role == "reference"
-        }
+        return {file.file_id: analyze_file(file.filename, file.path.read_bytes(), rules, customer_preference=customer, reference_only=True) for file in case.files if file.role == "reference"}
 
 
 def build_round(case: OracleCase, recognized: dict[str, dict] | None = None) -> tuple[ExecutionSnapshot, dict[str, bytes], dict[str, int]]:

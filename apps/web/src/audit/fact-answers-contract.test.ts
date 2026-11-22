@@ -5,7 +5,7 @@ import type {components} from '../generated/openapi.ts'
 
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
 
-const question = (field: string, items: string[], file = 'file-1', answered = false): FactQuestion => ({file_version_id: file, field, prompt: field, answer_type: 'boolean', locator: {kind: 'pdf_page', page: 1}, clause_ids: items, item_keys: items, fingerprint: 'a'.repeat(64), answered})
+const question = (field: string, items: string[], file = 'file-1', answered = false): FactQuestion => ({file_version_id: file, field, prompt: field, answer_type: 'boolean', locator: {kind: 'pdf_page', page: 1}, label: '第 1 页', clause_ids: items, item_keys: items, fingerprint: 'a'.repeat(64), answered})
 
 test('human confirmation resolves the original machine result by its canonical review key', () => {
   const finding = {item_key: 'R1', item: 'SOP阶段', status: 'UNABLE'}

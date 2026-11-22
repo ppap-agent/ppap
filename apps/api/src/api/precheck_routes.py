@@ -141,9 +141,11 @@ def register_precheck_routes(app: FastAPI, store: AuthStore, principal_of) -> No
         if denied:
             return denied
         from documents.precheck_pdf import render_precheck_pdf
+        from product.customers import type_names
 
         task = source["task"]
-        content = render_precheck_pdf({"task_number": task.get("number"), "generated_at": source["generated_at"], "recognition": source["recognition"], "precheck": source["precheck"]})
+        report = {"task_number": task.get("number"), "generated_at": source["generated_at"], "recognition": source["recognition"], "precheck": source["precheck"]}
+        content = render_precheck_pdf({**report, "type_names": type_names()})
         # The task number is what users see; the internal task id never names a delivered file.
         filename = f"{task['number']}-预检报告.pdf" if task.get("number") else "预检报告.pdf"
         return Response(content, media_type="application/pdf", headers={"Content-Disposition": attachment_content_disposition(filename), **HEADERS})

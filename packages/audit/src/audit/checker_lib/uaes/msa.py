@@ -7,7 +7,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
-from audit.checker_lib.nio.excel_agent import rule
+from audit.checker_lib.excel_agent import rule
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 
 from .control_plan import UaesControlPlanAgent, operation_owners

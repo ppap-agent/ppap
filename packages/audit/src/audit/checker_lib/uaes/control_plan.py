@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from audit.checker_lib.nio.excel_agent import rule
+from audit.checker_lib.excel_agent import rule
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 
 from .excel import Place, UaesExcelAgent, compact, original_name, unable

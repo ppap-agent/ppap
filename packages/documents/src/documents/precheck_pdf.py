@@ -7,7 +7,7 @@ from documents.report_layout import Chapter, Table, chapter_title, dash, render_
 KIND = "PPAP 预检报告"
 LEVEL = {"ok": "合规", "warn": "警告", "block": "阻断", "unmatched": "未匹配", "reference": "比对资料", "pending": "未执行"}
 CONCLUSION = {"pass": "通过", "fail": "不通过", "not_run": "未执行"}
-COVER_FIELDS = (("customer", "客户全称"), ("project", "项目"), ("model", "车型"), ("part_number", "零件号"), ("part", "零件名称"))
+COVER_FIELDS = (("customer", "客户"), ("project", "项目"), ("model", "车型"), ("part_number", "零件号"), ("part", "零件名称"))
 READER_FIELDS = ("供应商名称", "PPAP 版本", "SQE 工程师")
 SCOPE_NOTE = "本预检只判定「本批能否被可靠审核」，不判定「文件是否合规」，不执行修复与复检。「通过」只表示「能审」，不表示「审过了没问题」。"
 WARN_NOTE = "下列警告不拦截放行，但 100% 随本报告移交正式审核。正式审核不得因「预检已通过」而跳过下列任何一条指向的字段。警告是移交清单，不是免检证明。"
@@ -72,6 +72,11 @@ def _card(item: dict) -> str:
     return f"<h3>{text(item['number'])} ｜ {text(item['problem'])}</h3><div class='card'>" + "".join(f"<p><b>{label}：</b>{dash(value)}</p>" for label, value in fields) + "</div>"
 
 
+def _type_name(source: dict, document_type: str | None) -> str:
+    """A recognized type by its standard name: a dictionary code through the register's one table (``type_names``), a type name as recognized."""
+    return (source["type_names"].get(document_type) or document_type) if document_type else "—"
+
+
 def _cover(source: dict) -> str:
     overall = rating(source["precheck"])
     recognition = source.get("recognition") or {}
@@ -89,7 +94,7 @@ def _cover(source: dict) -> str:
 
 
 def render_precheck_pdf(source: dict) -> bytes:
-    """`source` holds the user-visible task_number (may be empty), generated_at, the recognized cover fields and the `precheck_task` result."""
+    """`source` holds the user-visible task_number (may be empty), generated_at, the recognized cover fields, the `precheck_task` result and the register's ``type_names``."""
     result = source["precheck"]
     blocks, warnings, statuses = result["blocks"], result["warnings"], result["statuses"]
     findings = blocks + warnings
@@ -115,7 +120,7 @@ def render_precheck_pdf(source: dict) -> bytes:
         Table(
             "表 2-1 文件集",
             ("序号", "文件", "客户", "类型", "文件级结论"),
-            _rows([(index, row["filename"], row["customer"] or "—", row["document_type"] or "—", LEVEL[row["level"]]) for index, row in enumerate(result["files"], 1)]),
+            _rows([(index, row["filename"], row["customer"] or "—", _type_name(source, row["document_type"]), LEVEL[row["level"]]) for index, row in enumerate(result["files"], 1)]),
             nowrap=(0, 4),
         ),
         "<p>范围判定：未声明提交范围，按部分提交推定。</p>",

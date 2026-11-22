@@ -54,29 +54,30 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
     try:
         try:
             payload = claimed.payload
-            if claimed.kind == "file_analysis" and payload.get("task_id") and not store.recognition_job_current(claimed):
-                obsolete = {"error": "recognition_superseded"}
-                accepted = store.complete_job(claimed, ident, obsolete, "failed")
-                emit("job_completed" if accepted else "job_result_discarded", outcome="failed", note="recognition_superseded")
-                return obsolete
+            if claimed.kind == "file_analysis":
+                # Only task acceptance creates recognition: its task, revision and frozen candidates.
+                if not (isinstance(payload.get("task_id"), str) and type(payload.get("task_revision")) is int and isinstance(payload.get("candidate_rules"), list)):
+                    raise RuleParseError("recognition_task_required")
+                if not store.recognition_job_current(claimed):
+                    obsolete = {"error": "recognition_superseded"}
+                    accepted = store.complete_job(claimed, ident, obsolete, "failed")
+                    emit("job_completed" if accepted else "job_result_discarded", outcome="failed", note="recognition_superseded")
+                    return obsolete
             version = store.get_version(payload["source_file_id"], payload["source_file_version_id"])
             if version is None or version.tenant_id != claimed.tenant_id or version.status != READY:
                 raise RuleParseError("file_not_ready")
             if claimed.kind == "file_validation":
                 result = validate_file(version.original_filename, store.version_bytes(version), scope=payload.get("scope"))
             elif claimed.kind == "file_analysis":
-                scoped = payload.get("matching_scope") == "customer_document_type"
-                candidates = payload["candidate_rules"] if scoped else store.list_rules(claimed.tenant_id)
                 result = (
                     dict(payload["confirmed_match"])
-                    if payload.get("confirmed_match") and scoped
+                    if payload.get("confirmed_match")
                     else analyze_file(
                         version.original_filename,
                         store.version_bytes(version),
-                        candidates,
+                        payload["candidate_rules"],
                         ai=ai,
-                        customer_preference=payload.get("customer_preference"),
-                        scoped=scoped,
+                        customer_preference=payload["customer_preference"],
                         reference_only=bool(payload.get("reference_only")),
                         validation_scope=payload.get("validation_scope"),
                     )
@@ -124,7 +125,7 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
         if claimed.kind != "audit" or not claimed.round_id:
             # An unknown kind, or an audit without a frozen round, fails; nothing runs.
             error = "unsupported_job_kind" if claimed.kind != "audit" else "checker_snapshot_required"
-            result = {"error": error, "note": error, "findings": [], "coverage": {}}
+            result: dict = {"error": error, "note": error}
             accepted = store.complete_job(claimed, ident, result, "failed")
             emit("job_completed" if accepted else "job_result_discarded", outcome="failed", note=error)
             return result
@@ -146,7 +147,6 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
 
 def process_report_job(store, claimed, ident) -> dict:
     from documents.audit_pdf import render_audit_pdf
-    from product.customers import full_name
 
     try:
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -154,7 +154,7 @@ def process_report_job(store, claimed, ident) -> dict:
             if claimed.kind == "report_zip":
                 result = store.build_report_package(claimed, generated_at, cancelled)
             else:
-                body = render_audit_pdf({**claimed.payload["report_input"], "generated_at": generated_at}, customer_name=full_name)
+                body = render_audit_pdf({**claimed.payload["report_input"], "generated_at": generated_at})
                 if cancelled.is_set():
                     raise ValueError("report_lease_unknown")
                 result = store.write_audit_report(claimed, body, generated_at)

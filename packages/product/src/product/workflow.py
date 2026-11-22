@@ -451,9 +451,9 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
 
     if audit.get("state") == "pending_confirm":
         matched = [row for row in selected if (row.get("match") or {}).get("state") in {"matched", "reference"}]
-        unmatched = [row for row in selected if (row.get("match") or {}).get("state") == "unmatched"]
-        customers = [c["name"] for c in (facts.get("customers") or {}).get("customers", [])]
-        if unmatched and not audit.get("customer_preference") and customers and editable:
+        customers = (facts.get("customers") or {}).get("customers", [])
+        # Only a task from before every task named its rule set lacks one; it is recognized again under the chosen one.
+        if not audit.get("customer_preference") and editable:
             found.append(
                 _issue(
                     task_id,
@@ -461,9 +461,10 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
                     "rule_conflict",
                     "blocking",
                     "recognize",
-                    f"有 {len(unmatched)} 份文件没有找到审核要求，因为还不知道按哪个客户审。",
+                    "这次审核还没有选定按哪个客户的规则审。",
                     "选定客户后重新识别，费用随之重新计算。",
-                    [_act("set_customer:" + name, "按「" + name + "」审") for name in customers],
+                    # The choice carries the rule set's key, as the rules name it; people read its registered name.
+                    [_act("set_customer:" + customer["key"], "按「" + customer["name"] + "」审") for customer in customers],
                 )
             )
         elif not matched and selected:

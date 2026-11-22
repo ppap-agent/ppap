@@ -89,10 +89,14 @@ def platform_model_access(purpose: ModelPurpose) -> ModelAccess:
     elif purpose == "vision":
         base_url, model, key, effort = _env("PPAP_MODEL_VISION_BASE_URL"), _env("PPAP_MODEL_VISION_MODEL"), _env("PPAP_MODEL_VISION_API_KEY"), _env("PPAP_MODEL_VISION_REASONING_EFFORT")
     elif purpose == "coding":
-        overridden = bool(_env("PPAP_MODEL_CODING_BASE_URL") or _env("PPAP_MODEL_CODING_MODEL"))
-        base_url = _env("PPAP_MODEL_CODING_BASE_URL") if overridden else text_url
-        model = _env("PPAP_MODEL_CODING_MODEL") if overridden else text_model
-        key = _env("PPAP_MODEL_CODING_API_KEY") if overridden else _env("PPAP_MODEL_TEXT_API_KEY")
+        # Deep has its own model only when both its endpoint and model are set; with neither it uses the
+        # text model. Half an override, or a Deep key without a Deep endpoint, is refused, never ignored.
+        # The Deep key may be held by the Controller alone: a missing key fails at call time, as for any use.
+        base_url, model, key = _env("PPAP_MODEL_CODING_BASE_URL"), _env("PPAP_MODEL_CODING_MODEL"), _env("PPAP_MODEL_CODING_API_KEY")
+        if bool(base_url) != bool(model) or (key and not base_url):
+            raise ModelUnavailable("deep_model_config_incomplete")
+        if not base_url:
+            base_url, model, key = text_url, text_model, _env("PPAP_MODEL_TEXT_API_KEY")
         effort = _env("PPAP_MODEL_CODING_REASONING_EFFORT")
     else:
         raise ModelUnavailable()

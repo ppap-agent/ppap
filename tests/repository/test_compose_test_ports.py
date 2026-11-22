@@ -26,7 +26,7 @@ esac
     docker.chmod(0o755)
     uv.chmod(0o755)
     env = {key: value for key, value in os.environ.items() if key != "PGPORT"}
-    env.update(PATH=f"{tmp_path}:{env['PATH']}", PYTEST_ENV_LOG=str(tmp_path / "pytest-env"), PPAP_E2E_WORKERS="0")
+    env.update(PATH=f"{tmp_path}:{env['PATH']}", PYTEST_ENV_LOG=str(tmp_path / "pytest-env"))
     root = Path(__file__).resolve().parents[2]
     result = subprocess.run(["bash", str(root / "scripts/run-compose-tests.sh"), suite], env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr

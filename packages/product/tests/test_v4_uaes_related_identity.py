@@ -35,7 +35,7 @@ def check(target, references, *, typed=True):
         by_audit_id={item.audit_id: item for item in [target, *references]},
         by_doc_type={PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): references} if typed else {},
     )
-    rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
+    rule = RuleInput.of(body, rule_id="frozen-rule")
     return UaesPfmeaAgent(target, rule, group).check(2)
 
 
@@ -93,7 +93,7 @@ def test_typed_and_untyped_counterparts_cannot_hide_a_second_candidate(tmp_path)
         by_audit_id={item.audit_id: item for item in [target, first, second]},
         by_doc_type={PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): [first]},
     )
-    rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
+    rule = RuleInput.of(body, rule_id="frozen-rule")
     assert UaesPfmeaAgent(target, rule, group).check(2).status == "UNABLE"
 
 
@@ -183,7 +183,7 @@ def test_valid_sample_photo_cannot_break_an_independent_typed_characteristic_pai
     photo = AuditInput(audit_id="photo", file_url=str(path))
     group = GroupContextInput(by_audit_id={"reference": reference, "photo": photo}, by_doc_type={PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): [reference], "E07": [photo]})
     body = preset_rule_body("UAES", "U07")
-    rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
+    rule = RuleInput.of(body, rule_id="frozen-rule")
     result = UaesPfmeaAgent(target, rule, group).check(2)
     assert result.status == "PASS", result.suggestions
 
@@ -195,7 +195,7 @@ def test_unavailable_unrelated_type_does_not_break_a_readable_formal_pair(tmp_pa
         by_audit_id={"reference": reference}, by_doc_type={PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): [reference]}, unavailable_files={"other": unavailable_type}
     )
     body = preset_rule_body("UAES", "U07")
-    rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
+    rule = RuleInput.of(body, rule_id="frozen-rule")
     assert UaesPfmeaAgent(target, rule, group).check(2).status == "PASS"
 
 
@@ -206,7 +206,7 @@ def test_unavailable_required_or_unclassified_type_keeps_its_execution_error(tmp
         by_audit_id={"reference": reference}, by_doc_type={PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST.get_type_name(): [reference]}, unavailable_files={"other": unavailable_type}
     )
     body = preset_rule_body("UAES", "U07")
-    rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
+    rule = RuleInput.of(body, rule_id="frozen-rule")
     assert UaesPfmeaAgent(target, rule, group).check(2).status == "ERR"
 
 
@@ -220,7 +220,7 @@ def test_msa_broad_type_keeps_its_actual_kappa_subtype_available(tmp_path):
         by_doc_type={T.get_type_name(): [reference] for T in [PpapDocumentType.MSA_REPORT]},
     )
     body = preset_rule_body("UAES", "U05")
-    rule = RuleInput(rule_id="frozen-rule", **{name: value for name, value in body.items() if name != "kind"})
+    rule = RuleInput.of(body, rule_id="frozen-rule")
     agent = UaesMsaAgent(target, rule, group)
     # A broad MSA type still lends its Kappa report to the clauses that pair one.
     assert [report.where for report in agent.kappas(agent.rule_ctx(agent._load_workbook()))] == ["“Kappa分析报告”"]

@@ -11,7 +11,7 @@
 配置值按显式 `Settings(...)` 参数、进程环境、显式指定的 dotenv 文件、默认值依次取值。代码字段名和环境变量别名遵循同一优先级；显式 `False`、空字符串、空来源列表不能被较低优先级的值替换。`pydantic-settings` 最低为 2.12.0，以使用其别名合并修复；不在本项目另建配置合并层。
 
 - Secret 只通过本地 gitignored `.env`、GitHub Secrets 或部署 Secret 注入。
-- Deep 可独立设置 `PPAP_MODEL_CODING_BASE_URL`、`PPAP_MODEL_CODING_MODEL`、`PPAP_MODEL_CODING_API_KEY`，base URL 与 model 必须同时提供；专用 API key 只给 Controller。API、Worker 和 Controller 使用相同的非敏感策略；未设置时沿用 `PPAP_MODEL_TEXT_*`。这些覆盖值不改变 Standard 模型。Pi 通过现有 Responses 网关使用短期执行授权，真实 provider key 不进入 guest。
+- Deep 可独立设置 `PPAP_MODEL_CODING_BASE_URL`、`PPAP_MODEL_CODING_MODEL`、`PPAP_MODEL_CODING_API_KEY`，base URL 与 model 必须同时提供，只设其一或只给 key 时报 Deep 模型配置不完整（`deep_model_config_incomplete`）；专用 API key 只给 Controller。API、Worker 和 Controller 使用相同的非敏感策略；未设置时沿用 `PPAP_MODEL_TEXT_*`。这些覆盖值不改变 Standard 模型。Pi 通过现有 Responses 网关使用短期执行授权，真实 provider key 不进入 guest。
 - 已提交的 `.env.dev` 填 isolated-dev Settings 默认值；[`.env.production`](../.env.production) 填生产仍可沿用的默认值，口令、S3 endpoint、公开 URL 和 LLM 留空。生产不能沿用 isolated-dev 口令和 `http://127.0.0.1:9000`。
 - 生产 compose 用 Docker Compose 的 `--env-file` 注入。CI fixture 是 `deploy/compose.env.example`。真实部署把填好密钥的文件交给同一个 `--env-file`。`init-db` 读取 bootstrap/migrator 口令，按 [migrations/README](../migrations/README.md) 初始化角色、库和 schema；`init-bucket` 用 Silo `mcli` 确保对象桶。API/Worker 只插值各自拥有的字段（含选定的 `PPAP_PG_HOST`/`PPAP_PG_PORT`，以及 API 的飞书变量），不含 bootstrap/migrator 或对方角色口令。
 - isolated-dev Compose 默认关闭业务收费，避免无飞书授权的浏览器流程测试调用真实计费；需要验证收费时显式设置 `PPAP_USAGE_CHARGE_ENABLED=true` 并提供额度接口。此默认值不改变生产 Compose 或 Settings 的收费政策。

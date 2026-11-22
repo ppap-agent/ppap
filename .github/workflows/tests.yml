@@ -18,6 +18,7 @@ permissions:
 # Toolchain authority is project metadata, not workflow literals:
 #   Python deps: uv.lock via `uv sync --locked` and `uv run --no-sync`
 #   Python interpreter: .python-version
+#   uv: pyproject.toml [tool.uv] required-version (setup-uv reads it)
 #   Node: .node-version
 #   pnpm: apps/web/package.json packageManager (Corepack)
 # Third-party/official actions are pinned to an immutable commit SHA with the
@@ -107,7 +108,6 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           working-directory: ${{ github.workspace }}
-          version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Assert Docker
@@ -177,7 +177,6 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           working-directory: ${{ github.workspace }}
-          version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Build, install and test isolated distributions
@@ -204,7 +203,6 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           working-directory: ${{ github.workspace }}
-          version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Canonical install
@@ -232,7 +230,6 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           working-directory: ${{ github.workspace }}
-          version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Schema PostgreSQL contracts
@@ -310,7 +307,6 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           working-directory: ${{ github.workspace }}
-          version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Canonical install
@@ -416,7 +412,6 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           working-directory: ${{ github.workspace }}
-          version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Use runner-local Corepack cache
@@ -482,7 +477,6 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           working-directory: ${{ github.workspace }}
-          version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Install Python deps and browser
@@ -526,10 +520,6 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_E2E }}
-          # Intentional all-suite concurrency experiment on isolated-dev.
-          # Includes real API/PostgreSQL/Worker E2E to surface state races.
-          # "0" restores serial execution of exactly the same full test set.
-          PPAP_E2E_WORKERS: "4"
         run: |
           set -euo pipefail
           # The always() cleanup step owns teardown. No duplicate Compose down

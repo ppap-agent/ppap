@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from audit.checker_lib.nio.excel_agent import ExcelAgent
+from audit.checker_lib.excel_agent import ExcelAgent
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet
 
 
@@ -36,8 +36,23 @@ class UaesExcelAgent(ExcelAgent):
 
     # The resource module of the document this carrier audits: its DOCUMENT and PDF_SPECS.
     DOCUMENT_MODULE: Any = None
-    # Formats the engine reads as tables; a DOCX carrier stays on its own reader.
+    # Formats this carrier reads. A leaf may hand it another (a DOCX control plan): that original is not read,
+    # and every clause is UNABLE.
     SUPPORTED_EXTENSIONS = frozenset({".xlsx", ".xls", ".xlsm", ".pdf"})
+    # Whether clauses read the original as tables; a carrier of image or form facts converts nothing.
+    TABLES = True
+
+    def _load_workbook(self) -> Any:
+        suffix = Path(str(self.audit_file.file_url)).suffix.lower()
+        if suffix not in type(self).SUPPORTED_EXTENSIONS:
+            raise unable(f"检查程序不能按本条款读取{suffix[1:].upper()}格式的原件，需人工复核。")
+        if type(self).TABLES:
+            return super()._load_workbook()
+        if self._workbook_cache is None:
+            from openpyxl import Workbook
+
+            self._workbook_cache = Workbook()
+        return self._workbook_cache
 
     def check(self, ith: int):
         # A need or a cited cell recorded by a clause that stopped early must not reach the next clause.
@@ -66,7 +81,7 @@ class UaesExcelAgent(ExcelAgent):
     @contextmanager
     def reading(self, ctx: RuleContext, item: Any, document: Any) -> Iterator[RuleContext]:
         """Read one frozen same-round original with this resource; its cells are evidence of its version."""
-        from audit.checker_lib.nio.cross_file_extractors import _load_workbook_auto
+        from audit.checker_lib.excel import load_workbook_auto
 
         metadata = getattr(item, "file_metadata", None) or {}
         version = str(metadata.get("file_version_id") or item.audit_id)
@@ -76,7 +91,7 @@ class UaesExcelAgent(ExcelAgent):
             expected = metadata.get("source_sha256") or metadata.get("sha256")
             if expected and hashlib.sha256(source.read_bytes()).hexdigest() != expected:
                 raise OSError("本轮冻结关联资料已变化，不能完成本项核对。")
-            cache[version] = self.convert(str(source), document)[1] if source.suffix.lower() == ".pdf" else _load_workbook_auto(str(source))
+            cache[version] = self.convert(str(source), document)[1] if source.suffix.lower() == ".pdf" else load_workbook_auto(str(source))
         with ctx.reading(cache[version], version):
             yield ctx
 

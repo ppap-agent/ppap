@@ -1,8 +1,6 @@
 """提示管理器 - 统一管理所有AI提示模板"""
 
-import json
 import logging
-from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +16,6 @@ class PromptManager:
         "rule_extractor": (
             "You are a specialized AI agent that converts quality control rule documents into a structured, machine-readable JSON format. Ensure your entire output is a single, valid JSON object."
         ),
-        "rule_matcher": "You are an expert in matching audit documents to compliance rules. Your task is to identify the single best rule ID for a given audit file.",
     }
 
     @staticmethod
@@ -109,28 +106,6 @@ Document Content:
 '''
 {content[:20000]}
 '''
-"""
-
-    @staticmethod
-    def get_rule_matching_prompt(audit_file_name: str, audit_file_content: str, rules: List[Dict[str, Any]]) -> str:
-        """构建规则匹配提示"""
-        rules_json = json.dumps(rules, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        content_excerpt = " ".join(str(audit_file_content or "")[:2000].split())[:600]
-        return f"""
-Please analyze the following audit file information and determine the most appropriate candidate ID from the provided list.
-
-Audit File Name: "{audit_file_name}"
-
-Available Rules (JSON):
-{rules_json}
-
-Audit File Content Excerpt:
-{content_excerpt}...
-
-Based on the file name and content, which candidate ID is the best match?
-Do not assume the only candidate is always correct. If the evidence is weak or ambiguous, return "unknown".
-Return exact json format with candidateId as the only field, no other text or explanation.
-{{"candidateId":"R01"}} or {{"candidateId":"unknown"}}
 """
 
     @staticmethod

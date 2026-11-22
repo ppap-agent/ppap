@@ -62,7 +62,7 @@ def _summary(conn, principal, head: dict) -> dict:
     customer = customers.find(head["customer_id"])
     return {
         **head,
-        "customer_name": customer.short_name if customer else head["customer_id"],
+        "customer_name": customer.name if customer else head["customer_id"],
         "closed": head["closed_at"] is not None,
         "total": counts[0],
         "answered": counts[1],

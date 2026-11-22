@@ -1,12 +1,10 @@
 """Small product-boundary checks for browsing, excerpts and history."""
 
 import io
-import os
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import httpx
-import pytest
 from product.feishu_drive import FeishuMetaError, list_drive_folder
 from product.preview import document_preview
 
@@ -76,10 +74,6 @@ class PreviewTests(unittest.TestCase):
 
 
 class ProductExperienceTests(unittest.TestCase):
-    @pytest.fixture(autouse=True)
-    def _owner_store(self, auth_store_factory):
-        self.auth_store = auth_store_factory
-
     def test_round_findings_follow_effective_clause_order_not_lexical_ids(self):
         from contextlib import nullcontext
 
@@ -138,92 +132,3 @@ class ProductExperienceTests(unittest.TestCase):
         body = AuthStore._round_public(object.__new__(AuthStore), conn, "round")
         self.assertEqual([item["locator"]["rule_item_id"] for item in body["findings"]], ["1", "2", "6", "10", "11"])
         self.assertEqual(body["findings"][2]["review"]["judgment"], "认可")
-
-    def setUp(self):
-        from api import create_app
-        from fastapi.testclient import TestClient
-        from product.settings import Settings
-
-        clean = {k: v for k, v in os.environ.items() if not k.startswith(("PPAP_", "FEISHU_"))}
-        env = patch.dict(os.environ, clean, clear=True)
-        env.start()
-        self.addCleanup(env.stop)
-        settings = Settings(usage_charge_enabled=False, git_sha="a" * 40)
-        self.store = self.auth_store(settings)
-        self.store.seed_isolated_dev()
-        self.client = TestClient(create_app(settings, lambda _: {"state": "ok"}, lambda _: {"state": "ok"}, self.store))
-        self.addCleanup(self.client.close)
-        self.login("alice")
-
-    def login(self, subject):
-        self.client.cookies.clear()
-        self.client.post("/isolated-dev/sessions", json={"subject": subject})
-
-    def test_draft_resume_is_paginated_authorized_and_keeps_reaudit_origin(self):
-        from product.fixtures import RULE_A
-
-        self.client.post("/drafts")  # Empty drafts should not clutter the homepage.
-        version = self.client.post("/files", json={"original_filename": "resume.txt", "byte_size": 1}).json()
-        path = f"/files/{version['file_id']}/versions/{version['id']}"
-        self.client.put(path + "/blob", content=b"x")
-        self.client.post(path + "/finalize")
-        items = [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]
-        ids = []
-        for _ in range(2):
-            draft = self.client.post("/drafts").json()["id"]
-            self.client.put(f"/drafts/{draft}", json={"items": items})
-            ids.append(draft)
-        page = self.client.get("/drafts?limit=1").json()
-        tail = self.client.get("/drafts?limit=1&offset=" + str(page["next_offset"])).json()
-        self.assertEqual({page["drafts"][0]["id"], tail["drafts"][0]["id"]}, set(ids))
-        self.assertIsNone(tail["next_offset"])
-        first = self.client.post(f"/drafts/{ids[0]}/accept", json={"idempotency_key": "resume-origin"}).json()["id"]
-        next_draft = self.client.post("/drafts", json={"predecessor_id": first}).json()["id"]
-        self.client.put(f"/drafts/{next_draft}", json={"items": items})
-        listed = self.client.get("/drafts").json()["drafts"]
-        self.assertNotIn(ids[0], [row["id"] for row in listed])
-        self.assertEqual(next(row for row in listed if row["id"] == next_draft)["predecessor_id"], first)
-        # A resumed draft does not depend on a browser query parameter for lineage.
-        accepted = self.client.post(f"/drafts/{next_draft}/accept", json={"idempotency_key": "resume-again"}).json()
-        self.assertEqual(accepted["predecessor_id"], first)
-        # Bob reads Alice's round and re-audits it in a draft of his own; Alice's open drafts stay hers.
-        self.login("bob")
-        self.assertEqual(self.client.get("/drafts").json()["drafts"], [])
-        self.assertEqual(self.client.put(f"/drafts/{ids[1]}", json={"items": items}).status_code, 403)
-        resumed = self.client.post("/drafts", json={"predecessor_id": first})
-        self.assertEqual(resumed.status_code, 201)
-        self.assertEqual(resumed.json()["predecessor_id"], first)
-        self.assertEqual(self.client.get("/drafts").json()["drafts"], [])
-        self.login("carol")
-        self.assertEqual(self.client.get("/drafts").json()["drafts"], [])
-        self.client.cookies.clear()
-        self.assertEqual(self.client.get("/drafts").status_code, 401)
-
-    def test_preview_authorization_and_search_across_history_pages(self):
-        from product.fixtures import RULE_A
-
-        rounds = []
-        for filename in ("first.txt", "second.txt"):
-            version = self.client.post("/files", json={"original_filename": filename, "byte_size": 4}).json()
-            path = f"/files/{version['file_id']}/versions/{version['id']}"
-            self.client.put(path + "/blob", content=b"test")
-            self.client.post(path + "/finalize")
-            self.assertEqual(self.client.get(path + "/preview").json()["text"], "test")
-            draft = self.client.post("/drafts").json()["id"]
-            self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]})
-            rounds.append(self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": filename}).json()["id"])
-        alice = self.store.principal_for_fixture("alice")
-        first, second = (self.store.list_rounds(alice, 1, offset) for offset in (0, 1))
-        self.assertEqual({first[0]["id"], second[0]["id"]}, set(rounds))
-        self.assertEqual(self.store.list_rounds(alice, 1, 2), [])
-        self.assertEqual(len(self.store.list_rounds(alice, q="first")), 1)
-        round_path = f"/rounds/{rounds[-1]}" + path + "/preview"
-        self.assertEqual(self.client.get(round_path).status_code, 200)
-        self.assertEqual(self.client.get(round_path + "?start_row=0").status_code, 422)
-        self.assertEqual(self.client.get(round_path + "?start_row=1048577").status_code, 422)
-        # Everyone in the enterprise reads its files and rounds.
-        self.login("bob")
-        self.assertEqual(self.client.get(path + "/preview").status_code, 200)
-        self.assertEqual(self.client.get(round_path).status_code, 200)
-        self.assertEqual(self.client.get(round_path + "?sheet=Sheet1&start_row=30").status_code, 200)
-        self.assertEqual({row["id"] for row in self.store.list_rounds(self.store.principal_for_fixture("bob"))}, set(rounds))

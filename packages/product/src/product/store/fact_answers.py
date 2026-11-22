@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from audit.fact_questions import BooleanFactEvaluation, FactQuestion, fingerprint
+from documents.location import location_label
 from psycopg.types.json import Jsonb
 from pydantic import ValidationError
 
@@ -98,7 +99,7 @@ def _view(conn, round_id):
                 continue
             question["clause_ids"] = list(dict.fromkeys(clause_by_item[key] for key in question["item_keys"]))
             question["fingerprint"] = fingerprint(question)
-        questions.append({**question, "answered": is_answered})
+        questions.append({**question, "label": location_label(question["locator"]), "answered": is_answered})
     questions.sort(key=lambda question: (question["file_version_id"], question["answered"], -len(question["clause_ids"]), question["field"]))
     return {"round_id": round_id, "revision": len(records), "questions": questions, "answers": answers, "results": _results(records), "model_calls": 0}
 

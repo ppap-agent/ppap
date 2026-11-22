@@ -11,6 +11,7 @@ import re
 import uuid
 from copy import deepcopy
 
+from product.customers import by_key
 from product.files import MAX_UPLOAD_BYTES
 
 PREPARATION_KEY = "_native_upload_preparation"
@@ -34,9 +35,10 @@ def _text(value, maximum=500) -> str:
 def normalize_preparation(value) -> dict:
     if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 1:
         raise ValueError("invalid_upload_preparation")
+    # A preparation may not have its rule set chosen yet; once chosen it is a registered key.
     customer = value.get("customer_preference")
-    if customer is not None:
-        _text(customer)
+    if customer is not None and by_key(customer) is None:
+        raise ValueError("invalid_upload_preparation")
     predecessor = value.get("predecessor_id")
     if predecessor is not None:
         predecessor = _uuid(predecessor)

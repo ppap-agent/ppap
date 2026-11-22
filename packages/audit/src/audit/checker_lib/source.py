@@ -458,7 +458,7 @@ class SourceAudit:
             suffix = Path(self.audit_file.file_url).suffix.lower()
             supported = self.resource["clauses"][self.clause_ids[ith]].get("carriers", self.resource["supported_suffixes"])
             if suffix not in self.resource["supported_suffixes"] or suffix not in supported:
-                raise UnknownFact("此检查不支持当前原件载体，未形成业务判断。")
+                raise UnknownFact("此检查不能读取这种格式的原件，需人工复核。")
             if not self.audit_file.audit_id:
                 raise UnknownFact("缺少冻结原件版本，不能形成业务判断。")
             status, message, *graded = self.rule_checkers[ith]()

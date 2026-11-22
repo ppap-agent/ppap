@@ -16,9 +16,9 @@ from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
 
 
-@pytest.fixture(params=[("v2", V2Agent, v2_pdf), ("v3", V3Agent, v3_pdf)], ids=["v2", "v3"])
+@pytest.fixture(params=[(V2Agent, v2_pdf), (V3Agent, v3_pdf)], ids=["v2", "v3"])
 def checker(request, monkeypatch):
-    profile, agent_class, pdf_module = request.param
+    agent_class, pdf_module = request.param
     monkeypatch.setattr(pdf_module, "convert_pdf_to_excel_auto", lambda *args, **kwargs: ConversionArtifact(success=False))
 
     def check(path, index, model_response=None):
@@ -35,7 +35,6 @@ def checker(request, monkeypatch):
         monkeypatch.setattr("documents.ai.run_json", analyze)
         rules = RuleInput(
             rule_id="confirmed-fixture-rules",
-            rule_profile=profile,
             type="检具认可报告",
             rules=[{"id": str(index), "category": "local", "rule_to_check": "用户确认的要求", "type_of_rule": "table"} for index in range(1, 4)],
         )

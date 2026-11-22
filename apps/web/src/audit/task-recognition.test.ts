@@ -5,9 +5,9 @@ import {createTaskRecognition, ruleChoicesFor, ruleCustomer, type AuditRecogniti
 
 type Task = components['schemas']['AuditTask']
 const files: Task['files'] = [{file: {id: 'version-a', file_id: 'file-a', original_filename: 'a.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 10, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: null}]
-const input = () => ({files: structuredClone(files), customer: null, previous: null})
+const input = () => ({files: structuredClone(files), customer: 'UAES', previous: null})
 function task(requestId: string): Task {
-  return {confirmation_basis_digest: null, confirmation_scope: null, id: requestId, number: 'PPAP-20261016-001', state: 'matching', customer_preference: null, source_draft_id: null, round_id: null, completion_reason: null, estimated_points: null, created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', files: structuredClone(files), input_revision: 0, recognition_request_id: requestId}
+  return {confirmation_basis_digest: null, confirmation_scope: null, id: requestId, number: 'PPAP-20261016-001', state: 'matching', customer_preference: 'UAES', source_draft_id: null, round_id: null, completion_reason: null, estimated_points: null, created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', files: structuredClone(files), input_revision: 0, recognition_request_id: requestId}
 }
 
 test('a prepared draft retains its own task identity when the recognition reply is lost', async () => {
@@ -149,7 +149,7 @@ test('a matched rule is labelled with its rule set, never the customer a file wr
   assert.equal(ruleCustomer(null), '')
 })
 
-test('a hand-picked rule comes from the chosen rule set; 自动识别 names each rule set', () => {
+test('a hand-picked rule comes from the chosen rule set; a task without one offers none', () => {
   const choices = [
     {id: 'uaes', title: '过程流程图（PFD）审核规则', customers: ['UAES'], customer_scope: 'restricted'},
     {id: 'li', title: '08 过程流程图', customers: ['理想'], customer_scope: 'restricted'},
@@ -157,5 +157,5 @@ test('a hand-picked rule comes from the chosen rule set; 自动识别 names each
     {id: 'unconfirmed', title: '未确认分类', customers: [], customer_scope: 'unconfirmed'},
   ]
   assert.deepEqual(ruleChoicesFor(choices, 'UAES').map(rule => rule.id), ['uaes', 'any'])
-  assert.deepEqual(ruleChoicesFor(choices, null).map(rule => rule.title), ['UAES · 过程流程图（PFD）审核规则', '理想 · 08 过程流程图', '通用存在性检查', '未确认分类'])
+  assert.deepEqual(ruleChoicesFor(choices, null), [])
 })

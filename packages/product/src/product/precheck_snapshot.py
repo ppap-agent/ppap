@@ -14,8 +14,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from product.customers import full_name
-from product.precheck import named_by_user, precheck_task, rule_customer
+from product.precheck import named_by_user, precheck_task
 from product.precheck_content import entry_key, precheck_content
 
 # Content results depend only on the bytes and the rule entry, so one read serves every later view.
@@ -42,15 +41,14 @@ def _cached_content(key: tuple, read) -> list[dict]:
 def cover_recognition(task: dict) -> dict[str, str | None]:
     """Cover values from the frozen recognition (match metadata) of the submitted files, never display corrections.
 
-    Differing values are all listed; a field no file recognized stays empty. The customer reads as its registered full name.
+    Differing values are all listed as the files wrote them; a field no file recognized stays empty. The customer is the
+    one the files write, never the task's chosen rule set.
     """
     rows = [row for row in task.get("files", []) if row.get("selection") == "selected" and not row.get("reference_only") and (row.get("match") or {}).get("state") == "matched"]
     cover: dict[str, str | None] = {}
     for field in COVER_FIELDS:
-        # The customer falls back to the task's customer, as the precheck routes it.
-        found = [((row.get("match") or {}).get("metadata") or {}).get(field) or (task.get("customer_preference") if field == "customer" else None) for row in rows]
-        values = [full_name(value) if field == "customer" else value.strip() for value in found if isinstance(value, str) and value.strip()]
-        cover[field] = "、".join(dict.fromkeys(values)) or None
+        found = [((row.get("match") or {}).get("metadata") or {}).get(field) for row in rows]
+        cover[field] = "、".join(dict.fromkeys(value.strip() for value in found if isinstance(value, str) and value.strip())) or None
     return cover
 
 
@@ -70,7 +68,7 @@ def _content(store, principal, task: dict) -> dict[str, list[dict]]:
         match = row.get("match") or {}
         if row.get("selection") != "selected" or match.get("state") != "matched" or row.get("reference_only"):
             continue
-        customer = rule_customer(task, row)
+        customer = task.get("customer_preference")
         key = entry_key(customer, match.get("document_type"))
         if key is None:
             continue

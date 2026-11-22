@@ -8,8 +8,6 @@ import {analysisNotice} from '../helpers'
 import {Button} from '../components/ui/button'
 
 const titles: Record<string, string> = {
-  matching_customer_required: '请先核对客户',
-  matching_customer_conflict: '文件客户与本次审核客户不一致',
   matching_document_type_required: '尚未确定文件类型',
   matching_document_type_rules_missing: '缺少此类文件的规则',
   matching_customer_rules_missing: '缺少适用客户的规则',
@@ -23,14 +21,14 @@ export function MatchingFeedback({gaps, candidates, onCheck, onRules, onRemove, 
   onTemplates?: (submit: boolean) => void
 }) {
   const reason = gaps.find(gap => Object.hasOwn(titles, gap))
-  const needsInput = reason === 'matching_customer_required' || reason === 'matching_customer_conflict' || reason === 'matching_document_type_required'
+  const needsInput = reason === 'matching_document_type_required'
   // Shown inside a file card or above a batch of files, so it is plain text rather than a bordered alert.
   return <div className="space-y-1.5">
     <p className="text-sm font-medium">{reason ? titles[reason] : '未匹配到生效规则'}</p>
     <p className="text-xs text-muted-foreground">{reason ? analysisNotice(reason) : '不会自动套用通用标准，也不会产生审核结论。'}</p>
     {candidates && candidates.length > 0 && <ul className="space-y-1 text-xs">{candidates.map(row => <li key={row.id}>{row.title}</li>)}</ul>}
     <div className="flex flex-wrap gap-2">
-      {needsInput && <Button size="sm" onClick={onCheck}>{reason === 'matching_customer_required' || reason === 'matching_customer_conflict' ? '返回核对客户' : '返回核对文件'}</Button>}
+      {needsInput && <Button size="sm" onClick={onCheck}>返回核对文件</Button>}
       {!needsInput && onRules && <Button size="sm" onClick={onRules}>{reason === 'matching_rules_customer_unassigned' || reason === 'ambiguous_available_rules' ? '核对规则范围与版本' : '上传对应规则'}</Button>}
       {onTemplates ? <><Button variant="link" size="sm" onClick={() => onTemplates(false)}>查看标准模板</Button><Button variant="link" size="sm" onClick={() => onTemplates(true)}>反馈对应模板</Button></> : <>
         <Button asChild variant="link" size="sm"><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer">查看模板<Icon icon={iconArrowUpRightFromSquare} aria-hidden="true"/></a></Button>

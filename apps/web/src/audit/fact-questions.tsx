@@ -11,7 +11,6 @@ import {Input} from '../components/ui/input'
 import {RadioGroup, RadioGroupItem} from '../components/ui/radio-group'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {FileName} from '../journey/file-name'
-import {sourceLocation} from '../journey/product'
 import {RemoteSourcePane} from '../journey/remote-source'
 import {checkedFactAnswer, definiteFactAnswerRejection, factValueLabel, groupFactQuestions, nativeFactAnswersAdapter, type FactAnswerReceipt, type FactAnswersView, type FactQuestion} from './fact-answers-contract'
 import {resultLabel, resultTone} from './status-labels'
@@ -103,6 +102,11 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, edi
   // Nothing to answer means nothing to show; a first read in progress does not claim a row either.
   if (!pending && !error && (!view || !questions.length && !answers.length && !results.length)) return null
   const filename = (id: string) => files.find(file => file.id === id)?.original_filename || '本轮原件'
+  // An answer is about its question's place; without the question the place is not shown.
+  const place = (row: {file_version_id: string; field: string}) => {
+    const label = view?.questions.find(question => question.file_version_id === row.file_version_id && question.field === row.field)?.label
+    return label ? ' · ' + label : ''
+  }
   return <section aria-label="原件事实确认" className="min-w-0 border-b px-6 py-2" data-fact-answer-state={saving ? 'saving' : pending ? 'unknown' : 'ready'}>
     <Disclosure open={expanded || Boolean(error)} onOpenChange={setExpanded} summary={<><span className="font-medium">原件事实确认</span><span className="ml-3 text-muted-foreground">{pending ? '回答结果待确认' : error ? '读取失败' : loading && !view ? '读取中…' : `待确认 ${questions.filter(question => !question.answered).length} 项 · 人工确认结果 ${results.length} 项`}</span></>}>
     <div className="space-y-4 py-4">
@@ -119,10 +123,10 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, edi
     {results.length > 0 && <section aria-label="人工确认结果" className="space-y-4 border-t pt-4"><h3 className="font-medium">人工确认结果</h3>{results.map(result => {
       const machine = findings.find(row => row.item_key === result.item_key)
       const clause = questions.find(row => row.item_keys.includes(result.item_key))?.clause_ids.join('、')
-      return <article key={result.item_key} className="space-y-2 border-l-2 pl-3 text-sm"><h4 className="font-medium">{machine?.item || clause || '未命名条款'}</h4><p>原机器结果：{machine ? resultLabel[machine.status] : '请在原审核记录中查看'}</p><div className="flex items-center gap-2"><Badge variant="outline">人工确认</Badge><Badge variant={resultTone(result.status)}>{resultLabel[result.status]}</Badge></div><p className="whitespace-pre-wrap">{result.suggestions}</p><p className="text-xs text-muted-foreground">回答人：{result.confirmed_by.join('、')} · <time dateTime={result.confirmed_at}>{displayTime(result.confirmed_at)}</time></p>{result.sources.map(source => <p key={`${source.file_version_id}:${source.field}`} className="break-words text-xs text-muted-foreground">依据：{filename(source.file_version_id)} · {sourceLocation(source.locator)} · {answers.find(answer => answer.field === source.field && answer.file_version_id === source.file_version_id)?.prompt || '未命名事实'}：{factValueLabel(source.value)}</p>)}</article>
+      return <article key={result.item_key} className="space-y-2 border-l-2 pl-3 text-sm"><h4 className="font-medium">{machine?.item || clause || '未命名条款'}</h4><p>原机器结果：{machine ? resultLabel[machine.status] : '请在原审核记录中查看'}</p><div className="flex items-center gap-2"><Badge variant="outline">人工确认</Badge><Badge variant={resultTone(result.status)}>{resultLabel[result.status]}</Badge></div><p className="whitespace-pre-wrap">{result.suggestions}</p><p className="text-xs text-muted-foreground">回答人：{result.confirmed_by.join('、')} · <time dateTime={result.confirmed_at}>{displayTime(result.confirmed_at)}</time></p>{result.sources.map(source => <p key={`${source.file_version_id}:${source.field}`} className="break-words text-xs text-muted-foreground">依据：{filename(source.file_version_id)}{place(source)} · {answers.find(answer => answer.field === source.field && answer.file_version_id === source.file_version_id)?.prompt || '未命名事实'}：{factValueLabel(source.value)}</p>)}</article>
     })}</section>}
     {answers.length > 0 && <Button variant="outline" asChild><a href={`${apiUrl}/audit-rounds/${encodeURIComponent(roundId)}/fact-answers/report`} download="original-fact-confirmations.pdf">下载人工确认报告</a></Button>}
-    {answers.length > 0 && <Disclosure className="border-t pt-3 text-sm" summary={<>已记录的原件回答（{answers.length}）</>}><div className="space-y-3">{answers.map(answer => <article key={answer.operation_id} className="space-y-1"><p>{answer.prompt}：{factValueLabel(answer.value)}</p><p className="text-xs text-muted-foreground">{filename(answer.file_version_id)} · {sourceLocation(answer.locator)} · {answer.answered_by} · <time dateTime={answer.answered_at}>{displayTime(answer.answered_at)}</time></p></article>)}</div></Disclosure>}
+    {answers.length > 0 && <Disclosure className="border-t pt-3 text-sm" summary={<>已记录的原件回答（{answers.length}）</>}><div className="space-y-3">{answers.map(answer => <article key={answer.operation_id} className="space-y-1"><p>{answer.prompt}：{factValueLabel(answer.value)}</p><p className="text-xs text-muted-foreground">{filename(answer.file_version_id)}{place(answer)} · {answer.answered_by} · <time dateTime={answer.answered_at}>{displayTime(answer.answered_at)}</time></p></article>)}</div></Disclosure>}
     </div>
     </Disclosure>
   </section>
@@ -130,12 +134,11 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, edi
 
 function FactQuestionForm({question, file, roundId, disabled, onAnswer}: {question: FactQuestion; file?: FileVersion; roundId: string; disabled: boolean; onAnswer: (value: boolean | string | null) => void}) {
   const [choice, setChoice] = useState(''), [text, setText] = useState(''), [open, setOpen] = useState(false)
-  const location = sourceLocation(question.locator)
-  const focus = useMemo(() => ({location, requestId: 0}), [location])
+  const focus = useMemo(() => ({locator: question.locator, label: question.label}), [question.locator, question.label])
   const id = `fact-${question.fingerprint}`
   const ready = choice === 'unknown' || question.answer_type === 'boolean' && ['yes', 'no'].includes(choice) || question.answer_type === 'text' && choice === 'text' && Boolean(text.trim())
   return <article className="space-y-3 rounded-lg border bg-card p-4" aria-label={question.prompt}>
-    <div className="space-y-1"><h4 className="font-medium">{question.prompt}</h4><p className="text-xs text-muted-foreground">{location} · 关联条款：{question.clause_ids.join('、')}（{question.item_keys.length} 项结果）</p></div>
+    <div className="space-y-1"><h4 className="font-medium">{question.prompt}</h4><p className="text-xs text-muted-foreground">{question.label} · 关联条款：{question.clause_ids.join('、')}（{question.item_keys.length} 项结果）</p></div>
     {file && <Button type="button" variant="outline" size="sm" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? '收起原件' : '对照原件'}</Button>}
     {open && file && <div className="flex h-[26rem] min-w-0"><RemoteSourcePane nativeOffice file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={focus}/></div>}
     <form onSubmit={event => {event.preventDefault(); if (ready && !disabled) onAnswer(choice === 'unknown' ? null : question.answer_type === 'boolean' ? choice === 'yes' : text.trim())}}>

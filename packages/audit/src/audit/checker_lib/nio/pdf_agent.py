@@ -18,7 +18,7 @@ from documents.files import detect_file_type, download_file_sync
 from documents.images import extract_images_from_bytes
 from PIL import Image
 
-from audit.checker_lib.li.base_agent import BaseAgent
+from audit.checker_lib.base_agent import BaseAgent
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
 from audit.contracts import AuditResultItem as AuditResult
 from audit.kinds import PpapDocumentType

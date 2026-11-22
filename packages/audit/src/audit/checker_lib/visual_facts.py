@@ -210,7 +210,7 @@ def read_original_visual_facts(
         raise ValueError("Existential fields must belong to the requested visual facts")
     suffix = Path(audit.file_url).suffix.casefold()
     if suffix not in {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".xlsx", ".xlsm", ".xls"}:
-        raise VisualFactsUnavailable("当前载体没有已定位的原件图像证据，需人工核对。")
+        raise VisualFactsUnavailable("这份原件没有能定位的图片证据，需人工核对。")
     digest = _source_identity(audit, cache)
     policy = _policy_identity(audit, cache)
     key = (

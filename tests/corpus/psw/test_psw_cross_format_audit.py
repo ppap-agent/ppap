@@ -171,7 +171,6 @@ def _li_psw_suite():
 
 def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
     from audit.audits import RoundInput, RoundWork
-    from audit.rule_profile import RULE_PROFILE_V2
     from corpus_contracts.core_round import run_suite_round
     from corpus_contracts.product_round import (
         MATCH,
@@ -187,7 +186,7 @@ def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
     engine_results = _run(
         PswExcelAgent,
         AuditInput(audit_id="psw-xlsx-engine", file_url=str(xlsx_path)),
-        RuleInput(rule_id="psw-xlsx", rule_profile=RULE_PROFILE_V2, type=doc_type, rules=implementation_rules),
+        RuleInput(rule_id="psw-xlsx", type=doc_type, rules=implementation_rules),
     )
     # Rules 3 and 5 read the seal and signature visually; the direct agent call has no model replay,
     # so only the deterministic rules are compared here. The PDF test covers the visual rules.

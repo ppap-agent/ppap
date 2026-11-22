@@ -26,5 +26,5 @@ def test_target_matches_its_customer_rule(target):
     customer, entry = group.split(":")
     # Recognition reads the presets of the revision this target's truths and recordings were made under.
     with presets_as_judged(customer):
-        result = analyze_file(filename, path.read_bytes(), customer_rules(customer), customer_preference=customer, scoped=True)
+        result = analyze_file(filename, path.read_bytes(), customer_rules(customer), customer_preference=customer)
     assert (result["matching_status"], result["matched_rule_id"]) == ("matched", entry), result["notices"]

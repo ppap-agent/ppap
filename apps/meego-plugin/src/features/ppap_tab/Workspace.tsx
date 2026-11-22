@@ -12,8 +12,8 @@ import type { Revise } from './Confirm';
 import { PdfView } from './Evidence';
 import { Guide } from './Guide';
 import { Issue, openFacts } from './Issue';
-import { buildPackage, currentTemplate, customerFullName, documentTypeName, openTotals, pendingStart, rectification, rememberedTemplate, rememberStart, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
-import type { Doc, OpenIssue, Package, RegisteredCustomer } from './ledger';
+import { buildPackage, currentTemplate, customerName, documentTypeName, openTotals, pendingStart, rectification, rememberedTemplate, rememberStart, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
+import type { Doc, OpenIssue, Package } from './ledger';
 import { bucket, bucketColor, bucketLabel, byUrgency, conclusionLabel, openCount, pendingNote, reviewOf, verdictLabel, when, withRuleVersion } from './model';
 import type { Choice, FactView, FileVersion, Job, Task, TaskFile } from './model';
 import { bytes, call, newId, PpapError, save, say, taskLink, waitFor } from './ppap';
@@ -37,6 +37,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
   const total = verdict(latest);
   // Before the first audit the person may pick the audit template; after that each round keeps its own.
   // The first audit starts from the template last used in this space, else the enterprise's default customer.
+  // Every audit names its customer; without one the person picks a template before starting.
   const allTemplates = useMemo(() => templates(data.rules), [data.rules]);
   const [chosenTemplate, setChosenTemplate] = useState<string | null>(() => {
     const remembered = rememberedTemplate(item.project_key);
@@ -92,7 +93,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
   // further audit is a person's own choice.
   const autoStarted = useRef(false);
   useEffect(() => {
-    if (!nodeWaiting || autoStarted.current || data.tasks.length || busy || !chosen.length) return;
+    if (!nodeWaiting || autoStarted.current || data.tasks.length || busy || !chosen.length || !customer) return;
     autoStarted.current = true;
     void start();
   });
@@ -115,6 +116,10 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
   // complete set again.
   async function start() {
     setNotice('');
+    if (!customer) {
+      setNotice('请先选择审核客户：在「审核模板」中选一个客户的模板。');
+      return;
+    }
     // The same start (same package, same earlier round, same customer) retried after its reply was lost
     // or its link to the work item failed: read the audit back and link it, never create a second one.
     const key = itemPath(item);
@@ -162,7 +167,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
       if (!inputs.length) return;
       setBusy('正在提交…');
       const taskId = newId();
-      // Rules are matched for one customer. Without it the match falls on rules that have no checker program.
+      // Rules are matched for the one customer the audit names; a re-audit keeps the earlier round's.
       const audited = earlier?.customer_preference ?? customer;
       rememberStart(key, { task: taskId, from });
       await call<Task>('/audit-tasks', { method: 'POST', body: { request_id: taskId, customer_preference: audited, files: inputs, ...(earlier ? { predecessor_id: latest!.round_id } : {}) } });
@@ -427,15 +432,15 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
         <h3 id="ppap-docs">资料<span className="count">{docs.length}</span></h3>
         {docs.length > 0 && uploader}
       </div>
-      <DocTable uploader={uploader} docs={docs} fields={data.fields} customers={data.customers} flight={flight} revise={revise} selectable={choosing && !busy} busy={Boolean(busy)} picked={picked} onPick={setPicked} onIssues={goToIssues} onReport={setReport} onDownload={row => void download(row)} onRegenerate={row => void regenerate(row)} onRefresh={() => void refresh().catch(failure => setNotice(say(failure)))} />
+      <DocTable uploader={uploader} docs={docs} fields={data.fields} typeNames={data.typeNames} flight={flight} revise={revise} selectable={choosing && !busy} busy={Boolean(busy)} picked={picked} onPick={setPicked} onIssues={goToIssues} onReport={setReport} onDownload={row => void download(row)} onRegenerate={row => void regenerate(row)} onRefresh={() => void refresh().catch(failure => setNotice(say(failure)))} />
       {customer && missing.length > 0 && (
         <div className="missing">
-          <Text type="tertiary">{customerFullName(data.customers, customer)} 要求的资料中，还有 {missing.length} 类没有提交。</Text>
+          <Text type="tertiary">{customerName(data.customers, customer)} 要求的资料中，还有 {missing.length} 类没有提交。</Text>
           <Button theme="borderless" size="small" onClick={() => setShowMissing(value => !value)}>{showMissing ? '收起' : `查看 ${missing.length} 类`}</Button>
           {showMissing && (
             <div className="missing-list">
               {unknownDocs > 0 && <Text type="tertiary" size="small">有 {unknownDocs} 份附件还没有识别类型，审核后这里会更新。</Text>}
-              <Text>{missing.map(type => documentTypeName(data.customers, type)).join('、')}</Text>
+              <Text>{missing.map(type => documentTypeName(data.typeNames, type)).join('、')}</Text>
             </div>
           )}
         </div>
@@ -454,15 +459,15 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
           <span className="hero-meta">{meta.join(' · ')}</span>
         </div>
         <div className="hero-actions">
-          {choosing && !latest && allTemplates.size > 1 && (
+          {choosing && (!customer || !latest && allTemplates.size > 1) && (
             <Select
               size="default"
               aria-label="审核模板"
               prefix="审核模板"
               disabled={Boolean(busy)}
               value={shownTemplate ?? undefined}
-              placeholder="按文件自动匹配"
-              optionList={[...allTemplates.keys()].sort((a, b) => templateName(a).localeCompare(templateName(b), 'zh-CN')).map(key => ({ value: key, label: templateName(key) }))}
+              placeholder="请选择审核客户"
+              optionList={[...allTemplates.keys()].sort((a, b) => templateName(a, data.customers).localeCompare(templateName(b, data.customers), 'zh-CN')).map(key => ({ value: key, label: templateName(key, data.customers) }))}
               onChange={value => {
                 setChosenTemplate(String(value));
                 rememberTemplate(item.project_key, String(value));
@@ -522,7 +527,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
           <TextArea aria-label="放行理由" value={reason} maxLength={500} autosize={{ minRows: 2, maxRows: 6 }} onChange={setReason} placeholder="例如：客户已书面接受该偏差" />
         </Space>
       </Modal>
-      {flight && !foreign && flight.state === 'pending_confirm' && !reselect && <Confirm task={flight} rules={data.rules} space={item.project_key} revise={revise} refresh={refresh} onReselect={() => setReselect(true)} />}
+      {flight && !foreign && flight.state === 'pending_confirm' && !reselect && <Confirm task={flight} rules={data.rules} customers={data.customers} space={item.project_key} revise={revise} refresh={refresh} onReselect={() => setReselect(true)} />}
 
       {report && latest ? (
         <article className="report-view" aria-label="审核报告">
@@ -562,10 +567,10 @@ const ATTACHMENT_LIMIT = 50;
 
 // The documents ---------------------------------------------------------
 
-type DocTableProps = { uploader: ReactNode; docs: Doc[]; fields: Record<string, string>; customers: RegisteredCustomer[] | null; flight: Task | null; revise: Revise; selectable: boolean; busy: boolean; picked: Set<string>; onPick: (next: Set<string>) => void; onIssues: () => void; onReport: (row: TaskFile) => void; onDownload: (row: TaskFile) => void; onRegenerate: (row: TaskFile) => void; onRefresh: () => void };
+type DocTableProps = { uploader: ReactNode; docs: Doc[]; fields: Record<string, string>; typeNames: Record<string, string> | null; flight: Task | null; revise: Revise; selectable: boolean; busy: boolean; picked: Set<string>; onPick: (next: Set<string>) => void; onIssues: () => void; onReport: (row: TaskFile) => void; onDownload: (row: TaskFile) => void; onRegenerate: (row: TaskFile) => void; onRefresh: () => void };
 
 function DocTable(props: DocTableProps) {
-  const { docs, fields, customers, selectable, picked } = props;
+  const { docs, fields, typeNames, selectable, picked } = props;
   if (!docs.length)
     return (
       <Empty title="这个工作项还没有资料" description="上传这一包 PPAP 文件，可以一次选择整个文件夹。在工作项里直接添加的附件，刷新后也会出现。">
@@ -582,7 +587,7 @@ function DocTable(props: DocTableProps) {
       render: (_: unknown, doc: Doc) => (
         <div className="doc-name">
           <Text ellipsis={{ showTooltip: true }}>{doc.attachment.name}</Text>
-          <Text type="tertiary" size="small">{[doc.type && documentTypeName(customers, doc.type), fields[doc.attachment.field_key], doc.attachment.size].filter(Boolean).join(' · ')}</Text>
+          <Text type="tertiary" size="small">{[doc.type && documentTypeName(typeNames, doc.type), fields[doc.attachment.field_key], doc.attachment.size].filter(Boolean).join(' · ')}</Text>
         </div>
       ),
     },

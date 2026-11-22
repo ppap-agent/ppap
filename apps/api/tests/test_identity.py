@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import unittest
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -182,6 +183,10 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(self.client.get(version, cookies=carol).json(), {"error": "access_denied"})
         self.assertEqual(self.client.post(f"/files/{created['file_id']}/versions", json=meta, cookies=bob).status_code, 403)
         self.assertEqual(self.client.post(f"/files/{created['file_id']}/versions", json=meta, cookies=alice).status_code, 201)
+        # Only a file takes file versions, even from the creator of another object.
+        preparation = {"version": 1, "customer_preference": None, "predecessor_id": None, "uploads": [], "files": []}
+        draft = self.client.post("/drafts", json={"request_id": str(uuid.uuid4()), "upload_preparation": preparation}, cookies=alice).json()["id"]
+        self.assertEqual(self.client.post(f"/files/{draft}/versions", json=meta, cookies=alice).json(), {"error": "access_denied"})
 
     def test_oauth_state_and_off_origin_return(self):
         from urllib.parse import parse_qs, urlparse

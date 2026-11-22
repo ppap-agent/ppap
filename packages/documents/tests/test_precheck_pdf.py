@@ -59,6 +59,7 @@ SOURCE = {
     "generated_at": "2026-11-12 10:00",
     "recognition": {"customer": "联合汽车电子有限公司", "project": "项目A", "model": None, "part_number": "F01RD0Y776", "part": "支架"},
     "precheck": RESULT,
+    "type_names": {"E07": "生产件样品照片", "T09": "过程流程图"},
 }
 
 
@@ -75,13 +76,23 @@ def test_report_has_a_cover_a_contents_page_and_the_ten_fixed_chapters_with_ever
     for _level, title, page in toc[1:]:
         assert pages[page - 1].startswith(title.replace(" ", "")), title
     cover = pages[0]
-    positions = [cover.index(item) for item in ("客户全称联合汽车电子有限公司", "项目项目A", "车型—", "零件号F01RD0Y776", "零件名称支架", "检查日期2026-11-12", "供应商名称", "PPAP版本", "SQE工程师")]
+    positions = [cover.index(item) for item in ("客户联合汽车电子有限公司", "项目项目A", "车型—", "零件号F01RD0Y776", "零件名称支架", "检查日期2026-11-12", "供应商名称", "PPAP版本", "SQE工程师")]
     assert positions == sorted(positions) and "结论摘要" not in cover and "第1/" not in cover
     assert pages[1].startswith("目录封面1")
     assert pages[2].endswith(f"PPAP-1-预检报告PPAP预检报告2026-11-12第3/{len(pages)}页")
     assert "U09:S1" in text and "已判定0项" in text and "文件无可读文字" in text
     assert "总评：不通过" in cover and "总评：不通过" in pages[2] and "「通过」只表示「能审」" in text
     assert document_metadata_is_clean(render_precheck_pdf(SOURCE))
+
+
+def test_the_file_set_names_each_type_by_its_standard_name_and_each_customer_as_the_file_writes_it():
+    photo = {"file_version_id": "photo", "filename": "照片.jpg", "level": "ok", "document_type": "E07", "customer": "联合汽车电子有限公司"}
+    result = {**RESULT, "files": [*RESULT["files"], photo]}
+    with pymupdf.open(stream=render_precheck_pdf({**SOURCE, "precheck": result}), filetype="pdf") as document:
+        pages = _flat(document)
+        toc = {entry: page for _level, entry, page in document.get_toc()}
+    files = pages[toc["二、提交范围与文件集"] - 1]
+    assert "照片.jpg联合汽车电子有限公司生产件样品照片" in files and "E07" not in files and "流程图.pdfUAES过程流程图" in files
 
 
 def document_metadata_is_clean(pdf: bytes) -> bool:

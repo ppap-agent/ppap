@@ -42,8 +42,6 @@ CONTENT_ACTIONS = {
     "W05": "修复无法显示的单元格或提供可读的原始文件。",
 }
 IDENTITY_GAPS = {
-    "matching_customer_required": ("未识别出客户", "返回上传页选择客户后重新识别。", "提交方"),
-    "matching_customer_conflict": ("文件内的客户标识与本次审核客户不一致", "核对审核客户；不同客户的文件分别建立任务。", "提交方"),
     "matching_document_type_required": ("未能确定文件类型", "核对文件是否为 PPAP 文件；必要时按客户模板重新整理后上传。", "材料侧"),
     "document_classification_failed": ("未能确定文件类型", "核对文件是否为 PPAP 文件；必要时按客户模板重新整理后上传。", "材料侧"),
 }
@@ -74,7 +72,6 @@ PEERS: dict[tuple[str, str], tuple[str, ...]] = {
     ("蔚来", "T10"): ("T09",),
     ("蔚来", "T09"): ("T12",),
 }
-PEER_NAMES = {"T09": "过程流程图", "T10": "PFMEA", "T11": "控制计划", "T12": "特殊特性清单", "E12": "采购件质量计划（PGQP1）"}
 # A placeholder or a label is not a part number that can pair two files.
 _NO_IDENTITY = {"", "/", "\\", "-", "--", "—", "——", "n/a", "na", "none", "null", "tbd", "xx", "xxx", "xxxx", "?", "无", "待填", "待定", "待确认", "未填写"}
 _NO_IDENTITY |= {"零件号", "零件编号", "partnumber", "partno", "partno."}
@@ -98,26 +95,11 @@ def _finding(code: str, level: str, file: dict, problem: str, evidence: str, act
     }
 
 
-def rule_customer(task: dict[str, Any], row: dict) -> str | None:
-    """The customer whose rules route this file: the task's customer, else the one customer of the rule it matched.
-
-    The customer a file writes (GEELY, UEAS, 联合电子UAES…) is one of its facts, shown as recorded and never used
-    to find rules (裁定 R-12).
-    """
-    if task.get("customer_preference"):
-        return task["customer_preference"]
-    body = (((row.get("match") or {}).get("rule") or {}).get("body")) or {}
-    customers = {value for value in body.get("customers") or [] if isinstance(value, str) and value.strip()}
-    if isinstance(body.get("suite_key"), str) and ":" in body["suite_key"]:
-        customers.add(body["suite_key"].split(":", 1)[0])
-    return next(iter(customers)) if len(customers) == 1 else None
-
-
 def customer_types(customer: str | None) -> frozenset[str] | None:
     """M: the registered customer's type set; None when the customer is not registered or has no M configured."""
-    from product.customers import resolve
+    from product.customers import by_key
 
-    registered = resolve(customer)
+    registered = by_key(customer)
     return frozenset(registered.type_set.types) if registered and registered.type_set and registered.type_set.types else None
 
 
@@ -255,6 +237,8 @@ def _counterparts(targets: list[tuple[dict, str, str]], files: list[dict], codes
     number, an untyped file that could be the counterpart, or several candidates leave the comparison
     undecided: neither S04 nor S07.
     """
+    from product.customers import type_names
+
     statuses: list[dict] = []
     findings: list[dict] = []
     submitted = {part for row, _customer, _code in targets if (part := _part(row))}
@@ -263,7 +247,7 @@ def _counterparts(targets: list[tuple[dict, str, str]], files: list[dict], codes
         others = [other for other in files if other["file"]["id"] != row["file"]["id"]]
         undetermined = any(codes[other["file"]["id"]] is None for other in others)
         for peer in PEERS.get((customer, code), ()):
-            document = PEER_NAMES[peer]
+            document = type_names()[peer]
             candidates = [other for other in others if codes[other["file"]["id"]] == peer]
             if mine and any(_part(other) == mine for other in candidates):
                 continue
@@ -368,11 +352,13 @@ def precheck_task(task: dict[str, Any], content: Mapping[str, list[dict]] | None
     entries: dict[str, str | None] = {}
     targets: list[tuple[dict, str, str]] = []
 
-    codes = {row["file"]["id"]: type_code((row.get("match") or {}).get("document_type"), rule_customer(task, row)) for row in files}
+    # The task's chosen rule set routes every file; the customer a file writes is one of its facts, never a route (裁定 R-12).
+    customer = task.get("customer_preference")
+    scope = customer_types(customer)
+    codes = {row["file"]["id"]: type_code((row.get("match") or {}).get("document_type"), customer) for row in files}
     for row in files:
         name, validation, match = row["file"]["original_filename"], row.get("validation") or {}, row.get("match") or {}
-        customer = rule_customer(task, row)
-        scope, code = customer_types(customer), codes[row["file"]["id"]]
+        code = codes[row["file"]["id"]]
         outside = scope is not None and code is not None and code not in scope
         reasons = "；".join(str(reason) for reason in validation.get("reasons") or [])
         if validation.get("state") == "invalid":

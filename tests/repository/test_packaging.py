@@ -1,8 +1,10 @@
-"""Deep toolchain pin; clean distribution correctness is validated separately in CI."""
+"""Toolchain pins (uv, Deep); clean distribution correctness is validated separately in CI."""
 
 from __future__ import annotations
 
 import json
+import re
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -22,3 +24,9 @@ class PackagingTests(unittest.TestCase):
             if key.startswith("node_modules/" + name):
                 with self.subTest(package=key):
                     self.assertEqual(entry["version"], PI_VERSION)
+
+    def test_images_copy_the_one_uv_version(self):
+        required = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["uv"]["required-version"]
+        for dockerfile in ("deploy/app/Dockerfile", "tests/corpus/Dockerfile.psw"):
+            with self.subTest(dockerfile=dockerfile):
+                self.assertEqual(re.findall(r"astral-sh/uv:([0-9.]+)@", (ROOT / dockerfile).read_text()), [required.removeprefix("==")])

@@ -231,6 +231,6 @@ python3 deploy/tke/build-current.py <full-source-sha> --provider unregistry
 
 ## Deep 配置
 
-现网 Deep 沿用文本模型（`PPAP_MODEL_TEXT_*`，即 grok-4.7）。需要 Deep 专用模型时，在每个容器把 `PPAP_MODEL_CODING_BASE_URL`、`PPAP_MODEL_CODING_MODEL`、`PPAP_MODEL_CODING_API_KEY` 指向那个模型的分组；代码拒绝只有 Deep 密钥而没有 Deep 端点的配置。`PPAP_MODEL_CODING_REASONING_EFFORT` 属于 Deep。
+现网 Deep 沿用文本模型（`PPAP_MODEL_TEXT_*`，即 grok-4.7）。需要 Deep 专用模型时，在每个容器把 `PPAP_MODEL_CODING_BASE_URL`、`PPAP_MODEL_CODING_MODEL`、`PPAP_MODEL_CODING_API_KEY` 指向那个模型的分组；端点与模型须同时设置，只设其一或只给 Deep 密钥都会在调用时报 Deep 模型配置不完整（`deep_model_config_incomplete`），不会改用文本模型。`PPAP_MODEL_CODING_REASONING_EFFORT` 属于 Deep。
 
 Worker 与 Deep Controller 共享 `/run/ppap-deep` 的 UDS。配置变更后直接重启其 Deployment；UDS 可用只表示进程连通，不证明真实 Deep 审核成功。当前 `container-only` / sandbox `off` 的能力边界仍见 `deploy/deep/README.md`。

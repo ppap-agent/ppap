@@ -53,8 +53,8 @@ class OfficialPlan:
 
 
 def _semantics(files) -> dict:
-    rules = json.loads(files["rules.json"])
-    return RuleInput.model_validate({**rules, "appendix": json.loads(files.get("appendix.json", b"[]")), "rule_id": ""}).model_dump(mode="json", exclude={"rule_id"})
+    rule = RuleInput.of(json.loads(files["rules.json"]), rule_id="", appendix=json.loads(files.get("appendix.json", b"[]")))
+    return rule.model_dump(mode="json", exclude={"rule_id"})
 
 
 def prepare(context: dict, *, cases: Path | None = None, oracle: Path | None = None, root: Path = REPO_ROOT, model_identity: dict[str, str] | None = None) -> OfficialPlan:

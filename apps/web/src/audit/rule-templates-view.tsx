@@ -39,16 +39,16 @@ export function RulesTrail({items}: {items: {label: string; href?: string}[]}) {
 
 const matches = (needle: string, ...values: string[]) => values.some(value => value.toLocaleLowerCase().includes(needle))
 
-/** Registered customers on the left (short names), the chosen one's file types and current rules on the right; without a choice the first one is shown. */
+/** Registered customers on the left, the chosen one's file types and current rules on the right; without a choice the first one is shown. */
 export function CustomerRulesBrowser({entries, selectedId, loading, questions}: {entries: CustomerRules[]; selectedId: string; loading: boolean; questions?: (customerId: string) => ReactNode}) {
   const [query, setQuery] = useState('')
   const needle = query.trim().toLocaleLowerCase()
   if (loading) return <div className="flex min-h-0 flex-1 flex-col"><ReadSkeleton label="正在读取客户规则…" kind="list" rows={5}/></div>
-  const shown = needle ? entries.filter(entry => matches(needle, entry.customer.full_name, entry.customer.short_name, ...(entry.types ?? []).flatMap(type => [type.label, ...type.rules.map(rule => rule.title)]))) : entries
+  const shown = needle ? entries.filter(entry => matches(needle, entry.customer.name, ...(entry.types ?? []).flatMap(type => [type.label, ...type.rules.map(rule => rule.title)]))) : entries
   // An address from before customers had ids (or a removed customer) opens the first customer rather than an error.
   const entry = entries.find(item => item.customer.customer_id === selectedId) ?? shown[0] ?? entries[0]
   // A search that names a rule narrows the chosen customer's types to it; a search that names the customer shows them all.
-  const focus = needle && entry && !matches(needle, entry.customer.full_name, entry.customer.short_name) ? needle : ''
+  const focus = needle && entry && !matches(needle, entry.customer.name) ? needle : ''
   // One surface split by a divider (Feishu master-detail): the list chooses, the table shows; the choice is not repeated as a heading.
   return <div className="grid min-h-0 flex-1 grid-cols-[17.5rem_minmax(0,1fr)] grid-rows-1 overflow-hidden rounded-lg bg-card">
     <aside aria-label="客户" className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden border-r p-3">
@@ -56,8 +56,8 @@ export function CustomerRulesBrowser({entries, selectedId, loading, questions}: 
       <ul className="grid min-h-0 flex-1 content-start gap-1 overflow-y-auto">{shown.map(item => {
         const {customer} = item, href = rulesAddress({template: customer.customer_id}), current = customer.customer_id === entry?.customer.customer_id, ratio = ruleCoverage(customer), described = `rules-customer-${customer.customer_id}`
         return <li key={customer.customer_id}><a aria-current={current ? 'page' : undefined} aria-describedby={described} href={href} onClick={event => followRulesLink(event, href)} className={`flex min-w-0 items-center gap-3 rounded-md px-3 py-2 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${current ? 'bg-primary-soft text-primary' : 'hover:bg-muted'}`}>
-          <CustomerAvatar name={customer.short_name}/>
-          <span className="min-w-0 flex-1 space-y-0.5"><span className="block truncate text-sm" title={customer.short_name}>{customer.short_name}</span><span id={described} className="block text-xs tabular-nums text-muted-foreground">{ratio ? `${ratio.covered} / ${ratio.total} 类有生效规则` : '文件类型范围未配置'}</span></span>
+          <CustomerAvatar name={customer.name}/>
+          <span className="min-w-0 flex-1 space-y-0.5"><span className="block truncate text-sm" title={customer.name}>{customer.name}</span><span id={described} className="block text-xs tabular-nums text-muted-foreground">{ratio ? `${ratio.covered} / ${ratio.total} 类有生效规则` : '文件类型范围未配置'}</span></span>
         </a></li>
       })}
       {!shown.length && <li className="grid justify-items-center gap-3 py-12 text-center"><p className="text-sm text-muted-foreground">{query ? '没有匹配的客户' : '还没有客户规则'}</p>{query && <Button variant="outline" size="sm" onClick={() => setQuery('')}>清除搜索</Button>}</li>}
@@ -82,11 +82,11 @@ function CustomerRulesDetail({entry, focus, questions}: {entry: CustomerRules; f
     return rules.length ? [{...type, rules}] : []
   })
   const rows = types.flatMap((type): {type: TypeRules; rule: RuleRow | null; first: boolean}[] => type.rules.length ? type.rules.map((rule, index) => ({type, rule, first: index === 0})) : [{type, rule: null, first: true}])
-  return <section aria-label={`${customer.short_name} 的规则`} className="flex min-h-0 flex-1 flex-col">
-    <h2 className="sr-only">{customer.short_name}</h2>
+  return <section aria-label={`${customer.name} 的规则`} className="flex min-h-0 flex-1 flex-col">
+    <h2 className="sr-only">{customer.name}</h2>
     {questions}
     {entry.types === null ? <Alert className="m-4 w-auto"><Icon icon={iconCircleExclamation} aria-hidden="true"/><AlertTitle>这个客户的文件类型范围尚未配置</AlertTitle><AlertDescription>暂不显示规则覆盖。请联系我们配置后再查看。</AlertDescription></Alert> : <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      {rows.length ? <Table aria-label={`${customer.short_name} 的规则列表`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>文件类型</TableHead><TableHead>规则</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead></TableRow></TableHeader><TableBody>{rows.map(({type, rule, first}) => {
+      {rows.length ? <Table aria-label={`${customer.name} 的规则列表`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>文件类型</TableHead><TableHead>规则</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead></TableRow></TableHeader><TableBody>{rows.map(({type, rule, first}) => {
         const href = rule && rulesAddress({systemRule: rule.id}), updated = rule ? day(rule.updatedAt) : ''
         return <TableRow key={rule ? rule.id : `type:${type.code}`}>
           <TableCell className="whitespace-normal">{first ? type.label : <span className="sr-only">{type.label}</span>}</TableCell>

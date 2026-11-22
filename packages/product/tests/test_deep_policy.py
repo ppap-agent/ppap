@@ -41,27 +41,3 @@ def test_default_and_explicit_protocol_labels_have_the_same_policy(monkeypatch):
     settings = Settings(git_sha="a" * 40, deep_executor_revision="")
     explicit = settings.model_copy(update={"deep_executor_revision": DEEP_PROTOCOL_REVISION})
     assert settings.deep_execution_revision() == explicit.deep_execution_revision()
-
-
-def test_deep_model_override_is_complete_and_independent_of_standard():
-    settings = Settings(
-        git_sha="a" * 40,
-        model_text_base_url="https://standard.example/v1",
-        model_text_model="standard",
-        model_text_api_key="standard-key",
-        model_coding_base_url="https://deep.example/backend-api/codex",
-        model_coding_model="deep",
-        model_coding_api_key="deep-key",
-    )
-    revision = settings.deep_execution_revision()
-    assert settings.deep_model_config() == ("https://deep.example/backend-api/codex", "deep", "deep-key")
-    assert settings.deep_execution_policy().model == "unconfigured"
-    assert settings.model_text_api_key == "standard-key" and settings.model_text_model == "standard"
-    assert settings.model_copy(update={"model_coding_api_key": "rotated"}).deep_execution_revision() == revision
-    assert settings.model_copy(update={"model_text_model": "other-standard"}).deep_execution_revision() == revision
-    assert settings.model_copy(update={"model_coding_model": "other-deep"}).deep_execution_revision() == revision
-    without_key = settings.model_copy(update={"model_coding_api_key": ""})
-    assert without_key.deep_execution_revision() == revision
-    with pytest.raises(ValueError, match="credential is unavailable"):
-        without_key.deep_model_config()
-    assert settings.model_copy(update={"model_coding_reasoning_effort": "high"}).deep_execution_revision() != revision

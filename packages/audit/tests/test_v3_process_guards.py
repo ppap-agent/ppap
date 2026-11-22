@@ -28,7 +28,6 @@ def check_workbook(tmp_path, agent_class, workbook, rule_number, group=None) -> 
         saved_file(tmp_path, "target.xlsx", workbook),
         RuleInput(
             rule_id="confirmed-process-rules",
-            rule_profile="v3",
             type=agent_class.DOC_TYPE.get_type_name(),
             rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, rule_number + 1)],
         ),
@@ -94,12 +93,11 @@ def test_customer_rule_id_still_runs_the_positional_builtin_check(tmp_path, run_
     path = saved_file(tmp_path, "target.xlsx", workbook).file_url
     rules = RuleInput(
         rule_id="confirmed-process-rules",
-        rule_profile="v3",
         type=PpapDocumentType.PROCESS_FLOW_CHART.get_type_name(),
         rules=[{"id": "6", "category": "完整入料要求", "rule_to_check": "识别工序名称列"}],
     )
 
-    results = run_checks(AuditInput(audit_id="target", file_url=path), rules)
+    results = run_checks(AuditInput(audit_id="target", file_url=path), rules, leaf="nio/N05")
 
     assert results[0].status == "NG"
     assert "代码字段" in results[0].suggestions
@@ -118,7 +116,6 @@ def test_parent_row_exclusion_is_kept_for_the_later_check(tmp_path):
         saved_file(tmp_path, "target.xlsx", workbook),
         RuleInput(
             rule_id="confirmed-process-rules",
-            rule_profile="v3",
             type=ProcessFlowChartExcelAgent.DOC_TYPE.get_type_name(),
             rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 6)],
         ),

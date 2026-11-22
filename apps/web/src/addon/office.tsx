@@ -4,7 +4,7 @@ import {useEffect, useId, useRef, useState} from 'react'
 import type {components} from '../generated/openapi'
 
 type Locator = components['schemas']['AuditEvidenceReference']['locator']
-export type Evidence = {file: components['schemas']['FileVersion']; locator: Locator; excerpt: string; clause: string}
+export type Evidence = {file: components['schemas']['FileVersion']; locator: Locator; label: string | null; excerpt: string; clause: string}
 type Office = components['schemas']['OfficePreviewResponse']
 type Editor = {destroyEditor: () => void}
 declare global {
@@ -22,20 +22,6 @@ function loadScript(src: string) {
     document.head.append(tag)
   })
   return script
-}
-
-export function locationLabel(locator: Locator): string {
-  if (!locator) return ''
-  switch (locator.kind) {
-    case 'xlsx_cell': return `工作表「${locator.sheet}」${locator.cell}`
-    case 'xlsx_range': return `工作表「${locator.sheet}」${locator.start}:${locator.end}`
-    case 'pdf_page': return `第 ${locator.page} 页`
-    case 'pdf_block': return `第 ${locator.page} 页 第 ${locator.block} 段`
-    case 'pdf_cell': return `第 ${locator.page} 页 表格第 ${locator.row} 行第 ${locator.column} 列`
-    case 'docx_paragraph': return `第 ${locator.paragraph} 段`
-    case 'docx_cell': return `第 ${locator.table} 个表格 第 ${locator.row} 行第 ${locator.column} 列`
-    default: return ''
-  }
 }
 
 /** Ask the spreadsheet viewer to show the cell. Best effort: the viewer still opens the file without it. */
@@ -73,7 +59,7 @@ export function OfficeView({evidence, roundId, call, onClose, onOpenWeb}: {evide
     })()
     return () => { disposed = true; editor?.destroyEditor() }
   }, [call, evidence, id, roundId])
-  const where = locationLabel(evidence.locator)
+  const where = evidence.label
   return (
     <section className="flex h-full flex-col gap-2" aria-label="对照原件">
       <header className="flex items-center gap-3">

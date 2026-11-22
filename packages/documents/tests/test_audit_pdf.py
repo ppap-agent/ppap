@@ -45,7 +45,7 @@ def test_a_pdf_contains_readable_chinese_rule_result_and_empty_cell_evidence():
         assert "必须填写零件号" in text
         assert "不符合" in text
         assert "该位置内容为空" in text
-        assert "检验!A2" in text
+        assert "工作表「检验」A2" in text
         assert "深度" not in text
         assert "\ufffd" not in text
         assert document.metadata["title"] == "尺寸检验报告.xlsx-审核报告" and document.metadata["subject"] == "PPAP 审核报告"
@@ -71,11 +71,11 @@ def test_pdf_table_cell_report_keeps_the_original_pdf_page_and_coordinates():
     with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
         text = "".join("".join(page.get_text().split()) for page in document)
         assert "尺寸检验报告.pdf" in text
-        assert "第3页·表格行12·列4" in text
+        assert "第3页表格第12行第4列" in text
         assert "不符合" in text
         assert "该位置内容为空" in text
         assert "Sheet" not in text
-        assert "!A2" not in text
+        assert "工作表" not in text
 
 
 def test_a_finding_located_on_a_pdf_page_names_that_page():
@@ -86,23 +86,6 @@ def test_a_finding_located_on_a_pdf_page_names_that_page():
     with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
         text = "".join("".join(page.get_text().split()) for page in document)
         assert "控制计划.pdf·第2页" in text and "300" not in text
-
-
-@pytest.mark.parametrize("page", [None, True, "1", 0])
-def test_a_pdf_page_that_is_not_a_page_number_is_refused(page):
-    source = report_source()
-    source["audit"]["checks"][0]["evidence"][0]["locator"] = {"kind": "pdf_page", "page": page}
-    with pytest.raises(ValueError, match="report_locator_unavailable"):
-        render_audit_pdf(source)
-
-
-@pytest.mark.parametrize("field", ["page", "row", "column"])
-@pytest.mark.parametrize("value", [None, True, "1", 1.5, 0, -1])
-def test_pdf_table_cell_report_rejects_invalid_coordinates(field, value):
-    source = report_source()
-    source["audit"]["checks"][0]["evidence"][0]["locator"] = {"kind": "pdf_cell", "page": 1, "row": 1, "column": 1, field: value}
-    with pytest.raises(ValueError, match="report_locator_unavailable"):
-        render_audit_pdf(source)
 
 
 def test_long_reports_keep_every_clause_and_treat_embedded_markup_as_source_text():
@@ -158,12 +141,14 @@ def _chapter(text: str, title: str) -> str:
 
 def test_report_has_an_own_cover_a_contents_page_and_the_ten_chapters_in_order():
     source = report_source()
-    source["recognition"] = {"customer": "UAES", "project": "项目A", "model": "M1", "part_number": "F01RD0Y776", "part": None}
+    # The cover's customer is the one the file writes, as written; the chosen rule set never stands in for it.
+    source["recognition"] = {"customer": "联合汽车电子有限公司", "project": "项目A", "model": "M1", "part_number": "F01RD0Y776", "part": None}
     source["audited_at"] = "2026-11-10T17:30:00+00:00"
-    with pymupdf.open(stream=render_audit_pdf(source, customer_name={"UAES": "联合汽车电子有限公司"}.get), filetype="pdf") as document:
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
         pages = _pages(document)
         cover = pages[0]
-        expected = ("客户全称联合汽车电子有限公司", "项目项目A", "车型M1", "零件号F01RD0Y776", "零件名称—", "检查日期2026-11-11", "供应商名称", "PPAP版本", "SQE工程师")
+        assert "联电科技" not in cover
+        expected = ("客户联合汽车电子有限公司", "项目项目A", "车型M1", "零件号F01RD0Y776", "零件名称—", "检查日期2026-11-11", "供应商名称", "PPAP版本", "SQE工程师")
         positions = [cover.index(text) for text in expected]
         assert positions == sorted(positions)
         assert "请下载后自行补充" in cover
@@ -182,8 +167,6 @@ def test_report_has_an_own_cover_a_contents_page_and_the_ten_chapters_in_order()
         for number, page in enumerate(pages[1:], 2):
             assert page.endswith(f"尺寸检验报告.xlsx-审核报告PPAP审核报告2026-11-11第{number}/{len(pages)}页"), page
         assert "本章无附加节。" in _chapter_page(document, "十、附录 · 分则附加节")
-    # The frozen input is not rewritten.
-    assert source["recognition"]["customer"] == "UAES"
 
 
 def test_chapter_four_has_the_eight_fixed_columns_and_unknown_values_read_as_a_dash():
@@ -195,7 +178,7 @@ def test_chapter_four_has_the_eight_fixed_columns_and_unknown_values_read_as_a_d
         assert "1R1·类别1NGA—零件号必须与图纸一致" in chapter
         # An NG without a level stays in chapter four with an empty level, never a guessed one.
         assert "2R2·类别2NG——" in chapter and "严重程度为「—」的不符合项尚未定级" in chapter
-        assert "尺寸检验报告.xlsx·检验!A1" in chapter
+        assert "尺寸检验报告.xlsx·工作表「检验」A1" in chapter
         assert "本次无C类问题。" in _chapter_page(document, "五、C 类问题明细")
 
 
@@ -427,8 +410,8 @@ def test_every_check_is_listed_and_remediation_holds_only_failed_items_merged_by
             assert f"R{number}·" in appendix
         remediation = _chapter(text, "七、整改建议汇总")
         # Two problems at one location merge into one point; the action names the location and the clause it must meet.
-        assert "①改值：使「尺寸检验报告.xlsx·检验!A2」满足审核项「类别3」（现状：第3项缺值）" in remediation
-        assert "②改值：使「尺寸检验报告.xlsx·检验!A2」满足审核项「类别7」（现状：第7项缺值）" in remediation
+        assert "①改值：使「尺寸检验报告.xlsx·工作表「检验」A2」满足审核项「类别3」（现状：第3项缺值）" in remediation
+        assert "②改值：使「尺寸检验报告.xlsx·工作表「检验」A2」满足审核项「类别7」（现状：第7项缺值）" in remediation
         assert "已核实" not in remediation
         assert "增补零件号P1的《图纸》" in remediation and "增补零件号P1的《材料证明》，删除本批零件号不一致的《材料证明》" in remediation
         assert "建议截止日" in remediation and "整改益处" in remediation and "修订后自查要点" in remediation
@@ -450,7 +433,7 @@ def test_all_pass_report_says_no_remediation_and_no_supply():
         assert "本次未发现问题项，无需整改。" in text
         assert "本次没有需补交或换交的关联文件。" in text
         assert "本次无A·B类问题。" in text and "本次无C类问题。" in text
-        assert "客户全称—" in text
+        assert "客户—" in text
 
 
 def _graded_source(levels):

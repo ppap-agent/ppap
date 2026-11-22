@@ -64,7 +64,7 @@ from product.files import (
     safe_content_type,
 )
 from product.fixtures import SUBJECTS
-from product.identity import DOCS_SESSION_SECONDS, DOCS_TOKEN_PREFIX, EDITION_COOKIE, SESSION_COOKIE, ProviderAuthError, can_modify, can_read, new_token, safe_return_to
+from product.identity import DOCS_SESSION_SECONDS, DOCS_TOKEN_PREFIX, EDITION_COOKIE, SESSION_COOKIE, ProviderAuthError, new_token, safe_return_to
 from product.logs import QUIET_PATHS, bind, emit, new_request_id, reset, round_id_from_path
 from product.logs import configure as configure_logs
 from product.mcp import McpError
@@ -75,6 +75,7 @@ from product.store.meego import MeegoStore
 from product.writeback_targets import public_target
 
 from api import web_contract as wc
+from api.access import object_denied
 from api.audit_routes import register_audit_routes
 from api.feishu_jsapi_routes import register_feishu_jsapi_routes
 from api.mcp_confirmation import require_approved_source
@@ -269,10 +270,7 @@ def create_app(
         principal = principal_of(request)
         if not principal:
             return None, JSONResponse({"error": "unauthenticated"}, status_code=401)
-        resource = store.resource(file_id)
-        if resource is None or resource.kind != "file" or not (can_modify if modify else can_read)(principal, resource):
-            return principal, JSONResponse({"error": "access_denied"}, status_code=403)
-        return principal, None
+        return principal, object_denied(store, principal, file_id, modify=modify, kind="file")
 
     def require_file_version(request: Request, file_id: str, version_id: str):
         principal = principal_of(request)
@@ -708,7 +706,7 @@ def create_app(
                 "invalid_compare_file_tokens",
             }:
                 return JSONResponse({"error": code}, status_code=400)
-            if code in {"idempotency_conflict", "draft_already_accepted"}:
+            if code == "idempotency_conflict":
                 return JSONResponse({"error": code}, status_code=409)
             return JSONResponse({"error": "invalid_upload"}, status_code=400)
         if isinstance(exc, (ObjectExists, ObjectMissing)):
@@ -897,9 +895,8 @@ def create_app(
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         if not session.access_token:
             return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
-        resource = store.resource(round_id)
-        if resource is None or not can_modify(session.principal, resource):
-            return JSONResponse({"error": "access_denied"}, status_code=403)
+        if denied := object_denied(store, session.principal, round_id, modify=True):
+            return denied
         round_body = store.get_round(round_id)
         if round_body is None:
             return JSONResponse({"error": "access_denied"}, status_code=403)

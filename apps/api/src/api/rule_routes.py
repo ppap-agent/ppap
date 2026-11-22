@@ -14,7 +14,7 @@ from api import web_contract as wc
 
 
 def customer_catalog(store, tenant_id: str) -> wc.AuditCustomerCatalog:
-    """Every registered customer with M and both coverage numerators; rule customer names that match no register entry are listed as recorded."""
+    """Every registered customer with M and both coverage numerators, and the type name table; rule customer names that match no register entry are listed as recorded."""
     from product import customers as register
     from product import template_library
 
@@ -27,15 +27,15 @@ def customer_catalog(store, tenant_id: str) -> wc.AuditCustomerCatalog:
         coverage = cast(wc.CustomerCoverage | None, register.coverage(customer, template_codes, register.rule_type_codes(customer, rules)))
         if coverage is None:
             emit("customer_type_set_missing", level=logging.WARNING, customer_id=customer.id)
-        rows.append({"customer_id": customer.id, "name": customer.short_name, "full_name": customer.full_name, "short_name": customer.short_name, "coverage": coverage})
+        rows.append({"customer_id": customer.id, "name": customer.name, "key": customer.key, "coverage": coverage})
     unregistered: set[str] = set()
     for rule in rules:
         try:
             normalize_document_type(rule.get("type"))
         except ValueError:
             continue
-        unregistered.update(value.strip() for value in rule["customers"] if isinstance(value, str) and value.strip() and register.resolve(value) is None)
-    return {"customers": rows, "unregistered": sorted(unregistered)}
+        unregistered.update(value.strip() for value in rule["customers"] if isinstance(value, str) and value.strip() and register.by_key(value) is None)
+    return {"customers": rows, "unregistered": sorted(unregistered), "type_names": register.type_names()}
 
 
 def register_rule_routes(app: FastAPI, store, principal_of):

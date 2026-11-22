@@ -255,6 +255,7 @@ class TaskRoundViewTests(unittest.TestCase):
                 audit = task_round_view(task_input(), round)["files"][0]["audit"]
                 check = audit["checks"][0]
                 self.assertIsNone(check["evidence"][0]["locator"])
+                self.assertIsNone(check["evidence"][0]["label"])
                 self.assertTrue(check["evidence"][0]["location_gap"])
                 self.assertEqual(check["finding"]["status"], "PASS")
 
@@ -711,6 +712,7 @@ class TaskRoundViewTests(unittest.TestCase):
                 {
                     "file_version_id": "version-reference",
                     "locator": {"kind": "xlsx_cell", "sheet": "参数", "cell": "B2"},
+                    "label": "工作表「参数」B2",
                     "excerpt": "每小时",
                     "location_gap": None,
                     "rendition": "original",

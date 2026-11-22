@@ -1,11 +1,10 @@
-"""Product audit draft/round/review loop. Does not copy checker corpus into E2E."""
+"""Product audit round/review loop. Does not copy checker corpus into E2E."""
 
 from __future__ import annotations
 
 import os
 import unittest
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
@@ -25,11 +24,33 @@ def rule_body():
         "kind": "engine",
         "rule_profile": "v3",
         "type": "控制计划",
-        "customers": ["测试客户"],
+        "customers": ["理想"],
         "models": ["M1"],
         "parts": ["P1"],
         "rules": [{"id": "1", "category": "基本信息", "priority": "P0", "rule_to_check": "必须填写零件号", "type_of_rule": "table"}],
     }
+
+
+def text_pdf(text: str) -> bytes:
+    import fitz
+
+    document = fitz.open()
+    document.new_page().insert_text((72, 72), text)
+    try:
+        return document.tobytes()
+    finally:
+        document.close()
+
+
+def text_docx(text: str) -> bytes:
+    from io import BytesIO
+
+    from docx import Document
+
+    document, stream = Document(), BytesIO()
+    document.add_paragraph(text)
+    document.save(stream)
+    return stream.getvalue()
 
 
 def _clean_env(**extra: str):
@@ -40,9 +61,10 @@ def _clean_env(**extra: str):
 
 class AuditFlowTests(unittest.TestCase):
     @pytest.fixture(autouse=True)
-    def _owner_store(self, auth_store_factory, core_system):
+    def _owner_store(self, auth_store_factory, core_system, audit_round):
         self.auth_store = auth_store_factory
         self.core = core_system
+        self.audit_round = audit_round
 
     def setUp(self):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
@@ -93,152 +115,24 @@ class AuditFlowTests(unittest.TestCase):
         self.originals[vid] = body
         return ready.json()
 
+    def _accept(self, files: dict, **options) -> dict:
+        return self.audit_round(self.store, self._principal(), files, **options)
+
     def _finish_worker(self) -> None:
-        claimed = self.store.claim_job("test-worker")
-        self.assertIsNotNone(claimed)
-        process_claimed(self.store, claimed, "test-worker")
+        """Run queued work up to and including the next audit; a finished task's report is queued before it."""
+        while True:
+            claimed = self.store.claim_job("test-worker")
+            self.assertIsNotNone(claimed)
+            process_claimed(self.store, claimed, "test-worker")
+            if claimed.kind == "audit":
+                return
 
-    def test_reaudit_draft_acceptance_retains_readable_predecessor(self):
+    def test_worker_writeback(self):
         self._login("alice")
         target = self._upload("report.xlsx", b"target-bytes")
-
-        def draft():
-            ident = self.client.post("/drafts").json()["id"]
-            self.client.put(f"/drafts/{ident}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]})
-            return ident
-
-        first_draft = draft()
-        first = self.client.post(f"/drafts/{first_draft}/accept", json={"idempotency_key": "first-report"}).json()
-        second_draft = draft()
-        payload = {"idempotency_key": "second-report", "predecessor_id": first["id"]}
-        second = self.client.post(f"/drafts/{second_draft}/accept", json=payload)
-        self.assertEqual(second.status_code, 201)
-        self.assertEqual(second.json()["predecessor_id"], first["id"])
-        self.assertEqual(self.client.get(f"/drafts/{second_draft}").json()["status"], "accepted")
-        self.assertEqual(self.client.post(f"/drafts/{second_draft}/accept", json=payload).json()["id"], second.json()["id"])
-        self.assertEqual(self.client.post(f"/drafts/{second_draft}/accept", json={"idempotency_key": "second-report"}).status_code, 409)
-        # Another member of the enterprise re-audits alice's round as their own round.
-        self._login("bob")
-        third_draft = draft()
-        third = self.client.post(f"/drafts/{third_draft}/accept", json={"idempotency_key": "third-report", "predecessor_id": first["id"]})
-        self.assertEqual(third.status_code, 201)
-        self.assertEqual(third.json()["predecessor_id"], first["id"])
-        self._login("carol")
-        foreign = self.client.post("/drafts").json()["id"]
-        self.assertEqual(self.client.post(f"/drafts/{foreign}/accept", json={"idempotency_key": "carol-report", "predecessor_id": first["id"]}).status_code, 403)
-
-    def test_reaudit_preparation_keeps_original_inputs_and_replays_one_draft(self):
-        self._login("alice")
-        target = self._upload("report.xlsx", b"target-bytes")
-        reference = self._upload("context.pdf", b"reference-bytes")
-        inputs = [
-            {"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A},
-            {"file_version_id": reference["id"], "role": "reference", "rule_version_id": None},
-        ]
-        source = self.client.post("/drafts").json()["id"]
-        self.assertEqual(self.client.put(f"/drafts/{source}", json={"items": inputs}).status_code, 200)
-        original = self.client.post(f"/drafts/{source}/accept", json={"idempotency_key": "preparation-source"}).json()
-        jobs = self._scalar("SELECT count(*) FROM engine.jobs")
-        charges = self._scalar("SELECT count(*) FROM product.usage_events")
-        request_id = str(uuid.uuid4())
-        payload = {"request_id": request_id, "predecessor_id": original["id"], "items": inputs, "case_context": {"registration": "{}"}}
-        created = self.client.post("/drafts", json=payload)
-        self.assertEqual(created.status_code, 201)
-        prepared = created.json()
-        self.assertEqual(prepared["id"], request_id)
-        self.assertEqual(prepared["status"], "open")
-        self.assertEqual(prepared["predecessor_id"], original["id"])
-        self.assertCountEqual([{key: item[key] for key in ("file_version_id", "role", "rule_version_id")} for item in prepared["items"]], inputs)
-        self.assertEqual(prepared["case_context"], payload["case_context"])
-        self.assertEqual(self.client.get(f"/drafts/{request_id}").json(), prepared)
-        self.assertEqual(self.client.post("/drafts", json=payload).json(), prepared)
-        self.assertEqual(self.client.get(f"/rounds/{original['id']}").json(), original)
-        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), jobs)
-        self.assertEqual(self._scalar("SELECT count(*) FROM product.usage_events"), charges)
-        conflict = self.client.post("/drafts", json={**payload, "items": inputs[:1]})
-        self.assertEqual(conflict.status_code, 409)
-        self.assertEqual(self.client.get(f"/drafts/{request_id}").json(), prepared)
-        self._login("bob")
-        self.assertEqual(self.client.post("/drafts", json=payload).status_code, 403)
-        self._login("carol")
-        self.assertEqual(self.client.post("/drafts", json=payload).status_code, 403)
-        self.assertEqual(self.client.get(f"/drafts/{request_id}").status_code, 403)
-
-    def test_initial_draft_inputs_are_atomic_and_concurrent_creation_reuses_identity(self):
-        self._login("alice")
-        target = self._upload("initial.xlsx", b"initial-bytes")
-        request_id = str(uuid.uuid4())
-        payload = {"request_id": request_id, "items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]}
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            responses = list(pool.map(lambda _: self.client.post("/drafts", json=payload), range(2)))
-        self.assertEqual([response.status_code for response in responses], [201, 201])
-        self.assertEqual(responses[0].json(), responses[1].json())
-        self.assertEqual(self.client.get(f"/drafts/{request_id}").json()["items"][0]["file_version_id"], target["id"])
-        self.assertEqual(self._scalar("SELECT count(*) FROM product.audit_drafts WHERE id = %s", (request_id,)), 1)
-        self.assertEqual(self.client.post("/drafts", json={"request_id": "invalid"}).status_code, 400)
-        self.assertEqual(self.client.post("/drafts", json={"request_id": target["file_id"]}).status_code, 403)
-        self.assertEqual(self.client.post("/drafts", json={"request_id": str(uuid.uuid4()), "case_context": []}).status_code, 400)
-        failed_id = str(uuid.uuid4())
-        self._login("carol")
-        self.assertEqual(self.client.post("/drafts", json={**payload, "request_id": failed_id}).status_code, 403)
-        self.assertEqual(self._scalar("SELECT count(*) FROM product.resources WHERE id = %s", (failed_id,)), 0)
-        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 0)
-        self.assertEqual(self._scalar("SELECT count(*) FROM product.usage_events"), 0)
-
-    def test_draft_does_not_create_a_round(self):
-        self._login("alice")
-        target = self._upload("report.xlsx", b"target-bytes")
-        draft = self.client.post("/drafts")
-        self.assertEqual(draft.status_code, 201)
-        saved = self.client.put(
-            f"/drafts/{draft.json()['id']}",
-            json={
-                "items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}],
-            },
-        )
-        self.assertEqual(saved.status_code, 200)
-        self.assertEqual(saved.json()["status"], "open")
-        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 0)
-        self.assertEqual(self._scalar("SELECT count(*) FROM product.audit_rounds"), 0)
-        missing = self.client.get(f"/rounds/{draft.json()['id']}")
-        self.assertEqual(missing.status_code, 403)
-
-    def test_accept_idempotency_and_worker_writeback(self):
-        self._login("alice")
-        target = self._upload("report.xlsx", b"target-bytes")
-        reference = self._upload("context.pdf", b"reference-bytes")
-        draft = self.client.post("/drafts").json()["id"]
-        self.client.put(
-            f"/drafts/{draft}",
-            json={
-                "items": [
-                    {"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A},
-                    {"file_version_id": reference["id"], "role": "reference"},
-                ],
-            },
-        )
-        first = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "submit-1"})
-        replay = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "submit-1"})
-        self.assertEqual(first.status_code, 201)
-        self.assertEqual(replay.status_code, 201)
-        self.assertEqual(first.json()["id"], replay.json()["id"])
-        self.assertEqual(self._scalar("SELECT count(*) FROM product.audit_rounds"), 1)
-        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 1)
-        conflict = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "submit-2"})
-        self.assertEqual(conflict.status_code, 409)
-        self.assertEqual(conflict.json()["error"], "draft_already_accepted")
-        other = self.client.post("/drafts").json()["id"]
-        self.client.put(
-            f"/drafts/{other}",
-            json={
-                "items": [{"file_version_id": reference["id"], "role": "target", "rule_version_id": RULE_A}],
-            },
-        )
-        mismatched = self.client.post(f"/drafts/{other}/accept", json={"idempotency_key": "submit-1"})
-        self.assertEqual(mismatched.status_code, 409)
-        self.assertEqual(mismatched.json()["error"], "idempotency_conflict")
+        reference = self._upload("context.pdf", text_pdf("reference-bytes"))
+        round_id = self._accept({target["id"]: RULE_A, reference["id"]: None})["id"]
         self._finish_worker()
-        round_id = first.json()["id"]
         body = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(body["execution"], "completed")
         statuses = {row["status"] for row in body["findings"]}
@@ -252,12 +146,7 @@ class AuditFlowTests(unittest.TestCase):
     def test_standard_result_writeback_failure_does_not_fabricate_engine_results_or_new_audits(self):
         self._login("alice")
         target = self._upload("report.xlsx", b"target-bytes")
-        draft = self.client.post("/drafts").json()["id"]
-        saved = self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]})
-        self.assertEqual(saved.status_code, 200, saved.text)
-        accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "standard-writeback-fault"})
-        self.assertEqual(accepted.status_code, 201, accepted.text)
-        frozen = accepted.json()
+        frozen = self._accept({target["id"]: RULE_A})
         usage = self._usage()
         worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
         job = worker.claim_job("standard-writeback")
@@ -320,12 +209,7 @@ class AuditFlowTests(unittest.TestCase):
     def test_cross_tenant_and_creator_only_review(self):
         self._login("alice")
         target = self._upload("report.xlsx", b"secret-bytes")
-        draft = self.client.post("/drafts").json()["id"]
-        self.client.put(
-            f"/drafts/{draft}",
-            json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
-        )
-        round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "k"}).json()["id"]
+        round_id = self._accept({target["id"]: RULE_A})["id"]
         self._finish_worker()
         self._login("carol")
         denied = self.client.get(f"/rounds/{round_id}")
@@ -357,36 +241,10 @@ class AuditFlowTests(unittest.TestCase):
             USER_ALICE,
         )
 
-    def test_drafts_are_changed_by_their_creator_while_rounds_are_tenant_read(self):
-        self._login("alice")
-        target = self._upload("report.xlsx", b"draft-bytes")
-        draft = self.client.post("/drafts").json()["id"]
-        self.client.put(
-            f"/drafts/{draft}",
-            json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
-        )
-        # Another member of the enterprise may read the draft but does not list or change it.
-        self._login("bob")
-        self.assertEqual(self.client.get(f"/drafts/{draft}").status_code, 200)
-        self.assertEqual(self.client.get("/drafts").json()["drafts"], [])
-        self.assertEqual(self.client.put(f"/drafts/{draft}", json={"items": []}).status_code, 403)
-        self._login("carol")
-        self.assertEqual(self.client.get(f"/drafts/{draft}").status_code, 403)
-        self._login("alice")
-        round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "tenant-round"}).json()["id"]
-        self._login("bob")
-        self.assertEqual(self.client.get("/drafts").json()["drafts"], [])
-        self.assertEqual(self.client.get(f"/rounds/{round_id}").status_code, 200)
-
     def test_review_does_not_mutate_finding_and_conflicts(self):
         self._login("alice")
         target = self._upload("report.xlsx", b"target-bytes")
-        draft = self.client.post("/drafts").json()["id"]
-        self.client.put(
-            f"/drafts/{draft}",
-            json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
-        )
-        round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "rev"}).json()["id"]
+        round_id = self._accept({target["id"]: RULE_A})["id"]
         self._finish_worker()
         finding = self.client.get(f"/rounds/{round_id}").json()["findings"][0]
         before_review = self._rounds()[0]
@@ -422,12 +280,7 @@ class AuditFlowTests(unittest.TestCase):
     def test_reaudit_keeps_old_round(self):
         self._login("alice")
         first = self._upload("report.xlsx", b"version-one")
-        draft = self.client.post("/drafts").json()["id"]
-        self.client.put(
-            f"/drafts/{draft}",
-            json={"items": [{"file_version_id": first["id"], "role": "target", "rule_version_id": RULE_A}]},
-        )
-        old_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "old"}).json()["id"]
+        old_id = self._accept({first["id"]: RULE_A})["id"]
         self._finish_worker()
         self.client.put(
             f"/rounds/{old_id}/reviews",
@@ -440,14 +293,7 @@ class AuditFlowTests(unittest.TestCase):
             },
         )
         second = self._upload("report.xlsx", b"version-two", file_id=first["file_id"])
-        successor = self.client.post("/drafts", json={"predecessor_id": old_id}).json()["id"]
-        self.client.put(
-            f"/drafts/{successor}",
-            json={"items": [{"file_version_id": second["id"], "role": "target", "rule_version_id": RULE_A}]},
-        )
-        created = self.client.post(f"/drafts/{successor}/accept", json={"idempotency_key": "new"})
-        self.assertEqual(created.status_code, 201, created.text)
-        new_id = created.json()["id"]
+        new_id = self._accept({second["id"]: RULE_A}, predecessor_id=old_id)["id"]
         self.assertNotEqual(new_id, old_id)
         self._finish_worker()
         old = self.client.get(f"/rounds/{old_id}").json()
@@ -460,36 +306,12 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(old_bytes.content, self.originals[first["id"]])
         self.assertEqual(new_bytes.content, self.originals[second["id"]])
 
-    def test_staging_cannot_be_accepted(self):
-        self._login("alice")
-        created = self.client.post("/files", json={"original_filename": "a.bin", "content_type": "application/octet-stream", "byte_size": 4})
-        file_id, vid = created.json()["file_id"], created.json()["id"]
-        self.client.put(f"/files/{file_id}/versions/{vid}/blob", content=b"wait")
-        draft = self.client.post("/drafts").json()["id"]
-        blocked = self.client.put(
-            f"/drafts/{draft}",
-            json={"items": [{"file_version_id": vid, "role": "target", "rule_version_id": RULE_A}]},
-        )
-        self.assertEqual(blocked.status_code, 409)
-        self.assertEqual(blocked.json()["error"], "file_not_ready")
-
     def test_accept_keeps_every_target_and_reference(self):
         self._login("alice")
         first = self._upload("a.xlsx", b"one")
         second = self._upload("b.xlsx", b"two")
-        reference = self._upload("context.pdf", b"ref")
-        draft = self.client.post("/drafts").json()["id"]
-        self.client.put(
-            f"/drafts/{draft}",
-            json={
-                "items": [
-                    {"file_version_id": first["id"], "role": "target", "rule_version_id": RULE_A},
-                    {"file_version_id": second["id"], "role": "target", "rule_version_id": RULE_A},
-                    {"file_version_id": reference["id"], "role": "reference"},
-                ],
-            },
-        )
-        round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "multi"}).json()["id"]
+        reference = self._upload("context.pdf", text_pdf("ref"))
+        round_id = self._accept({first["id"]: RULE_A, second["id"]: RULE_A, reference["id"]: None})["id"]
         self._finish_worker()
         body = self.client.get(f"/rounds/{round_id}").json()
         keys = {row["item_key"] for row in body["findings"]}
@@ -502,12 +324,7 @@ class AuditFlowTests(unittest.TestCase):
         self._login("alice")
         self.assertEqual(self._rounds(), [])
         target = self._upload("report.xlsx", b"target-bytes")
-        draft = self.client.post("/drafts").json()["id"]
-        self.client.put(
-            f"/drafts/{draft}",
-            json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
-        )
-        round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "history-1"}).json()["id"]
+        round_id = self._accept({target["id"]: RULE_A})["id"]
         listed = self._rounds()
         self.assertEqual([row["id"] for row in listed], [round_id])
         self.assertEqual(listed[0]["inputs"][0]["original_filename"], "report.xlsx")
@@ -524,17 +341,29 @@ class AuditFlowTests(unittest.TestCase):
         bob_list = self._rounds()
         self.assertEqual([row["id"] for row in bob_list], [round_id])
 
-    def test_uploaded_rule_without_binding_cannot_claim_presence_pass(self):
+    def test_preview_authorization_and_search_across_history_pages(self):
         self._login("alice")
-        source = self._upload("new-rule.json", b"{}")
-        uploaded = self.client.post("/rules", json={"title": "新规则", "body": rule_body(), "source_file_version_id": source["id"]})
-        self.assertEqual(uploaded.status_code, 201)
-        draft = self.client.post("/drafts", json={"items": [{"file_version_id": source["id"], "role": "target", "rule_version_id": uploaded.json()["id"]}]}).json()
-        accepted = self.client.post(f"/drafts/{draft['id']}/accept", json={"idempotency_key": "unimplemented-upload"})
-        # Without a generated program the rule is not offered: nothing runs, so nothing can pass.
-        self.assertEqual(accepted.status_code, 400)
-        self.assertEqual(accepted.json()["error"], "checker_not_generated")
-        self.assertEqual(self.core.calls, 0)
+        rounds = []
+        for filename in ("first.docx", "second.docx"):
+            version = self._upload(filename, text_docx("test"))
+            path = f"/files/{version['file_id']}/versions/{version['id']}"
+            self.assertEqual(self.client.get(path + "/preview").json()["text"], "test")
+            rounds.append(self._accept({version["id"]: RULE_A})["id"])
+        alice = self.store.principal_for_fixture("alice")
+        first, second = (self.store.list_rounds(alice, 1, offset) for offset in (0, 1))
+        self.assertEqual({first[0]["id"], second[0]["id"]}, set(rounds))
+        self.assertEqual(self.store.list_rounds(alice, 1, 2), [])
+        self.assertEqual(len(self.store.list_rounds(alice, q="first")), 1)
+        round_path = f"/rounds/{rounds[-1]}" + path + "/preview"
+        self.assertEqual(self.client.get(round_path).status_code, 200)
+        self.assertEqual(self.client.get(round_path + "?start_row=0").status_code, 422)
+        self.assertEqual(self.client.get(round_path + "?start_row=1048577").status_code, 422)
+        # Everyone in the enterprise reads its files and rounds.
+        self._login("bob")
+        self.assertEqual(self.client.get(path + "/preview").status_code, 200)
+        self.assertEqual(self.client.get(round_path).status_code, 200)
+        self.assertEqual(self.client.get(round_path + "?sheet=Sheet1&start_row=30").status_code, 200)
+        self.assertEqual({row["id"] for row in self.store.list_rounds(self.store.principal_for_fixture("bob"))}, set(rounds))
 
     def test_selected_rule_items_are_frozen_in_confirmed_order(self):
         self._login("alice")
@@ -566,22 +395,19 @@ def check(context):
 """,
         )
         target = self._upload("plan.xlsx", b"target-bytes")
-        draft = self.client.post("/drafts").json()["id"]
-        self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": published.json()["id"]}]})
-        accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "rule-items-1"})
-        self.assertEqual(accepted.status_code, 201)
+        accepted = self._accept({target["id"]: published.json()["id"]})
         frozen = self._scalar(
             "SELECT rule_execution FROM product.round_inputs WHERE round_id = %s AND role = 'target'",
-            (accepted.json()["id"],),
+            (accepted["id"],),
         )
         self.assertEqual(frozen["mode"], "checker_core")
-        accepted_rules = accepted.json()["inputs"][0]["rule"]["body"]["rules"]
+        accepted_rules = accepted["inputs"][0]["rule"]["body"]["rules"]
         self.assertEqual([row["id"] for row in accepted_rules], ["keep", "extra"])
         self.assertEqual(frozen["verification"], "unverified")
         self.assertEqual(frozen["binding"]["entrypoints"], {"keep": "checker:check", "extra": "checker:check"})
 
         self._finish_worker()
-        loaded = self.client.get("/rounds/" + accepted.json()["id"]).json()
+        loaded = self.client.get("/rounds/" + accepted["id"]).json()
         self.assertEqual(loaded["findings"][0]["item_key"], target["id"] + ":rule:keep")
         self.assertEqual(loaded["findings"][0]["item"], mapped_text)
         self.assertFalse(loaded["coverage"]["unchecked"])
@@ -601,14 +427,14 @@ def check(context):
         self.assertEqual(after_upload["history"], active["history"])
         self.assertEqual(after_upload["verification_status"], "stale")
         self.assertEqual(after_upload["rule_update"]["target_revision_id"], successor.json()["body"]["suite_revision_id"])
-        self.assertEqual(self.client.get("/rounds/" + accepted.json()["id"]).json(), loaded)
+        self.assertEqual(self.client.get("/rounds/" + accepted["id"]).json(), loaded)
         candidate_id = successor.json()["body"]["suite_revision_id"]
         releases.publish(principal, suite_key, candidate_id, active["revision"], str(uuid.uuid4()), force_unverified=True)
         self.assertEqual(releases.active(principal, suite_key)["current_revision_id"], candidate_id)
-        replay = self.client.get("/rounds/" + accepted.json()["id"]).json()
+        replay = self.client.get("/rounds/" + accepted["id"]).json()
         self.assertEqual(replay, loaded)
         self.assertEqual(
-            self._scalar("SELECT rule_execution FROM product.round_inputs WHERE round_id = %s AND role = 'target'", (accepted.json()["id"],)),
+            self._scalar("SELECT rule_execution FROM product.round_inputs WHERE round_id = %s AND role = 'target'", (accepted["id"],)),
             frozen,
         )
         self.assertEqual(replay["findings"][0]["item"], mapped_text)

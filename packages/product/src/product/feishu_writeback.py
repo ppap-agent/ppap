@@ -12,6 +12,7 @@ from urllib.parse import quote
 from audit.audits import ERR, EXEC_COMPLETED, FINDING_STATUSES, NA, NG, PASS, TARGET, UNABLE
 from audit.models import public_locator
 from audit.rule_coverage import REASON_MANUAL_ONLY, REASON_UNSUPPORTED, unsupported_item_note
+from documents.location import location_label
 
 from product.feishu_drive import OPEN_API
 
@@ -313,30 +314,13 @@ def _finding_title(row: dict, number: int) -> str:
     return str(clause) + " · " + str(row.get("classification") or "条款")
 
 
-def _source_location(locator: dict) -> str:
-    kind = locator["kind"]
-    if kind == "xlsx_cell":
-        return f"{locator['sheet']}!{locator['cell']}"
-    if kind == "xlsx_range":
-        return f"{locator['sheet']}!{locator['start']}:{locator['end']}"
-    if kind == "pdf_page":
-        return f"第 {locator['page']} 页"
-    if kind == "pdf_block":
-        return f"第 {locator['page']} 页 · 文本块 {locator['block']}"
-    if kind == "pdf_cell":
-        return f"第 {locator['page']} 页 · 表格行 {locator['row']} · 列 {locator['column']}"
-    if kind == "docx_paragraph":
-        return f"段落 {locator['paragraph']}"
-    return f"表格 {locator['table']} · 行 {locator['row']} · 列 {locator['column']}"
-
-
 def _published_clause(clauses: object, clause_id: object, text: object) -> bool:
     return bool(text) and isinstance(clauses, list) and any(isinstance(clause, dict) and clause.get("rule_to_check") == text and (not clause_id or clause.get("id") == clause_id) for clause in clauses)
 
 
 def _semantic_source_text(source: dict) -> str:
     role = "待审" if source["role"] == TARGET else "参考"
-    return f"来源：{source['filename']}（{role}）；位置：{_source_location(source['locator'])}；原文摘录：{source['excerpt']}"
+    return f"来源：{source['filename']}（{role}）；位置：{location_label(source['locator'])}；原文摘录：{source['excerpt']}"
 
 
 def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:

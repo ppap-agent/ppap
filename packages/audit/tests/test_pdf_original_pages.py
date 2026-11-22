@@ -16,15 +16,14 @@ from documents.contracts import ConversionArtifact
 from PIL import Image
 
 
-@pytest.fixture(params=[("v2", V2PswPDFAgent, v2_pdf), ("v3", V3PswPDFAgent, v3_pdf)], ids=["v2", "v3"])
-def agent_profile(request):
+@pytest.fixture(params=[(V2PswPDFAgent, v2_pdf), (V3PswPDFAgent, v3_pdf)], ids=["v2", "v3"])
+def agent_variant(request):
     return request.param
 
 
-def stamp_rules(profile):
+def stamp_rules():
     return RuleInput(
         rule_id="confirmed-psw-rules",
-        rule_profile=profile,
         type="零件提交保证书",
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 11)],
     )
@@ -43,8 +42,8 @@ def original_pdf(tmp_path):
 
 
 @pytest.mark.parametrize(("keyword", "expected_colors"), [("Authorization", [(51, 179, 77)]), ("Not in this document", [(255, 255, 255), (51, 179, 77), (51, 77, 204)])])
-def test_keyword_selection_reads_matching_original_pages_or_all_pages(original_pdf, monkeypatch, agent_profile, keyword, expected_colors):
-    profile, agent_class, pdf_module = agent_profile
+def test_keyword_selection_reads_matching_original_pages_or_all_pages(original_pdf, monkeypatch, agent_variant, keyword, expected_colors):
+    agent_class, pdf_module = agent_variant
 
     def convert(file_ref, *, enable_cache=True, doc_type=None):
         assert file_ref.location == str(original_pdf)
@@ -54,7 +53,7 @@ def test_keyword_selection_reads_matching_original_pages_or_all_pages(original_p
     monkeypatch.setattr(pdf_module, "convert_pdf_to_excel_auto", convert)
     monkeypatch.setattr("documents.ai.run_json", lambda self, **kwargs: "No additional OCR text")
     with bind_runtime(None):
-        agent = agent_class(AuditInput(audit_id="selected-pages", file_url=str(original_pdf)), stamp_rules(profile))
+        agent = agent_class(AuditInput(audit_id="selected-pages", file_url=str(original_pdf)), stamp_rules())
 
         images = agent.get_images_for_keywords([keyword])
 
@@ -69,8 +68,8 @@ def test_keyword_selection_reads_matching_original_pages_or_all_pages(original_p
     [([2], [(51, 77, 204)]), ([1], [(51, 179, 77)]), ([], [(255, 255, 255), (51, 179, 77), (51, 77, 204)])],
     ids=["custom-appendix-page", "custom-authorization-page", "empty-selection-falls-back-to-all-pages"],
 )
-def test_custom_page_selector_controls_actual_original_pages(original_pdf, monkeypatch, agent_profile, selection, expected_colors):
-    profile, agent_class, pdf_module = agent_profile
+def test_custom_page_selector_controls_actual_original_pages(original_pdf, monkeypatch, agent_variant, selection, expected_colors):
+    agent_class, pdf_module = agent_variant
     original_bytes = original_pdf.read_bytes()
 
     class SelectedPagesAgent(agent_class):
@@ -84,7 +83,7 @@ def test_custom_page_selector_controls_actual_original_pages(original_pdf, monke
 
     monkeypatch.setattr(pdf_module, "convert_pdf_to_excel_auto", convert)
     with bind_runtime(None):
-        agent = SelectedPagesAgent(AuditInput(audit_id="custom-pages", file_url=str(original_pdf)), stamp_rules(profile))
+        agent = SelectedPagesAgent(AuditInput(audit_id="custom-pages", file_url=str(original_pdf)), stamp_rules())
         try:
             images = agent.get_images_for_keywords(["Authorization"])
         finally:

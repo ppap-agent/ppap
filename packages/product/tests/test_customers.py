@@ -1,4 +1,4 @@
-"""The customer register: exact names only, a versioned type set M, and two independent coverage numerators."""
+"""The customer register: one shown name per key, a versioned type set M, and two independent coverage numerators."""
 
 from dataclasses import replace
 
@@ -11,13 +11,10 @@ def preset_rules():
     return [{**preset_rule_body(preset.customer, preset.entry_id), "id": preset.entry_id} for preset in customer_presets()]
 
 
-def test_only_registered_names_resolve_and_unregistered_values_are_returned_as_recorded():
-    assert [customers.resolve(name).id for name in ("UAES", "联合汽车电子有限公司", " 理想 ", "理想汽车", "蔚来", "蔚来汽车")] == ["uaes", "uaes", "li", "li", "nio", "nio"]
-    for name in ("UAES（联电）", "联合汽车电子", "联合汽车电子（UAES）", "uaes", "理想 汽车", "", None, "li"):
-        assert customers.resolve(name) is None
-    assert customers.full_name("UAES") == "联合汽车电子有限公司"
-    assert customers.short_name("蔚来汽车") == "蔚来"
-    assert customers.full_name("长城汽车") == "长城汽车"
+def test_a_chosen_rule_set_reads_as_its_registered_name_by_its_key_only():
+    assert [customers.customer_name(key) for key in ("UAES", "理想", "蔚来")] == ["联电科技/UAES", "理想/Li Auto", "蔚来/Nio"]
+    # A company name is no key: it never turns into a rule set's name. An enterprise's own rule set is named by itself.
+    assert [customers.customer_name(value) for value in ("联合汽车电子有限公司", "蔚来汽车", "长城汽车")] == ["联合汽车电子有限公司", "蔚来汽车", "长城汽车"]
 
 
 def test_type_sets_and_rule_coverage_from_the_installed_presets():
@@ -63,12 +60,16 @@ def test_rule_numerator_counts_each_type_once_and_only_rules_change_it():
     assert customers.rule_type_codes(li, other) == set()
 
 
-def test_every_type_in_m_has_a_readable_name():
+def test_every_shown_type_has_one_readable_name():
     # A customer-only E code is shown by its dictionary name, never as the bare code; other types by their rule type name.
+    names = customers.type_names()
     for customer in customers.CUSTOMERS:
         for entry in customers.coverage(customer, (), ())["types"]:
-            assert entry["name"] and entry["name"] != entry["code"], (customer.id, entry)
-            assert entry["code"].startswith("E") or entry["name"] == entry["rule_type"], (customer.id, entry)
+            name = names[entry["code"]]
+            assert name and name != entry["code"], (customer.id, entry)
+            assert entry["code"].startswith("E") or name == entry["rule_type"], (customer.id, entry)
+    # Counterpart documents are named too, though in no M.
+    assert names["E12"] == "采购件质量计划（PGQP1）"
 
 
 def test_missing_type_set_yields_no_coverage():

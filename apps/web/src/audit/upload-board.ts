@@ -31,11 +31,12 @@ export function listedTypes(types: FileSlot[], open: boolean): {shown: FileSlot[
 }
 
 /** Why recognition cannot start now, in the order the person would deal with it. Empty when it can start. */
-export function recognitionHold(input: {recognizing: boolean; saving: boolean; preparationPending: boolean; needsCurrent: boolean; transferBlocked: boolean; uploading?: number; checking: number; exceptions: number; selected: number}): string {
+export function recognitionHold(input: {recognizing: boolean; saving: boolean; preparationPending: boolean; needsCurrent: boolean; customer: boolean; transferBlocked: boolean; uploading?: number; checking: number; exceptions: number; selected: number}): string {
   if (input.recognizing) return '正在识别，完成后可修改。'
   if (input.saving) return '正在保存本次文件…'
   if (input.preparationPending) return '上传准备待确认，请先读取准备记录。'
   if (input.needsCurrent) return '任务已有更新，请先读取当前任务。'
+  if (!input.customer) return '请选择审核客户后再开始识别。'
   if (input.transferBlocked) return '请先处理或移除未完成的传输，再开始识别。'
   if (input.uploading) return `正在上传…（还有 ${input.uploading} 份）`
   if (input.checking) return `正在检查文件…（还有 ${input.checking} 份）`

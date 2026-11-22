@@ -18,19 +18,18 @@ from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
 
 
-def check_workbook(tmp_path, workbook, agent_type, profile, rule_number):
+def check_workbook(tmp_path, workbook, agent_type, rule_number):
     path = tmp_path / "date-contract.xlsx"
     workbook.save(path)
     workbook.close()
-    return check_file(path, agent_type, profile, rule_number)
+    return check_file(path, agent_type, rule_number)
 
 
-def check_file(path, agent_type, profile, rule_number):
+def check_file(path, agent_type, rule_number):
     agent = agent_type(
         AuditInput(audit_id="date-contract", file_url=str(path)),
         RuleInput(
             rule_id="confirmed-date-rules",
-            rule_profile=profile,
             type=agent_type.DOC_TYPE.get_type_name(),
             rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, rule_number + 1)],
         ),
@@ -43,9 +42,9 @@ def check_file(path, agent_type, profile, rule_number):
         agent.close()
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2PfmeaAgent), ("v3", V3PfmeaAgent)], ids=["v2", "v3"])
+@pytest.mark.parametrize("agent_type", [V2PfmeaAgent, V3PfmeaAgent], ids=["v2", "v3"])
 @pytest.mark.parametrize(("last_revision", "expected"), [(46011, "PASS"), ("46011.0", "PASS"), (46012, "NG")], ids=["same-date", "serial-text", "different-date"])
-def test_pfmea_dates_match_history_across_chinese_native_and_serial_values(tmp_path, profile, agent_type, last_revision, expected):
+def test_pfmea_dates_match_history_across_chinese_native_and_serial_values(tmp_path, agent_type, last_revision, expected):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "PFMEA"
@@ -56,14 +55,14 @@ def test_pfmea_dates_match_history_across_chinese_native_and_serial_values(tmp_p
     history.append([datetime(2025, 3, 16)])
     history.append([last_revision])
 
-    result = check_workbook(tmp_path, workbook, agent_type, profile, 2)
+    result = check_workbook(tmp_path, workbook, agent_type, 2)
 
     assert result.status == expected
     if expected == "NG":
         assert "修订日期" in result.suggestions
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2DvpRAgent), ("v3", V3DvpRAgent)], ids=["v2", "v3"])
+@pytest.mark.parametrize("agent_type", [V2DvpRAgent, V3DvpRAgent], ids=["v2", "v3"])
 @pytest.mark.parametrize(
     ("start", "end", "expected"),
     [
@@ -75,21 +74,21 @@ def test_pfmea_dates_match_history_across_chinese_native_and_serial_values(tmp_p
     ],
     ids=["chinese-date", "excel-serial", "serial-text", "native-date", "end-before-start"],
 )
-def test_dvpr_plan_dates_accept_supported_formats_and_keep_chronology(tmp_path, profile, agent_type, start, end, expected):
+def test_dvpr_plan_dates_accept_supported_formats_and_keep_chronology(tmp_path, agent_type, start, end, expected):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "DVP&R"
     sheet.append(["序号", "试验项目", "试验要求", "试验类型", "计划开始", "计划结束"])
     sheet.append([1, "试验A", "要求A", "PV", start, end])
 
-    result = check_workbook(tmp_path, workbook, agent_type, profile, 4)
+    result = check_workbook(tmp_path, workbook, agent_type, 4)
 
     assert result.status == expected
     if expected == "NG":
         assert "计划结束日期" in result.suggestions
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2XirAgent), ("v3", V3XirAgent)], ids=["v2", "v3"])
+@pytest.mark.parametrize("agent_type", [V2XirAgent, V3XirAgent], ids=["v2", "v3"])
 @pytest.mark.parametrize(
     ("deadline", "expected"),
     [
@@ -103,14 +102,14 @@ def test_dvpr_plan_dates_accept_supported_formats_and_keep_chronology(tmp_path, 
     ],
     ids=["future-date", "future-datetime", "future-slash-text", "past-date", "past-datetime", "invalid", "missing"],
 )
-def test_issue_deadlines_accept_supported_future_dates_and_reject_invalid_or_past_values(tmp_path, profile, agent_type, deadline, expected):
+def test_issue_deadlines_accept_supported_future_dates_and_reject_invalid_or_past_values(tmp_path, agent_type, deadline, expected):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "项目问题清单汇总"
     sheet.append(["问题描述", "对应措施", "时间节点", "负责人"])
     sheet.append(["问题A", "调整工装", deadline, "负责人A"])
 
-    result = check_workbook(tmp_path, workbook, agent_type, profile, 3)
+    result = check_workbook(tmp_path, workbook, agent_type, 3)
 
     assert result.status == expected
     if expected == "NG":
@@ -170,7 +169,7 @@ class FixedPswClock(datetime):
         return cls(2026, 1, 1, tzinfo=tz)
 
 
-@pytest.mark.parametrize(("profile", "module"), [("v2", psw_v2), ("v3", psw_v3)], ids=["v2", "v3"])
+@pytest.mark.parametrize("module", [psw_v2, psw_v3], ids=["v2", "v3"])
 @pytest.mark.parametrize(
     ("approval_date", "expected", "reason"),
     [
@@ -183,11 +182,11 @@ class FixedPswClock(datetime):
     ],
     ids=["excel-serial", "serial-text", "decimal-serial-text", "native-date", "old-chinese-date", "invalid-calendar-date"],
 )
-def test_psw_conditional_approval_dates_keep_recency_after_normalization(tmp_path, monkeypatch, profile, module, approval_date, expected, reason):
+def test_psw_conditional_approval_dates_keep_recency_after_normalization(tmp_path, monkeypatch, module, approval_date, expected, reason):
     monkeypatch.setattr(module, "datetime", FixedPswClock)
     path = conditional_psw(tmp_path, approval_date)
 
-    result = check_file(path, module.PswExcelAgent, profile, 9)
+    result = check_file(path, module.PswExcelAgent, 9)
 
     assert result.status == expected
     if reason:

@@ -18,12 +18,12 @@ def test_new_enterprise_receives_all_preset_rules_without_upload(auth_store_fact
     rules = client.get("/rules").json()["rules"]
     presets = [rule for rule in rules if rule["rule_profile"] == "v4"]
     assert presets
-    assert {row["short_name"] for row in client.get("/audit-customers").json()["customers"]} == {customer.short_name for customer in customers.CUSTOMERS}
+    assert {row["key"] for row in client.get("/audit-customers").json()["customers"]} == {customer.key for customer in customers.CUSTOMERS}
     installed = [row for row in store.list_rules(principal.tenant_id) if row["rule_profile"] == "v4"]
     first_ids = {row["id"] for row in installed}
     # Every preset is installed and kept; new tasks are offered only 蔚来's types in its M, not its N06–N17.
     nio = customers.find("nio")
-    outside = {row["id"] for row in installed if row["customers"] == [nio.short_name] and customers.type_code(row["type"], nio.short_name) not in nio.type_set.types}
+    outside = {row["id"] for row in installed if row["customers"] == [nio.key] and customers.type_code(row["type"], nio.key) not in nio.type_set.types}
     withheld = {row["id"] for row in installed} - {preset["id"] for preset in presets}
     assert outside and withheld == outside
     store.upsert_feishu_identity(tenant, "first")

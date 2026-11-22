@@ -28,9 +28,8 @@ BODY = {
 CUSTOMER = {
     "customer_id": "test-customer",
     "name": "测试客户",
-    "full_name": "测试客户有限公司",
-    "short_name": "测试客户",
-    "coverage": {"version": "1", "effective_from": "2026-01-01", "types": [{"code": "P10", "rule_type": "控制计划", "name": "控制计划"}], "template_types": [], "rule_types": ["P10"]},
+    "key": "测试客户",
+    "coverage": {"version": "1", "effective_from": "2026-01-01", "types": [{"code": "P10", "rule_type": "控制计划"}], "template_types": [], "rule_types": ["P10"]},
 }
 
 
@@ -226,7 +225,7 @@ class RuleInteractionTests(unittest.TestCase):
         customers = []
         for customer in register.CUSTOMERS:
             coverage = register.coverage(customer, [], register.rule_type_codes(customer, latest))
-            customers.append({"customer_id": customer.id, "name": customer.short_name, "full_name": customer.full_name, "short_name": customer.short_name, "coverage": coverage})
+            customers.append({"customer_id": customer.id, "name": customer.name, "key": customer.key, "coverage": coverage})
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
@@ -234,23 +233,23 @@ class RuleInteractionTests(unittest.TestCase):
             page.goto(WEB + "/requirements")
             directory = page.get_by_role("complementary", name="客户", exact=True)
             for customer in register.CUSTOMERS:
-                expect(directory.get_by_role("link").filter(has_text=customer.short_name)).to_be_visible()
+                expect(directory.get_by_role("link").filter(has_text=customer.name)).to_be_visible()
             uaes = register.find("uaes")
-            directory.get_by_role("link").filter(has_text=uaes.short_name).click()
-            expect(page.get_by_role("heading", name=uaes.short_name, exact=True)).to_be_visible()
+            directory.get_by_role("link").filter(has_text=uaes.name).click()
+            expect(page.get_by_role("heading", name=uaes.name, exact=True)).to_be_visible()
             # A search that names a rule narrows the chosen customer's types to it.
             page.get_by_role("searchbox", name="搜索客户", exact=True).fill("生产件样品照片")
-            table = page.get_by_role("table", name=f"{uaes.short_name} 的规则列表", exact=True)
+            table = page.get_by_role("table", name=f"{uaes.name} 的规则列表", exact=True)
             expect(table.get_by_role("row")).to_have_count(2)
             table.get_by_role("link").filter(has_text="生产件样品照片").click()
             expect(page.get_by_role("heading", name="生产件样品照片审核规则", exact=True, level=1)).to_be_visible()
             expect(page.get_by_role("region", name="规则条款", exact=True).get_by_role("article").first).to_be_visible()
-            page.get_by_role("navigation", name="位置", exact=True).get_by_role("link", name=uaes.short_name, exact=True).click()
-            expect(page.get_by_role("heading", name=uaes.short_name, exact=True)).to_be_visible()
+            page.get_by_role("navigation", name="位置", exact=True).get_by_role("link", name=uaes.name, exact=True).click()
+            expect(page.get_by_role("heading", name=uaes.name, exact=True)).to_be_visible()
             nio = register.find("nio")
             page.get_by_role("searchbox", name="搜索客户", exact=True).fill("")
-            directory.get_by_role("link").filter(has_text=nio.short_name).click()
-            expect(page.get_by_role("heading", name=nio.short_name, exact=True)).to_be_visible()
+            directory.get_by_role("link").filter(has_text=nio.name).click()
+            expect(page.get_by_role("heading", name=nio.name, exact=True)).to_be_visible()
             expect(page.get_by_role("main")).not_to_contain_text("生产件样品照片")
             self.assertEqual(state["writes"], [])
             browser.close()
@@ -296,7 +295,7 @@ class RuleInteractionTests(unittest.TestCase):
             versions, reads, creates, writes = {}, [], [], []
             self.upload_preparation_routes(page)
             page.on("request", lambda request: writes.append((request.method, urlsplit(request.url).path)) if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
-            page.route("**/api/audit-customers", lambda route: route.fulfill(json={"customers": []}))
+            page.route("**/api/audit-customers", lambda route: route.fulfill(json={"customers": [], "unregistered": [], "type_names": {}}))
             page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
 
             def upload(route):
@@ -416,7 +415,10 @@ class RuleInteractionTests(unittest.TestCase):
         self.route(page)
         state = {"writes": []}
         page.on("request", lambda request: state["writes"].append((request.method, urlsplit(request.url).path.removeprefix("/api"))) if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
-        page.route("**/api/audit-customers", lambda route: route.fulfill(json={"customers": customers, "unregistered": []}))
+        from product.customers import type_names
+
+        catalog = {"customers": customers, "unregistered": [], "type_names": {**type_names(), "P10": "控制计划"}}
+        page.route("**/api/audit-customers", lambda route: route.fulfill(json=catalog))
         page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
         page.route("**/api/rules", lambda route: route.fulfill(json={"rules": [listed(rule) for rule in rules.values()]}))
 

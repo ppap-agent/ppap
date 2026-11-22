@@ -9,7 +9,7 @@ from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
 
 
-def check_workbook(tmp_path, workbook, agent_type, profile, rule_number, metadata=None):
+def check_workbook(tmp_path, workbook, agent_type, rule_number, metadata=None):
     path = tmp_path / "numeric-contract.xlsx"
     workbook.save(path)
     workbook.close()
@@ -17,7 +17,6 @@ def check_workbook(tmp_path, workbook, agent_type, profile, rule_number, metadat
         AuditInput(audit_id="numeric-contract", file_url=str(path), file_metadata=metadata or {}),
         RuleInput(
             rule_id="confirmed-numeric-rules",
-            rule_profile=profile,
             type=agent_type.DOC_TYPE.get_type_name(),
             rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, rule_number + 1)],
         ),
@@ -30,9 +29,9 @@ def check_workbook(tmp_path, workbook, agent_type, profile, rule_number, metadat
         agent.close()
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2CapacityAgent), ("v3", V3CapacityAgent)], ids=["v2", "v3"])
+@pytest.mark.parametrize("agent_type", [V2CapacityAgent, V3CapacityAgent], ids=["v2", "v3"])
 @pytest.mark.parametrize(("reported_capacity", "expected"), [(93506, "PASS"), (93507, "PASS"), (93508, "NG")], ids=["floor", "ceiling", "above-ceiling"])
-def test_monthly_capacity_accepts_floor_or_ceiling_and_reports_the_source_row(tmp_path, profile, agent_type, reported_capacity, expected):
+def test_monthly_capacity_accepts_floor_or_ceiling_and_reports_the_source_row(tmp_path, agent_type, reported_capacity, expected):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "产能测试及评估"
@@ -43,7 +42,7 @@ def test_monthly_capacity_accepts_floor_or_ceiling_and_reports_the_source_row(tm
     for column, value in enumerate(["工序A", 2, 250, 2, 3, 2.4, 26, 0.999, reported_capacity], start=1):
         sheet.cell(9, column, value)
 
-    result = check_workbook(tmp_path, workbook, agent_type, profile, 6)
+    result = check_workbook(tmp_path, workbook, agent_type, 6)
 
     assert result.status == expected
     if expected == "PASS":
@@ -74,17 +73,17 @@ def test_pdf_display_precision_does_not_hide_inconsistent_capacity_inputs(tmp_pa
         ]
     )
     sheet.append(["SMT", "1", jph, "1", "1", "9.5", "26", "90.6%", monthly, "450", "3.8"])
-    result = check_workbook(tmp_path, workbook, V2CapacityAgent, "v2", 6, {"source_pdf_url": "original.pdf"})
+    result = check_workbook(tmp_path, workbook, V2CapacityAgent, 6, {"source_pdf_url": "original.pdf"})
     assert result.status == expected
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2SupplierAgent), ("v3", V3SupplierAgent)], ids=["v2", "v3"])
+@pytest.mark.parametrize("agent_type", [V2SupplierAgent, V3SupplierAgent], ids=["v2", "v3"])
 @pytest.mark.parametrize(
     ("weight", "number_format", "expected"),
     [(3.1897, "General", "PASS"), (3.189, "General", "NG"), (3.1, "0.0000", "PASS")],
     ids=["four-decimal-value", "three-decimal-value", "four-decimal-format"],
 )
-def test_supplier_weight_accepts_four_decimal_values_or_explicit_four_decimal_format(tmp_path, profile, agent_type, weight, number_format, expected):
+def test_supplier_weight_accepts_four_decimal_values_or_explicit_four_decimal_format(tmp_path, agent_type, weight, number_format, expected):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "材料产品及分供方清单"
@@ -92,7 +91,7 @@ def test_supplier_weight_accepts_four_decimal_values_or_explicit_four_decimal_fo
     sheet.append(["PART-001", weight])
     sheet["B2"].number_format = number_format
 
-    result = check_workbook(tmp_path, workbook, agent_type, profile, 1)
+    result = check_workbook(tmp_path, workbook, agent_type, 1)
 
     assert result.status == expected
     if expected == "PASS":

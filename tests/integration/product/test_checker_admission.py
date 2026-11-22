@@ -4,11 +4,13 @@ import hashlib
 import json
 import uuid
 from copy import deepcopy
+from io import BytesIO
 
 import pytest
 from audit.checker_core import checker_digest
 from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from audit.standard_suites import library_revision
+from openpyxl import Workbook
 from product.settings import Settings
 from product.store.model_credentials import platform_selection
 from product.store.suite_releases import SuiteReleaseStore
@@ -21,7 +23,8 @@ RULES = {
     "rule_profile": "v3",
     "suite_key": KEY,
     "type": "控制计划",
-    "customers": ["测试客户"],
+    # A task's rule group is a registered customer the rule applies to.
+    "customers": ["理想"],
     "models": [],
     "parts": [],
     "rules": [{"id": "R1", "category": "工序", "rule_to_check": "工序编号必须一致", "type_of_rule": "table", "priority": "P0"}],
@@ -30,9 +33,19 @@ RULES = {
 FILES = {"rules.json": json.dumps(RULES, ensure_ascii=False).encode(), "checker.py": b"def check(context): return []\n", "appendix.json": b"[]"}
 
 
+def workbook(text):
+    book = Workbook()
+    book.active["A1"] = text
+    stream = BytesIO()
+    book.save(stream)
+    book.close()
+    return stream.getvalue()
+
+
 class Admission:
-    def __init__(self, store):
+    def __init__(self, store, audit_round):
         self.store = store
+        self.audit_round = audit_round
         self.alice = store.upsert_feishu_identity("checker-admission", "alice", "Alice")
         self.bob = store.upsert_feishu_identity("checker-admission", "bob", "Bob")
         self.suites = SuiteStore(store.settings, store.objects, role="migrator")
@@ -41,12 +54,9 @@ class Admission:
         self.rule_id = str(uuid.uuid4())
         with store._conn() as conn:
             conn.execute("INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES(%s,%s,'Control plan',%s)", (self.rule_id, self.alice.tenant_id, Jsonb(RULES)))
-        self.target = self.upload("cp.xlsx", b"frozen target")
-        self.reference = self.upload("pfmea.xlsx", b"frozen reference")
-        self.items = [
-            {"file_version_id": self.target.id, "role": "target", "rule_version_id": self.rule_id},
-            {"file_version_id": self.reference.id, "role": "reference", "rule_version_id": None},
-        ]
+        self.target = self.upload("cp.xlsx", workbook("frozen target"))
+        self.reference = self.upload("特殊特性清单.xlsx", workbook("frozen reference"))
+        self.files = {self.target.id: self.rule_id, self.reference.id: None}
 
     def upload(self, filename, body):
         version = self.store.create_staging(self.alice, filename, "application/octet-stream", len(body))
@@ -78,12 +88,19 @@ class Admission:
         platform.publish_official(revision.id, expected_revision=0, expected_validation_revision=result["write_revision"])
         return result
 
-    def draft(self):
-        return self.store.create_draft(self.alice, items=self.items)["id"]
-
     def accept(self):
-        draft_id = self.draft()
-        return self.store.accept_draft(self.alice, draft_id, "accept:" + draft_id)
+        return self.audit_round(self.store, self.alice, self.files)
+
+    def confirm(self, task_id, request_id=None):
+        """Confirm the task again: a new confirmation, or a replay of `request_id`."""
+        task = self.store.get_audit_task(self.alice, task_id)
+        if request_id is None:
+            return self.store.confirm_audit_task(self.alice, task_id, str(uuid.uuid4()), 0, expected_confirmation_basis_digest=task["confirmation_basis_digest"], require_confirmation_basis=True)
+        return self.store.confirm_audit_task(self.alice, task_id, request_id, 0)
+
+    def recognized(self):
+        """A task recognized and waiting for its confirmation."""
+        return self.audit_round(self.store, self.alice, self.files, confirm=False)["id"]
 
     def snapshot(self, round_id):
         return self.suites.read_snapshot(round_id, self.alice.tenant_id)
@@ -95,15 +112,15 @@ class Admission:
                 for table in (
                     "product.audit_rounds",
                     "product.checker_execution_snapshots",
-                    "engine.jobs",
+                    "engine.jobs WHERE kind = 'audit'",
                     "product.usage_events",
                 )
             )
 
 
 @pytest.fixture
-def admission(auth_store_factory):
-    return Admission(auth_store_factory(Settings(feishu_app_id="checker-admission-tests", usage_charge_enabled=False, git_sha="a" * 40)))
+def admission(auth_store_factory, audit_round):
+    return Admission(auth_store_factory(Settings(feishu_app_id="checker-admission-tests", usage_charge_enabled=False, git_sha="a" * 40)), audit_round)
 
 
 def test_publication_and_rollback_only_change_new_round_snapshots(admission):
@@ -135,8 +152,9 @@ def test_publication_and_rollback_only_change_new_round_snapshots(admission):
     }
     assert a.releases.detail(a.alice, candidate.id)["rounds"][0]["id"] == second["id"]
     # Replaying a prior confirmation does not select today's adopted Suite.
-    replay = a.store.accept_draft(a.alice, first["source_draft_id"], "accept:" + first["source_draft_id"])
-    assert replay["id"] == first["id"]
+    with a.store._conn() as conn:
+        request_id = str(conn.execute("SELECT idempotency_key FROM product.audit_rounds WHERE id=%s", (first["id"],)).fetchone()[0])
+    assert a.confirm(first["source_draft_id"], request_id)["round_id"] == first["id"]
     assert a.counts()[:3] == (3, 3, 3)
     with a.store._conn() as conn:
         payload = conn.execute("SELECT payload FROM engine.jobs WHERE audit_round_id=%s", (first["id"],)).fetchone()[0]
@@ -146,16 +164,20 @@ def test_publication_and_rollback_only_change_new_round_snapshots(admission):
 
 def test_missing_official_proof_is_atomic_and_only_explicit_force_can_run(admission):
     a = admission
-    draft = a.draft()
+    draft = a.recognized()
     before = a.counts()
-    with pytest.raises(KeyError, match="suite_access_denied"):
-        a.store.accept_draft(a.alice, draft, "missing-proof")
+    # Without an adopted program the matched rule cannot run: the task offers nothing to confirm.
+    task = a.store.get_audit_task(a.alice, draft)
+    assert task["confirmation_basis_digest"] is None
+    assert {gap for row in task["files"] for gap in row["match"]["gaps"]} == {"checker_suite_unavailable"}
+    with pytest.raises(ValueError, match="invalid_task_confirmation"):
+        a.confirm(draft)
     assert a.counts() == before
     assert a.store.get_draft(draft)["status"] == "open"
     with pytest.raises(ValueError, match="suite_confirmation_required"):
         a.releases.publish(a.bob, KEY, a.official.id, 0, str(uuid.uuid4()))
     a.releases.publish(a.bob, KEY, a.official.id, 0, str(uuid.uuid4()), force_unverified=True)
-    accepted = a.store.accept_draft(a.alice, draft, "missing-proof")
+    accepted = a.store.get_round(a.confirm(draft)["round_id"])
     assert a.snapshot(accepted["id"]).targets[0].verification == "unverified"
     with a.store._conn() as conn:
         execution = conn.execute("SELECT rule_execution FROM product.round_inputs WHERE round_id=%s AND role='target'", (accepted["id"],)).fetchone()[0]
@@ -166,7 +188,7 @@ def test_missing_official_proof_is_atomic_and_only_explicit_force_can_run(admiss
 def test_admission_integrity_failures_never_queue_a_round(admission, fault):
     a = admission
     a.verify()
-    draft = a.draft()
+    draft = a.recognized()
     if fault == "object_bytes":
         digest = a.official.overrides["checker.py"]
         a.store.objects.data[f"suites/official/objects/{digest}"] = b"changed outside the immutable artifact"
@@ -175,7 +197,7 @@ def test_admission_integrity_failures_never_queue_a_round(admission, fault):
             conn.execute("UPDATE product.file_versions SET status='failed' WHERE id=%s", (a.reference.id,))
     before = a.counts()
     with pytest.raises((KeyError, ValueError)):
-        a.store.accept_draft(a.alice, draft, "invalid-input")
+        a.confirm(draft)
     assert a.counts() == before
     assert a.store.get_draft(draft)["status"] == "open"
 
@@ -248,7 +270,7 @@ def test_waiting_audit_cannot_use_old_transaction_time_to_revive_lease(admission
         assert future.result(timeout=3) is False
 
 
-def test_first_standard_adoption_uses_tenant_heads_and_freezes_related_checks(auth_store_factory):
+def test_first_standard_adoption_uses_tenant_heads_and_freezes_related_checks(auth_store_factory, audit_round):
     from api import create_app
     from audit.standard_suites import predefined_directory_suites
     from fastapi.testclient import TestClient
@@ -289,15 +311,15 @@ def test_first_standard_adoption_uses_tenant_heads_and_freezes_related_checks(au
                 "INSERT INTO product.rule_versions(id,tenant_id,title,body) VALUES(%s,%s,'UAES 控制计划',%s)",
                 (rule_id, principal.tenant_id, Jsonb({**json.loads(baselines["UAES:U08"].files["rules.json"]), "suite_key": "UAES:U08"})),
             )
-        raw = b"frozen original for admission"
+        raw = workbook("frozen original for admission")
         staged = store.create_staging(principal, "control-plan.xlsx", "application/octet-stream", len(raw))
         original = store.finalize_version(store.put_blob(staged, raw))
-        draft = client.post("/drafts", json={"items": [{"file_version_id": original.id, "role": "target", "rule_version_id": rule_id}]}).json()
-        accepted = client.post(f"/drafts/{draft['id']}/accept", json={"idempotency_key": "first-standard-adoption"})
-        assert accepted.status_code == 201, accepted.text
-        frozen = suites.read_snapshot(accepted.json()["id"], principal.tenant_id)
+        accepted = audit_round(api, principal, {original.id: rule_id}, customer="UAES")
+        frozen = suites.read_snapshot(accepted["id"], principal.tenant_id)
         assert frozen.targets[0].suite_revision_id == revisions["UAES:U08"].id
         assert frozen.targets[0].verification == "unverified"
         assert frozen.targets[0].related_suite_digests == {key: revisions[key].resolved_digest for key in ("UAES:U07", "UAES:U16")}
-        assert client.post(f"/drafts/{draft['id']}/accept", json={"idempotency_key": "first-standard-adoption"}).json()["id"] == accepted.json()["id"]
-        assert suites.read_snapshot(accepted.json()["id"], principal.tenant_id).to_dict() == frozen.to_dict()
+        with store._conn() as conn:
+            request_id = str(conn.execute("SELECT idempotency_key FROM product.audit_rounds WHERE id=%s", (accepted["id"],)).fetchone()[0])
+        assert api.confirm_audit_task(principal, accepted["source_draft_id"], request_id, 0)["round_id"] == accepted["id"]
+        assert suites.read_snapshot(accepted["id"], principal.tenant_id).to_dict() == frozen.to_dict()

@@ -15,12 +15,17 @@ from .conftest import pick_audit_files  # noqa: E402
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 # Recognition progress on the confirm-rules page.
 RECOGNIZING = re.compile(r"^识别中 \d+/\d+$")
-# The picker names the automatic choice with its description, as the person reads it.
+# Every task names a registered customer; the register the picker lists.
+CUSTOMERS = [
+    {"customer_id": "uaes", "name": "UAES", "key": "UAES", "coverage": None},
+    {"customer_id": "li", "name": "理想", "key": "理想", "coverage": None},
+    {"customer_id": "nio", "name": "蔚来", "key": "蔚来", "coverage": None},
+]
 
 
 class PreparationHTTP:
     def __init__(self, lose_prepare_reply=False, lose_task_reply=False):
-        self.customer_default = {"customer_preference": None, "revision": 0}
+        self.customer_default = {"customer_preference": "UAES", "revision": 0}
         self.default_writes = []
         self.lose_default_reply = False
         self.lose_prepare_reply = lose_prepare_reply
@@ -71,7 +76,7 @@ class PreparationHTTP:
                     return
             route.fulfill(json=self.customer_default)
         elif path == "/audit-customers":
-            route.fulfill(json={"customers": []})
+            route.fulfill(json={"customers": CUSTOMERS, "unregistered": [], "type_names": {}})
         elif path == "/drafts" and method == "POST":
             self.preparation_creates.append(copy.deepcopy(body))
             self.draft = {
@@ -507,15 +512,15 @@ def test_customer_mode_keeps_task_selection_separate_from_confirmed_default():
         expect(page.get_by_text("企业默认：蔚来", exact=True)).to_have_count(0)
         assert len(server.default_writes) == 2
         choice.click()
-        page.get_by_role("option", name="自动识别", exact=True).click()
+        page.get_by_role("option", name="理想", exact=True).click()
         expect(page.get_by_text("企业默认：蔚来", exact=True)).to_be_visible()
         page.get_by_role("button", name="重新读取企业默认", exact=True).click()
-        expect(choice).to_contain_text("自动识别")
+        expect(choice).to_contain_text("理想")
         assert len(server.default_writes) == 2
         browser.close()
 
 
-def test_pending_default_cannot_silently_create_an_auto_customer_upload():
+def test_pending_default_cannot_silently_create_an_upload_without_its_customer():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page()
@@ -537,7 +542,7 @@ def test_pending_default_cannot_silently_create_an_auto_customer_upload():
         browser.close()
 
 
-def test_explicit_auto_selection_can_continue_while_default_read_is_pending():
+def test_an_explicit_customer_choice_can_continue_while_default_read_is_pending():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page()
@@ -547,14 +552,15 @@ def test_explicit_auto_selection_can_continue_while_default_read_is_pending():
         page.route("**/api/audit-customers/default", lambda route: pending.append(route))
         page.goto(WEB + "/tasks/new")
         choice = page.get_by_role("combobox", name="审核客户", exact=True)
-        expect(choice).to_contain_text("请选择本次审核客户")
+        expect(choice).to_contain_text("请选择审核客户")
+        expect(page.get_by_role("option", name="自动识别", exact=True)).to_have_count(0)
         choice.click()
-        page.get_by_role("option", name="自动识别", exact=True).click()
+        page.get_by_role("option", name="理想", exact=True).click()
         expect(page.get_by_role("button", name="选择本地文件", exact=True)).to_be_enabled()
-        expect(choice).to_contain_text("自动识别")
+        expect(choice).to_contain_text("理想")
         pending.pop().fulfill(json={"customer_preference": "UAES", "revision": 3})
         expect(page.get_by_text("企业默认：UAES", exact=True)).to_be_visible()
-        expect(choice).to_contain_text("自动识别")
+        expect(choice).to_contain_text("理想")
         assert server.default_writes == []
         browser.close()
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from audit.checker_lib.nio.excel_agent import rule
+from audit.checker_lib.excel_agent import rule
 from audit.engine.rule_engine import Decision, RuleContext, Sheet, Table
 
 from .excel import UaesExcelAgent, compact, unable

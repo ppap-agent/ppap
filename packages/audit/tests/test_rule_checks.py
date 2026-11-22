@@ -22,7 +22,6 @@ def saved_workbook(tmp_path: Path) -> str:
 def rule_input(*items: tuple[str, str]) -> RuleInput:
     return RuleInput(
         rule_id="confirmed-clauses",
-        rule_profile="v3",
         type=PpapDocumentType.PROCESS_FLOW_CHART.get_type_name(),
         rules=[{"id": clause_id, "category": category, "rule_to_check": category} for clause_id, category in items],
     )
@@ -195,7 +194,7 @@ def test_rerun_shares_the_workbook_but_not_the_previous_assertions(tmp_path: Pat
         assert agent.starts == [[]]
         assert "已收集的不合格" not in probed.suggestions
         cached = agent._workbook_cache
-        import audit.checker_lib.nio.excel_agent as excel_agent_module
+        import audit.checker_lib.excel_agent as excel_agent_module
 
         original_loader = excel_agent_module.load_excel_workbook
 

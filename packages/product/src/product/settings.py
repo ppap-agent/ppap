@@ -44,9 +44,6 @@ class Settings(BaseSettings):
     model_text_model: str = Field(default="", alias="PPAP_MODEL_TEXT_MODEL")
 
     # Coding (the Deep agent) uses the text model unless its own base URL and model are set.
-    model_coding_api_key: str = Field(default="", alias="PPAP_MODEL_CODING_API_KEY")
-    model_coding_base_url: str = Field(default="", alias="PPAP_MODEL_CODING_BASE_URL")
-    model_coding_model: str = Field(default="", alias="PPAP_MODEL_CODING_MODEL")
     model_coding_reasoning_effort: Literal["xhigh", "high", "medium", "low"] = Field(default="medium", alias="PPAP_MODEL_CODING_REASONING_EFFORT")
 
     feishu_app_id: str = Field(default="", alias="FEISHU_APP_ID")
@@ -173,26 +170,6 @@ class Settings(BaseSettings):
         if not self.web_url.strip():
             raise ValueError("production must set PPAP_WEB_URL explicitly")
         return self
-
-    def deep_model_policy(self) -> tuple[str, str]:
-        """Resolve non-secret model identity without requiring provider credentials."""
-        values = (self.model_coding_base_url.strip(), self.model_coding_model.strip())
-        if any(values):
-            if not all(values):
-                raise ValueError("Deep model override requires base URL and model")
-            return values
-        return self.model_text_base_url.strip(), self.model_text_model.strip()
-
-    def deep_model_config(self) -> tuple[str, str, str]:
-        """Only the Controller resolves and validates the matching credential."""
-        base_url, model = self.deep_model_policy()
-        overridden = bool(self.model_coding_base_url.strip() or self.model_coding_model.strip())
-        if self.model_coding_api_key.strip() and not overridden:
-            raise ValueError("Deep credential requires an explicit Deep base URL and model")
-        key = self.model_coding_api_key if overridden else self.model_text_api_key
-        if not key.strip():
-            raise ValueError("Deep model credential is unavailable")
-        return base_url, model, key
 
     def deep_execution_policy(self, model_identity: dict[str, str] | None = None) -> DeepExecutionPolicy:
         # Acceptance freezes the tenant's model selection (its key or the platform's).

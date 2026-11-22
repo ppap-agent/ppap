@@ -7,9 +7,9 @@ from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
 
 
-@pytest.fixture(params=[("v2", V2Agent), ("v3", V3Agent)], ids=["v2", "v3"])
+@pytest.fixture(params=[V2Agent, V3Agent], ids=["v2", "v3"])
 def check(request, tmp_path):
-    profile, agent_type = request.param
+    agent_type = request.param
 
     def check_workbook(workbook, rule_index=0):
         path = tmp_path / "checking-fixture.xlsx"
@@ -19,7 +19,6 @@ def check(request, tmp_path):
             AuditInput(audit_id="fixture-report", file_url=str(path)),
             RuleInput(
                 rule_id="confirmed-fixture-rules",
-                rule_profile=profile,
                 type=agent_type.DOC_TYPE.get_type_name(),
                 rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 4)],
             ),

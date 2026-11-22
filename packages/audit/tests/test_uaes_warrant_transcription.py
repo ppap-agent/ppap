@@ -57,7 +57,7 @@ def scanned(tmp_path, monkeypatch):
             return facts
 
         monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", request)
-        rule = RuleInput(rule_id="u17", **preset_rule_body("UAES", "U17"))
+        rule = RuleInput.of(preset_rule_body("UAES", "U17"), rule_id="u17")
         return UaesWarrantAgent(AuditInput(audit_id="psw", file_url=str(path)), rule)
 
     return build, calls
@@ -125,7 +125,7 @@ def workbook(monkeypatch):
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", request)
 
     def build(path):
-        rule = RuleInput(rule_id="u17", **preset_rule_body("UAES", "U17"))
+        rule = RuleInput.of(preset_rule_body("UAES", "U17"), rule_id="u17")
         return UaesWarrantAgent(AuditInput(audit_id="psw", file_url=str(path)), rule)
 
     return build, asked, answers

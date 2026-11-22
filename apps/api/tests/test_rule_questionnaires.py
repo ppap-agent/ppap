@@ -95,7 +95,7 @@ def test_members_answer_each_their_own_answers_keep_history_and_other_enterprise
 
     # Members read the cards as loaded, in order, with the relayed answer and its source.
     listed = zhang.get("/rule-questionnaires").json()["questionnaires"]
-    assert [(row["id"], row["customer_name"], row["rulebook"], row["total"], row["answered"]) for row in listed] == [(qid, "UAES", {"version": "v1.0", "revision": 0}, len(CARDS), 0)]
+    assert [(row["id"], row["customer_name"], row["rulebook"], row["total"], row["answered"]) for row in listed] == [(qid, "联电科技/UAES", {"version": "v1.0", "revision": 0}, len(CARDS), 0)]
     view = zhang.get(f"/rule-questionnaires/{qid}").json()
     assert [card["key"] for card in view["questions"]] == [card["key"] for card in CARDS]
     assert view["questions"][1]["relayed"]["source"] == "经产品负责人转达" and view["questions"][1]["relayed"]["date"] == "2026-11-20"

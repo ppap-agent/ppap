@@ -22,7 +22,7 @@ def stage_agent(tmp_path, suffix="xls"):
     workbook.active.title = "控制计划"
     workbook.active.merge_cells("A1:F1")
     workbook.active["A1"] = "样件 试生产 批量生产"
-    agent = ControlPlanAgent(AuditInput(audit_id="frozen", file_url=str(path)), RuleInput(rule_id="confirmed", rule_profile="v3", type="控制计划", rules=[]))
+    agent = ControlPlanAgent(AuditInput(audit_id="frozen", file_url=str(path)), RuleInput(rule_id="confirmed", type="控制计划", rules=[]))
     serialized = BytesIO()
     workbook.save(serialized)
     path.write_bytes(serialized.getvalue())

@@ -2,7 +2,6 @@ import {useEffect, useState} from 'react'
 import {createRoot} from 'react-dom/client'
 import '../index.css'
 import {personalDriveUpload, request} from '../api'
-import {sourceLocation} from '../helpers'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 import {ProductAccess} from '../journey/access'
@@ -18,7 +17,7 @@ import {AuditRules} from './rules'
 import {canonicalAddress, readAuditRoute} from './routes'
 import {Toaster} from '../components/toast'
 
-const renderOriginal: OriginalRenderer = (file, evidence, roundId) => <div className="flex h-[65dvh] min-h-96 min-w-0"><RemoteSourcePane file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={evidence?.locator ? {location: sourceLocation({locator: evidence.locator}), requestId: 0} : undefined}/></div>
+const renderOriginal: OriginalRenderer = (file, evidence, roundId) => <div className="flex h-[65dvh] min-h-96 min-w-0"><RemoteSourcePane file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={evidence?.locator && evidence.label ? {locator: evidence.locator, label: evidence.label} : undefined}/></div>
 
 function NativeAudit() {
   const [adapter, setAdapter] = useState<AuditIntakeAdapter>(() => ({...createNativeAuditAdapter({personalDriveUpload, customers: []}), readRound}))
@@ -30,9 +29,9 @@ function NativeAudit() {
     let active = true
     void readAuditCustomers().then(result => {
       if (!active) return
-      if (!Array.isArray(result.customers) || result.customers.some(row => !row.customer_id || !row.name) || new Set(result.customers.map(row => row.customer_id)).size !== result.customers.length) throw new Error('客户规则目录暂时无法读取，请重新读取。')
-      const customers = result.customers.map(row => row.name)
-      setAdapter(current => ({...current, customers: customers.map(name => ({value: name, label: name}))})); setError('')
+      if (!Array.isArray(result.customers) || result.customers.some(row => !row.customer_id || !row.name || !row.key) || new Set(result.customers.map(row => row.customer_id)).size !== result.customers.length) throw new Error('客户规则目录暂时无法读取，请重新读取。')
+      // A choice shows the customer's name and submits its key.
+      setAdapter(current => ({...current, customers: result.customers.map(row => ({value: row.key, label: row.name}))})); setError('')
     }).catch(cause => {if (active) setError(cause instanceof Error ? cause.message : '无法读取审核规则。')})
     return () => {active = false}
   }, [revision])

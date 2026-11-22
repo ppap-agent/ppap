@@ -17,8 +17,7 @@ import {FileIcon, FileName} from '../journey/file-name'
 import {Tooltip, TooltipContent, TooltipTrigger} from '../components/ui/tooltip'
 import {clauseLabel, pendingCount, pendingNote, reportReady, resultConsistencyError, taskProgressError, taskResultCounts} from './result-projection'
 import {AuditReports} from './reports'
-import {AuditReviewContent, useMinWidth, useRegisteredCustomers, type OriginalRenderer} from './review-content'
-import {customerFullName} from './customer-register'
+import {AuditReviewContent, useMinWidth, type OriginalRenderer} from './review-content'
 import type {AuditReportAdapter} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {AuditTaskEstimate} from './task-estimate'
@@ -168,9 +167,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   }
   // Each queue button is named by its file; state, progress and report status describe it.
   const queueId = useId()
-  const customers = useRegisteredCustomers()
-  // P5 shows the registered full name throughout (PRD §1.4 ①③).
-  const subject = subjectLabel(taskSubject(task), value => customerFullName(customers, value))
+  const subject = subjectLabel(taskSubject(task))
   const fileGroups = [{title: '审核文件', rows: targets}, {title: '比对资料', rows: references}].filter(group => group.rows.length)
   const rowView = (row: typeof queue[number]) => {
     const invalid = resultConsistencyError(task, row)

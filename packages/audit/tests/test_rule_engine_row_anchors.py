@@ -12,7 +12,7 @@ from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
 
 
-def _status(tmp_path: Path, agent_cls, workbook: Workbook, rule_number: int, *, profile: str) -> str:
+def _status(tmp_path: Path, agent_cls, workbook: Workbook, rule_number: int) -> str:
     path = tmp_path / "input.xlsx"
     workbook.save(path)
     workbook.close()
@@ -20,7 +20,6 @@ def _status(tmp_path: Path, agent_cls, workbook: Workbook, rule_number: int, *, 
         AuditInput(audit_id="rule-engine", file_url=str(path)),
         RuleInput(
             rule_id="rule-engine",
-            rule_profile=profile,
             type=agent_cls.DOC_TYPE.get_type_name(),
             rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 9)],
         ),
@@ -56,7 +55,7 @@ def _control_plan(special_row_3: str, frequency_row_3: str | None) -> Workbook:
     ],
 )
 def test_li_control_plan_checks_every_row_of_a_merged_process_block(tmp_path, rule_number, special, frequency, expected):
-    assert _status(tmp_path, LiControlPlan, _control_plan(special, frequency), rule_number, profile="v2") == expected
+    assert _status(tmp_path, LiControlPlan, _control_plan(special, frequency), rule_number) == expected
 
 
 def _equipment_list(row_7: dict[str, object]) -> Workbook:
@@ -75,7 +74,7 @@ def _equipment_list(row_7: dict[str, object]) -> Workbook:
     return workbook
 
 
-@pytest.mark.parametrize("agent_cls,profile", [(LiEquipment, "v2"), (NioEquipment, "v3")])
+@pytest.mark.parametrize("agent_cls", [LiEquipment, NioEquipment], ids=["v2", "v3"])
 @pytest.mark.parametrize(
     ("rule_number", "row_7", "expected"),
     [
@@ -85,15 +84,15 @@ def _equipment_list(row_7: dict[str, object]) -> Workbook:
         (2, {"设备": None, "验收结果": None}, "NG"),
     ],
 )
-def test_equipment_rows_are_found_by_the_line_process_trigger(tmp_path, agent_cls, profile, rule_number, row_7, expected):
-    assert _status(tmp_path, agent_cls, _equipment_list(row_7), rule_number, profile=profile) == expected
+def test_equipment_rows_are_found_by_the_line_process_trigger(tmp_path, agent_cls, rule_number, row_7, expected):
+    assert _status(tmp_path, agent_cls, _equipment_list(row_7), rule_number) == expected
 
 
 def test_equipment_rows_under_a_merged_line_process_are_each_checked(tmp_path):
     workbook = _equipment_list({"产线/工序": None, "供应商": None})
     workbook.active.merge_cells("B6:B7")
 
-    assert _status(tmp_path, LiEquipment, workbook, 1, profile="v2") == "NG"
+    assert _status(tmp_path, LiEquipment, workbook, 1) == "NG"
 
 
 def _annual_tests(row_11: dict[str, object]) -> Workbook:
@@ -109,7 +108,7 @@ def _annual_tests(row_11: dict[str, object]) -> Workbook:
     return workbook
 
 
-@pytest.mark.parametrize("agent_cls,profile", [(LiAnnual, "v2"), (NioAnnual, "v3")])
+@pytest.mark.parametrize("agent_cls", [LiAnnual, NioAnnual], ids=["v2", "v3"])
 @pytest.mark.parametrize(
     ("rule_number", "row_11", "expected"),
     [
@@ -119,5 +118,5 @@ def _annual_tests(row_11: dict[str, object]) -> Workbook:
         (5, {"试验项目": None}, "NG"),
     ],
 )
-def test_annual_test_rows_are_not_cut_off_at_a_blank_required_cell(tmp_path, agent_cls, profile, rule_number, row_11, expected):
-    assert _status(tmp_path, agent_cls, _annual_tests(row_11), rule_number, profile=profile) == expected
+def test_annual_test_rows_are_not_cut_off_at_a_blank_required_cell(tmp_path, agent_cls, rule_number, row_11, expected):
+    assert _status(tmp_path, agent_cls, _annual_tests(row_11), rule_number) == expected

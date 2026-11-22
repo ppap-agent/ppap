@@ -11,7 +11,7 @@ SAMPLES = Path(__file__).resolve().parents[3] / "assets" / "uaes" / "samples"
 
 def _check(agent_class, preset: str, path: Path, method: str):
     body = preset_rule_body("UAES", preset)
-    agent = agent_class(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id=preset.lower(), **{key: value for key, value in body.items() if key != "kind"}))
+    agent = agent_class(AuditInput(audit_id="version", file_url=str(path)), RuleInput.of(body, rule_id=preset.lower()))
     names = [name for name, _ in agent.declared_rules()]
     return agent.check(names.index(method))
 
@@ -41,15 +41,15 @@ def test_a_signature_picture_in_the_supplier_area_signs_each_report_with_require
 
 
 def test_a_kappa_part_number_written_under_its_label_is_read():
-    from audit.checker_lib.nio.cross_file_extractors import _load_workbook_auto
+    from audit.checker_lib.excel import load_workbook_auto
     from audit.checker_lib.uaes.msa import UaesMsaAgent
     from audit.engine.rule_engine import RuleContext
 
     path = SAMPLES / "F01R10Y776_机加壳体" / "测试文件" / "06 测量系统分析评价" / "776-Kappa.xls"
     body = preset_rule_body("UAES", "U05")
-    agent = UaesMsaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput(rule_id="u05", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesMsaAgent(AuditInput(audit_id="version", file_url=str(path)), RuleInput.of(body, rule_id="u05"))
     assert agent._rule_resource is not None
-    ctx = RuleContext(None, _load_workbook_auto(str(path)), agent._rule_resource)
+    ctx = RuleContext(None, load_workbook_auto(str(path)), agent._rule_resource)
     (kappa,) = agent.reports_in(ctx)
     assert kappa.parts == {"F01RD0Y776"} and not kappa.names
 

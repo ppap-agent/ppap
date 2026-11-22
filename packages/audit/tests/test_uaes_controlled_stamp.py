@@ -43,7 +43,7 @@ def test_the_image_model_fact_decides_a_pdf_stamp(tmp_path, monkeypatch, fact, s
 
     monkeypatch.setattr(UaesSourceAgent, "visual_pdf", visual_pdf)
     body = preset_rule_body("UAES", "U16")
-    agent = UaesProcessFlowAgent(AuditInput(audit_id="flow", file_url=str(path)), RuleInput(rule_id="u16", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesProcessFlowAgent(AuditInput(audit_id="flow", file_url=str(path)), RuleInput.of(body, rule_id="u16"))
     names = [name for name, _ in agent.declared_rules()]
     result = agent.check(names.index("rule_3"))
     assert result.status == expected
@@ -60,7 +60,7 @@ def test_an_unreadable_stamp_is_left_to_a_person_where_the_clause_does_not_fail_
 
     monkeypatch.setattr(UaesSourceAgent, "visual_pdf", lambda self, fields, **options: note_unreadable(fields) or {"controlled_stamp": None})
     body = preset_rule_body("UAES", "U10")
-    agent = UaesControlledDocumentAgent(AuditInput(audit_id="spec", file_url=str(path)), RuleInput(rule_id="u10", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesControlledDocumentAgent(AuditInput(audit_id="spec", file_url=str(path)), RuleInput.of(body, rule_id="u10"))
     result = agent.check(0)
     assert result.status == "UNABLE"
     assert "原件上的受控章无法辨识，需人工复核" in result.suggestions
@@ -79,7 +79,7 @@ def test_a_failed_model_request_is_not_an_unreadable_stamp(tmp_path, monkeypatch
 
     monkeypatch.setattr(UaesSourceAgent, "visual_pdf", visual_pdf)
     body = preset_rule_body("UAES", "U16")
-    agent = UaesProcessFlowAgent(AuditInput(audit_id="flow", file_url=str(path)), RuleInput(rule_id="u16", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesProcessFlowAgent(AuditInput(audit_id="flow", file_url=str(path)), RuleInput.of(body, rule_id="u16"))
     with pytest.raises(GuardStop) as stop:
         agent.stamp()
     assert stop.value.status == "ERR"
@@ -102,7 +102,7 @@ def test_an_image_fact_fails_only_when_the_original_itself_cannot_be_made_out(tm
 
     monkeypatch.setattr(UaesSourceAgent, "visual_pdf", visual_pdf)
     body = preset_rule_body("UAES", "U16")
-    agent = UaesProcessFlowAgent(AuditInput(audit_id="flow", file_url=str(path)), RuleInput(rule_id="u16", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesProcessFlowAgent(AuditInput(audit_id="flow", file_url=str(path)), RuleInput.of(body, rule_id="u16"))
     names = [name for name, _ in agent.declared_rules()]
     result = agent.check(names.index("rule_1"))
     assert result.status == expected, result.suggestions

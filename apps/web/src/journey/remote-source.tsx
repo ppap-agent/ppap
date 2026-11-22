@@ -11,8 +11,6 @@ import type {SourceFocus} from './source-documents'
 
 const imageTypes: Record<string, string> = {png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp'}
 const WorkbookSource = lazy(() => import('./workbook-source').then(module => ({default: module.WorkbookSource})))
-const PdfSource = lazy(() => import('./pdf-source').then(module => ({default: module.PdfSource})))
-export type SourceCitation = {locator: {kind: 'xlsx_cell'; sheet: string; cell: string} | {kind: 'pdf_page'; page: number; region?: number[]}; excerpt: string}
 const WordSource = lazy(() => import('./word-source').then(module => ({default: module.WordSource})))
 export type RemoteOriginalSource = {
   url: (file: Material, roundId?: string) => string
@@ -23,7 +21,7 @@ const productOriginal: RemoteOriginalSource = {
   office: (file, roundId, signal) => request<OfficePreviewResponse>('/files/' + file.file_id + '/versions/' + file.file_version_id + '/office' + (roundId ? '?round_id=' + roundId : ''), 'GET', undefined, signal),
 }
 
-function BrowserOriginal({file, roundId, source, focus, onCite}: {file: Material; roundId?: string; source: RemoteOriginalSource; focus?: SourceFocus; onCite?: (citation: SourceCitation) => void}) {
+function BrowserOriginal({file, roundId, source, focus}: {file: Material; roundId?: string; source: RemoteOriginalSource; focus?: SourceFocus}) {
   const [url, setUrl] = useState(''), [text, setText] = useState(''), [error, setError] = useState('')
   const [original, setOriginal] = useState<Blob | null>(null)
   const [truncated, setTruncated] = useState(false)
@@ -50,14 +48,13 @@ function BrowserOriginal({file, roundId, source, focus, onCite}: {file: Material
   }, [file.file_id, file.file_version_id, roundId, mime, textFile, source])
   if (error) return <p role="alert" className="p-4 text-sm">{error}</p>
   if (!url) return <ReadSkeleton label="正在查看原件…" kind="document" className="p-3"/>
-  if (original && ['xlsx', 'xlsm', 'xls', 'docx'].includes(extension)) return <Suspense fallback={<ReadSkeleton label="正在准备原件阅读器…" kind="document"/>}><div className="absolute inset-0 flex min-w-0 flex-col overflow-auto [&>div]:min-h-0">{extension === 'docx' ? <WordSource blob={original} name={file.original_filename}/> : <WorkbookSource blob={original} name={file.original_filename} focus={focus} onCite={onCite ? (_location, excerpt, cell) => onCite({locator: {kind: 'xlsx_cell', ...cell}, excerpt}) : undefined}/>}</div></Suspense>
-  if (extension === 'pdf' && onCite) return <Suspense fallback={<ReadSkeleton label="正在准备原件阅读器…" kind="document"/>}><div className="absolute inset-0"><PdfSource url={url} name={file.original_filename} onCite={(page, region) => onCite({locator: {kind: 'pdf_page', page, ...(region ? {region} : {})}, excerpt: ''})}/></div></Suspense>
+  if (original && ['xlsx', 'xlsm', 'xls', 'docx'].includes(extension)) return <Suspense fallback={<ReadSkeleton label="正在准备原件阅读器…" kind="document"/>}><div className="absolute inset-0 flex min-w-0 flex-col overflow-auto [&>div]:min-h-0">{extension === 'docx' ? <WordSource blob={original} name={file.original_filename}/> : <WorkbookSource blob={original} name={file.original_filename} focus={focus}/>}</div></Suspense>
   if (extension === 'pdf') return <iframe className="absolute inset-0 size-full border-0" src={url} title={file.original_filename + ' 原件'}/>
   if (imageTypes[extension]) return <div className="absolute inset-0 overflow-auto p-3"><img className="mx-auto max-w-full" src={url} alt={file.original_filename}/></div>
   return <div className="absolute inset-0 overflow-auto p-4"><pre className="whitespace-pre-wrap break-words text-sm">{text || '（空文件）'}</pre>{truncated && <p className="mt-3 text-sm text-muted-foreground">仅显示前 1 MB，请下载完整原件。</p>}</div>
 }
 
-export function RemoteSourcePane({file, roundId, focus, source = productOriginal, nativeOffice = false, onCite}: {file: Material; roundId?: string; focus?: SourceFocus; source?: RemoteOriginalSource; nativeOffice?: boolean; onCite?: (citation: SourceCitation) => void}) {
+export function RemoteSourcePane({file, roundId, focus, source = productOriginal, nativeOffice = false}: {file: Material; roundId?: string; focus?: SourceFocus; source?: RemoteOriginalSource; nativeOffice?: boolean}) {
   const [office, setOffice] = useState<OfficePreviewResponse | null>(null), [officeFailed, setOfficeFailed] = useState(false), [attempt, setAttempt] = useState(0)
   const [fullscreen, setFullscreen] = useState(false), [canFullscreen, setCanFullscreen] = useState(false), [notice, setNotice] = useState('')
   const host = useRef<HTMLElement>(null)
@@ -94,10 +91,10 @@ export function RemoteSourcePane({file, roundId, focus, source = productOriginal
         <Button variant="outline" size="sm" asChild><a href={source.url(file, roundId)} download={file.original_filename}><Icon icon={iconDownload}/>下载原件</a></Button>
       </div>
     </div>
-    {focus?.location && focus.location !== '位置待确认' && <p className="shrink-0 break-words text-sm text-muted-foreground">核对位置：{focus.location}</p>}
+    {focus && <p className="shrink-0 break-words text-sm text-muted-foreground">核对位置：{focus.label}</p>}
     {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
     <div className="relative min-h-80 min-w-0 flex-1">
-      {browserOriginal ? <BrowserOriginal key={`${roundId}:${file.file_id}:${file.file_version_id}:${attempt}`} file={file} roundId={roundId} source={source} focus={focus} onCite={onCite}/>
+      {browserOriginal ? <BrowserOriginal key={`${roundId}:${file.file_id}:${file.file_version_id}:${attempt}`} file={file} roundId={roundId} source={source} focus={focus}/>
         : officeFailed || office && (!office.available || !office.script_url || !office.config) ? <div className="grid min-h-80 content-center justify-items-start gap-3 p-4 text-sm"><p role="alert">原件预览暂不可用</p><p className="text-muted-foreground">{office?.notice || '请重新读取，或下载原件核对。'}</p><Button variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}><Icon icon={iconArrowsRotate}/>重新读取</Button></div>
           : office?.script_url && office.config ? <OfficePreview key={attempt} scriptUrl={office.script_url} config={office.config} onFailed={() => setOfficeFailed(true)}/>
             : <ReadSkeleton label="正在连接原件预览…" kind="document" className="p-3"/>}

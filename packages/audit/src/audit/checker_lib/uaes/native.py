@@ -18,7 +18,7 @@ from typing import Any, cast
 from documents.model_access import ModelUnavailable
 from openpyxl.utils.cell import coordinate_to_tuple
 
-from audit.checker_lib.li.base_agent import BaseAgent
+from audit.checker_lib.base_agent import BaseAgent
 from audit.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
 from audit.document_tools import ReadLimits, TableReader, ref, snapshot
 from audit.engine.checkers.rule_declarations import discover_declared_rules

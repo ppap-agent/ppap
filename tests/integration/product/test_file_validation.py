@@ -64,7 +64,6 @@ def test_file_validation_is_recoverable_without_creating_an_audit(validation_sys
     assert recovered.json()["result"] == {"state": "valid", "reasons": []}
     assert recovered.json()["status"] == "succeeded"
     assert client.get(path + "/validation").json() == {"validation": recovered.json()}
-    assert client.get("/drafts").json()["drafts"] == []
     api = build_product_store(worker.settings, objects=worker.objects, role="api")
     alice = api.principal_for_fixture("alice")
     assert api.list_rounds(alice) == []

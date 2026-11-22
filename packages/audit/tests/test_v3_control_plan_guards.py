@@ -38,7 +38,6 @@ def check_rule(tmp_path: Path, workbook: Workbook, rule_number: int, *, source_p
         AuditInput(audit_id="control-plan", file_url=str(path), file_metadata={"source_pdf_url": source_pdf_url} if source_pdf_url else {}),
         RuleInput(
             rule_id="confirmed-rules",
-            rule_profile="v3",
             type="控制计划",
             rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 12)],
         ),
@@ -137,7 +136,7 @@ def test_unreadable_plan_is_still_a_system_error(tmp_path):
     path.write_bytes(b"not an Excel archive")
     agent = ControlPlanAgent(
         AuditInput(audit_id="broken-plan", file_url=str(path)),
-        RuleInput(rule_id="confirmed-rules", rule_profile="v3", type="控制计划", rules=[{"id": "1", "category": "local_excel_check", "rule_to_check": "文件类型勾选审核"}]),
+        RuleInput(rule_id="confirmed-rules", type="控制计划", rules=[{"id": "1", "category": "local_excel_check", "rule_to_check": "文件类型勾选审核"}]),
     )
     try:
         result = agent.check(0)

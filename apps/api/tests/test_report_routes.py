@@ -24,7 +24,7 @@ class ReportRouteTests(unittest.TestCase):
             ("create_report_document", "doc123"),
             ("append_report_blocks", None),
         ]:  # noqa: E501
-            patcher = patch("api.report_routes." + name, return_value=value)
+            patcher = patch(("api.access." if name == "can_read" else "api.report_routes.") + name, return_value=value)
             setattr(self, name, patcher.start())
             self.addCleanup(patcher.stop)
 

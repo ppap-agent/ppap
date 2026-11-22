@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
 from product.customers import in_type_set
 from product.files import ObjectMissing, attachment_content_disposition, original_filename, safe_content_type
-from product.identity import can_modify, can_read
 from product.store import AuthStore
 
 from api import web_contract as wc
+from api.access import object_denied
 
 
 def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_for) -> None:
@@ -24,10 +24,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         principal, denied = require_principal(request)
         if denied:
             return None, denied
-        resource = store.resource(resource_id)
-        if resource is None or not (can_modify if modify else can_read)(principal, resource):
-            return principal, JSONResponse({"error": "access_denied"}, status_code=403)
-        return principal, None
+        return principal, object_denied(store, principal, resource_id, modify=modify)
 
     def fail(exc: Exception) -> JSONResponse:
         if isinstance(exc, KeyError):
@@ -366,34 +363,15 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
-    @app.post("/drafts", response_model=wc.Draft, status_code=201, openapi_extra=wc.openapi_body(wc.DraftCreateRequest, required=False))
-    def drafts_create(request: Request, body: dict | None = None) -> JSONResponse:
+    @app.post("/drafts", response_model=wc.Draft, status_code=201, openapi_extra=wc.openapi_body(wc.DraftCreateRequest))
+    def drafts_create(body: dict, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
         try:
-            value = body or {}
-            return JSONResponse(
-                store.create_draft(
-                    principal,
-                    value.get("predecessor_id"),
-                    request_id=value.get("request_id"),
-                    items=value.get("items"),
-                    case_context=value.get("case_context"),
-                    upload_preparation=value.get("upload_preparation"),
-                ),
-                status_code=201,
-            )
+            return JSONResponse(store.create_draft(principal, body.get("request_id"), body.get("upload_preparation")), status_code=201)
         except (KeyError, ValueError) as exc:
             return fail(exc)
-
-    @app.get("/drafts", response_model=wc.DraftList)
-    def drafts_list(request: Request, limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0), q: str = Query("", max_length=200)) -> JSONResponse:
-        principal, denied = require_principal(request)
-        if denied:
-            return denied
-        rows = store.list_drafts(principal, limit + 1, offset, q)
-        return JSONResponse({"drafts": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
     @app.post("/file-validations", response_model=wc.FileValidationJob, status_code=202, openapi_extra=wc.openapi_body(wc.FileValidationRequest))
     def files_validate(body: dict, request: Request) -> JSONResponse:
@@ -435,7 +413,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
             draft = store.get_draft(draft_id, principal)
         except (KeyError, ValueError) as exc:
             return fail(exc)
-        if draft is None or cast(Any, store.resource(draft_id)).tenant_id != principal.tenant_id:
+        resource = store.resource(draft_id)
+        if draft is None or resource is None or resource.tenant_id != principal.tenant_id:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         return JSONResponse(draft)
 
@@ -444,42 +423,11 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         principal, denied = require_object(request, draft_id, modify=True)
         if denied:
             return denied
-        items = body.get("items") if "items" in body else None
-        writeback_target = body.get("writeback_target") if "writeback_target" in body else None
-        if "rule_version_id" in body:
-            return JSONResponse({"error": "per_target_rules_required"}, status_code=400)
         try:
-            draft = store.save_draft(
-                principal,
-                draft_id,
-                items,
-                writeback_target,
-                body.get("case_context"),
-                upload_preparation=body.get("upload_preparation"),
-                expected_revision=body.get("expected_revision"),
-            )
+            draft = store.save_draft(principal, draft_id, body.get("upload_preparation"), body.get("expected_revision"), body.get("writeback_target"))
         except (KeyError, ValueError) as exc:
             return fail(exc)
         return JSONResponse(draft)
-
-    @app.post("/drafts/{draft_id}/accept", response_model=wc.Round, status_code=201, openapi_extra=wc.openapi_body(wc.DraftAcceptRequest))
-    def drafts_accept(draft_id: str, body: dict, request: Request) -> JSONResponse:
-        principal, denied = require_object(request, draft_id, modify=True)
-        if denied:
-            return denied
-        try:
-            model_consent = {}
-            if "expected_model_revision" in body:
-                expected = body["expected_model_revision"]
-                if expected is not None and (not isinstance(expected, str) or not 1 <= len(expected) <= 64):
-                    raise ValueError("model_configuration_changed")
-                model_consent["expected_model_revision"] = expected
-            round_body = store.accept_draft(
-                principal, draft_id, cast(str, body.get("idempotency_key")), body.get("predecessor_id"), usage_policy=lambda actor: quota_for(request, actor), **model_consent
-            )
-        except (KeyError, ValueError) as exc:
-            return fail(exc)
-        return JSONResponse(round_body, status_code=201)
 
     usage_settlements = {"", "charged", "pending", "processing", "unknown", "trial"}
 

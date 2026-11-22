@@ -8,7 +8,7 @@ from io import BytesIO
 
 import pymupdf
 
-from documents.audit_pdf import _location
+from documents.location import location_label
 from documents.report_layout import text
 
 TITLE = "PPAP 原件事实人工确认报告"
@@ -44,8 +44,7 @@ def render_fact_confirmation_pdf(source: dict) -> bytes:
         result = results[finding["item_key"]]
         parts.append(f"<p><b>人工确认：{text(result['status'])}</b> · {text(result['suggestions'])}</p>")
         for answer in result["sources"]:
-            position = answer["locator"]
-            location = f"第 {position['page']} 页" if position.get("kind") == "pdf_page" else _location(position)
+            location = location_label(answer["locator"])
             question = prompts.get((answer["file_version_id"], answer["field"])) or "—"
             parts.append(f"<p>依据：{text(originals.get(answer['file_version_id']) or '—')} · {text(location)} · {text(question)} · 回答：{text(_value(answer['value']))}</p>")
             parts.append(f"<p>回答人：{text(answerers.get(answer['answered_by']) or '—')}；时间：{text(answer['answered_at'])}</p>")

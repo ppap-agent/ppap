@@ -19,7 +19,7 @@ def _check(tmp_path, rows, rule):
         book.active.append(row)
     book.save(path)
     body = preset_rule_body("UAES", "U07")
-    agent = UaesPfmeaAgent(AuditInput(audit_id="pfmea", file_url=str(path)), RuleInput(rule_id="u07", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesPfmeaAgent(AuditInput(audit_id="pfmea", file_url=str(path)), RuleInput.of(body, rule_id="u07"))
     return agent.check([name for name, _ in agent.declared_rules()].index(rule))
 
 

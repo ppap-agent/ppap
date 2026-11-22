@@ -3,7 +3,7 @@
 import { Banner, Button, Input, Radio, RadioGroup, Space, Tag, TextArea, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useId, useRef, useState } from 'react';
 import { OriginalView } from './Evidence';
-import { bucket, bucketColor, bucketLabel, judgmentLabel, locationLabel, observation, programNotice, resultLabel, reviewOf, when } from './model';
+import { bucket, bucketColor, bucketLabel, judgmentLabel, observation, programNotice, resultLabel, reviewOf, when } from './model';
 import type { Check, Citation, FactQuestion, FactView, Task, TaskFile } from './model';
 import { call, newId, PpapError, say } from './ppap';
 
@@ -56,7 +56,7 @@ export function Issue({ task, row, check, position, stale, facts, onBack, onChan
           <RadioGroup type="card" direction="vertical" aria-label="原件依据" value={shown} onChange={event => setShown(Number(event.target.value))}>
             {sources.map((item, index) => (
               <Radio key={index} value={index} extra={item.excerpt || undefined}>
-                {fileOf(item.file_version_id)!.original_filename} · {locationLabel(item.locator) || item.location_gap || '位置未记录'}
+                {fileOf(item.file_version_id)!.original_filename} · {item.label || item.location_gap || '位置未记录'}
               </Radio>
             ))}
           </RadioGroup>
@@ -122,7 +122,7 @@ function FactForm({ roundId, revision, question, onChanged }: { roundId: string;
     <section className="fact" aria-labelledby={`${id}-prompt`}>
       <Text strong className="label" id={`${id}-prompt`}>需要确认的原件事实</Text>
       <Text>{question.prompt}</Text>
-      {question.locator && <Text type="tertiary" size="small">原件位置：{locationLabel(question.locator)}</Text>}
+      <Text type="tertiary" size="small">原件位置：{question.label}</Text>
       {notice && <Banner type="warning" fullMode={false} closeIcon={null} description={notice} />}
       {question.answer_type === 'boolean' ? (
         <RadioGroup aria-labelledby={`${id}-prompt`} value={typeof value === 'boolean' ? String(value) : undefined} disabled={busy} onChange={event => setValue(event.target.value === 'true')}>
@@ -164,8 +164,8 @@ function ReviewForm({ roundId, check, fileName, ownFile, editable, onChanged }: 
 
   // A manual verdict must cite the original; the evidence already on screen is that citation.
   const cited: Citation[] = check.evidence
-    .filter(item => item.locator && item.excerpt.trim() && fileName(item.file_version_id))
-    .map(item => ({ file_version_id: item.file_version_id, location: locationLabel(item.locator), excerpt: item.excerpt.trim().slice(0, 4000) }))
+    .filter(item => item.label && item.excerpt.trim() && fileName(item.file_version_id))
+    .map(item => ({ file_version_id: item.file_version_id, location: item.label!, excerpt: item.excerpt.trim().slice(0, 4000) }))
     .slice(0, 20);
   const manual = judgment.startsWith('manual-');
   // Without a located result, the reviewer cites the original themself: where, and what it says.

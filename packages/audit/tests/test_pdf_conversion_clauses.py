@@ -14,9 +14,9 @@ from documents.ocr.observation import current_ocr_observation
 from openpyxl import Workbook
 
 
-@pytest.mark.parametrize("profile", ["v2", "v3"])
+@pytest.mark.parametrize("leaf", ["li/L04", "nio/N08"])
 @pytest.mark.parametrize(("weight", "expected"), [(3.1897, "PASS"), (3.189, "NG")], ids=["valid-weight", "invalid-weight"])
-def test_pdf_conversion_uses_actual_values_and_releases_temporary_files_before_return(tmp_path, monkeypatch, run_checks, profile, weight, expected):
+def test_pdf_conversion_uses_actual_values_and_releases_temporary_files_before_return(tmp_path, monkeypatch, run_checks, leaf, weight, expected):
     source = tmp_path / "suppliers.pdf"
     with fitz.open() as document:
         document.new_page().insert_text((72, 72), "Supplier list")
@@ -41,14 +41,13 @@ def test_pdf_conversion_uses_actual_values_and_releases_temporary_files_before_r
     monkeypatch.setattr("audit.checker_lib.nio.pdf_agent.convert_pdf_to_excel_auto", convert)
     rules = RuleInput(
         rule_id="confirmed-supplier-rules",
-        rule_profile=profile,
         type="材料、产品及分供方清单",
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 5)],
     )
     gc_was_enabled = gc.isenabled()
     gc.disable()
     try:
-        results = run_checks(AuditInput(audit_id="suppliers", file_url=str(source)), rules)
+        results = run_checks(AuditInput(audit_id="suppliers", file_url=str(source)), rules, leaf=leaf)
 
         assert len(results) == 4
         assert results[0].status == expected
@@ -63,9 +62,9 @@ def test_pdf_conversion_uses_actual_values_and_releases_temporary_files_before_r
         gc.collect()
 
 
-@pytest.mark.parametrize("profile", ["v2", "v3"])
+@pytest.mark.parametrize("leaf", ["li/L17", "nio/N17"])
 @pytest.mark.parametrize("stamp_detected", [True, False])
-def test_psw_facts_are_read_directly_through_ocr_configuration(tmp_path, monkeypatch, run_checks, profile, stamp_detected):
+def test_psw_facts_are_read_directly_through_ocr_configuration(tmp_path, monkeypatch, run_checks, leaf, stamp_detected):
     from audit.engine.checkers import psw_scope
 
     source = tmp_path / "original.pdf"
@@ -134,11 +133,10 @@ def test_psw_facts_are_read_directly_through_ocr_configuration(tmp_path, monkeyp
     monkeypatch.setattr("documents.ai.run_json", lambda *a, **k: pytest.fail("PSW images must not enter text LLM"))
     rules = RuleInput(
         rule_id="confirmed-psw-rules",
-        rule_profile=profile,
         type="零件提交保证书",
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 11)],
     )
-    results = run_checks(AuditInput(audit_id="original-psw", file_url=str(source)), rules)
+    results = run_checks(AuditInput(audit_id="original-psw", file_url=str(source)), rules, leaf=leaf)
     assert len(results) == 10
     assert results[2].status == results[4].status == results[7].status == "UNABLE"
     assert results[4].evidence.used == ("visual" if stamp_detected else "none")
@@ -153,9 +151,9 @@ def test_psw_facts_are_read_directly_through_ocr_configuration(tmp_path, monkeyp
     assert source.read_bytes() == original_bytes
 
 
-@pytest.mark.parametrize("profile", ["v2", "v3"])
+@pytest.mark.parametrize("leaf", ["li/L04", "nio/N08"])
 @pytest.mark.parametrize(("weight", "expected"), [(3.1897, "PASS"), (3.189, "NG")])
-def test_supplier_alias_executes_the_existing_checker_on_actual_workbook_values(tmp_path, run_checks, profile, weight, expected):
+def test_supplier_alias_executes_the_existing_checker_on_actual_workbook_values(tmp_path, run_checks, leaf, weight, expected):
     path = tmp_path / "suppliers.xlsx"
     workbook = Workbook()
     workbook.active.title = "材料产品及分供方清单"
@@ -165,12 +163,11 @@ def test_supplier_alias_executes_the_existing_checker_on_actual_workbook_values(
     workbook.close()
     rules = RuleInput(
         rule_id="confirmed-supplier-rules",
-        rule_profile=profile,
         type="材料分供方",
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, 5)],
     )
 
-    results = run_checks(AuditInput(audit_id="supplier-alias", file_url=str(path)), rules)
+    results = run_checks(AuditInput(audit_id="supplier-alias", file_url=str(path)), rules, leaf=leaf)
 
     assert results[0].status == expected
     if expected == "NG":

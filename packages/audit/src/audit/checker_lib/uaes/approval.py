@@ -7,7 +7,7 @@ from datetime import date
 from types import SimpleNamespace
 from typing import Any
 
-from audit.checker_lib.nio.excel_agent import rule
+from audit.checker_lib.excel_agent import rule
 from audit.engine.checkers.date_utils import normalize_excel_date
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 

@@ -37,7 +37,7 @@ def test_an_unidentifiable_part_number_fails_the_pgqp1_clause_and_asks_for_a_per
     monkeypatch.setattr(UaesPfmeaAgent, "require_readable", lambda self, kinds: None)
     monkeypatch.setattr(UaesPfmeaAgent, "batch_files", lambda self, kind: [object()])
     body = preset_rule_body("UAES", "U07")
-    agent = UaesPfmeaAgent(AuditInput(audit_id="pfmea", file_url=str(path)), RuleInput(rule_id="u07", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesPfmeaAgent(AuditInput(audit_id="pfmea", file_url=str(path)), RuleInput.of(body, rule_id="u07"))
     monkeypatch.setattr(UaesPfmeaAgent, "sheets", lambda self, ctx: [])
     names = [name for name, _ in agent.declared_rules()]
     result = agent.check(names.index("rule_4"))
@@ -67,6 +67,6 @@ def test_a_failure_effect_is_not_a_lessons_learned_citation(tmp_path, header, ex
     book.active.append(["10 铣面", "平面度超差", "客户抱怨，装配困难导致整车返修", "7", "刀具磨损", "3", "4"])
     book.save(path)
     body = preset_rule_body("UAES", "U07")
-    agent = UaesPfmeaAgent(AuditInput(audit_id="pfmea", file_url=str(path)), RuleInput(rule_id="u07", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesPfmeaAgent(AuditInput(audit_id="pfmea", file_url=str(path)), RuleInput.of(body, rule_id="u07"))
     result = agent.check([name for name, _ in agent.declared_rules()].index("rule_1"))
     assert result.status == expected, result.suggestions

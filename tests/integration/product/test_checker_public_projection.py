@@ -112,7 +112,6 @@ def test_pdf_page_keeps_a_related_file_cell(tmp_path: Path) -> None:
         AuditInput(audit_id="pdf-file", file_url=str(tmp_path / "source.pdf"), file_metadata={"file_version_id": "pdf-version"}),
         RuleInput(
             rule_id="pdf-rule",
-            rule_profile="v3",
             type=PpapDocumentType.PROCESS_FLOW_CHART.get_type_name(),
             rules=[{"id": "P1", "category": "转换结果", "rule_to_check": "转换后的表格"}],
         ),

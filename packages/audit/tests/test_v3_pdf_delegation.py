@@ -39,7 +39,6 @@ class ConversionRuntime:
 def rules(count: int) -> RuleInput:
     return RuleInput(
         rule_id="confirmed-rules",
-        rule_profile="v3",
         type="控制计划",
         rules=[{"id": str(index), "category": "local_excel_check", "rule_to_check": f"规则 {index}"} for index in range(1, count + 1)],
     )
@@ -156,7 +155,6 @@ def test_process_flow_pdf_keeps_the_original_page_on_the_delegated_result(tmp_pa
             AuditInput(audit_id="flow", file_url="flow.pdf", file_metadata={"file_version_id": "pdf-version"}),
             RuleInput(
                 rule_id="flow-rule",
-                rule_profile="v3",
                 type="过程流程图",
                 rules=[{"id": "1", "category": "表头字段完整性检查", "rule_to_check": "表头字段要完整"}],
             ),

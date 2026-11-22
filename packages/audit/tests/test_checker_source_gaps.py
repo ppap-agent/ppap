@@ -43,7 +43,7 @@ def test_clause_carrier_limit_stops_before_source_or_model_read(tmp_path):
     try:
         result = audit.evaluate("R1")
         assert result.status == "UNABLE" and result.checks_performed == 0
-        assert "不支持" in result.suggestions
+        assert "不能读取这种格式" in result.suggestions
     finally:
         audit.close()
 

@@ -19,8 +19,8 @@ from openpyxl.drawing.image import Image as WorkbookImage
 from PIL import Image, ImageDraw
 
 
-@pytest.mark.parametrize("agent_type,profile", [(V2Psw, "v2"), (V3Psw, "v3")])
-def test_company_stamp_and_printed_name_cannot_fill_the_supplier_signature(tmp_path, agent_type, profile):
+@pytest.mark.parametrize("agent_type", [V2Psw, V3Psw], ids=["v2", "v3"])
+def test_company_stamp_and_printed_name_cannot_fill_the_supplier_signature(tmp_path, agent_type):
     path = tmp_path / "warrant.xlsx"
     book = Workbook()
     sheet = book.active
@@ -37,7 +37,7 @@ def test_company_stamp_and_printed_name_cannot_fill_the_supplier_signature(tmp_p
     sheet.add_image(WorkbookImage(encoded), "H23")
     book.save(path)
     book.close()
-    agent = agent_type(AuditInput(audit_id="warrant", file_url=str(path)), RuleInput(rule_id="psw", type="零件提交保证书", rule_profile=profile, rules=[]))
+    agent = agent_type(AuditInput(audit_id="warrant", file_url=str(path)), RuleInput(rule_id="psw", type="零件提交保证书", rules=[]))
     try:
         with bind_runtime(None):
             result = agent.check(4)
@@ -84,7 +84,7 @@ def test_part_and_operation_numbers_bind_the_corresponding_records(tmp_path, par
         paths.append(path)
     flow = AuditInput(audit_id="flow", file_url=str(paths[1]))
     context = GroupContextInput(by_doc_type={"过程流程图": [flow]}, by_audit_id={"flow": flow})
-    agent = ControlPlanAgent(AuditInput(audit_id="plan", file_url=str(paths[0])), RuleInput(rule_id="cp", type="控制计划", rule_profile="v3", rules=[]), group_context=context)
+    agent = ControlPlanAgent(AuditInput(audit_id="plan", file_url=str(paths[0])), RuleInput(rule_id="cp", type="控制计划", rules=[]), group_context=context)
     try:
         with bind_runtime(None):
             result = agent.check(7)
@@ -133,7 +133,7 @@ def test_numeric_public_check_preserves_the_record_unit_and_both_source_cells(tm
     book.save(path)
     book.close()
     agent = DimensionMeasurementExcelAgent(
-        AuditInput(audit_id="measurement", file_url=str(path), file_metadata={"file_version_id": "measurement-v1"}), RuleInput(rule_id="dimension", type="尺寸检验报告", rule_profile="v2", rules=[])
+        AuditInput(audit_id="measurement", file_url=str(path), file_metadata={"file_version_id": "measurement-v1"}), RuleInput(rule_id="dimension", type="尺寸检验报告", rules=[])
     )
     try:
         result = agent.check(2)
@@ -222,9 +222,9 @@ def test_overlapping_rules_reuse_the_same_located_fact_or_failure(tmp_path, monk
         book.close()
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2Psw), ("v3", V3Psw)])
+@pytest.mark.parametrize("agent_type", [V2Psw, V3Psw], ids=["v2", "v3"])
 @pytest.mark.parametrize(("heading_row", "control_row", "expected"), [(12, 33, "NG"), (70, 72, "PASS")])
-def test_submission_reason_uses_its_labelled_section_after_rows_move(tmp_path, monkeypatch, profile, agent_type, heading_row, control_row, expected):
+def test_submission_reason_uses_its_labelled_section_after_rows_move(tmp_path, monkeypatch, agent_type, heading_row, control_row, expected):
     from audit.engine.rule_engine.excel_ops import DefaultExcelOps
 
     path = tmp_path / "moved-submission.xlsx"
@@ -238,7 +238,7 @@ def test_submission_reason_uses_its_labelled_section_after_rows_move(tmp_path, m
     workbook.save(path)
     workbook.close()
     monkeypatch.setattr(DefaultExcelOps, "get_checkbox_controls", lambda *args, **kwargs: [(control_row, 2, True)])
-    agent = agent_type(AuditInput(audit_id="moved-reason", file_url=str(path)), RuleInput(rule_id="reason", rule_profile=profile, type="零件提交保证书", rules=[]))
+    agent = agent_type(AuditInput(audit_id="moved-reason", file_url=str(path)), RuleInput(rule_id="reason", type="零件提交保证书", rules=[]))
     try:
         with bind_runtime(None):
             result = agent.check(6)
@@ -247,8 +247,8 @@ def test_submission_reason_uses_its_labelled_section_after_rows_move(tmp_path, m
         agent.close()
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2Psw), ("v3", V3Psw)])
-def test_unlabelled_disposition_control_cannot_imply_approval(tmp_path, monkeypatch, profile, agent_type):
+@pytest.mark.parametrize("agent_type", [V2Psw, V3Psw], ids=["v2", "v3"])
+def test_unlabelled_disposition_control_cannot_imply_approval(tmp_path, monkeypatch, agent_type):
     from audit.engine.rule_engine.excel_ops import DefaultExcelOps
 
     path = tmp_path / "unlabelled-disposition.xlsx"
@@ -258,7 +258,7 @@ def test_unlabelled_disposition_control_cannot_imply_approval(tmp_path, monkeypa
     workbook.save(path)
     workbook.close()
     monkeypatch.setattr(DefaultExcelOps, "get_checkbox_controls", lambda *args, **kwargs: [(60, 3, True)])
-    agent = agent_type(AuditInput(audit_id="unlabelled-disposition", file_url=str(path)), RuleInput(rule_id="approval", rule_profile=profile, type="零件提交保证书", rules=[]))
+    agent = agent_type(AuditInput(audit_id="unlabelled-disposition", file_url=str(path)), RuleInput(rule_id="approval", type="零件提交保证书", rules=[]))
     try:
         with bind_runtime(None):
             result = agent.check(8)
@@ -267,9 +267,9 @@ def test_unlabelled_disposition_control_cannot_imply_approval(tmp_path, monkeypa
         agent.close()
 
 
-@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2Psw), ("v3", V3Psw)])
+@pytest.mark.parametrize("agent_type", [V2Psw, V3Psw], ids=["v2", "v3"])
 @pytest.mark.parametrize("appearance_checked", [False, True])
-def test_submission_result_options_cannot_share_a_neighbouring_checked_control(tmp_path, monkeypatch, profile, agent_type, appearance_checked):
+def test_submission_result_options_cannot_share_a_neighbouring_checked_control(tmp_path, monkeypatch, agent_type, appearance_checked):
     from audit.engine.rule_engine.excel_ops import DefaultExcelOps
 
     path = tmp_path / "adjacent-results.xlsx"
@@ -292,7 +292,7 @@ def test_submission_result_options_cannot_share_a_neighbouring_checked_control(t
     workbook.save(path)
     workbook.close()
     monkeypatch.setattr(DefaultExcelOps, "get_checkbox_controls", lambda *args, **kwargs: controls)
-    agent = agent_type(AuditInput(audit_id="adjacent-results", file_url=str(path)), RuleInput(rule_id="approval", rule_profile=profile, type="零件提交保证书", rules=[]))
+    agent = agent_type(AuditInput(audit_id="adjacent-results", file_url=str(path)), RuleInput(rule_id="approval", type="零件提交保证书", rules=[]))
     try:
         with bind_runtime(None):
             result = agent.check(7)

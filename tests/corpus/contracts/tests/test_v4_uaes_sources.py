@@ -11,7 +11,7 @@ def test_original_uaes_inspection_reference_without_supplier_readings_is_not_a_p
     root = Path(__file__).resolve().parents[4]
     path = root / "assets/uaes/templates/F-PU-207_样品检验报告_Sample Inspection Report_V01-.xls (1).xls"
     body = preset_rule_body("UAES", "U01")
-    agent = UaesInspectionAgent(AuditInput(audit_id="original-reference", file_url=str(path)), RuleInput(rule_id="source", **{key: value for key, value in body.items() if key != "kind"}))
+    agent = UaesInspectionAgent(AuditInput(audit_id="original-reference", file_url=str(path)), RuleInput.of(body, rule_id="source"))
     result = agent.check(0)
     # The blank reference heads ten columns F:O but holds no reading: a measured
     # column is one with readings, so the empty template is not a PASS.

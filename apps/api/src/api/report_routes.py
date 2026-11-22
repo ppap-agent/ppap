@@ -12,10 +12,10 @@ from product.feishu_writeback import (
     report_blocks,
     round_return_url,
 )
-from product.identity import can_read
 from product.mcp import McpError
 
 from api import web_contract as wc
+from api.access import object_denied
 from api.mcp_confirmation import require_approved_source
 
 
@@ -24,11 +24,12 @@ def register_report_routes(app, store, session_of, http, settings):
         session = session_of(request)
         if not session:
             return None, None, None, JSONResponse({"error": "unauthenticated"}, status_code=401)
-        principal = session.principal
-        resource = store.resource(round_id)
-        if resource is None or not can_read(principal, resource):
-            return None, None, None, JSONResponse({"error": "access_denied"}, status_code=403)
+        if denied := object_denied(store, session.principal, round_id):
+            return None, None, None, denied
         body = store.get_round(round_id)
+        if body is None:
+            # The id names a draft or file of the enterprise, not a round.
+            return None, None, None, JSONResponse({"error": "access_denied"}, status_code=403)
         try:
             if request.method == "POST":
                 require_approved_source(request, f"/rounds/{round_id}", body)

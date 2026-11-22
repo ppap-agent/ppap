@@ -2,7 +2,6 @@
 
 import os
 import threading
-import time
 import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -13,10 +12,11 @@ import pytest
 
 class AuditDatabaseCase(unittest.TestCase):
     @pytest.fixture(autouse=True)
-    def _schema_support(self, schema_tools, memory_objects_type, sample_rule_body_factory):
+    def _schema_support(self, schema_tools, memory_objects_type, sample_rule_body_factory, audit_round):
         self.schema = schema_tools
         self.memory_objects_type = memory_objects_type
         self.rule_body = sample_rule_body_factory
+        self.audit_round = audit_round
 
     def setUp(self):
         from product import build_product_store
@@ -97,14 +97,41 @@ class AuditDatabaseCase(unittest.TestCase):
         self.store.put_blob(version, content)
         return self.store.finalize_version(version)
 
-    def draft(self, items, predecessor_id=None):
-        draft = self.store.create_draft(self.alice, predecessor_id)
-        self.store.save_draft(self.alice, draft["id"], items)
-        return draft["id"]
+    def checked_upload(self, name):
+        """An original that passes the upload check: a workbook or a PDF with text, its own content each time."""
+        from io import BytesIO
 
-    def reaudit(self, predecessor_id, key, items):
-        """An explicit re-audit is a new draft naming its predecessor."""
-        return self.store.accept_draft(self.alice, self.draft(items, predecessor_id), key)
+        if name.endswith(".pdf"):
+            import fitz
+
+            with fitz.open() as document:
+                document.new_page().insert_text((72, 72), "reference " + uuid.uuid4().hex)
+                content = document.tobytes()
+        else:
+            from openpyxl import Workbook
+
+            book = Workbook()
+            book.active.append([name, uuid.uuid4().hex])
+            stream = BytesIO()
+            book.save(stream)
+            book.close()
+            content = stream.getvalue()
+        version = self.store.create_staging(self.alice, name, "application/octet-stream", len(content))
+        self.store.put_blob(version, content)
+        return self.store.finalize_version(version)
+
+    def customer_rule_body(self):
+        """The sample rule, in the rule group the audits here choose."""
+        return {**self.rule_body(), "customers": ["理想"]}
+
+    def finish_audit(self):
+        """The queued audit ends, so its round can be re-audited."""
+        from product import build_product_store
+
+        worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
+        claimed = worker.claim_job("finish-audit")
+        self.assertEqual(claimed.kind, "audit")
+        self.assertTrue(worker.complete_job(claimed, "finish-audit", {"findings": [], "coverage": {}}, "succeeded"))
 
 
 class NativeEntryDatabaseTests(AuditDatabaseCase):
@@ -198,7 +225,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         client.cookies.set(SESSION_COOKIE, token)
 
         def records():
-            return self.store.list_rounds(self.alice), self.store.list_usage_events(self.alice), client.get("/drafts").json()
+            return self.store.list_rounds(self.alice), self.store.list_usage_events(self.alice)
 
         before = records()
         info = client.get("/support")
@@ -243,7 +270,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
             file = self.store.create_staging(self.alice, name, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", len(content.getvalue()))
             self.store.put_blob(file, content.getvalue())
             files.append(self.store.finalize_version(file))
-        rule = self.store.publish_rule(self.alice, "客户自定义要求", self.rule_body(), files[-1].id)
+        rule = self.store.publish_rule(self.alice, "客户自定义要求", self.customer_rule_body(), files[-1].id)
         releases = SuiteReleaseStore(self.settings, self.store.objects)
         base = releases.suites.resolve_suite(rule["body"]["suite_revision_id"], self.alice.tenant_id)
         rules = json.loads(base.files["rules.json"])
@@ -275,8 +302,7 @@ def check(context):
             related_suite_keys=base.revision.related_suite_keys,
         )
         releases.publish(self.alice, base.revision.suite_key, candidate.id, releases.active(self.alice, base.revision.suite_key)["revision"], str(uuid.uuid4()), force_unverified=True)
-        draft = self.draft([{"file_version_id": file.id, "role": "target", "rule_version_id": rule["id"]} for file in files])
-        accepted = self.store.accept_draft(self.alice, draft, "file-isolation")
+        accepted = self.audit_round(self.store, self.alice, {file.id: rule["id"] for file in files})
         self.store.objects.delete(files[0].object_key)
         worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
         claimed = worker.claim_job("file-isolation-test")
@@ -356,10 +382,9 @@ def check(context):
         from fastapi.testclient import TestClient
         from product import build_product_store
 
-        target, reference = self.upload("review.xlsx"), self.upload("context.pdf")
-        rule = self.store.publish_rule(self.alice, "人工核对要求", self.rule_body(), reference.id)
-        draft = self.draft([{"file_version_id": target.id, "role": "target", "rule_version_id": rule["id"]}, {"file_version_id": reference.id, "role": "reference"}])
-        round = self.store.accept_draft(self.alice, draft, "manual-review")
+        target, reference = self.checked_upload("review.xlsx"), self.checked_upload("context.pdf")
+        rule = self.store.publish_rule(self.alice, "人工核对要求", self.customer_rule_body(), reference.id)
+        round = self.audit_round(self.store, self.alice, {target.id: rule["id"], reference.id: None})
         worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
         claimed = worker.claim_job("review-test")
         self.assertIsNotNone(claimed)
@@ -400,9 +425,8 @@ def check(context):
         from product.fixtures import RULE_A
         from pydantic import TypeAdapter
 
-        target, reference = self.upload("historical.txt"), self.upload("reference.txt")
-        draft = self.draft([{"file_version_id": target.id, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference.id, "role": "reference"}])
-        round = self.store.accept_draft(self.alice, draft, "historical-reader")
+        target, reference = self.checked_upload("historical.xlsx"), self.checked_upload("reference.pdf")
+        round = self.audit_round(self.store, self.alice, {target.id: RULE_A, reference.id: None})
         principal = [self.alice]
         app = FastAPI()
         register_audit_routes(app, self.store, lambda request: principal[0], Mock())
@@ -419,7 +443,7 @@ def check(context):
         self.assertEqual({row["file"]["id"] for row in view["files"]}, {target.id, reference.id})
         self.assertEqual(next(row["file"] for row in view["files"] if row["role"] == "target"), target.public())
         self.assertIsNone(next(row["audit"] for row in view["files"] if row["role"] == "reference"))
-        replacement = self.store.create_staging(self.alice, "historical.txt", "application/octet-stream", 1, file_id=target.file_id)
+        replacement = self.store.create_staging(self.alice, "historical.xlsx", "application/octet-stream", 1, file_id=target.file_id)
         self.store.put_blob(replacement, b"y")
         self.store.finalize_version(replacement)
         self.assertEqual(client.get(path + "?read_view=true").json()["read_view"], view)
@@ -429,52 +453,25 @@ def check(context):
         principal[0] = self.store.principal_for_fixture("carol")
         self.assertEqual(client.get(path + "?read_view=true").status_code, 403)
 
-    def test_resumable_drafts_keep_origin_and_stay_with_their_creator(self):
+    def test_each_target_keeps_its_rule_snapshot_through_explicit_reaudit(self):
         from product.fixtures import RULE_A
 
-        file = self.upload("draft.txt")
-        items = [{"file_version_id": file.id, "role": "target", "rule_version_id": RULE_A}]
-        draft = self.draft(items)
-        first = self.store.accept_draft(self.alice, draft, "origin")
-        next_draft = self.store.create_draft(self.alice, first["id"])["id"]
-        self.store.save_draft(self.alice, next_draft, items)
-        rows = self.store.list_drafts(self.alice)
-        self.assertEqual([row["id"] for row in rows], [next_draft])
-        self.assertEqual(rows[0]["predecessor_id"], first["id"])
-        self.assertTrue(rows[0]["updated_at"])
-        bob = self.store.principal_for_fixture("bob")
-        self.assertEqual(self.store.list_drafts(bob), [])
-        bob_draft = self.store.create_draft(bob, first["id"])
-        self.assertEqual(bob_draft["predecessor_id"], first["id"])
-        self.assertEqual(self.store.list_drafts(bob), [])
-        accepted = self.store.accept_draft(self.alice, next_draft, "resumed")
-        self.assertEqual(accepted["predecessor_id"], first["id"])
-        self.assertEqual(self.store.list_drafts(self.alice), [])
-
-    def test_each_target_keeps_its_rule_snapshot_through_replay_and_explicit_reaudit(self):
-        from product.fixtures import RULE_A
-
-        first, second, reference = [self.upload(name) for name in ("a.xlsx", "b.xlsx", "context.pdf")]
-        rule = self.store.publish_rule(self.alice, "客户规则", self.rule_body(), reference.id)
-        items = [
-            {"file_version_id": first.id, "role": "target", "rule_version_id": RULE_A},
-            {"file_version_id": second.id, "role": "target", "rule_version_id": rule["id"]},
-            {"file_version_id": reference.id, "role": "reference"},
-        ]  # noqa: E501
-        draft = self.draft(items)
-        accepted = self.store.accept_draft(self.alice, draft, "per-input")
+        first, second, reference = [self.checked_upload(name) for name in ("a.xlsx", "b.xlsx", "context.pdf")]
+        rule = self.store.publish_rule(self.alice, "客户规则", self.customer_rule_body(), reference.id)
+        items = {first.id: RULE_A, second.id: rule["id"], reference.id: None}
+        accepted = self.audit_round(self.store, self.alice, items)
         by_id = {item["file_version_id"]: item for item in accepted["inputs"]}
         self.assertEqual(by_id[first.id]["rule"]["id"], RULE_A)
-        expected_body = {**self.rule_body(), "title": "客户规则", "suite_key": rule["body"]["suite_key"], "checker_binding": {}, "appendix": []}
+        expected_body = {**self.customer_rule_body(), "title": "客户规则", "suite_key": rule["body"]["suite_key"], "checker_binding": {}, "appendix": []}
         self.assertEqual(by_id[second.id]["rule"]["body"], expected_body)
         self.assertIsNone(by_id[reference.id]["rule"])
         self.assertNotIn("rule", accepted)
-        self.assertEqual(self.store.accept_draft(self.alice, draft, "per-input")["id"], accepted["id"])
-        changed = self.rule_body()
+        changed = self.customer_rule_body()
         changed["rules"][0]["rule_to_check"] = "新版检查要求"
         newer = self.store.publish_rule(self.alice, "新版客户规则", changed, reference.id, rule["id"])
-        next_items = [{**item, "rule_version_id": newer["id"]} if item["file_version_id"] == second.id else item for item in items]
-        next_round = self.reaudit(accepted["id"], "explicit-resubmit", next_items)
+        next_items = {**items, second.id: newer["id"]}
+        self.finish_audit()
+        next_round = self.audit_round(self.store, self.alice, next_items, predecessor_id=accepted["id"])
         self.assertNotEqual(next_round["id"], accepted["id"])
         self.assertEqual(next_round["predecessor_id"], accepted["id"])
         self.assertEqual(self.store.get_round(accepted["id"])["inputs"], accepted["inputs"])
@@ -485,76 +482,12 @@ def check(context):
         releases = SuiteReleaseStore(self.store.settings, self.store.objects, role="api")
         active = releases.active(self.alice, rule["body"]["suite_key"])
         releases.publish(self.alice, rule["body"]["suite_key"], newer["body"]["suite_revision_id"], active["revision"], str(uuid.uuid4()), force_unverified=True)
-        adopted_round = self.reaudit(next_round["id"], "explicit-adopted-resubmit", next_items)
+        self.finish_audit()
+        adopted_round = self.audit_round(self.store, self.alice, next_items, predecessor_id=next_round["id"])
         expected_new = {**changed, "title": "新版客户规则", "suite_key": rule["body"]["suite_key"], "checker_binding": {}, "appendix": []}
         self.assertEqual(next(item for item in adopted_round["inputs"] if item["file_version_id"] == second.id)["rule"]["body"], expected_new)
         self.assertEqual(self.store.get_round(accepted["id"])["inputs"], accepted["inputs"])
         self.assertEqual(self.store.get_round(next_round["id"])["inputs"], next_round["inputs"])
-
-    def test_same_key_concurrent_acceptance_and_conflicts_check_bindings_roles_and_round_access(self):
-        from product.fixtures import RULE_A
-
-        first, reference = self.upload("a.xlsx"), self.upload("context.xlsx")
-        items = [{"file_version_id": first.id, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference.id, "role": "reference"}]
-        for same_draft in (True, False):
-            with self.subTest(same_draft=same_draft):
-                first_draft = self.draft(items)
-                second_draft = first_draft if same_draft else self.draft(list(reversed(items)))
-                key = str(uuid.uuid4())
-                start = threading.Barrier(2)
-
-                def accept(draft):
-                    start.wait(timeout=5)
-                    return self.store.accept_draft(self.alice, draft, key)
-
-                with ThreadPoolExecutor(max_workers=2) as pool:
-                    # Both requests must reach a database lock before either can finish.
-                    with self.store._conn() as locker:
-                        with locker.transaction():
-                            locker.execute("SELECT id FROM product.audit_drafts WHERE id = ANY(%s::uuid[]) FOR UPDATE", ([first_draft, second_draft],)).fetchall()
-                            futures = [pool.submit(accept, draft) for draft in (first_draft, second_draft)]
-                            deadline = time.monotonic() + 5
-                            blocked = 0
-                            while time.monotonic() < deadline:
-                                with self.store._conn() as monitor:
-                                    blocked = monitor.execute("SELECT count(*) FROM pg_stat_activity WHERE datname = %s AND wait_event_type = 'Lock'", (self.database,)).fetchone()[0]
-                                if blocked == 2:
-                                    break
-                                time.sleep(0.02)
-                            self.assertEqual(blocked, 2)
-                    accepted = [future.result(timeout=5) for future in futures]
-                self.assertEqual(accepted[0]["id"], accepted[1]["id"])
-                with self.store._conn() as conn:
-                    self.assertEqual(conn.execute("SELECT count(*) FROM product.audit_rounds WHERE idempotency_key = %s", (key,)).fetchone()[0], 1)
-                    self.assertEqual(conn.execute("SELECT count(*) FROM engine.jobs WHERE audit_round_id = %s", (accepted[0]["id"],)).fetchone()[0], 1)
-
-        changed_roles = [{"file_version_id": first.id, "role": "reference"}, {"file_version_id": reference.id, "role": "target", "rule_version_id": RULE_A}]
-        with self.assertRaisesRegex(ValueError, "idempotency_conflict"):
-            self.store.accept_draft(self.alice, self.draft(changed_roles), key)
-        rule = self.store.publish_rule(self.alice, "客户规则", self.rule_body(), reference.id)
-        changed_rule = [{**items[0], "rule_version_id": rule["id"]}, items[1]]
-        with self.assertRaisesRegex(ValueError, "idempotency_conflict"):
-            self.store.accept_draft(self.alice, self.draft(changed_rule), key)
-        bob = self.store.principal_for_fixture("bob")
-        other_draft = self.store.create_draft(bob)["id"]
-        self.store.save_draft(bob, other_draft, items)
-        replay = self.store.accept_draft(bob, other_draft, key)
-        self.assertEqual(replay["id"], accepted[0]["id"])
-
-    def test_missing_target_rule_reference_rule_and_foreign_rule_are_rejected(self):
-        from product.fixtures import RULE_A, RULE_B
-
-        first = self.upload("a.xlsx")
-        draft = self.draft([{"file_version_id": first.id, "role": "target"}])
-        with self.assertRaisesRegex(ValueError, "rule_required"):
-            self.store.accept_draft(self.alice, draft, "missing-binding")
-        with self.assertRaisesRegex(ValueError, "reference_rule_forbidden"):
-            self.draft([{"file_version_id": first.id, "role": "reference", "rule_version_id": RULE_A}])
-        with self.assertRaisesRegex(ValueError, "unknown_rule"):
-            self.draft([{"file_version_id": first.id, "role": "target", "rule_version_id": RULE_B}])
-        with self.store._conn() as conn:
-            self.assertEqual(conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0], 0)
-            self.assertEqual(conn.execute("SELECT count(*) FROM engine.jobs").fetchone()[0], 0)
 
 
 class AuditDisplayDatabaseTests(AuditDatabaseCase):
@@ -669,7 +602,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                 "request_id": str(uuid.uuid4()),
                 "task_id": task["id"],
                 "expected_revision": 0,
-                "customer_preference": None,
+                "customer_preference": "理想",
                 "files": [{"file_version_id": row["file"]["id"], "validation_id": row["validation_id"], "selection": row["selection"], "removal_reason": None} for row in task["files"]],
             },
         )
@@ -1288,7 +1221,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.display_client.get(history_path + "/result", params={**old, "result_attempt": 99}).status_code, 403)
         self.assertEqual(self.display_client.get("/audit-archive", params={"search": "missing"}).json()["total"], 0)
         self.assertEqual(self.display_client.get("/audit-archive", params={"page": 2}).json()["documents"], [])
-        self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "recorded:测试客户"}).json()["total"], 2)
+        self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "测试客户"}).json()["total"], 2)
         self.assertEqual(self.display_client.get("/audit-archive", params={"from_date": "2099-01-01"}).json()["total"], 0)
         self.assertEqual(self.display_client.get("/audit-archive", params={"from_date": "2026-10-20", "through_date": "2026-10-01"}).status_code, 400)
         category = page["categories"][0]
@@ -1308,7 +1241,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         refreshed = self.display_client.get("/audit-archive").json()["documents"]
         self.assertEqual(refreshed[0]["document_id"], other_doc["document_id"])
         self.assertGreater(refreshed[0]["updated_at"], refreshed[1]["updated_at"])
-        self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "recorded:更正客户"}).json()["total"], 1)
+        self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "更正客户"}).json()["total"], 1)
         self.assertIs(detail.json()["creator"]["mine"], True)
         # Another member of the enterprise reads the same archive and history, but cannot correct it.
         self.display_principal = self.store.principal_for_fixture("bob")
@@ -1500,7 +1433,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertEqual(job.kind, "file_validation")
             self.assertTrue(worker.complete_job(job, "display-test", {"state": "valid", "reasons": []}, "succeeded"))
             inputs.append({"file_version_id": file.id, "validation_id": key, "selection": "selected", "removal_reason": None})
-        task = self.store.create_audit_task(self.alice, {"request_id": str(uuid.uuid4()), "customer_preference": None, "files": inputs})
+        task = self.store.create_audit_task(self.alice, {"request_id": str(uuid.uuid4()), "customer_preference": "理想", "files": inputs})
         for _ in files:
             job = worker.claim_job("display-test")
             self.assertEqual(job.kind, "file_analysis")
@@ -2978,21 +2911,15 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.settings.feishu_ai_item_id = "test-item"
         self.settings.feishu_free_trial_quota_points = 700
 
-    def accepted(self, draft, key=None):
+    def accepted(self, files):
         from product.feishu_usage import PartnerAiItem
 
-        return self.store.accept_draft(self.alice, draft, key or draft, usage_policy=lambda actor: PartnerAiItem(True, 1, True))
+        return self.audit_round(self.store, self.alice, files, usage_policy=lambda actor: PartnerAiItem(True, 1, True))
 
     def prepared(self):
         from product.fixtures import RULE_A
 
-        target, reference = self.upload("target.xlsx"), self.upload("reference.pdf")
-        return self.draft(
-            [
-                {"file_version_id": target.id, "role": "target", "rule_version_id": RULE_A},
-                {"file_version_id": reference.id, "role": "reference"},
-            ]
-        )
+        return {self.checked_upload("target.xlsx").id: RULE_A, self.checked_upload("reference.pdf").id: None}
 
     def test_usage_page_groups_file_allocations_and_preserves_tenant_ledger_without_granting_history(self):
         from api.audit_routes import register_audit_routes
@@ -3003,9 +2930,9 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         from product.fixtures import RULE_A
         from pydantic import TypeAdapter
 
-        first, second = self.upload("费用核对.xlsx"), self.upload("另一份.pdf")
-        draft = self.draft([{"file_version_id": version.id, "role": "target", "rule_version_id": RULE_A} for version in (first, second)])
-        accepted = self.accepted(draft)
+        first, second = self.checked_upload("费用核对.xlsx"), self.checked_upload("另一份.pdf")
+        accepted = self.accepted({first.id: RULE_A, second.id: RULE_A})
+        draft = accepted["source_draft_id"]
         before = self.store.list_usage_events(self.alice)
         principal = [None]
         app = FastAPI()
@@ -3073,8 +3000,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         from product.db import connect
 
         self.settings.feishu_free_trial_quota_points = 0
-        draft = self.prepared()
-        accepted = self.accepted(draft)
+        accepted = self.accepted(self.prepared())
         event = self.store.list_usage_events(self.alice)[0]
         with connect(self.settings, "migrator") as conn:
             conn.execute("UPDATE product.audit_rounds SET created_at = '2026-10-28T02:00:00Z' WHERE id = %s", (accepted["id"],))
@@ -3116,8 +3042,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         from product.db import connect
 
         self.settings.feishu_free_trial_quota_points = 0
-        draft = self.prepared()
-        self.accepted(draft)
+        self.accepted(self.prepared())
         event = self.store.list_usage_events(self.alice)[0]
         with connect(self.settings, "migrator") as conn:
             conn.execute("UPDATE product.usage_events SET debit_order_id = 'verified-order', debited_at = now() WHERE id = %s", (event["id"],))
@@ -3127,8 +3052,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         from product.db import connect
 
         self.settings.feishu_free_trial_quota_points = 0
-        draft = self.prepared()
-        self.accepted(draft)
+        self.accepted(self.prepared())
         event = self.store.list_usage_events(self.alice)[0]
         claim = self.store.claim_usage_report(self.alice, event["id"])
         with connect(self.settings, "migrator") as conn:
@@ -3168,15 +3092,8 @@ class UsageAcceptanceTests(AuditDatabaseCase):
     def test_each_target_has_its_own_usage_slices(self):
         from product.fixtures import RULE_A
 
-        first, second = self.upload("first.xlsx"), self.upload("second.xlsx")
-        draft = self.draft(
-            [
-                {"file_version_id": first.id, "role": "target", "rule_version_id": RULE_A},
-                {"file_version_id": second.id, "role": "target", "rule_version_id": RULE_A},
-            ]
-        )
-        accepted = self.accepted(draft)
-        self.accepted(draft)
+        first, second = self.checked_upload("first.xlsx"), self.checked_upload("second.xlsx")
+        accepted = self.accepted({first.id: RULE_A, second.id: RULE_A})
         events = self.store.list_usage_events(self.alice)
         self.assertEqual({row.get("file_version_id") for row in events}, {first.id, second.id})
         for version in (first.id, second.id):
@@ -3193,8 +3110,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         from product.feishu import UserTokens
 
         self.settings.feishu_free_trial_quota_points = 0
-        draft = self.prepared()
-        self.accepted(draft)
+        self.accepted(self.prepared())
         event = self.store.list_usage_events(self.alice)[0]
         claim = self.store.claim_usage_report(self.alice, event["id"])
         self.assertIsNotNone(claim)
@@ -3217,11 +3133,9 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.assertEqual(status, 409)
         self.assertEqual(body["external_status"], "unknown")
 
-    def test_concurrent_rounds_share_trial_and_replay_does_not_charge(self):
-        drafts = [self.prepared(), self.prepared()]
-        with ThreadPoolExecutor(2) as pool:
-            rounds = list(pool.map(self.accepted, drafts))
-        self.accepted(drafts[0])
+    def test_rounds_share_trial_and_one_usage_report_claim_wins(self):
+        # Concurrent confirmations spending the last free allocation are covered with the task tests.
+        rounds = [self.accepted(self.prepared()) for _ in range(2)]
         events = self.store.list_usage_events(self.alice)
         self.assertEqual(sum(e["consumed_points"] for e in events), 1000)
         self.assertTrue(all(e["external_confirmed_at"] is None for e in events))
@@ -3252,14 +3166,15 @@ class UsageAcceptanceTests(AuditDatabaseCase):
     def test_usage_error_rolls_back_round_and_job(self):
         from unittest.mock import patch
 
-        draft = self.prepared()
+        files = self.prepared()
         with patch.object(self.store, "_record_round_usage", side_effect=RuntimeError("test rollback")):
             with self.assertRaises(RuntimeError):
-                self.accepted(draft, "rollback")
+                self.accepted(files)
         with self.store._conn() as conn:
-            for table in ("product.audit_rounds", "engine.jobs", "product.usage_events"):
+            for table in ("product.audit_rounds", "engine.jobs WHERE kind = 'audit'", "product.usage_events"):
                 self.assertEqual(conn.execute("SELECT count(*) FROM " + table).fetchone()[0], 0)
-        self.assertEqual(self.store.get_draft(draft)["status"], "open")
+        (task,) = self.store.list_audit_tasks(self.alice)
+        self.assertEqual(self.store.get_draft(task["id"])["status"], "open")
 
 
 if __name__ == "__main__":
