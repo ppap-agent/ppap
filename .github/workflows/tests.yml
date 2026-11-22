@@ -96,6 +96,8 @@ jobs:
           fetch-depth: 0
       - name: Protect independent human corpus truth
         run: python3 scripts/check_oracle_changes.py --event "$GITHUB_EVENT_PATH"
+      - name: Keep old migrations, protected assets and secrets as they are
+        run: python3 scripts/check_protected_changes.py --event "$GITHUB_EVENT_PATH"
       - name: Use runner-local Corepack cache
         working-directory: ${{ github.workspace }}
         run: echo "COREPACK_HOME=$RUNNER_TEMP/corepack/${GITHUB_RUN_ID}/${GITHUB_JOB}" >> "$GITHUB_ENV"

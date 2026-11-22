@@ -1,4 +1,7 @@
 # Same ruff and mypy contract as CI. Uses the workspace tools, not a second copy.
+# `pre-commit install` installs both hooks; the protected-change check needs the commit message.
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
 repos:
   - repo: local
     hooks:
@@ -19,3 +22,10 @@ repos:
         language: system
         types_or: [python, pyi]
         pass_filenames: false
+      # Same check as CI on each pushed commit: old migrations, protected assets, secrets.
+      - id: protected-changes
+        name: protected changes
+        entry: python3 scripts/check_protected_changes.py --staged
+        language: system
+        stages: [commit-msg]
+        always_run: true
