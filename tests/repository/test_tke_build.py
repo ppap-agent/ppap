@@ -2,6 +2,7 @@
 
 import json
 import runpy
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -466,11 +467,12 @@ def test_a_run_in_progress_stops_a_new_build_before_anything_is_pushed(tmp_path)
 
     def cloud(method, path, body=None, query=None):
         assert (method, path, query["status"]) == ("GET", BUILD["FLOW"] + "/runs", "RUNNING")
-        return [{"pipelineRunId": 147}]
+        return [{"pipelineRunId": 147, "startTime": time.time() * 1000}, {"pipelineRunId": 53, "startTime": (time.time() - 10 * 86400) * 1000}]
 
     def forbidden(*args):
         pytest.fail("nothing is pushed or dispatched beside a run in progress")
 
     with patch.dict(operation.__globals__, {"cloud": cloud, "source_branch": forbidden}):
-        with pytest.raises(ValueError, match="147 is in progress"):
+        # The 10-day-old run is stuck in Yunxiao and does not hold a build back; only the live one does.
+        with pytest.raises(ValueError, match="run 147 is in progress"):
             operation(SHA, tmp_path, None)
