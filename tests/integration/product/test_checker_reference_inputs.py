@@ -11,7 +11,7 @@ def test_reference_without_rule_keeps_confirmed_document_type(auth_store_factory
     version = store.create_staging(principal, "unhelpful-name.xlsx", "application/octet-stream", 3)
     version = store.finalize_version(store.put_blob(version, b"raw"))
     with store._conn() as conn:
-        prepared = store._bound_audit_items(conn, principal, [{"file_version_id": version.id, "role": "reference"}])
+        prepared = store._bound_audit_items(conn, principal, [{"file_version_id": version.id, "rule_version_id": None, "role": "reference"}])
         assert prepared[0]["rule_body"] is None
         prepared[0]["document_type"] = "过程流程图"  # The server's confirmed recognition result.
         frozen = freeze_authorized_inputs(conn, principal, prepared)

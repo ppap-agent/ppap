@@ -35,8 +35,8 @@ def client_for(a):
     return client
 
 
-def test_same_content_hint_response_survives_reconnect_without_changing_results(auth_store_factory):
-    a = Admission(auth_store_factory(Settings(feishu_app_id="review-hints-tests", usage_charge_enabled=False, git_sha="a" * 40)))
+def test_same_content_hint_response_survives_reconnect_without_changing_results(auth_store_factory, audit_round):
+    a = Admission(auth_store_factory(Settings(feishu_app_id="review-hints-tests", usage_charge_enabled=False, git_sha="a" * 40)), audit_round)
     # init-db replays migrations on every startup; repeat the new migration.
     with a.store._conn() as conn:
         conn.execute((Path(__file__).resolve().parents[3] / "migrations/0056_review_hint_actions.sql").read_text())
@@ -65,8 +65,8 @@ def test_same_content_hint_response_survives_reconnect_without_changing_results(
         assert reopened.get("/review-hints/responses").json() == {"accepted": 0, "ignored": 1, "responded": 1, "acceptance_ratio": 0.0, "ignore_ratio": 1.0}
 
 
-def test_explicit_actual_pdf_excel_pair_produces_cross_format_hint(auth_store_factory):
-    a = Admission(auth_store_factory(Settings(feishu_app_id="review-hints-pair", usage_charge_enabled=False, git_sha="a" * 40)))
+def test_explicit_actual_pdf_excel_pair_produces_cross_format_hint(auth_store_factory, audit_round):
+    a = Admission(auth_store_factory(Settings(feishu_app_id="review-hints-pair", usage_charge_enabled=False, git_sha="a" * 40)), audit_round)
     a.verify()
     with fitz.open() as document:
         document.new_page().insert_text((50, 50), "Same business document")
@@ -77,7 +77,7 @@ def test_explicit_actual_pdf_excel_pair_produces_cross_format_hint(auth_store_fa
     workbook.save(data)
     workbook.close()
     excel = a.upload("control.xlsx", data.getvalue())
-    a.items = [{"file_version_id": source.id, "role": "target", "rule_version_id": a.rule_id} for source in (pdf, excel)]
+    a.files = {pdf.id: a.rule_id, excel.id: a.rule_id}
     round = a.accept()
     finish(a.store, round["id"], [(pdf.id, "NG"), (excel.id, "PASS")])
     with client_for(a) as client:
@@ -94,8 +94,8 @@ def test_explicit_actual_pdf_excel_pair_produces_cross_format_hint(auth_store_fa
 
 
 @pytest.mark.parametrize("scope", ["other_tenant", "other_member"])
-def test_review_hints_are_read_by_the_enterprise_and_answered_only_by_the_round_creator(auth_store_factory, scope):
-    a = Admission(auth_store_factory(Settings(feishu_app_id="review-hints-private", usage_charge_enabled=False, git_sha="a" * 40)))
+def test_review_hints_are_read_by_the_enterprise_and_answered_only_by_the_round_creator(auth_store_factory, audit_round, scope):
+    a = Admission(auth_store_factory(Settings(feishu_app_id="review-hints-private", usage_charge_enabled=False, git_sha="a" * 40)), audit_round)
     a.verify()
     first, second = a.accept(), a.accept()
     finish(a.store, first["id"], [(a.target.id, "PASS")])
