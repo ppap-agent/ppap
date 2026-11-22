@@ -2,7 +2,6 @@
 
 import json
 import runpy
-import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -385,7 +384,6 @@ def test_run_uses_requested_commit_when_fixed_branch_moves(tmp_path, branch_head
             assert method == "GET"
             return {"pipelineConfig": {"pipelineConfigId": 1, "flow": (ROOT / "deploy/tke/yunxiao.yaml").read_text()}}
         if path == BUILD["FLOW"] + "/runs" and method == "GET":
-            assert query["status"] == "RUNNING"
             return []
         if method == "POST":
             assert json.loads(body["params"])["envs"]["PPAP_SOURCE_SHA"] == SHA
@@ -462,16 +460,14 @@ def test_fixed_source_branch_supports_advances_and_older_commits(tmp_path):
     assert not (tmp_path / "askpass.py").exists()
 
 
-def test_a_fourth_concurrent_build_waits_and_stuck_runs_do_not_count(tmp_path):
+def test_a_fourth_concurrent_build_waits(tmp_path):
     operation = BUILD["yunxiao"]
-    now = time.time() * 1000
-    stuck = {"pipelineRunId": 53, "startTime": now - 10 * 86400 * 1000}
-    live = [{"pipelineRunId": n, "startTime": now} for n in (147, 148, 149)]
 
-    def run_with(listed):
+    def run_with(statuses):
         def cloud(method, path, body=None, query=None):
-            assert (method, path, query["status"]) == ("GET", BUILD["FLOW"] + "/runs", "RUNNING")
-            return listed
+            # Only the latest runs are read: an old run Yunxiao still shows as RUNNING is not among them.
+            assert (method, path, query) == ("GET", BUILD["FLOW"] + "/runs", {"perPage": BUILD["RECENT_RUNS"], "page": 1})
+            return [{"pipelineRunId": 150 - n, "status": status} for n, status in enumerate(statuses)]
 
         def pushed(*args):
             raise RuntimeError("pushed")
@@ -479,8 +475,7 @@ def test_a_fourth_concurrent_build_waits_and_stuck_runs_do_not_count(tmp_path):
         with patch.dict(operation.__globals__, {"cloud": cloud, "source_branch": pushed}):
             operation(SHA, tmp_path, None)
 
-    # Two live builds and a 10-day-old stuck run leave room for this one.
     with pytest.raises(RuntimeError, match="pushed"):
-        run_with([stuck, *live[:2]])
-    with pytest.raises(ValueError, match="3 Yunxiao runs are in progress"):
-        run_with([stuck, *live])
+        run_with(["RUNNING", "RUNNING", "SUCCESS", "FAIL", "SUCCESS"])
+    with pytest.raises(ValueError, match=r"3 Yunxiao runs are in progress \(150, 149, 147\)"):
+        run_with(["RUNNING", "RUNNING", "SUCCESS", "RUNNING", "SUCCESS"])

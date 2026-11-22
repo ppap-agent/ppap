@@ -27,8 +27,8 @@ ROOT = HERE.parents[1]
 COMPONENTS = ("app", "web", "deep")
 PREFIX = "icoastline.tencentcloudcr.com/ppap-feishu/current-"
 CODEUP = "https://codeup.aliyun.com/icoastline/integration/4.0/ppap-web.git"
-STUCK_AFTER = 12 * 3600
 MAX_RUNNING = 3  # Yunxiao builds this pipeline at most three at a time
+RECENT_RUNS = 5  # only the latest runs can be building; an old run left RUNNING in Yunxiao is not
 FLOW = "/flow/organizations/60d54c9a70ab8549fd3e10db/pipelines/5339663"
 NAMESPACE = "ppap-test"
 SOURCE_BRANCH = "codex/ppap-current-release"
@@ -146,11 +146,7 @@ def yunxiao(sha: str, attempt: Path, resume_run: int | None, mode: str = "releas
     if resume_run is None:
         # A run in progress may be building this very source; its source is not readable from the run, so a person
         # decides: follow it with --run-id, or wait for it to finish. Never start a second build beside it.
-        # A build takes under an hour; a run still RUNNING after STUCK_AFTER is stuck in Yunxiao, not building.
-        listed = cloud("GET", FLOW + "/runs", query={"perPage": 10, "page": 1, "status": "RUNNING"})
-        running = [r for r in listed if time.time() - r["startTime"] / 1000 < STUCK_AFTER]
-        for stuck in (r for r in listed if r not in running):
-            print(f"Ignoring Yunxiao run {stuck['pipelineRunId']}: RUNNING since {time.strftime('%Y-%m-%d %H:%M', time.localtime(stuck['startTime'] / 1000))}, stuck.", flush=True)
+        running = [r for r in cloud("GET", FLOW + "/runs", query={"perPage": RECENT_RUNS, "page": 1}) if r["status"] == "RUNNING"]
         require(
             len(running) < MAX_RUNNING,
             f"{len(running)} Yunxiao runs are in progress ({', '.join(str(r['pipelineRunId']) for r in running)}): wait for one to finish, or follow this source's run with --run-id",
