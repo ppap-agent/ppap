@@ -45,8 +45,7 @@ def _questionnaire(conn, principal, questionnaire_id: str) -> dict:
         "id": str(row[0]),
         "customer_id": row[1],
         "rule_version": row[2],
-        # The rulebook revision it was asked on; none for a questionnaire loaded before revisions were recorded.
-        "rulebook": {"version": row[6], "revision": row[7]} if row[6] is not None else None,
+        "rulebook": {"version": row[6], "revision": row[7]},
         "title": row[3],
         "imported_at": row[4].isoformat(),
         "closed_at": row[5].isoformat() if row[5] else None,

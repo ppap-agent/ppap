@@ -4599,8 +4599,6 @@ export interface components {
             changes: components["schemas"]["RulebookChangeCounts"] | null;
             /** Clause Count */
             clause_count: number;
-            /** In Audit */
-            in_audit: boolean;
             /** Revision */
             revision: number;
             /** Version */
@@ -4614,8 +4612,6 @@ export interface components {
             clause_count: number;
             /** Documents */
             documents: components["schemas"]["RulebookDocument"][];
-            /** In Audit */
-            in_audit: boolean;
             /** Revision */
             revision: number;
             /** Version */
@@ -4870,7 +4866,7 @@ export interface components {
             mine: number;
             /** Rule Version */
             rule_version: string;
-            rulebook: components["schemas"]["RuleQuestionnaireRulebook"] | null;
+            rulebook: components["schemas"]["RuleQuestionnaireRulebook"];
             /** Title */
             title: string;
             /** Total */
@@ -4898,7 +4894,7 @@ export interface components {
             questions: components["schemas"]["RuleQuestion"][];
             /** Rule Version */
             rule_version: string;
-            rulebook: components["schemas"]["RuleQuestionnaireRulebook"] | null;
+            rulebook: components["schemas"]["RuleQuestionnaireRulebook"];
             /** Title */
             title: string;
             /** Total */

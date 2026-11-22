@@ -1,4 +1,4 @@
-"""Rulebook revisions are read by directory convention, for any customer, and never claimed to be in audit by guess."""
+"""Rulebook revisions are read by directory convention, for any customer, and keep their clause naming."""
 
 import json
 from pathlib import Path
@@ -33,7 +33,6 @@ def test_any_customer_revisions_with_their_changes_in_the_rulebook_order(tmp_pat
         ("B 文件", [("B:1", "要点", {"kind": "new", "note": "要求签字"})]),
         ("A 文件", [("A:1", "要点", {"kind": "changed", "note": "改了阈值"})]),
     ]
-    assert view["in_audit"] is False
 
 
 def test_unknown_customers_and_revisions_read_nothing(tmp_path):
@@ -43,27 +42,16 @@ def test_unknown_customers_and_revisions_read_nothing(tmp_path):
         assert read_revision(tmp_path, customer, version, revision) is None
 
 
-def test_uaes_v1_is_under_review_not_in_audit():
-    (row,) = [row for row in list_revisions(ROOT, "uaes") if (row["version"], row["revision"]) == ("v1.0", 0)]
-    assert (row["in_audit"], row["clause_count"], row["changes"]) == (False, 63, {"same": 6, "changed": 46, "new": 11})
-    view = read_revision(ROOT, "uaes", "v1.0", 0)
-    assert len(view["documents"]) == 19 and view["documents"][0]["title"] == "包装方案"
-    assert all(clause["change"] for document in view["documents"] for clause in document["clauses"])
-
-
-def test_a_revision_is_in_audit_only_when_its_clauses_are_the_presets_audits_run(tmp_path):
-    from audit.presets import customer_presets
-
-    presets = [preset for preset in customer_presets() if preset.customer == "UAES"]
-    write(tmp_path, "uaes", "v0.0", "m1", {preset.entry_id: [(clause.id, clause.text) for clause in preset.clauses] for preset in presets})
-    write(tmp_path, "uaes", "v0.0", "m2", {preset.entry_id: [(clause.id, clause.text + "。") for clause in preset.clauses] for preset in presets})
-    assert [(row["revision"], row["in_audit"]) for row in list_revisions(tmp_path, "uaes")] == [(1, True), (2, False)]
-
-
-def test_every_shipped_rulebook_names_its_clauses_by_document_type_and_number():
+def test_every_shipped_rulebook_names_its_clauses_and_explains_each_change():
     customers = [path.name for path in ROOT.iterdir() if (path / "rulebook").is_dir()]
-    assert "uaes" in customers
+    assert customers
     assert {customer: problems(ROOT, customer) for customer in customers} == {customer: [] for customer in customers}
+    for customer in customers:
+        for row in list_revisions(ROOT, customer):
+            clauses = [clause for document in read_revision(ROOT, customer, row["version"], row["revision"])["documents"] for clause in document["clauses"]]
+            assert len(clauses) == row["clause_count"] > 0
+            # A revision with a comparison table says for every clause how it changed.
+            assert row["changes"] is None or all(clause["change"] for clause in clauses)
 
 
 def test_a_name_off_its_file_repeated_or_changed_within_a_version_is_found(tmp_path):

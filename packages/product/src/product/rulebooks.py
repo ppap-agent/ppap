@@ -5,8 +5,8 @@ assets/uaes/AGENTS.md): ``rules/*.json`` holds one document type's clauses each.
 comparison table that leads into one of its revisions (``<from> 到 <version>-m<revision> 对照.md``), whose rows say per
 clause whether its meaning changed. A clause is named by its document type and number as the customer's rulebook has
 them (``CP:5`` in ``rules/CP.json``); every revision of a version has the same clause names, so a changed name means a
-new version (``problems`` checks this). Nothing here is customer specific, writes anything or decides which revision audits
-use: a revision is "in audit" only when its clauses are exactly the product presets the audits run.
+new version (``problems`` checks this). Nothing here is customer specific, writes anything or says which revision audits
+use.
 """
 
 from __future__ import annotations
@@ -70,20 +70,11 @@ def _changes(rulebook: Path, version: str, revision: int) -> tuple[dict[str, Any
     return ({"version": base.group(1), "revision": int(base.group(2))} if base else None), changes
 
 
-def _in_audit(customer_id: str, documents: list[dict[str, Any]]) -> bool:
-    from audit.presets import customer_presets
-    from audit.standard_suites import customer_directory
-
-    audited = Counter(clause.text for preset in customer_presets() if customer_directory(preset.customer) == customer_id for clause in preset.clauses)
-    return bool(audited) and audited == Counter(clause["text"] for document in documents for clause in document["clauses"])
-
-
-def _summary(customer_id: str, version: str, revision: int, documents: list[dict[str, Any]], changes: dict[str, dict[str, str]], base: dict[str, Any] | None) -> dict[str, Any]:
+def _summary(version: str, revision: int, documents: list[dict[str, Any]], changes: dict[str, dict[str, str]], base: dict[str, Any] | None) -> dict[str, Any]:
     counts = Counter(changes[clause["id"]]["kind"] for document in documents for clause in document["clauses"] if clause["id"] in changes)
     return {
         "version": version,
         "revision": revision,
-        "in_audit": _in_audit(customer_id, documents),
         "clause_count": sum(len(document["clauses"]) for document in documents),
         "base": base,
         "changes": {kind: counts.get(kind, 0) for kind in ("same", "changed", "new")} if changes else None,
@@ -98,7 +89,7 @@ def list_revisions(root: Path, customer_id: str) -> list[dict[str, Any]]:
     rows = []
     for version, revision, directory in _revision_dirs(rulebook):
         base, changes = _changes(rulebook, version, revision)
-        rows.append(_summary(customer_id, version, revision, _documents(directory, version), changes, base))
+        rows.append(_summary(version, revision, _documents(directory, version), changes, base))
     return rows
 
 
@@ -113,7 +104,7 @@ def read_revision(root: Path, customer_id: str, version: str, revision: int) -> 
     for document in documents:
         for clause in document["clauses"]:
             clause["change"] = changes.get(clause["id"])
-    return {**_summary(customer_id, version, revision, documents, changes, base), "documents": documents}
+    return {**_summary(version, revision, documents, changes, base), "documents": documents}
 
 
 def problems(root: Path, customer_id: str) -> list[str]:

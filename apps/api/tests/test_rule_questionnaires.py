@@ -189,9 +189,9 @@ def test_each_rulebook_revision_carries_its_own_questionnaire(auth_store_factory
     insert = "INSERT INTO product.rule_questionnaires(id,tenant_id,customer_id,rule_version,title,rulebook_version,rulebook_revision) VALUES(gen_random_uuid(),%s,'uaes',%s,'x',%s,%s)"
     with store._conn() as conn:
         conn.execute(insert, (tenant, "规范性条款 v1.0", "v1.0", 1))
-    # The same revision twice, a revision without its version, or a version the label does not name is refused.
-    for label, version, revision in (("规范性条款 v1.0", "v1.0", 1), ("规范性条款 v1.0", None, 2), ("规范性条款 v1.0", "v2.0", 0), ("规范性条款 v1.0", "1.0", 3)):
-        with store._conn() as conn, pytest.raises((psycopg.errors.UniqueViolation, psycopg.errors.CheckViolation)):
+    # The same revision twice, no revision, or a version the label does not name is refused.
+    for label, version, revision in (("规范性条款 v1.0", "v1.0", 1), ("规范性条款 v1.0", None, None), ("规范性条款 v1.0", "v2.0", 0), ("规范性条款 v1.0", "1.0", 3)):
+        with store._conn() as conn, pytest.raises((psycopg.errors.UniqueViolation, psycopg.errors.CheckViolation, psycopg.errors.NotNullViolation)):
             conn.execute(insert, (tenant, label, version, revision))
     listed = client("zhang").get("/rule-questionnaires").json()["questionnaires"]
     assert sorted((row["rulebook"]["version"], row["rulebook"]["revision"]) for row in listed) == [("v1.0", 0), ("v1.0", 1)]

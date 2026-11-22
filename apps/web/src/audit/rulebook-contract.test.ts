@@ -3,7 +3,7 @@ import test from 'node:test'
 import type {Question, QuestionnaireList} from './rule-questions-contract.ts'
 import {changeSummary, parseRevisionKey, questionnaireFor, questionsByClause, revisionKey, revisionLabel} from './rulebook-contract.ts'
 
-const summary = (id: string, customer: string, rulebook: {version: string; revision: number} | null) => ({id, customer_id: customer, rule_version: '规范性条款 v1.0', rulebook}) as QuestionnaireList['questionnaires'][number]
+const summary = (id: string, customer: string, rulebook: {version: string; revision: number}) => ({id, customer_id: customer, rule_version: '规范性条款 v1.0', rulebook}) as QuestionnaireList['questionnaires'][number]
 
 test('a revision is named and addressed the same way everywhere', () => {
   const ref = {version: 'v1.0', revision: 0}
@@ -14,8 +14,8 @@ test('a revision is named and addressed the same way everywhere', () => {
   assert.equal(changeSummary({base: null, changes: null}), '')
 })
 
-test('a questionnaire belongs to the revision recorded on it, never one guessed from its label', () => {
-  const list = {questionnaires: [summary('legacy', 'uaes', null), summary('q0', 'uaes', {version: 'v1.0', revision: 0}), summary('q1', 'uaes', {version: 'v1.0', revision: 1}), summary('other', 'li', {version: 'v1.0', revision: 0})]}
+test('a questionnaire belongs to the revision recorded on it', () => {
+  const list = {questionnaires: [summary('q0', 'uaes', {version: 'v1.0', revision: 0}), summary('q1', 'uaes', {version: 'v1.0', revision: 1}), summary('other', 'li', {version: 'v1.0', revision: 0})]}
   assert.equal(questionnaireFor(list, 'uaes', {version: 'v1.0', revision: 0})?.id, 'q0')
   assert.equal(questionnaireFor(list, 'uaes', {version: 'v1.0', revision: 1})?.id, 'q1')
   assert.equal(questionnaireFor(list, 'uaes', {version: 'v1.0', revision: 2}), undefined)

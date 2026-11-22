@@ -260,11 +260,6 @@ def validate(questionnaire: dict) -> None:
     for field in ("rule_version", "title"):
         if not isinstance(questionnaire.get(field), str) or not 1 <= len(questionnaire[field].strip()) <= 200:
             problems.append(f"{field} 缺失或太长")
-    version, revision = questionnaire.get("rulebook_version"), questionnaire.get("rulebook_revision")
-    if not (isinstance(version, str) and re.fullmatch(r"v\d+\.\d+", version) and str(questionnaire.get("rule_version", "")).endswith(" " + version)):
-        problems.append("rulebook_version 不是规则库版本（如 v1.0），或 rule_version 没以它结尾")
-    if type(revision) is not int or revision < 0:
-        problems.append("rulebook_revision 不是修订号（0、1、2……）")
     cards = questionnaire.get("questions") or []
     keys = [card.get("key") for card in cards]
     if not cards or len(set(keys)) != len(keys):
@@ -284,8 +279,8 @@ def target(questionnaire: dict, tenant: str) -> str:
     """The questionnaire's row: this enterprise, this customer, this rulebook revision."""
     return (
         f"r.tenant_id = (SELECT id FROM product.tenants WHERE provider = 'feishu' AND external_key = {literal(tenant)}) "
-        f"AND r.customer_id = {literal(questionnaire['customer_id'])} AND r.rule_version = {literal(questionnaire['rule_version'])} "
-        f"AND r.rulebook_revision = {int(questionnaire['rulebook_revision'])}"
+        f"AND r.customer_id = {literal(questionnaire['customer_id'])} AND r.rulebook_version = {literal(str(questionnaire['rulebook_version']))} "
+        f"AND r.rulebook_revision = {literal(str(questionnaire['rulebook_revision']))}::integer"
     )
 
 
@@ -303,8 +298,8 @@ BEGIN
 END $$;
 WITH questionnaire AS (
     INSERT INTO product.rule_questionnaires (id, tenant_id, customer_id, rule_version, rulebook_version, rulebook_revision, title)
-    SELECT gen_random_uuid(), id, {literal(questionnaire["customer_id"])}, {literal(questionnaire["rule_version"])}, {literal(questionnaire["rulebook_version"])},
-           {int(questionnaire["rulebook_revision"])}, {literal(questionnaire["title"])}
+    SELECT gen_random_uuid(), id, {literal(questionnaire["customer_id"])}, {literal(questionnaire["rule_version"])}, {literal(str(questionnaire["rulebook_version"]))},
+           {literal(str(questionnaire["rulebook_revision"]))}::integer, {literal(questionnaire["title"])}
     FROM product.tenants WHERE provider = 'feishu' AND external_key = {literal(tenant)}
     RETURNING id
 )

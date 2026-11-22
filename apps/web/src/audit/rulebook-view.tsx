@@ -17,7 +17,6 @@ import {followRulesLink, rulesAddress, RulesTrail} from './rule-templates-view'
 import {CHANGE_LABEL, changeSummary, parseRevisionKey, questionnaireFor, questionsByClause, revisionKey, revisionLabel, type RevisionList, type RevisionSummary, type RevisionView} from './rulebook-contract'
 
 const progress = (row: {answered: number; total: number}) => `待确认问题 已答 ${row.answered} / ${row.total}`
-const status = (summary: Pick<RevisionSummary, 'in_audit'>) => summary.in_audit ? '审核用' : '评审中，审核未使用'
 
 /** Under a customer on the rules page: its rulebook revisions, then any questionnaire not reached through one. */
 export function CustomerRulebook({customerId, questionnaires}: {customerId: string; questionnaires: QuestionnaireList | null}) {
@@ -37,7 +36,7 @@ export function CustomerRulebook({customerId, questionnaires}: {customerId: stri
       {[...revisions].reverse().map(row => {
         const href = rulesAddress({template: customerId, rulebook: revisionKey(row)}), id = `rb-${revisionKey(row)}`
         const questionnaire = questionnaireFor(questionnaires, customerId, row)
-        const facts = [status(row), `${row.clause_count} 条`, changeSummary(row), questionnaire ? progress(questionnaire) : ''].filter(Boolean).join(' · ')
+        const facts = [`${row.clause_count} 条`, changeSummary(row), questionnaire ? progress(questionnaire) : ''].filter(Boolean).join(' · ')
         return <Item key={id} variant="outline" size="sm" asChild>
           <a href={href} aria-labelledby={`${id}-title`} aria-describedby={`${id}-facts`} onClick={event => followRulesLink(event, href)}>
             <ItemContent><ItemTitle id={`${id}-title`} wrap>规则 {revisionLabel(row)}</ItemTitle><ItemDescription id={`${id}-facts`}>{facts}</ItemDescription></ItemContent>
@@ -96,7 +95,6 @@ export function RulebookRevisionPage({customer, revision, questionnaires}: {cust
       {trail}
       <div className="grid gap-2">
         <h1 className="text-xl font-semibold">规则 {revisionLabel(view)}</h1>
-        <p className="flex flex-wrap items-center gap-2 text-sm"><Badge variant={view.in_audit ? 'success' : 'info'}>{view.in_audit ? '审核用' : '评审中'}</Badge>{!view.in_audit && <span className="text-muted-foreground">审核未使用这份修订</span>}</p>
         <p className="text-sm text-muted-foreground">{view.clause_count} 条{view.changes ? `；${changeSummary(view)}` : ''}</p>
       </div>
       {questionnaire && questionnaireHref && <Item variant="outline" size="sm" asChild>

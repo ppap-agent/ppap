@@ -27,7 +27,7 @@ export function changeSummary(summary: Pick<RevisionSummary, 'base' | 'changes'>
 
 /** The customer's questionnaire on a revision: the one recorded as asked on it. */
 export function questionnaireFor(list: QuestionnaireList | null, customerId: string, ref: RevisionRef): QuestionnaireSummary | undefined {
-  return list?.questionnaires.find(row => row.customer_id === customerId && row.rulebook?.version === ref.version && row.rulebook.revision === ref.revision)
+  return list?.questionnaires.find(row => row.customer_id === customerId && row.rulebook.version === ref.version && row.rulebook.revision === ref.revision)
 }
 
 /** Each card under every clause it asks about; a card's items are «<clause>#<place>». */

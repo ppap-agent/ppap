@@ -28,8 +28,8 @@ class RuleQuestionnaireSummary(BaseModel):
     customer_id: str
     customer_name: str
     rule_version: str
-    # The rulebook revision it was asked on; null for a questionnaire loaded before revisions were recorded.
-    rulebook: RuleQuestionnaireRulebook | None
+    # The rulebook revision it was asked on.
+    rulebook: RuleQuestionnaireRulebook
     title: str
     imported_at: str
     closed_at: str | None

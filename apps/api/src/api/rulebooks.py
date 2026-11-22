@@ -27,8 +27,6 @@ class RulebookChangeCounts(BaseModel):
 class RulebookRevisionSummary(BaseModel):
     version: str
     revision: int
-    # True only when its clauses are exactly the rules audits run now.
-    in_audit: bool
     clause_count: int
     base: RulebookRevisionRef | None
     changes: RulebookChangeCounts | None

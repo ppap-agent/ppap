@@ -11,14 +11,13 @@ const view = (questions: Question[]): QuestionnaireView => ({
 })
 const receipt = (revision: number, choice: string | null, text: string | null = null) => ({operation_id: `op-${revision}`, questionnaire_id: 'q1', question_key: 'c1', answerer: '张三', mine: true, revision, choice, text, note: null, answered_at: `2026-11-2${revision}T00:00:00Z`})
 
-test('a questionnaire is titled by the revision it was asked on, never by guessing from its label', () => {
+test('a questionnaire is titled by the revision it was asked on', () => {
   const existing = view([card('c1', 'common')])
   const answered = applyReceipt(existing, receipt(1, 'A'))
   assert.equal(questionnaireVersionLabel(existing), '规范性条款 v1.0 修订 0')
   assert.equal(questionnaireVersionLabel(answered), '规范性条款 v1.0 修订 0')
   assert.deepEqual([answered.id, answered.rule_version, answered.answered], ['q1', '规范性条款 v1.0', 1])
   assert.equal(questionnaireVersionLabel({...existing, rulebook: {version: 'v1.0', revision: 2}}), '规范性条款 v1.0 修订 2')
-  assert.equal(questionnaireVersionLabel({...existing, rulebook: null}), '规范性条款 v1.0')
 })
 
 test('groups follow the answering order with common questions first, empty groups left out', () => {
