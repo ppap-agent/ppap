@@ -31,7 +31,7 @@ from worker import process_claimed
 pytestmark = pytest.mark.usefixtures("generated_rules")
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-# The 控制计划 rule an operator publishes on the web; MCP itself has no rule tools.
+# The 控制计划 rule an operator publishes on the web; MCP never changes the rules an audit uses.
 MCP_RULE = "00000000-0000-4000-8000-00000000c0de"
 RULE_BODY = {
     "kind": "engine",
@@ -45,6 +45,7 @@ RULE_BODY = {
 TOOLS = {
     "find_submissions",
     "prepare_audit",
+    "prepare_rule_clarification",
     "get_task",
     "get_issue",
     "resolve_issue",
@@ -504,7 +505,7 @@ def test_registry_annotations_and_browser_revoke(mcp_app):
         _, tokens, _ = connection(client, store, scopes=" ".join(SCOPES))
         token = tokens["access_token"]
         tools = {tool["name"]: tool for tool in rpc(client, token, "tools/list").json()["result"]["tools"]}
-        # Commands and queries on a task; nothing uploads, downloads or edits rules.
+        # Commands and queries on a task; nothing uploads or downloads bytes, and rules change only through an approved clarification.
         assert tools.keys() == TOOLS
         for tool in tools.values():
             assert tool["inputSchema"]["type"] == "object" and {"result", "issues", "next"} <= tool["outputSchema"]["properties"].keys()
