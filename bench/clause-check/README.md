@@ -24,8 +24,8 @@ cases.json 记录各条款、需要对照的真实文件、参照发现（需人
 
 ## 本地校验（仅 Python 标准库）
 
-    python3 -m unittest discover -s .claude/skills/clause-check/tests -v
-    python3 .claude/skills/clause-check/scripts/check.py .claude/skills/clause-check/examples/X01/X01-1.review.json
+    python3 -m unittest discover -s .agents/skills/clause-check/tests -v
+    python3 .agents/skills/clause-check/scripts/check.py .agents/skills/clause-check/examples/X01/X01-1.review.json
 
 ## 运行 Agent 基准
 

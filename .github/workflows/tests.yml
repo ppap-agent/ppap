@@ -127,7 +127,7 @@ jobs:
             pnpm install --frozen-lockfile
           )
           git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
-          python3 -m unittest discover -s .claude/skills/clause-check/tests -v
+          python3 -m unittest discover -s .agents/skills/clause-check/tests -v
           uv run --no-sync ruff check packages apps/api apps/worker tests scripts
           if ! uv run --no-sync ruff format --check packages apps/api apps/worker tests scripts; then
             uv run --no-sync ruff format --diff packages apps/api apps/worker tests scripts
