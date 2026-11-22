@@ -383,8 +383,6 @@ def test_run_uses_requested_commit_when_fixed_branch_moves(tmp_path, branch_head
         if path == BUILD["FLOW"]:
             assert method == "GET"
             return {"pipelineConfig": {"pipelineConfigId": 1, "flow": (ROOT / "deploy/tke/yunxiao.yaml").read_text()}}
-        if path == BUILD["FLOW"] + "/runs" and method == "GET":
-            return []
         if method == "POST":
             assert json.loads(body["params"])["envs"]["PPAP_SOURCE_SHA"] == SHA
             return 2
@@ -397,7 +395,7 @@ def test_run_uses_requested_commit_when_fixed_branch_moves(tmp_path, branch_head
     with patch.dict(operation.__globals__, {"cloud": cloud, "source_branch": lambda *args: BUILD["SOURCE_BRANCH"]}):
         assert operation(SHA, tmp_path, None) == IMAGES
     assert sum(method == "POST" for method, _ in calls) == 1
-    assert not any(method == "PUT" or path == BUILD["FLOW"] for method, path in calls)
+    assert not any(method == "PUT" or path == BUILD["FLOW"] or path.endswith("/runs") and method == "GET" for method, path in calls)
 
 
 def test_other_run_receipt_cannot_supply_selected_source_images(tmp_path):
@@ -458,24 +456,3 @@ def test_fixed_source_branch_supports_advances_and_older_commits(tmp_path):
     assert refs == ["refs/heads/" + BUILD["SOURCE_BRANCH"]]
     assert git("rev-parse", refs[0], cwd=remote) == commits[1]
     assert not (tmp_path / "askpass.py").exists()
-
-
-def test_a_fourth_concurrent_build_waits(tmp_path):
-    operation = BUILD["yunxiao"]
-
-    def run_with(statuses):
-        def cloud(method, path, body=None, query=None):
-            # Only the latest runs are read: an old run Yunxiao still shows as RUNNING is not among them.
-            assert (method, path, query) == ("GET", BUILD["FLOW"] + "/runs", {"perPage": BUILD["RECENT_RUNS"], "page": 1})
-            return [{"pipelineRunId": 150 - n, "status": status} for n, status in enumerate(statuses)]
-
-        def pushed(*args):
-            raise RuntimeError("pushed")
-
-        with patch.dict(operation.__globals__, {"cloud": cloud, "source_branch": pushed}):
-            operation(SHA, tmp_path, None)
-
-    with pytest.raises(RuntimeError, match="pushed"):
-        run_with(["RUNNING", "RUNNING", "SUCCESS", "FAIL", "SUCCESS"])
-    with pytest.raises(ValueError, match=r"3 Yunxiao runs are in progress \(150, 149, 147\)"):
-        run_with(["RUNNING", "RUNNING", "SUCCESS", "RUNNING", "SUCCESS"])
