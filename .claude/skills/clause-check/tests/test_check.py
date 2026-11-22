@@ -84,13 +84,14 @@ class ClauseReviewTests(unittest.TestCase):
             root = Path(tmp)
             clause = "七项全部满足才通过，否则不通过。签字与印章任一缺失，不通过。"
             review = {
-                "schema": "clause-check-review-v1", "source": "rules.json#X01:1",
+                "schema": "clause-check-review-v1",
+                "source": "rules.json#X01:1",
                 "requirements": [
                     {"quote": "七项全部满足才通过", "role": "necessary", "scope": "七项", "meaning": "任一项缺失不得通过。"},
-                    {"quote": "签字与印章任一缺失，不通过", "role": "prohibition", "scope": "供应商签署", "meaning": "签字和印章同时必需。"}
+                    {"quote": "签字与印章任一缺失，不通过", "role": "prohibition", "scope": "供应商签署", "meaning": "签字和印章同时必需。"},
                 ],
                 "findings": [],
-                "excluded": [{"quote": "七项全部满足才通过", "issue": "七项齐全即可通过", "reason": "才通过只规定必要条件；签章要求仍独立有效。"}]
+                "excluded": [{"quote": "七项全部满足才通过", "issue": "七项齐全即可通过", "reason": "才通过只规定必要条件；签章要求仍独立有效。"}],
             }
             path = self.fixture(root, review, clause)
             self.assertEqual(0, self.run_check(path).returncode)
@@ -109,7 +110,9 @@ class ClauseReviewTests(unittest.TestCase):
             path = self.fixture(root, review, src)
             self.assertEqual(0, self.run_check(path).returncode)
             plan = root / "plan.json"
-            plan.write_text(json.dumps({"customer_id": "uaes", "rule_version": "test-v1", "title": "测试问卷"}, ensure_ascii=False), encoding="utf-8")
+            plan.write_text(
+                json.dumps({"customer_id": "uaes", "rule_version": "测试条款 v1.0", "rulebook_version": "v1.0", "rulebook_revision": 0, "title": "测试问卷"}, ensure_ascii=False), encoding="utf-8"
+            )
             output = root / "import.json"
             build = subprocess.run([sys.executable, str(questionnaire), "build", str(root), str(plan), str(output)], capture_output=True, text=True)
             self.assertEqual(0, build.returncode, build.stderr)
