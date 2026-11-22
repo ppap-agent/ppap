@@ -27,7 +27,7 @@ import {hasExecutionError, subjectLabel, summarizeTask, taskSubject} from './tas
 import {displayTime} from '../helpers'
 import {FactQuestions} from './fact-questions'
 import {factMachineFindings} from './fact-answers-contract'
-import {conclusionLabel, executionLabel, reportLabel, resultLabel, resultTone, uncoveredLabel, type ResultTone} from './status-labels'
+import {checkStatusLabel, conclusionLabel, executionLabel, reportLabel, resultLabel, resultTone, uncoveredLabel, type ResultTone} from './status-labels'
 import {deepModeTitle, deepReviewNotice} from './deep-mode'
 import {RunFinished, RunStatus} from './run-status'
 import {LiveProgress} from './live-progress'
@@ -47,7 +47,7 @@ export function AuditExcludedFiles({files}: {files: Task['files']}) {
 /** Reads the original Round of a re-audit, for showing which files changed. */
 export type ReadRound = (id: string, signal: AbortSignal) => Promise<components['schemas']['Round']>
 
-export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, onChange, renderOriginal, reportAdapter, notificationAdapter, onReportChange, onReportView, sharingAdapter, onEditDisplay, headerActions, headerTitle, onReaudit, readRound, onFileOpen, live = false, steps}: {live?: boolean; steps?: LiveSteps; onFileOpen?: (open: boolean) => void; task: Task; busy: boolean; readError: string; onReadSupport: () => void; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; notificationAdapter?: AuditNotificationAdapter; onReportChange: (task: Task) => void; onReportView: (open: boolean) => void; sharingAdapter?: AuditSharingAdapter; onEditDisplay?: (file: components['schemas']['AuditTaskFile']) => void; headerTitle?: HTMLElement | null; headerActions?: HTMLElement | null; onReaudit?: () => void; readRound?: ReadRound}) {
+export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, onChange, renderOriginal, reportAdapter, notificationAdapter, onReportChange, onReportView, sharingAdapter, onEditDisplay, headerActions, headerTitle, onReaudit, readRound, onFileOpen, live = false, steps}: {live?: boolean; steps?: LiveSteps; onFileOpen?: (open: boolean) => void; task: Task; busy: boolean; readError: string; onReadSupport: () => void; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer; reportAdapter: AuditReportAdapter; notificationAdapter?: AuditNotificationAdapter; onReportChange: (task: Task) => void; onReportView: (open: boolean) => void; sharingAdapter: AuditSharingAdapter; onEditDisplay?: (file: components['schemas']['AuditTaskFile']) => void; headerTitle?: HTMLElement | null; headerActions?: HTMLElement | null; onReaudit?: () => void; readRound?: ReadRound}) {
   const openSupport = useContext(SupportEntryContext)
   const queue = task.files.filter(row => row.selection === 'selected')
   const progressIssue = taskProgressError(task)
@@ -105,7 +105,6 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
     if (group) group.items.push(check); else groups.push({row, items: [check]})
     return groups
   }, [])
-  const issueLabel = (check: (typeof issues)[number]['check']) => check.execution === 'failed' ? resultLabel.ERR : check.coverage !== 'executed' ? uncoveredLabel : check.finding ? resultLabel[check.finding.status] : '结果未知'
   function openIssue(fileId: string, clauseId: string) {
     setSelected(fileId)
     const url = new URL(location.href)
@@ -137,7 +136,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
           const clauseNo = clauseIndex < 0 ? '—' : `第 ${clauseIndex + 1} 条`
           const clauseName = clauseIndex < 0 ? clauseLabel(clauses, check.rule_item.id) : clauses[clauseIndex].category
           const openRow = () => openIssue(group.row.file.id, check.rule_item.id)
-          return <TableRow key={check.rule_item.id} className="cursor-pointer" onClick={event => {if (!(event.target instanceof Element && event.target.closest('button'))) openRow()}}><TableCell className="align-top"><Badge shape="square" variant={check.finding?.status === 'NG' && check.coverage === 'executed' && check.execution === 'completed' ? 'destructive' : 'warning'}>{issueLabel(check)}</Badge></TableCell><TableCell className="align-top" title={clauseIndex < 0 ? check.rule_item.id : undefined}><span className="tabular-nums text-muted-foreground">{clauseNo}</span></TableCell><TableCell className="whitespace-normal align-top">{/* The row is a mouse target; this button is the keyboard and screen-reader entry. */}<Button variant="link" size="sm" className="h-auto justify-start text-left whitespace-normal" title={clauseName} onClick={openRow}>{clauseName}</Button></TableCell></TableRow>
+          return <TableRow key={check.rule_item.id} className="cursor-pointer" onClick={event => {if (!(event.target instanceof Element && event.target.closest('button'))) openRow()}}><TableCell className="align-top"><Badge shape="square" variant={check.finding?.status === 'NG' && check.coverage === 'executed' && check.execution === 'completed' ? 'destructive' : 'warning'}>{checkStatusLabel(check)}</Badge></TableCell><TableCell className="align-top" title={clauseIndex < 0 ? check.rule_item.id : undefined}><span className="tabular-nums text-muted-foreground">{clauseNo}</span></TableCell><TableCell className="whitespace-normal align-top">{/* The row is a mouse target; this button is the keyboard and screen-reader entry. */}<Button variant="link" size="sm" className="h-auto justify-start text-left whitespace-normal" title={clauseName} onClick={openRow}>{clauseName}</Button></TableCell></TableRow>
         })}</TableBody></Table></section>)}
       {issues.length > issueLimit && <Button variant="link" size="sm" aria-expanded={allIssues} onClick={() => setAllIssues(value => !value)}>{allIssues ? `只看前 ${issueLimit} 项` : `查看全部 ${issues.length} 个需关注项`}</Button>}</div>}
     {!running && issues.length === 0 && <p className="text-sm text-muted-foreground">{task.state === 'completed' && !executionFailed && !progressIssue ? '没有需关注的审核项。从文件列表查看逐项结果和依据。' : '从文件列表查看各文件的状态。'}</p>}

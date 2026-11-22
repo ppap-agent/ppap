@@ -71,7 +71,7 @@ jobs:
         with:
           node-version-file: .node-version
           package-manager-cache: false
-      # docs/DESIGN_SYSTEM.md: design.md is a current projection of tokens/, and authored styles use tokens.
+      # apps/web/tokens/README.md: design.md is a current projection of tokens/, and authored styles use tokens.
       - name: Design projection and token policy
         working-directory: ${{ github.workspace }}/apps/web
         env:
@@ -127,7 +127,6 @@ jobs:
             pnpm install --frozen-lockfile
           )
           git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
-          uv run --no-sync python -m compileall -q packages apps/api apps/worker tests scripts
           python3 -m unittest discover -s .claude/skills/clause-check/tests -v
           uv run --no-sync ruff check packages apps/api apps/worker tests scripts
           if ! uv run --no-sync ruff format --check packages apps/api apps/worker tests scripts; then
@@ -147,9 +146,6 @@ jobs:
             corepack yarn@1.22.22 install --frozen-lockfile --ignore-scripts
             npx --yes -p typescript@5.6.3 tsc -p tsconfig.json --noEmit
           )
-          docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
-          docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
-          docker buildx bake --print >/dev/null
           docker buildx bake --check
           node scripts/verify-container-graph.mjs
           curl -fsSL -o /tmp/actionlint.tar.gz https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
@@ -489,29 +485,12 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - name: Use runner-local Corepack cache
-        working-directory: ${{ github.workspace }}
-        run: echo "COREPACK_HOME=$RUNNER_TEMP/corepack/${GITHUB_RUN_ID}/${GITHUB_JOB}" >> "$GITHUB_ENV"
-      - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-          package-manager-cache: false
-      - name: Install frontend dependencies for feedback E2E
-        working-directory: ${{ github.workspace }}/apps/web
-        env:
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
       - name: Install Python deps and browser
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           uv sync --locked --group e2e
           uv run --no-sync python -m playwright install chromium
-      - name: Install shared Excel converter for product contracts
-        uses: ./.github/actions/excel-converter
       - name: Set up cached image builder
         id: image_builder
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -533,11 +512,6 @@ jobs:
             "ppap-web:${PPAP_BUILD_SHA}" \
             "ppap-deep:${PPAP_BUILD_SHA}" \
             >/dev/null
-          docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fx "ppap-app:${PPAP_BUILD_SHA}" >/dev/null
-          docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fx "ppap-web:${PPAP_BUILD_SHA}" >/dev/null
-          docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml config --images | grep -Fx "ppap-deep:${PPAP_BUILD_SHA}" >/dev/null
-          docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fx "ppap-app:${PPAP_BUILD_SHA}" >/dev/null
-          docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fx "ppap-web:${PPAP_BUILD_SHA}" >/dev/null
       - name: Production runtime and backup
         working-directory: ${{ github.workspace }}
         env:

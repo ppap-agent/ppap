@@ -99,6 +99,19 @@ def type_name(code: str) -> str:
     return next((name for codes in _standard_codes().values() for name, value in codes.items() if value == code), code)
 
 
+def display_name(code: str) -> str:
+    """The name people read for a code: a customer-only E code by its PPAP-00-A dictionary name, any other by the rule type name."""
+    return _dictionary_names().get(code) or type_name(code)
+
+
+@lru_cache(maxsize=1)
+def _dictionary_names() -> dict[str, str]:
+    """E code → name from the PPAP-00-A routing, the one table of customer-only document names."""
+    from product.precheck_content import ENTRIES
+
+    return {names[0]: names[1] for _customer, names in ENTRIES.values() if names[0].startswith("E")}
+
+
 @lru_cache(maxsize=1)
 def _standard_codes() -> dict[str | None, dict[str, str]]:
     """Type name → T code per preset customer, and under None the plain codes (T01, not T01a) every customer shares."""
@@ -154,7 +167,7 @@ def coverage(customer: RegisteredCustomer, template_codes: Iterable[str | None],
     return {
         "version": type_set.version,
         "effective_from": type_set.effective_from,
-        "types": [{"code": code, "rule_type": type_name(code)} for code in type_set.types],
+        "types": [{"code": code, "rule_type": type_name(code), "name": display_name(code)} for code in type_set.types],
         "template_types": covered(customer, template_codes),
         "rule_types": covered(customer, rule_codes),
     }

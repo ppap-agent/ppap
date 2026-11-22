@@ -7,12 +7,12 @@ import {customerFullName, customerShortName, type RegisteredCustomer} from '../a
 import {clauseObservation, pendingNote} from '../audit/result-projection'
 import {taskAddress} from '../audit/routes'
 import {newerRuleOf, ruleName, type RuleVersionChoice} from '../audit/reaudit-intent'
-import {conclusionLabel} from '../audit/status-labels'
+import {checkStatusLabel, conclusionLabel} from '../audit/status-labels'
 import {submittedCount} from '../audit/task-acceptance'
 import type {components} from '../generated/openapi'
 import {resolveHost, type AddonHost} from './host'
 import {OfficeView, type Evidence} from './office'
-import {attention, audited, marker, resultMarkdown, statusOf, totals, verdict, verdictLabel, type Task, type TaskFile} from './report'
+import {attention, audited, marker, resultMarkdown, totals, verdict, verdictText, type Task, type TaskFile} from './report'
 import '../index.css'
 
 type DocLink = components['schemas']['DocLink']
@@ -425,7 +425,7 @@ function Result({task, call, host, canEdit, open, onReaudit, setPrimary, notify}
   return (
     <section aria-label="审核结果" data-testid="addon-round">
       <h2 className="mb-2 text-base font-semibold">审核结果</h2>
-      <p className="mb-2 flex flex-wrap items-center gap-2.5"><span className={tag(overall)}>{verdictLabel[overall]}</span>{audited(task).length > 0 && <span>不符合 <strong>{sum.ng}</strong> 项 · 待审核 <strong>{sum.pending}</strong> 项{sum.errors > 0 && <> · 审核异常 <strong>{sum.errors}</strong> 项</>}</span>}</p>
+      <p className="mb-2 flex flex-wrap items-center gap-2.5"><span className={tag(overall)}>{verdictText(overall)}</span>{audited(task).length > 0 && <span>不符合 <strong>{sum.ng}</strong> 项 · 待审核 <strong>{sum.pending}</strong> 项{sum.errors > 0 && <> · 审核异常 <strong>{sum.errors}</strong> 项</>}</span>}</p>
       {overall === 'NONE' && <p className="text-muted-foreground">没有可用的审核规则，这一次没有审核，也没有扣点。</p>}
       {overall === 'ERROR' && <p role="alert" className="mb-2 rounded-md bg-warning/10 px-3 py-2 text-warning">审核出现技术错误，结果不完整，不能写入文档。</p>}
       {writable && !canEdit && !written && <p className="text-muted-foreground">你没有这篇文档的编辑权限，不能把结果写入文档。</p>}
@@ -450,7 +450,7 @@ function Result({task, call, host, canEdit, open, onReaudit, setPrimary, notify}
               return (
                 <li key={row.file.id + check.rule_item.id}>
                   <button type="button" className="flex w-full flex-col gap-0.5 border-b py-2 text-left hover:bg-muted" title="对照原件查看" onClick={() => setViewing({file, locator: source?.locator ?? null, excerpt: source?.excerpt ?? '', clause: check.rule_item.rule_to_check})}>
-                    <span className="flex min-w-0 items-center gap-2"><span className={tag(check.finding?.status === 'NG' ? 'NG' : 'UNKNOWN')}>{statusOf(check)}</span><span className="text-muted-foreground text-xs min-w-0 truncate" title={row.file.original_filename}>{row.file.original_filename}</span></span>
+                    <span className="flex min-w-0 items-center gap-2"><span className={tag(check.finding?.status === 'NG' ? 'NG' : 'UNKNOWN')}>{checkStatusLabel(check)}</span><span className="text-muted-foreground text-xs min-w-0 truncate" title={row.file.original_filename}>{row.file.original_filename}</span></span>
                     <span className="line-clamp-3">{check.rule_item.rule_to_check}</span>
                     <span className="text-muted-foreground text-xs">{clauseObservation(check)}</span>
                   </button>

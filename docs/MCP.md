@@ -36,7 +36,7 @@
 | `get_operation` | 读 | 按 `request_id` 读回一次写操作的回执 |
 | `get_account` | 读 | 当前用户、可选客户、剩余点数 |
 
-文件只来自飞书，结果只回到飞书：MCP 不上传、不下载字节，也没有本地适配器。规则与检查程序只由平台运营在网页维护。每个面向用户的 API 路由，要么由这些工具到达，要么在 `apps/api/tests/test_mcp_coverage.py` 写明为何留给网页。
+文件只来自飞书，结果只回到飞书：MCP 不上传、不下载字节，也没有本地适配器。MCP 没有规则或检查程序的工具；规则由平台离线交付，网页规则页只读（见 [Northstar](NORTHSTAR.md)）。每个面向用户的 API 路由，要么由这些工具到达，要么在 `apps/api/tests/test_mcp_coverage.py` 写明为何留给网页。
 
 网页或飞书插件发起的审核同样是任务：`get_task`、`get_results`、`record_review`、`publish_report` 对它一样可用，只是没有文件夹可供重新准备。
 

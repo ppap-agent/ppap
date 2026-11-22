@@ -355,8 +355,15 @@ def core_system(monkeypatch, tmp_path):
             resolved = releases.suites.resolve_suite(selected["revision_id"], principal.tenant_id)
             rules = json.loads(resolved.files["rules.json"])
             rules["checker_binding"] = binding if binding is not None else {str(row["id"]): "checker:check" for row in rules["rules"]}
-            candidate = releases.save_candidate(principal, selected["revision_id"], {"rules.json": json.dumps(rules, ensure_ascii=False), "checker.py": code})
-            return releases.publish(principal, body["suite_key"], candidate["id"], selected["head_revision"], str(uuid.uuid4()), force_unverified=True)
+            candidate = releases.suites.create_revision(
+                tenant_id=principal.tenant_id,
+                suite_key=resolved.revision.suite_key,
+                files={"rules.json": json.dumps(rules, ensure_ascii=False).encode(), "checker.py": code.encode()},
+                created_by=principal.user_id,
+                base_revision_id=resolved.revision.id,
+                related_suite_keys=resolved.revision.related_suite_keys,
+            )
+            return releases.publish(principal, body["suite_key"], candidate.id, selected["head_revision"], str(uuid.uuid4()), force_unverified=True)
 
         @staticmethod
         def adopt_standard(store, principal, *keys):

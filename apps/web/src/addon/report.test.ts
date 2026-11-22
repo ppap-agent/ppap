@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {attention, marker, resultMarkdown, verdict, type Task} from './report.ts'
+import {attention, marker, resultMarkdown, verdict, verdictText, type Task} from './report.ts'
 
 function check(id: string, status: 'PASS' | 'NG' | 'UNABLE', text: string) {
   return {rule_item: {id, category: '完整性', rule_to_check: text}, execution: 'completed', coverage: 'executed', scope_notice: null, evidence: [], review: null, finding: {status, suggestions: status === 'NG' ? '特殊特性|符号缺失' : ''}}
@@ -9,7 +9,7 @@ function finished(overrides: Record<string, unknown> = {}): Task {
   const counts = {pass_count: 1, ng_count: 1, unknown_count: 1, not_covered_count: 0, error_count: 0}
   const audit = {execution: 'completed', conclusion: 'NG', counts, checks: [check('c1', 'PASS', '封面完整'), check('c2', 'UNABLE', '签字日期可辨认'), check('c3', 'NG', '特殊特性已标识')]}
   return {
-    id: 'task-1', number: 'PPAP-20261116-003', state: 'completed', execution: 'completed', has_execution_error: false, completion_reason: 'processed',
+    id: 'task-1', number: 'PPAP-20261116-003', state: 'completed', execution: 'completed', has_execution_error: false, completion_reason: 'processed', conclusion: 'NG', machine_conclusion: 'NG',
     round_id: 'round-1', round_started_at: '2026-11-16T06:30:00Z', created_at: '2026-11-16T06:00:00Z',
     files: [
       {file: {id: 'v1', original_filename: 'PFMEA|A.xlsx'}, selection: 'selected', match: {state: 'matched'}, audit},
@@ -19,17 +19,24 @@ function finished(overrides: Record<string, unknown> = {}): Task {
   } as unknown as Task
 }
 
-test('an unfinished or failed audit is never stated as conforming', () => {
+test('the add-on shows the server conclusion as it is; only a round with no rules or still running is told apart', () => {
   assert.equal(verdict(finished()), 'NG')
-  assert.equal(verdict(finished({state: 'reviewing', execution: 'running'})), 'RUNNING')
-  assert.equal(verdict(finished({has_execution_error: true})), 'ERROR')
+  // A person's confirmation is the last word: the server's conclusion, not the machine's, is shown.
+  assert.equal(verdict(finished({conclusion: 'PASS', machine_conclusion: 'NG'})), 'PASS')
+  assert.equal(verdict(finished({conclusion: 'ERROR'})), 'ERROR')
+  assert.equal(verdict(finished({conclusion: null})), 'UNKNOWN')
+  assert.equal(verdict(finished({state: 'reviewing', execution: 'running', conclusion: null})), 'RUNNING')
   assert.equal(verdict(finished({completion_reason: 'no_matching_rules'})), 'NONE')
-  const passing = finished()
-  passing.files[0].audit!.conclusion = 'PASS'
-  assert.equal(verdict(passing), 'PASS')
-  passing.files[0].audit!.conclusion = null
-  assert.equal(verdict(passing), 'UNKNOWN')
-  assert.throws(() => resultMarkdown(finished({has_execution_error: true}), 'https://ppap.example/t'), /round_incomplete/)
+  assert.throws(() => resultMarkdown(finished({conclusion: 'ERROR'}), 'https://ppap.example/t'), /round_incomplete/)
+})
+
+test('a round with 待审核 clauses is not shown as 符合 even when every file passed by machine', () => {
+  const task = finished({conclusion: 'UNKNOWN', machine_conclusion: 'UNKNOWN'})
+  task.files[0].audit!.conclusion = 'PASS'
+  assert.equal(verdictText(verdict(task)), '待审核')
+  const text = resultMarkdown(task, 'https://ppap.example/t')
+  assert.match(text, /\*\*总体结论：待审核\*\*/)
+  assert.ok(!text.includes('总体结论：符合'))
 })
 
 test('the document content names the audit, every audited file and each open item, most urgent first', () => {

@@ -3,12 +3,12 @@ import test from 'node:test'
 import {customerCoverage, customerFileSlots, customerTypeSetMissing} from './customer-coverage.ts'
 import {customerFullName, customerShortName, registeredCustomer, type RegisteredCustomer} from './customer-register.ts'
 
-const customer = (id: string, full: string, short: string, types: [string, string][] | null, rules: string[] = [], templates: string[] = []): RegisteredCustomer => ({
+const customer = (id: string, full: string, short: string, types: [string, string, string?][] | null, rules: string[] = [], templates: string[] = []): RegisteredCustomer => ({
   customer_id: id, name: short, full_name: full, short_name: short,
-  coverage: types && {version: 'V3.33', effective_from: '2026-11-18', types: types.map(([code, rule_type]) => ({code, rule_type})), template_types: templates, rule_types: rules},
+  coverage: types && {version: 'V3.33', effective_from: '2026-11-18', types: types.map(([code, rule_type, name]) => ({code, rule_type, name: name ?? rule_type})), template_types: templates, rule_types: rules},
 })
 const customers = [
-  customer('uaes', '联合汽车电子有限公司', 'UAES', [['T11', '控制计划'], ['E07', 'E07']], ['T11', 'E07'], ['T11']),
+  customer('uaes', '联合汽车电子有限公司', 'UAES', [['T11', '控制计划'], ['E07', 'E07', '生产件样品照片']], ['T11', 'E07'], ['T11']),
   customer('nio', '蔚来汽车', '蔚来', null),
 ]
 
@@ -23,8 +23,8 @@ test('only registered names resolve; look-alikes are shown as recorded', () => {
   assert.equal(customerFullName(null, 'UAES'), 'UAES')
 })
 
-test('the picker shows the backend rule coverage N_r/M; nothing is shown before the read, for automatic mode or without M', () => {
-  assert.deepEqual(customerCoverage({customers}, 'UAES'), {supported: 2, total: 2})
+test('the picker shows the picked customer coverage; nothing before the read, for automatic mode, an unregistered name or without M', () => {
+  assert.deepEqual(customerCoverage({customers}, 'UAES'), {covered: 2, total: 2})
   assert.equal(customerCoverage({customers}, 'auto'), null)
   assert.equal(customerCoverage({customers: null}, 'UAES'), null)
   assert.equal(customerCoverage(null, 'UAES'), null)

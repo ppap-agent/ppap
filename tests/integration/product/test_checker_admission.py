@@ -7,8 +7,8 @@ from copy import deepcopy
 
 import pytest
 from audit.checker_core import checker_digest
+from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from audit.standard_suites import library_revision
-from product.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from product.settings import Settings
 from product.store.model_credentials import platform_selection
 from product.store.suite_releases import SuiteReleaseStore
@@ -113,14 +113,16 @@ def test_publication_and_rollback_only_change_new_round_snapshots(admission):
     original = a.snapshot(first["id"])
     candidate_rules = deepcopy(RULES)
     candidate_rules["rules"][0]["rule_to_check"] = "企业已确认的新条款"
-    candidate = a.releases.save_candidate(a.alice, a.official.id, {"rules.json": json.dumps(candidate_rules, ensure_ascii=False)})
-    a.releases.publish(a.bob, KEY, candidate["id"], 0, str(uuid.uuid4()), force_unverified=True)
+    candidate = a.releases.suites.create_revision(
+        tenant_id=a.alice.tenant_id, suite_key=KEY, files={"rules.json": json.dumps(candidate_rules, ensure_ascii=False).encode()}, created_by=a.alice.user_id, base_revision_id=a.official.id
+    )
+    a.releases.publish(a.bob, KEY, candidate.id, 0, str(uuid.uuid4()), force_unverified=True)
     second = a.accept()
     changed = a.snapshot(second["id"])
     a.releases.publish(a.bob, KEY, a.official.id, 1, str(uuid.uuid4()))
     third = a.accept()
     restored = a.snapshot(third["id"])
-    assert [snapshot.targets[0].suite_revision_id for snapshot in (original, changed, restored)] == [a.official.id, candidate["id"], a.official.id]
+    assert [snapshot.targets[0].suite_revision_id for snapshot in (original, changed, restored)] == [a.official.id, candidate.id, a.official.id]
     assert [snapshot.targets[0].verification for snapshot in (original, changed, restored)] == ["verified", "unverified", "verified"]
     assert changed.targets[0].rules["rules"][0]["rule_to_check"] == "企业已确认的新条款"
     assert a.snapshot(first["id"]).to_dict() == original.to_dict()
@@ -131,7 +133,7 @@ def test_publication_and_rollback_only_change_new_round_snapshots(admission):
         (a.target.id, "target", a.target.sha256),
         (a.reference.id, "reference", a.reference.sha256),
     }
-    assert a.releases.detail(a.alice, candidate["id"])["rounds"][0]["id"] == second["id"]
+    assert a.releases.detail(a.alice, candidate.id)["rounds"][0]["id"] == second["id"]
     # Replaying a prior confirmation does not select today's adopted Suite.
     replay = a.store.accept_draft(a.alice, first["source_draft_id"], "accept:" + first["source_draft_id"])
     assert replay["id"] == first["id"]
@@ -184,10 +186,12 @@ def test_standard_round_freezes_the_explicitly_adopted_appendix(admission):
     appendix = [{"id": "confirmed", "kind": "interpretation", "content": "确认后的编号解释", "scope": {"document_ids": [a.target.id], "rule_ids": ["R1"]}, "confirmation_source": "synthetic"}]
     # Adopting appendix bytes creates a distinct unverified Suite; the round
     # freezes those exact bytes, never the old verified proof.
-    candidate = a.releases.save_candidate(a.alice, a.official.id, {"appendix.json": json.dumps(appendix, ensure_ascii=False)})
-    a.releases.publish(a.bob, KEY, candidate["id"], 0, str(uuid.uuid4()), force_unverified=True)
+    candidate = a.releases.suites.create_revision(
+        tenant_id=a.alice.tenant_id, suite_key=KEY, files={"appendix.json": json.dumps(appendix, ensure_ascii=False).encode()}, created_by=a.alice.user_id, base_revision_id=a.official.id
+    )
+    a.releases.publish(a.bob, KEY, candidate.id, 0, str(uuid.uuid4()), force_unverified=True)
     frozen = a.snapshot(a.accept()["id"])
-    assert frozen.targets[0].suite_revision_id == candidate["id"]
+    assert frozen.targets[0].suite_revision_id == candidate.id
     assert frozen.targets[0].verification == "unverified"
     assert frozen.to_dict()["targets"][0]["appendix"] == appendix
 

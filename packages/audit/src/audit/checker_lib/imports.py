@@ -47,8 +47,6 @@ def import_violations(tree: ast.AST) -> tuple[str, ...]:
                 for alias in node.names:
                     if _forbidden("audit." + alias.name):
                         found.append(f"{node.lineno}: audit.{alias.name}")
-            if module == "audit.standard_library" and any(alias.name == "check_clause" for alias in node.names):
-                found.append(f"{node.lineno}: audit.standard_library.check_clause")
         elif isinstance(node, ast.Call) and _call_name(node) in _DYNAMIC:
             if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
                 found.append(f"{node.lineno}: non_literal_import")

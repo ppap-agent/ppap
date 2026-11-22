@@ -212,11 +212,11 @@ class ProductExperienceTests(unittest.TestCase):
             draft = self.client.post("/drafts").json()["id"]
             self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]})
             rounds.append(self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": filename}).json()["id"])
-        first = self.client.get("/rounds?limit=1").json()
-        second = self.client.get(f"/rounds?limit=1&offset={first['next_offset']}").json()
-        self.assertEqual({first["rounds"][0]["id"], second["rounds"][0]["id"]}, set(rounds))
-        self.assertIsNone(second["next_offset"])
-        self.assertEqual(len(self.client.get("/rounds?q=first").json()["rounds"]), 1)
+        alice = self.store.principal_for_fixture("alice")
+        first, second = (self.store.list_rounds(alice, 1, offset) for offset in (0, 1))
+        self.assertEqual({first[0]["id"], second[0]["id"]}, set(rounds))
+        self.assertEqual(self.store.list_rounds(alice, 1, 2), [])
+        self.assertEqual(len(self.store.list_rounds(alice, q="first")), 1)
         round_path = f"/rounds/{rounds[-1]}" + path + "/preview"
         self.assertEqual(self.client.get(round_path).status_code, 200)
         self.assertEqual(self.client.get(round_path + "?start_row=0").status_code, 422)
@@ -226,4 +226,4 @@ class ProductExperienceTests(unittest.TestCase):
         self.assertEqual(self.client.get(path + "/preview").status_code, 200)
         self.assertEqual(self.client.get(round_path).status_code, 200)
         self.assertEqual(self.client.get(round_path + "?sheet=Sheet1&start_row=30").status_code, 200)
-        self.assertEqual({row["id"] for row in self.client.get("/rounds").json()["rounds"]}, set(rounds))
+        self.assertEqual({row["id"] for row in self.store.list_rounds(self.store.principal_for_fixture("bob"))}, set(rounds))

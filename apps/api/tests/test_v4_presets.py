@@ -4,6 +4,7 @@ import uuid
 
 from api import create_app
 from fastapi.testclient import TestClient
+from product import customers
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 
@@ -17,12 +18,14 @@ def test_new_enterprise_receives_all_preset_rules_without_upload(auth_store_fact
     rules = client.get("/rules").json()["rules"]
     presets = [rule for rule in rules if rule["rule_profile"] == "v4"]
     assert presets
-    assert {row["name"] for row in client.get("/audit-customers").json()["customers"]} == {"UAES", "理想", "蔚来"}
+    assert {row["short_name"] for row in client.get("/audit-customers").json()["customers"]} == {customer.short_name for customer in customers.CUSTOMERS}
     installed = [row for row in store.list_rules(principal.tenant_id) if row["rule_profile"] == "v4"]
     first_ids = {row["id"] for row in installed}
-    # Every preset is installed and kept; new tasks are offered only 蔚来's five types, not its N06–N17.
-    withheld = [row for row in installed if row["id"] not in {preset["id"] for preset in presets}]
-    assert len(withheld) == 12 and all(row["customers"] == ["蔚来"] for row in withheld)
+    # Every preset is installed and kept; new tasks are offered only 蔚来's types in its M, not its N06–N17.
+    nio = customers.find("nio")
+    outside = {row["id"] for row in installed if row["customers"] == [nio.short_name] and customers.type_code(row["type"], nio.short_name) not in nio.type_set.types}
+    withheld = {row["id"] for row in installed} - {preset["id"] for preset in presets}
+    assert outside and withheld == outside
     store.upsert_feishu_identity(tenant, "first")
     peer = store.upsert_feishu_identity(tenant, "second")
     assert {row["id"] for row in store.list_rules(peer.tenant_id) if row["rule_profile"] == "v4"} == first_ids
@@ -38,8 +41,8 @@ def test_new_enterprise_receives_all_preset_rules_without_upload(auth_store_fact
     other_ids = {row["id"] for row in store.list_rules(other.tenant_id) if row["rule_profile"] == "v4"}
     assert len(other_ids) == len(first_ids) and not first_ids & other_ids
     assert store.get_rule(other.tenant_id, next(iter(first_ids))) is None
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert store.list_rounds(principal) == []
+    assert store.list_usage_events(principal) == []
     client.close()
 
 

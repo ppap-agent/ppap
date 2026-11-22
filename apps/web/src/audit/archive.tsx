@@ -24,10 +24,10 @@ import type {AuditSharingAdapter} from './sharing-contract'
 import {useReportPackage} from './report-actions'
 import {ReportPackage} from './report-package'
 import {historyReportReady, historyReportReference, resultKey, readArchiveAddress, writeArchiveAddress, writeArchivePackageAddress, type HistoryEntry} from './archive-contract'
-import type {OriginalRenderer} from './review-content'
+import {useDocumentTypeLabel, type OriginalRenderer} from './review-content'
 import {sameSnapshot} from './result-projection'
 import {readAuditRoute} from './routes'
-import {conclusionLabel, documentTypeLabel, resultTone} from './status-labels'
+import {conclusionLabel, resultTone} from './status-labels'
 import type {ArchiveDocument, ArchiveQuery, AuditArchiveAdapter} from './archive-contract'
 
 const initialQuery: ArchiveQuery = {search: '', category_id: null, document_type: null, customer: null, initiator: null, from_date: null, through_date: null, result: null, page: 1, page_size: 10}
@@ -46,7 +46,8 @@ const results = [['PASS', conclusionLabel.PASS], ['NG', conclusionLabel.NG], ['U
 const resultName = (value: ArchiveQuery['result']) => results.find(([key]) => key === value)?.[1] ?? null
 const otherLabel = (label: string, kind: string) => label === '其他' ? `未归类${kind}` : label
 
-export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter, sharingAdapter, precheckAdapter, headerTitle, active = true}: {headerTitle?: HTMLElement | null; adapter: AuditArchiveAdapter; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; precheckAdapter?: PrecheckAdapter; active?: boolean; headerActions?: HTMLElement | null}) {
+export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter, sharingAdapter, precheckAdapter, headerTitle, active = true}: {headerTitle?: HTMLElement | null; adapter: AuditArchiveAdapter; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; reportAdapter: AuditReportAdapter; sharingAdapter: AuditSharingAdapter; precheckAdapter?: PrecheckAdapter; active?: boolean; headerActions?: HTMLElement | null}) {
+  const documentTypeLabel = useDocumentTypeLabel()
   const [query, setQuery] = useState(initialQuery), [search, setSearch] = useState(''), [searchOpen, setSearchOpen] = useState(false)
   const [page, setPage] = useState<components['schemas']['AuditArchivePage'] | null>(null)
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0)
@@ -90,7 +91,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
   }, reportAdapter)
   async function restorePackage() {
     const requestId = packageRequestRef.current
-    if (!requestId || !reportAdapter) return
+    if (!requestId) return
     const request = ++packageEpoch.current
     setPackageReading(true); setPackageError('')
     try {
@@ -114,7 +115,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
     } else setChecked(rows => Object.fromEntries(Object.entries(rows).filter(([id]) => id !== document.document_id)))
   }
   async function download(asPackage = false) {
-    if (!reportAdapter || downloading) return
+    if (downloading) return
     setDownloading(true); setDownloadError('')
     let url = ''
     try {
@@ -173,7 +174,7 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
   const applied = ([['search', '搜索', query.search], ['category_id', '分类', query.category_id ? categoryLabel || '已选分类' : null], ['document_type', '文件类型', query.document_type && documentTypeLabel(query.document_type)], ['customer', '客户', query.customer && (customerGroup(query.customer)?.full_name || '已选客户')], ['result', '审核结果', resultName(query.result)], ['initiator', '发起人', query.initiator]] as const).filter(([, , value]) => Boolean(value))
   const clearFilters = () => {setSearch(''); setQuery(initialQuery)}
   const status = (document: ArchiveDocument) => <div className="space-y-1">{document.latest_completed ? <Badge variant={resultTone(document.latest_completed.conclusion)}>{document.latest_completed.conclusion ? conclusionLabel[document.latest_completed.conclusion] ?? '结果未知' : '结果未知'}</Badge> : <span className="text-xs text-muted-foreground">尚无完成审核</span>}{document.latest_completed && <p className="text-xs text-muted-foreground">第 {document.latest_completed.sequence} 次审核</p>}{document.latest_activity && ['queued', 'running'].includes(document.latest_activity.execution) && <p className="text-xs text-muted-foreground">第 {document.latest_activity.sequence} 次审核{document.latest_activity.execution === 'queued' ? '排队中' : '中'}</p>}</div>
-  const selection = chosen.length > 0 && <section aria-label="已选固定报告" className="space-y-3"><div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-sm font-medium">已选择 {chosen.length} 份报告</span>{chosen.length > 1 ? <Button variant="outline" size="sm" disabled={!packaging.canCreatePackage(chosenReferences)} onClick={() => void packaging.createPackage(chosenReferences)}>打包所选 {chosen.length} 份历史报告</Button> : <Button variant="outline" size="sm" disabled={!reportAdapter || downloading} onClick={() => void download()}>下载所选 1 份历史报告</Button>}<Button variant="ghost" size="sm" onClick={() => setChecked({})}>清空选择</Button></div><div className="flex flex-wrap gap-2">{chosen.map(item => <Badge variant="outline" className="max-w-full whitespace-normal text-left" key={resultKey(item.entry.reference)}>{item.title} · 第 {item.entry.sequence} 次审核</Badge>)}</div></section>
+  const selection = chosen.length > 0 && <section aria-label="已选固定报告" className="space-y-3"><div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-sm font-medium">已选择 {chosen.length} 份报告</span>{chosen.length > 1 ? <Button variant="outline" size="sm" disabled={!packaging.canCreatePackage(chosenReferences)} onClick={() => void packaging.createPackage(chosenReferences)}>打包所选 {chosen.length} 份历史报告</Button> : <Button variant="outline" size="sm" disabled={downloading} onClick={() => void download()}>下载所选 1 份历史报告</Button>}<Button variant="ghost" size="sm" onClick={() => setChecked({})}>清空选择</Button></div><div className="flex flex-wrap gap-2">{chosen.map(item => <Badge variant="outline" className="max-w-full whitespace-normal text-left" key={resultKey(item.entry.reference)}>{item.title} · 第 {item.entry.sequence} 次审核</Badge>)}</div></section>
   if (!active) return null
   if (!address.documentId && (address.reference || address.invalid || address.report)) return <Alert><AlertTitle>无法打开这次审核</AlertTitle><AlertDescription><p>链接缺少有效的文件或审核信息。</p><Button variant="outline" size="sm" onClick={closeDocument}>返回审核文件</Button></AlertDescription></Alert>
   // A history read that settles after the person left this document must not write it back into the address.

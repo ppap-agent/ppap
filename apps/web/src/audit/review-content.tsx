@@ -27,8 +27,8 @@ import {ReviewHintDetails} from './review-hints'
 import {ReviewDocumentPairs} from './review-document-pairs'
 import {readAuditRoute, writeAuditAddress} from './routes'
 import {request} from '../api'
-import {customerFullName, type RegisteredCustomer} from './customer-register'
-import {conclusionLabel, documentTypeLabel, executionLabel, reportLabel, resultLabel, resultTone, uncoveredLabel, type ResultTone} from './status-labels'
+import {customerFullName, documentTypeName, type RegisteredCustomer} from './customer-register'
+import {checkStatusLabel, conclusionLabel, executionLabel, reportLabel, resultLabel, resultTone, uncoveredLabel, type ResultTone} from './status-labels'
 
 type File = ReviewFile
 type Evaluation = components['schemas']['AuditClauseEvaluation']
@@ -37,13 +37,6 @@ type SelectedSource = {kind: 'machine'; reference: AuditEvidence} | {kind: 'revi
 export type AuditEvidence = components['schemas']['AuditEvidenceReference']
 export type OriginalRenderer = (file: components['schemas']['FileVersion'], evidence: AuditEvidence | null, roundId?: string) => ReactNode
 const evidenceText = (evidence: AuditEvidence, verified: boolean) => evidence.excerpt || (verified ? '该位置内容为空。' : '未提供摘录。')
-function checkLabel(check: Evaluation) {
-  if (check.execution === 'queued') return '排队中'
-  if (check.execution === 'running') return '审核中'
-  if (check.execution === 'failed') return resultLabel.ERR
-  if (check.coverage !== 'executed') return uncoveredLabel
-  return check.finding ? resultLabel[check.finding.status] : '结果未知'
-}
 function checkTone(check: Evaluation): ResultTone {
   if (check.execution === 'queued' || check.execution === 'running') return 'outline'
   if (check.execution === 'failed') return resultTone('ERR')
@@ -75,6 +68,12 @@ export function useRegisteredCustomers() {
     return () => {active = false}
   }, [])
   return customers
+}
+
+/** Document type names from the customer register; a type shows as recorded until the register is read. */
+export function useDocumentTypeLabel() {
+  const customers = useRegisteredCustomers()
+  return (type: string) => documentTypeName(customers, type)
 }
 
 /** What recognition read before the displayed values were corrected; the corrected values themselves sit in the file overview. */
@@ -198,7 +197,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
   }
   const basis = check && <article key={check.rule_item.id} aria-label="条款判定依据" className="flex flex-col gap-6 animate-in fade-in-0 duration-200 motion-reduce:animate-none">
     {/* The verdict and its reason lead; everything else supports them. */}
-    <section className={`space-y-2 rounded-lg border-l-4 bg-muted/40 p-4 ${verdictAccent[checkTone(check)] ?? 'border-l-border'}`}><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xs font-medium text-muted-foreground">判定理由</h3><Badge shape="square" variant={checkTone(check)}>{checkLabel(check)}</Badge></div><p className="whitespace-pre-wrap text-base leading-relaxed">{clauseObservation(check)}</p>{check.scope && (check.scope.unknown > 0 || check.scope.checked < check.scope.total) && <p className="text-xs text-muted-foreground">检查范围：已查 {check.scope.checked}/{check.scope.total}，未知 {check.scope.unknown}。</p>}</section>
+    <section className={`space-y-2 rounded-lg border-l-4 bg-muted/40 p-4 ${verdictAccent[checkTone(check)] ?? 'border-l-border'}`}><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xs font-medium text-muted-foreground">判定理由</h3><Badge shape="square" variant={checkTone(check)}>{checkStatusLabel(check)}</Badge></div><p className="whitespace-pre-wrap text-base leading-relaxed">{clauseObservation(check)}</p>{check.scope && (check.scope.unknown > 0 || check.scope.checked < check.scope.total) && <p className="text-xs text-muted-foreground">检查范围：已查 {check.scope.checked}/{check.scope.total}，未知 {check.scope.unknown}。</p>}</section>
     {check.finding?.review_hint && <ReviewHintDetails key={`${roundId}:${check.finding.item_key}`} roundId={roundId} hint={check.finding.review_hint} onHandled={() => setHandledHints(hints => [...hints, check.finding!.review_hint!])}/>}
     {/* A rule that only repeats the title says nothing new. */}
     {check.rule_item.rule_to_check.trim() !== check.rule_item.category.trim() && <section className="space-y-2"><h3 className="text-xs font-medium text-muted-foreground">审核规则原文</h3><p className="whitespace-pre-wrap border-l-2 pl-4 text-sm leading-relaxed">{check.rule_item.rule_to_check}</p></section>}
@@ -245,7 +244,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       {overview && <section aria-label="文件信息概览" className="flex items-start gap-2 py-0.5">
         <h3 className="sr-only">文件信息</h3>
         <dl className={`grid min-w-0 flex-1 ${originalOpen ? 'grid-cols-2' : 'grid-cols-4'} gap-x-5 gap-y-1 text-xs [&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-1.5 [&_dd]:min-w-0 [&_dd]:truncate [&_dt]:shrink-0 [&_dt]:text-muted-foreground`}>
-          {([['匹配规则', rule?.title || ''], ['文件类型', file.match?.document_type && !file.file.original_filename.includes(documentTypeLabel(file.match.document_type)) ? documentTypeLabel(file.match.document_type) : ''], ['客户名称', customerFullName(customers, displayValues.customer)], ['车型', displayValues.model || ''], ['项目名称', displayValues.project || ''], ['零件号', displayValues.part_number || ''], ['零件名称', displayValues.part || ''], ...facts.map(fact => [fact.label, fact.value] as [string, string])].filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd title={value}>{label === '匹配规则' && rule ? <Button variant="link" size="xs" className="h-auto max-w-full" title={rule.title} onClick={() => setInfoOpen(true)}><span className="truncate">{rule.title}</span></Button> : value}</dd></div>))}
+          {([['匹配规则', rule?.title || ''], ['文件类型', file.match?.document_type && !file.file.original_filename.includes(documentTypeName(customers, file.match.document_type)) ? documentTypeName(customers, file.match.document_type) : ''], ['客户名称', customerFullName(customers, displayValues.customer)], ['车型', displayValues.model || ''], ['项目名称', displayValues.project || ''], ['零件号', displayValues.part_number || ''], ['零件名称', displayValues.part || ''], ...facts.map(fact => [fact.label, fact.value] as [string, string])].filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd title={value}>{label === '匹配规则' && rule ? <Button variant="link" size="xs" className="h-auto max-w-full" title={rule.title} onClick={() => setInfoOpen(true)}><span className="truncate">{rule.title}</span></Button> : value}</dd></div>))}
         </dl>
         {onEditDisplay && <Button variant="ghost" size="icon-xs" aria-label="更正显示信息" title="更正显示信息" disabled={!validDisplayInfo(file.display_info)} onClick={onEditDisplay}><Icon icon={iconPen}/></Button>}
       </section>}
@@ -270,7 +269,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
               return <TableRow key={row.rule_item.id} ref={linked ? linkedRow : undefined} data-state={linked ? 'selected' : undefined}>
                 <TableCell className="align-top"><span className="text-xs tabular-nums text-muted-foreground" title={`来源编号 ${row.rule_item.id}`}>{audit.checks.indexOf(row) + 1}</span></TableCell>
                 <TableCell className="whitespace-normal align-top"><p className="break-words font-medium" title={row.rule_item.category}><HighlightText text={row.rule_item.category} query={query}/></p>{query.trim() && row.rule_item.rule_to_check.toLowerCase().includes(query.trim().toLowerCase()) && <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground"><HighlightText text={row.rule_item.rule_to_check} query={query}/></p>}</TableCell>
-                <TableCell className="align-top"><div className="flex flex-col items-start gap-1"><Badge shape="square" variant={checkTone(row)}>{checkLabel(row)}</Badge>{diff?.added.includes(row) && <Badge shape="square" variant="outline">新增问题</Badge>}{diff?.resolved.includes(row) && <Badge shape="square" variant="outline">已解决</Badge>}</div></TableCell>
+                <TableCell className="align-top"><div className="flex flex-col items-start gap-1"><Badge shape="square" variant={checkTone(row)}>{checkStatusLabel(row)}</Badge>{diff?.added.includes(row) && <Badge shape="square" variant="outline">新增问题</Badge>}{diff?.resolved.includes(row) && <Badge shape="square" variant="outline">已解决</Badge>}</div></TableCell>
                 <TableCell className="whitespace-normal align-top">{basisCell(row)}</TableCell>
               </TableRow>
             })}</TableBody>

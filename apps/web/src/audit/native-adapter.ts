@@ -10,7 +10,7 @@ import type {UploadAdapter} from './uploads'
 import type {AuditArchiveAdapter} from './archive-contract'
 import type {AuditUsageAdapter} from './usage-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
-import {ruleTemplateKey} from './rule-templates.ts'
+import {currentRules, ruleTemplateKey} from './rule-templates.ts'
 
 export const nativeSharingAdapter: AuditSharingAdapter = {
   listTargets: (query, kind, pageToken) => readWithDeadline(signal => request(`/audit-share-targets?${new URLSearchParams({query, kind, ...(pageToken ? {page_token: pageToken} : {})})}`, 'GET', undefined, signal), '读取组织目录超时，请重新读取目标。'),
@@ -327,10 +327,9 @@ export function createNativeAuditAdapter(options: {customers: string[]; personal
     },
     async ruleChoices(signal) {
       const {rules} = await request<components['schemas']['RulesList']>('/rules', 'GET', undefined, signal)
-      // Recognition accepts only the newest version of a rule: one no other version names as its predecessor.
-      const replaced = new Set(rules.map(rule => rule.predecessor_id))
-      // The same template keys the rules page shows, so a person picks a template by the name they already know.
-      return rules.filter(rule => rule.kind === 'engine' && !replaced.has(rule.id)).map(rule => ({id: rule.id, title: rule.title, type: rule.type ?? undefined, template: ruleTemplateKey(rule), customers: rule.customers ?? [], customer_scope: rule.customer_scope}))
+      // Recognition accepts only the newest version of a rule; the same template keys the rules page shows,
+      // so a person picks a template by the name they already know.
+      return currentRules(rules).map(rule => ({id: rule.id, title: rule.title, type: rule.type ?? undefined, template: ruleTemplateKey(rule), customers: rule.customers ?? [], customer_scope: rule.customer_scope}))
     },
     prepareReaudit: roundId => request(`/rounds/${encoded(roundId)}/reaudit-inputs`),
     match: (files, customer, previous, requestId, predecessorId, preparation) => request<AuditTask>('/audit-tasks', 'POST', {

@@ -46,6 +46,20 @@ def publish(custom, *, body=None, predecessor=None, request=None):
     return store.publish_rule(alice, "企业追溯规则", body or rule_body(), source.id, predecessor, request or str(uuid.uuid4()))
 
 
+def changed(custom, base_revision_id, files):
+    """Alice's Suite revision changing `files` on top of the base, kept in the base's Suite."""
+    _, alice, _, _, _, suites, _ = custom
+    base = suites.get_revision(base_revision_id, alice.tenant_id)
+    return suites.create_revision(
+        tenant_id=alice.tenant_id,
+        suite_key=base.suite_key,
+        files={path: body.encode() for path, body in files.items()},
+        created_by=alice.user_id,
+        base_revision_id=base.id,
+        related_suite_keys=base.related_suite_keys,
+    )
+
+
 def accept(custom, rule):
     store, alice, _, _, source, suites, _ = custom
     draft = store.create_draft(alice, items=[{"file_version_id": source.id, "role": "target", "rule_version_id": rule["id"]}])
@@ -62,7 +76,7 @@ def counts(custom):
 def test_api_new_type_publishes_baseless_suite_that_cannot_be_audited_until_generated(custom):
     store, alice, bob, _, source, suites, releases = custom
     app = FastAPI()
-    register_rule_routes(app, store, lambda request: alice, None)
+    register_rule_routes(app, store, lambda request: alice)
     client = TestClient(app)
     request = {"request_id": str(uuid.uuid4()), "title": "企业追溯规则", "body": rule_body(), "source_file_version_id": source.id}
     response = client.post("/rules", json=request)
@@ -93,9 +107,9 @@ def generated(custom, rule):
     _, alice, _, _, _, _, releases = custom
     rules = json.loads(releases.detail(alice, rule["body"]["suite_revision_id"])["files"]["rules.json"])
     rules["checker_binding"] = {"R1": "checker:check"}
-    program = releases.save_candidate(alice, rule["body"]["suite_revision_id"], {"rules.json": json.dumps(rules), "checker.py": "def check(context): return []\n"})
-    releases.publish(alice, rule["body"]["suite_key"], program["id"], 1, str(uuid.uuid4()), True)
-    return program["id"]
+    program = changed(custom, rule["body"]["suite_revision_id"], {"rules.json": json.dumps(rules), "checker.py": "def check(context): return []\n"})
+    releases.publish(alice, rule["body"]["suite_key"], program.id, 1, str(uuid.uuid4()), True)
+    return program.id
 
 
 def test_successor_is_same_suite_and_old_admission_and_retries_never_drift(custom):
@@ -183,13 +197,13 @@ def test_concurrent_successors_cannot_overwrite_newer_published_rules(custom):
 def test_empty_binding_alone_does_not_authorize_code_or_implicit_adoption(custom):
     _, alice, _, _, _, _, releases = custom
     first = publish(custom)
-    candidate = releases.save_candidate(alice, first["body"]["suite_revision_id"], {"checker.py": "raise RuntimeError('must not run')\n"})
+    candidate = changed(custom, first["body"]["suite_revision_id"], {"checker.py": "raise RuntimeError('must not run')\n"})
     with pytest.raises(ValueError, match="suite_confirmation_required"):
-        releases.publish(alice, first["body"]["suite_key"], candidate["id"], 1, str(uuid.uuid4()))
+        releases.publish(alice, first["body"]["suite_key"], candidate.id, 1, str(uuid.uuid4()))
     # Normal Suite publication can explicitly adopt a generated implementation.
-    rules = json.loads(candidate["files"]["rules.json"])
+    rules = json.loads(releases.detail(alice, candidate.id)["files"]["rules.json"])
     rules["checker_binding"] = {"R1": "checker:check"}
-    executable = releases.save_candidate(alice, candidate["id"], {"rules.json": json.dumps(rules), "checker.py": "def check(context): return []\n"})
+    executable = releases.detail(alice, changed(custom, candidate.id, {"rules.json": json.dumps(rules), "checker.py": "def check(context): return []\n"}).id)
     with pytest.raises(ValueError, match="suite_confirmation_required"):
         releases.publish(alice, first["body"]["suite_key"], executable["id"], 1, str(uuid.uuid4()))
     releases.publish(alice, first["body"]["suite_key"], executable["id"], 1, str(uuid.uuid4()), True)

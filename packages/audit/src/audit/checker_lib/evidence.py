@@ -34,10 +34,6 @@ def json_locator(payload: Mapping[str, str], *, file_version_id: str, source_sha
     return json.dumps(body, ensure_ascii=False, separators=(",", ":"))
 
 
-def structure_diagnostic(code: str, message: str) -> EvidenceDiagnostic:
-    return EvidenceDiagnostic(code=code, stage="structure", severity="warning", message=message)
-
-
 def structure_evidence(*, source_format: _Format, sources: tuple[EvidenceSource, ...], diagnostics: tuple[EvidenceDiagnostic, ...] = ()) -> AuditEvidence:
     return AuditEvidence(
         required="structure",

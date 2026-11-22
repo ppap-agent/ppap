@@ -162,7 +162,7 @@ components:
 # PPAP Web design guidance
 
 The token frontmatter above is generated from `apps/web/tokens/` by `pnpm design:update` (see
-[docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)); do not edit it by hand. The layout and component guidance below
+[apps/web/tokens](apps/web/tokens/README.md)); do not edit it by hand. The layout and component guidance below
 comes from the Stitch design system "Precision Slate"; the colours and shapes follow the taste of Feishu's own apps. It is
 reviewed by people; where an exact value in it differs from
 the frontmatter, the frontmatter wins.

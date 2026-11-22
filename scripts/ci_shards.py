@@ -20,11 +20,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from scripts.ci_heartbeat import run_with_heartbeat
-from scripts.validate_distribution import production_members
+from scripts.validate_distribution import production_members, workspace_members
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = "deploy/isolated-dev/compose.yaml"
-DEFAULT_SHARDS = 3
+SHARDS = 3  # tests.yml matrices list these shard indexes
 MODULE_CONCURRENCY = 3
 
 
@@ -36,17 +36,7 @@ class Target:
 
 
 def discover_modules() -> list[Target]:
-    targets = []
-    for tests in sorted((ROOT / "packages").glob("*/tests")):
-        if any(tests.rglob("test_*.py")):
-            targets.append(Target(tests.parent.name, False, tests.relative_to(ROOT).as_posix()))
-    for name in ("api", "worker"):
-        tests = ROOT / "apps" / name / "tests"
-        if any(tests.rglob("test_*.py")):
-            targets.append(Target(name, name in {"api", "worker"}, tests.relative_to(ROOT).as_posix()))
-    corpus_tests = ROOT / "tests/corpus/contracts/tests"
-    if any(corpus_tests.rglob("test_*.py")):
-        targets.append(Target("corpus-contracts", False, corpus_tests.relative_to(ROOT).as_posix()))
+    targets = [Target(name, member.postgres, member.tests.relative_to(ROOT).as_posix()) for name, member in sorted(workspace_members().items()) if any(member.tests.rglob("test_*.py"))]
     if not targets:
         raise RuntimeError("no Python owner test directories discovered")
     return targets
@@ -166,22 +156,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("suite", choices=["plan", "modules", "distributions", "integration"])
     parser.add_argument("--shard", type=int)
-    parser.add_argument("--shards", type=int, default=DEFAULT_SHARDS)
     args = parser.parse_args()
-    if args.shards < 1:
-        parser.error("--shards must be positive")
 
     if args.suite == "integration":
         run_integration()
         return
 
     suites = ("modules", "distributions") if args.suite == "plan" else (args.suite,)
-    if args.suite != "plan" and (args.shard is None or not 0 <= args.shard < args.shards):
-        parser.error("provide --shard in [0, --shards)")
+    if args.suite != "plan" and (args.shard is None or not 0 <= args.shard < SHARDS):
+        parser.error(f"provide --shard in [0, {SHARDS})")
 
     for suite in suites:
         targets = discover_modules() if suite == "modules" else discover_distributions()
-        groups = partition(targets, args.shards)
+        groups = partition(targets, SHARDS)
         print(f"{suite}: {len(targets)} targets in {len(groups)} shards", flush=True)
         for index, group in enumerate(groups):
             print(f"  shard {index}: {', '.join(item.name for item in group) or '(empty)'}", flush=True)

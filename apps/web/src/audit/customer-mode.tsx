@@ -4,7 +4,7 @@ import {ReadSkeleton} from '../components/read-skeleton'
 import {Button} from '../components/ui/button'
 import {Label} from '../components/ui/label'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
-import type {Coverage} from './customer-coverage'
+import type {Coverage} from './rule-templates'
 import {CustomerAvatar} from './customer-avatar'
 import {Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle} from '../components/ui/dialog'
 
@@ -23,7 +23,7 @@ export const acceptedUploads = (customer: string) => customer === 'UAES' ? photo
 
 /** One customer in the picker: avatar and name (its accessible name, shown in the trigger), plus how many standard file types its rules cover as its description. */
 export function CustomerItem({value, label, coverage, typeSetMissing = false}: {value: string; label: string; coverage?: Coverage | null; typeSetMissing?: boolean}) {
-  const description = value === 'auto' ? '按文件内容匹配客户规则' : typeSetMissing ? '文件类型范围未配置' : coverage ? `已支持 ${coverage.supported} / ${coverage.total} 类 PPAP 文件` : undefined
+  const description = value === 'auto' ? '按文件内容匹配客户规则' : typeSetMissing ? '文件类型范围未配置' : coverage ? `已支持 ${coverage.covered} / ${coverage.total} 类 PPAP 文件` : undefined
   return <SelectItem value={value} description={description && <span className="-mt-1 block pl-10 tabular-nums">{description}</span>}><span className="flex min-w-0 items-center gap-3"><CustomerAvatar name={label} className="size-7 text-xs"/><span className="truncate">{label}</span></span></SelectItem>
 }
 export const CustomerListNote = ({count}: {count: number}) => <p className="px-2 pt-1.5 pb-1 text-xs text-muted-foreground">已开通 {count} 家客户的模板与规则</p>

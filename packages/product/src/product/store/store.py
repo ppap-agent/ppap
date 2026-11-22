@@ -84,13 +84,11 @@ from product.identity import (
 from product.rules import (
     FILE_PREPARATION_KINDS,
     customer_scope,
-    document_type_aliases,
     latest_rule_versions,
     normalize_rule_body,
     rule_parse_request,
     rule_parse_view,
     rule_title,
-    source_review,
 )
 from product.settings import Settings
 from product.storage import S3Objects
@@ -2895,51 +2893,6 @@ class AuthStore:
                 item["clause_count"] = len(clauses) if isinstance(clauses, list) else 0
             out.append(item)
         return out
-
-    def list_rule_library(self, tenant_id: str) -> list[dict]:
-        with self._conn() as conn:
-            rows = conn.execute(
-                """SELECT id, title, created_at, predecessor_id, body->'customers', body->'parts', case_context,
-                    CASE WHEN jsonb_typeof(body->'rules') = 'array' THEN jsonb_array_length(body->'rules') ELSE 0 END,
-                    body->>'type', body->>'suite_key'
-                FROM product.rule_versions WHERE tenant_id = %s AND body->>'kind' = 'engine' AND source_file_version_id IS NOT NULL
-                ORDER BY created_at DESC, id DESC""",
-                (tenant_id,),
-            ).fetchall()
-        versions = []
-        for row in rows:
-            customers, parts, context = row[4] or [], row[5] or [], row[6] or {}
-            try:
-                registration = json.loads(context.get("registration") or "{}")
-            except (TypeError, ValueError):
-                registration = {}
-            registration = registration if isinstance(registration, dict) else {}
-            stored_scope = registration.get("scope") or {}
-            stored_scope = stored_scope if isinstance(stored_scope, dict) else {}
-            scope = {"customer": customers[0] if customers else "", "part": parts[0] if parts else "", "revision": "", "allParts": not parts, "allRevisions": True}
-            scope.update({key: stored_scope[key] for key in ("customer", "part", "revision") if isinstance(stored_scope.get(key), str)})
-            scope.update({key: stored_scope[key] for key in ("allParts", "allRevisions") if isinstance(stored_scope.get(key), bool)})
-            scope["allCustomers"] = customer_scope({"customers": customers}, context) == "all"
-            basis = registration.get("basis")
-            source = basis.get("source") if isinstance(basis, dict) else None
-            version = source.get("version") if isinstance(source, dict) else None
-            versions.append(
-                {
-                    "id": str(row[0]),
-                    "title": row[1],
-                    "version": version if isinstance(version, str) else row[2].isoformat()[:16].replace("T", " "),
-                    "scope": scope,
-                    "reason": registration.get("reason") if isinstance(registration.get("reason"), str) else "",
-                    "created_at": row[2].isoformat(),
-                    "predecessor_id": str(row[3]) if row[3] else None,
-                    "clause_count": row[7],
-                    "document_type": row[8] if isinstance(row[8], str) else "",
-                    "document_type_aliases": document_type_aliases(row[8] if isinstance(row[8], str) else ""),
-                    "suite_key": row[9] if isinstance(row[9], str) and row[9] else None,
-                    "source_review": source_review(context),
-                }
-            )
-        return versions
 
     def get_rule(self, tenant_id: str, rule_version_id: str) -> dict | None:
         parsed = _as_uuid(rule_version_id)

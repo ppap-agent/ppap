@@ -40,29 +40,5 @@ def find_headers(sheet, aliases: Mapping[str, tuple[str, ...]], *, max_rows: int
     return best
 
 
-def window_has_merge(sheet, max_row: int, max_col: int) -> bool:
-    for rng in sheet.merged_cells.ranges:
-        if rng.min_row <= max_row and rng.max_row >= 1 and rng.min_col <= max_col and rng.max_col >= 1:
-            return True
-    return False
-
-
-def columns_have_merge(sheet, header_row: int, last_row: int, columns: tuple[int, ...]) -> bool:
-    for rng in sheet.merged_cells.ranges:
-        if rng.max_row < header_row or rng.min_row > last_row:
-            continue
-        if any(rng.min_col <= col <= rng.max_col for col in columns):
-            return True
-    return False
-
-
-def sheet_has_value(sheet, max_row: int, max_col: int) -> bool:
-    for row in range(1, max_row + 1):
-        for col in range(1, max_col + 1):
-            if not is_blank(sheet.cell(row, col).value):
-                return True
-    return False
-
-
 def cell_span(row: int, last_row: int, col: int, last_col: int) -> tuple[str, str]:
     return f"{column_letter(col)}{row}", f"{column_letter(last_col)}{max(last_row, row)}"

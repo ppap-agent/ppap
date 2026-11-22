@@ -10,11 +10,10 @@ from product.identity import SESSION_COOKIE
 from product.settings import Settings
 
 
-def test_customer_catalog_and_rule_library_require_login_and_are_not_cached():
-    for path in ("/audit-customers", "/rule-library"):
-        response = TestClient(app).get(path)
-        assert response.status_code == 401
-        assert response.headers["cache-control"] == "private, no-store"
+def test_customer_catalog_requires_login_and_is_not_cached():
+    response = TestClient(app).get("/audit-customers")
+    assert response.status_code == 401
+    assert response.headers["cache-control"] == "private, no-store"
 
 
 def test_customer_catalog_lists_registered_customers_and_unregistered_names_as_recorded(tmp_path):
@@ -52,19 +51,20 @@ def test_customer_catalog_lists_registered_customers_and_unregistered_names_as_r
     li = first["customers"][1]["coverage"]
     # Both registered names count for 理想; one type with two rules counts once; no template files here.
     assert (li["version"], len(li["types"]), li["rule_types"], li["template_types"]) == ("V3.33", 17, ["T09", "T11"], [])
-    assert {"code": "T11", "rule_type": "控制计划"} in li["types"]
+    assert {"code": "T11", "rule_type": "控制计划", "name": "控制计划"} in li["types"]
     assert customer_catalog(store("second"), "second")["unregistered"] == ["其他企业客户"]
 
 
 def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(auth_store_factory):
     tenants = ["catalog-test-" + uuid.uuid4().hex for _ in range(2)]
     store = auth_store_factory(Settings(feishu_app_id="catalog-test", platform_operators=",".join(tenant + ":catalog-user" for tenant in tenants)), reset=False)
-    clients = []
+    clients, principals = [], []
     for tenant in tenants:
         principal = store.upsert_feishu_identity(tenant, "catalog-user")
         client = TestClient(create_app(store.settings, auth_store=store))
         client.cookies.set(SESSION_COOKIE, store.create_session(principal))
         clients.append(client)
+        principals.append(principal)
     first, second = clients
 
     def custom_choices(result):
@@ -78,7 +78,7 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         # PRD §1.5: 蔚来's measurement report is T01a, 理想's inspection report T01; both rules read as 全功能检验报告.
         coverage = {row["customer_id"]: row["coverage"] for row in empty["customers"]}
         assert "T01a" in coverage["nio"]["rule_types"] and "T01" in coverage["li"]["rule_types"]
-        assert {"code": "T01a", "rule_type": "全功能检验报告"} in coverage["nio"]["types"]
+        assert {"code": "T01a", "rule_type": "全功能检验报告", "name": "全功能检验报告"} in coverage["nio"]["types"]
         assert custom_choices(empty) == []
 
         def publish(client, customers, kind, predecessor=None):
@@ -105,22 +105,9 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         # Recorded names stay apart; nothing is folded into one id.
         assert custom_choices(result.json()) == ["Customer A", "DFMEA only", "customer a"]
         assert custom_choices(second.get("/audit-customers").json()) == ["其他企业客户"]
-        library = first.get("/rule-library")
-        assert library.headers["cache-control"] == "private, no-store"
-        versions = library.json()["versions"]
-        assert len(versions) == 6
-        assert any(version["id"] == old for version in versions)
-        assert any(version["predecessor_id"] == old for version in versions)
-        version_fields = {"id", "title", "version", "scope", "reason", "created_at", "predecessor_id", "clause_count", "document_type", "document_type_aliases", "suite_key", "source_review"}
-        assert all(set(version) == version_fields and version["clause_count"] == 1 and version["source_review"] == "unchecked" for version in versions)
-        assert {version["document_type"] for version in versions} >= {"控制计划", "过程流程图", "全功能检验报告", "设计失效模式及后果分析"}
-        control_plan = next(version for version in versions if version["document_type"] == "控制计划")
-        assert "Control plan" in control_plan["document_type_aliases"]
-        assert all(isinstance(version["suite_key"], str) and version["suite_key"] for version in versions)
-        assert not {version["id"] for version in versions} & {version["id"] for version in second.get("/rule-library").json()["versions"]}
         assert first.get("/audit-tasks").json()["tasks"] == []
-        assert first.get("/rounds").json()["rounds"] == []
-        assert first.get("/usage").json()["events"] == []
+        assert store.list_rounds(principals[0]) == []
+        assert store.list_usage_events(principals[0]) == []
     finally:
         for client in clients:
             client.close()

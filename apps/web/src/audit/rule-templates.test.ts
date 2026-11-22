@@ -2,14 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
 import type {RegisteredCustomer} from './customer-register.ts'
-import {customerRules, ruleCoverage, ruleTemplateKey, templateName} from './rule-templates.ts'
+import {currentRules, customerRules, ruleCoverage, ruleTemplateKey, templateName} from './rule-templates.ts'
 
 type Rule = components['schemas']['Rule']
 const rule = (id: string, customers: string[], type: string, extra: Partial<Rule> = {}) =>
   ({id, title: `${type}审核规则`, kind: 'engine', created_at: '2026-11-01', predecessor_id: null, customer_scope: 'restricted', type, rule_profile: 'v4', customers, models: [], parts: [], clause_count: 4, ...extra}) as Rule
-const customer = (id: string, full: string, short: string, types: [string, string][] | null, rules: string[] = []): RegisteredCustomer => ({
+const customer = (id: string, full: string, short: string, types: [string, string, string?][] | null, rules: string[] = []): RegisteredCustomer => ({
   customer_id: id, name: short, full_name: full, short_name: short,
-  coverage: types && {version: 'V3.33', effective_from: '2026-11-18', types: types.map(([code, rule_type]) => ({code, rule_type})), template_types: [], rule_types: rules},
+  coverage: types && {version: 'V3.33', effective_from: '2026-11-18', types: types.map(([code, rule_type, name]) => ({code, rule_type, name: name ?? rule_type})), template_types: [], rule_types: rules},
 })
 
 test('each registered customer lists the current rules of every type in its M, and only those', () => {
@@ -21,13 +21,19 @@ test('each registered customer lists the current rules of every type in its M, a
   ]
   const [listed] = customerRules([nio], rules)
   assert.deepEqual(listed.types?.map(type => [type.label, type.rules.map(row => row.id)]), [['控制计划', ['cp-2', 'cp']], ['过程流程图', []]])
-  assert.deepEqual(ruleCoverage(nio), {covered: 1, total: 2})
+  // The same rules in force serve the confirm step's rule picker.
+  assert.deepEqual(currentRules(rules).map(row => row.id), ['cp', 'cp-2', 'dv', 'look'])
 })
 
-test('a customer without M lists no types and has no coverage', () => {
+test('rule coverage N_r/M is the backend count of types in M with a current rule; nothing without a customer or M', () => {
+  assert.deepEqual(ruleCoverage(customer('nio', '蔚来汽车', '蔚来', [['T11', '控制计划'], ['T09', '过程流程图']], ['T11'])), {covered: 1, total: 2})
+  assert.equal(ruleCoverage(customer('li', '理想汽车', '理想', null)), null)
+  assert.equal(ruleCoverage(undefined), null)
+})
+
+test('a customer without M lists no types', () => {
   const missing = customer('li', '理想汽车', '理想', null)
   assert.deepEqual(customerRules([missing], [rule('cp', ['理想'], '控制计划')]), [{customer: missing, types: null}])
-  assert.equal(ruleCoverage(missing), null)
 })
 
 test('the confirm step rule picker keys follow the customer field', () => {

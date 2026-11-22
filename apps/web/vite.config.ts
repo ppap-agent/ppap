@@ -11,7 +11,7 @@ export default defineConfig({
   // The workbook worker is loaded on demand; discover its dependencies before opening a reader.
   optimizeDeps: {include: ['xlsx', 'xlsx/dist/cpexcel.full.mjs']},
   plugins: [
-    // The runtime theme is generated from tokens/ before any stylesheet is read (docs/DESIGN_SYSTEM.md).
+    // The runtime theme is generated from tokens/ before any stylesheet is read (tokens/README.md).
     {name: 'ppap-design-tokens', enforce: 'pre', async buildStart() { await writeDesignTokens() }},
     react(),
     tailwindcss(),

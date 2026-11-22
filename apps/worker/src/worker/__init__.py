@@ -34,15 +34,6 @@ def worker_id(explicit: str) -> str:
     return explicit or f"{socket.gethostname()}-{os.getpid()}"
 
 
-def run_claimed_job(kind: str, payload: dict) -> dict:
-    """Execute one claimed job with in-repo checkers. Round jobs are completed by process_claimed."""
-    if kind != "audit":
-        return {"error": "unsupported_job_kind", "note": "unsupported_job_kind"}
-    if payload.get("round_id"):
-        return {"note": "round_audit", "round_id": payload.get("round_id")}
-    return {"error": "checker_snapshot_required", "note": "checker_snapshot_required"}
-
-
 def process_file_job(store, claimed, ident, ai=None) -> dict:
     from product.files import READY
     from product.rules import RuleParseError
@@ -131,11 +122,12 @@ def _process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> 
         if claimed.kind in FILE_PREPARATION_KINDS:
             return process_file_job(store, claimed, ident, rule_ai)
         if claimed.kind != "audit" or not claimed.round_id:
-            diagnostic = run_claimed_job(claimed.kind, claimed.payload or {})
-            outcome = "failed" if diagnostic.get("error") else "succeeded"
-            accepted = store.complete_job(claimed, ident, {**diagnostic, "findings": [], "coverage": {}}, outcome)
-            emit("job_completed" if accepted else "job_result_discarded", outcome=outcome, note=diagnostic.get("note"))
-            return diagnostic
+            # An unknown kind, or an audit without a frozen round, fails; nothing runs.
+            error = "unsupported_job_kind" if claimed.kind != "audit" else "checker_snapshot_required"
+            result = {"error": error, "note": error, "findings": [], "coverage": {}}
+            accepted = store.complete_job(claimed, ident, result, "failed")
+            emit("job_completed" if accepted else "job_result_discarded", outcome="failed", note=error)
+            return result
         work = store.round_work(claimed.round_id)
         if work is None:
             result = {"note": "missing_round", "findings": [], "coverage": {}}
@@ -218,13 +210,11 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
     from audit.checker_core import runtime_revision
     from audit.standard_suites import library_revision
 
-    settings = getattr(store, "settings", None)
+    settings = store.settings
     payload = claimed.payload if isinstance(claimed.payload, dict) else {}
     executor = payload.get("executor")
     revision = payload.get("executor_revision")
     try:
-        if settings is None:
-            raise ValueError("settings_required")
         expected_revision = runtime_revision(settings.deep_execution_revision(payload.get("model_identity")), library_revision())
     except (ValueError, AttributeError, KeyError, TypeError):
         return failure_result("executor_revision_mismatch"), "failed"
@@ -232,7 +222,7 @@ def run_core_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
         return failure_result("checker_snapshot_required"), "failed"
     if revision != expected_revision:
         return failure_result("executor_revision_mismatch"), "failed"
-    socket_path = str(getattr(settings, "deep_controller_socket", "") if settings else "").strip()
+    socket_path = settings.deep_controller_socket.strip()
     if not socket_path:
         return failure_result("deep_runtime_unavailable"), "failed"
     try:

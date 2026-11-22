@@ -481,28 +481,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
             return fail(exc)
         return JSONResponse(round_body, status_code=201)
 
-    @app.get("/rounds", response_model=wc.RoundList)
-    def rounds_list(
-        request: Request, limit: int = Query(50, ge=1, le=50), offset: int = Query(0, ge=0), q: str = Query("", max_length=200), execution: str = "", unreviewed: bool = False
-    ) -> JSONResponse:
-        principal, denied = require_principal(request)
-        if denied:
-            return denied
-        if execution not in {"", "queued", "running", "completed", "failed"}:
-            return JSONResponse({"error": "invalid_execution"}, status_code=400)
-        rows = store.list_rounds(principal, limit + 1, offset, q, execution, unreviewed)
-        return JSONResponse({"rounds": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
-
-    @app.get("/usage", response_model=wc.UsageList)
-    def usage_list(request: Request, limit: int = Query(50, ge=1, le=50), offset: int = Query(0, ge=0), since: date | None = None, until: date | None = None) -> JSONResponse:
-        principal, denied = require_principal(request)
-        if denied:
-            return denied
-        if since and until and since > until:
-            return JSONResponse({"error": "invalid_date_range"}, status_code=400)
-        rows = store.list_usage_events(principal, limit + 1, offset, since, until)
-        return JSONResponse({"events": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
-
     usage_settlements = {"", "charged", "pending", "processing", "unknown", "trial"}
 
     @app.get("/audit-usage", response_model=wc.AuditUsagePage)

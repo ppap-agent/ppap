@@ -9,7 +9,7 @@ type ReportItem = {reference: AuditReportReference; report: Report}
 const sameCollection = (left: AuditReportReference[], right: AuditReportReference[]) => left.length === right.length && left.every(reference => right.some(row => sameSnapshot(row, reference)))
 
 /** Report operations accept fixed references, not ownership of a private task. */
-export function useReportGeneration(items: ReportItem[], onChange: (reference: AuditReportReference, report: Report) => void, adapter?: AuditReportAdapter) {
+export function useReportGeneration(items: ReportItem[], onChange: (reference: AuditReportReference, report: Report) => void, adapter: AuditReportAdapter) {
   const current = useRef(items), alive = useRef(true), pending = useRef(new Set<string>())
   current.current = items
   const [busy, setBusy] = useState<string[]>([])
@@ -22,7 +22,7 @@ export function useReportGeneration(items: ReportItem[], onChange: (reference: A
   }
   async function run(reference: AuditReportReference, readOnly: boolean) {
     const previous = locate(reference)
-    const command = readOnly ? adapter?.readRegeneration : adapter?.regenerate
+    const command = readOnly ? adapter.readRegeneration : adapter.regenerate
     if (!command || !previous || pending.current.has(reference.report_id)) return
     if (readOnly ? previous.generation_request?.state !== 'pending' : previous.state !== 'failed' || !previous.regenerate_allowed || previous.generation_request?.state === 'pending') return
     const requestId = readOnly ? previous.generation_request!.request_id : crypto.randomUUID()
@@ -44,21 +44,21 @@ export function useReportGeneration(items: ReportItem[], onChange: (reference: A
   return {busy, regenerate: (reference: AuditReportReference) => run(reference, false), read: (reference: AuditReportReference) => run(reference, true)}
 }
 
-export function useReportPackage(job: AuditReportPackage | null | undefined, onChange: (job: AuditReportPackage) => void, eligible: (reference: AuditReportReference) => boolean, adapter?: AuditReportAdapter, scopeError = '') {
+export function useReportPackage(job: AuditReportPackage | null | undefined, onChange: (job: AuditReportPackage) => void, eligible: (reference: AuditReportReference) => boolean, adapter: AuditReportAdapter, scopeError = '') {
   const current = useRef(job), alive = useRef(true), pending = useRef(false)
   current.current = job
   const [packageBusy, setPackageBusy] = useState(false)
   useEffect(() => {alive.current = true; return () => {alive.current = false}}, [])
   function commit(next: AuditReportPackage) {if (alive.current) {current.current = next; onChange(next)}}
   function canCreatePackage(reports: AuditReportReference[]) {
-    if (scopeError || !adapter?.createPackage || !adapter.readPackage || !adapter.readPackageFile || pending.current || !multipleDistinctReports(reports) || reports.some(reference => !eligible(reference))) return false
+    if (scopeError || !adapter.createPackage || !adapter.readPackage || !adapter.readPackageFile || pending.current || !multipleDistinctReports(reports) || reports.some(reference => !eligible(reference))) return false
     const previous = current.current
     if (!previous) return true
     if (packageOutcomeError(previous) || previous.receipt.state === 'pending' || previous.receipt.state === 'accepted' && ['pending', 'generating'].includes(previous.state)) return false
     return !(sameCollection(reports, previous.reports) && previous.state === 'failed' && previous.receipt.state !== 'rejected' && (!previous.retry_allowed || !adapter.retryPackage))
   }
   async function run(readOnly: boolean, reports?: AuditReportReference[]) {
-    if (scopeError || !adapter || pending.current) return
+    if (scopeError || pending.current) return
     const previous = current.current
     if (readOnly ? !previous : !canCreatePackage(reports || [])) return
     const recovery = !readOnly && previous?.state === 'failed' && previous.receipt.state === 'accepted' && sameCollection(reports || [], previous.reports) ? previous : null
@@ -87,7 +87,7 @@ export function useReportPackage(job: AuditReportPackage | null | undefined, onC
 }
 
 /** The task view updates only report projections; historical views use the same cores. */
-export function useReportActions(task: Task, onChange: (task: Task) => void, adapter?: AuditReportAdapter) {
+export function useReportActions(task: Task, onChange: (task: Task) => void, adapter: AuditReportAdapter) {
   const current = useRef(task)
   current.current = task
   const generation = useReportGeneration(task.files.flatMap(row => {const reference = reportReference(task, row); return reference && row.audit ? [{reference, report: row.audit.report}] : []}), (reference, report) => {

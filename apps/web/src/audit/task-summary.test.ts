@@ -26,15 +26,8 @@ test('opening partial execution faults preserves the Round terminal state', () =
   const summarized = summarizeTask(base)
   assert.equal(summarized.execution, 'completed')
   assert.equal(summarized.has_execution_error, true)
-  const legacy = {...base}; delete legacy.execution; delete legacy.has_execution_error
-  assert.equal(summarizeTask(legacy).execution, undefined)
-  assert.equal(summarizeTask(legacy).has_execution_error, true)
-  const loading = {...legacy, state: 'reviewing' as const, files: []}
-  assert.equal(summarizeTask(loading).execution, undefined)
   const explicit = {...base, has_execution_error: false}
   assert.equal(summarizeTask(explicit).has_execution_error, false)
-  const running = {...legacy, state: 'reviewing' as const, execution: 'running' as const}
-  assert.equal(summarizeTask(running).has_execution_error, false)
 })
 
 test('the task title comes from the first selected file that names a customer, model or part, preferring corrected display values', () => {

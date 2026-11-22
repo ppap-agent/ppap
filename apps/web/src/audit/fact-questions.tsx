@@ -1,5 +1,5 @@
 import {displayTime} from '../helpers'
-import {useCallback, useContext, useEffect, useMemo, useRef, useState} from 'react'
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import {iconArrowsRotate} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import {apiUrl} from '../api'
@@ -13,8 +13,7 @@ import {ReadSkeleton} from '../components/read-skeleton'
 import {FileName} from '../journey/file-name'
 import {sourceLocation} from '../journey/product'
 import {RemoteSourcePane} from '../journey/remote-source'
-import {checkedFactAnswer, definiteFactAnswerRejection, factValueLabel, groupFactQuestions, type FactAnswerReceipt, type FactAnswersAdapter, type FactAnswersView, type FactQuestion} from './fact-answers-contract'
-import {FactAnswersContext} from './fact-answers-context'
+import {checkedFactAnswer, definiteFactAnswerRejection, factValueLabel, groupFactQuestions, nativeFactAnswersAdapter, type FactAnswerReceipt, type FactAnswersView, type FactQuestion} from './fact-answers-contract'
 import {resultLabel, resultTone} from './status-labels'
 import {writeAuditAddress} from './routes'
 import {Disclosure} from '../components/disclosure'
@@ -36,9 +35,7 @@ function keepOperation(roundId: string, operationId: string | null) {
 }
 /** Answers apply only to this frozen original and round. Machine findings stay untouched. */
 /** `editable` is the task creator's: everyone in the enterprise reads the answers, only the creator gives them. */
-export function FactQuestions({roundId, files, findings = [], fileVersionId, adapter: providedAdapter, editable = true}: {roundId: string; files: FileVersion[]; findings?: MachineFinding[]; fileVersionId?: string; adapter?: FactAnswersAdapter; editable?: boolean}) {
-  const inheritedAdapter = useContext(FactAnswersContext)
-  const adapter = providedAdapter ?? inheritedAdapter
+export function FactQuestions({roundId, files, findings = [], fileVersionId, editable = true}: {roundId: string; files: FileVersion[]; findings?: MachineFinding[]; fileVersionId?: string; editable?: boolean}) {
   const [view, setView] = useState<FactAnswersView | null>(null)
   const [error, setError] = useState(''), [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false)
@@ -49,7 +46,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
     const token = ++generation.current
     setLoading(true)
     try {
-      const next = await adapter.read(roundId)
+      const next = await nativeFactAnswersAdapter.read(roundId)
       if (token !== generation.current || !mounted.current) return
       if (next.round_id !== roundId || next.model_calls !== 0) throw new Error('事实问题不属于本次审核，请重新读取。')
       setView(current => current && current.revision > next.revision ? current : next)
@@ -57,7 +54,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
     } catch (cause) {
       if (token === generation.current && mounted.current) {setError(message(cause)); if (inaccessible(cause)) setView(null)}
     } finally {if (token === generation.current && mounted.current) setLoading(false)}
-  }, [adapter, roundId])
+  }, [roundId])
   useEffect(() => {
     mounted.current = true; void read()
     return () => {mounted.current = false; generation.current++}
@@ -74,7 +71,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
     busy.current = true; setSaving(true); setError(''); setNotice('')
     const input = {operation_id: crypto.randomUUID(), expected_revision: view.revision, file_version_id: question.file_version_id, field: question.field, expected_question_fingerprint: question.fingerprint, value}
     setPending(input.operation_id); keepOperation(roundId, input.operation_id)
-    try {await accepted(checkedFactAnswer(await adapter.apply(roundId, input), roundId, input.operation_id, input))}
+    try {await accepted(checkedFactAnswer(await nativeFactAnswersAdapter.apply(roundId, input), roundId, input.operation_id, input))}
     catch (cause) {
       if (!mounted.current) return
       if (definiteFactAnswerRejection(cause)) {
@@ -91,7 +88,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, ada
     if (!pending || busy.current) return
     busy.current = true; setSaving(true)
     try {
-      const receipt = await adapter.readOperation(roundId, pending)
+      const receipt = await nativeFactAnswersAdapter.readOperation(roundId, pending)
       if (!mounted.current) return
       if (receipt) await accepted(checkedFactAnswer(receipt, roundId, pending))
       else setError('尚未读到原操作结果，请稍后继续读取。不会自动重交回答。')

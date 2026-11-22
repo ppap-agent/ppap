@@ -65,8 +65,10 @@ def test_file_validation_is_recoverable_without_creating_an_audit(validation_sys
     assert recovered.json()["status"] == "succeeded"
     assert client.get(path + "/validation").json() == {"validation": recovered.json()}
     assert client.get("/drafts").json()["drafts"] == []
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    api = build_product_store(worker.settings, objects=worker.objects, role="api")
+    alice = api.principal_for_fixture("alice")
+    assert api.list_rounds(alice) == []
+    assert api.list_usage_events(alice) == []
 
 
 def test_saved_but_damaged_file_is_not_a_valid_input(validation_system):

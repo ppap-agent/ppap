@@ -16,14 +16,15 @@ import {ReportPackage, LinkedReportPackage, reportPackageAddress} from './report
 import {ReportPreview} from './report-preview'
 import {ReportShareDialog} from './report-share'
 import {useShareActions} from './share-actions'
-import {conclusionLabel, documentTypeLabel, reportShortLabel as labels, resultTone} from './status-labels'
+import {conclusionLabel, reportShortLabel as labels, resultTone} from './status-labels'
+import {useDocumentTypeLabel} from './review-content'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {displayTime} from '../helpers'
 
 type Task = components['schemas']['AuditTask']
 
-export function AuditReports({task, initialFile, onChoose, onRead, busy, readError, onReadSupport, adapter, onChange, sharingAdapter, headerActions}: {task: Task; initialFile: string; onChoose: (fileId: string) => void; onRead: () => void; busy: boolean; readError: string; onReadSupport: () => void; adapter?: AuditReportAdapter; onChange: (task: Task) => void; sharingAdapter?: AuditSharingAdapter; headerActions?: HTMLElement | null}) {
-  const rows = task.files.filter(file => file.selection === 'selected' && file.match?.state !== 'reference')
+export function AuditReports({task, initialFile, onChoose, onRead, busy, readError, onReadSupport, adapter, onChange, sharingAdapter, headerActions}: {task: Task; initialFile: string; onChoose: (fileId: string) => void; onRead: () => void; busy: boolean; readError: string; onReadSupport: () => void; adapter: AuditReportAdapter; onChange: (task: Task) => void; sharingAdapter: AuditSharingAdapter; headerActions?: HTMLElement | null}) {
+  const rows = task.files.filter(file => file.selection === 'selected' && file.match?.state !== 'reference'), documentTypeLabel = useDocumentTypeLabel()
   function statusFor(row: Task['files'][number]) {
     const report = row.audit?.report
     return resultConsistencyError(task, row) ? '结果待确认' : !report ? '尚未取得结果' : report.state === 'ready' && !reportReady(task, row) ? '产物待确认' : labels[report.state]
@@ -60,7 +61,7 @@ export function AuditReports({task, initialFile, onChoose, onRead, busy, readErr
   }
   async function downloadSelected() {
     const row = selectedReports[0], ref = row ? reportReference(task, row) : null, artifact = row?.audit?.report.artifact
-    if (!adapter || !ref || !artifact || downloading) return
+    if (!ref || !artifact || downloading) return
     setDownloading(true); setPdfDownloadError('')
     try {saveBlob(await readReportPdf(adapter, ref, artifact), artifact.filename)}
     catch {if (alive.current) setPdfDownloadError('所选 PDF 读取失败；报告生成状态未改变，可以重试下载。')}
@@ -68,7 +69,7 @@ export function AuditReports({task, initialFile, onChoose, onRead, busy, readErr
   }
   async function downloadZip(job = task.report_package) {
     const artifact = job?.artifact
-    if (taskPackageScopeError({...task, report_package: job}) || !adapter || !job || !artifact || job.state !== 'ready' || downloading) return
+    if (taskPackageScopeError({...task, report_package: job}) || !job || !artifact || job.state !== 'ready' || downloading) return
     setDownloading(true); setZipDownloadError('')
     try {
       const blob = await readReportZip(adapter, job)
@@ -101,7 +102,7 @@ export function AuditReports({task, initialFile, onChoose, onRead, busy, readErr
   // The left column acts only on the checked reports; the report being read is shared and downloaded from its own header.
   const current = ready && reference ? [reference] : []
   const download = count > 1 ? selectedZip ? <Button size="sm" variant="outline" disabled={downloading} onClick={() => void downloadZip()}><Icon icon={iconDownload}/>下载<span className="sr-only">所选</span>报告<span className="sr-only"> ZIP</span></Button> : <Button size="sm" variant="outline" disabled={!actions.canCreatePackage(selectedReferences)} onClick={() => {if (packageRequest) leaveLinkedPackage(); void actions.createPackage(selectedReferences)}}><Icon icon={iconBoxArchive}/>打包<span className="sr-only">所选 {count} 份</span>报告</Button>
-    : <Button size="sm" variant="outline" disabled={!adapter || downloading} onClick={() => void downloadSelected()}><Icon icon={iconDownload}/>下载<span className="sr-only">所选</span>报告</Button>
+    : <Button size="sm" variant="outline" disabled={downloading} onClick={() => void downloadSelected()}><Icon icon={iconDownload}/>下载<span className="sr-only">所选</span>报告</Button>
   const batch = count > 0 ? <div role="group" aria-label="所选报告操作" className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">已选 {count} 份</span><Button size="sm" disabled={!sharingAdapter} onClick={event => openShare(event.currentTarget, selectedReferences)}><Icon icon={iconShareNodes}/>分享<span className="sr-only">所选</span></Button>{download}<Button variant="ghost" size="xs" onClick={() => setChecked([])}>清空选择</Button></div>
     : <p className="px-1 text-xs text-muted-foreground">勾选报告后可批量下载或分享。</p>
   const files = <div className="space-y-3"><h1 className="sr-only">审核报告</h1>{batch}{!packageRequest && packages}{list}</div>
@@ -110,7 +111,7 @@ export function AuditReports({task, initialFile, onChoose, onRead, busy, readErr
     {packageRequest && packages}
     {readError && <Alert variant="destructive"><AlertTitle>报告状态暂时无法读取</AlertTitle><AlertDescription><p>{readError}</p><Button variant="outline" size="sm" onClick={onReadSupport}>联系支持</Button></AlertDescription></Alert>}
     {pdfDownloadError && <Alert variant="destructive"><AlertTitle>PDF 下载未完成</AlertTitle><AlertDescription>{pdfDownloadError}</AlertDescription></Alert>}
-    <div className="h-full min-h-[32rem]"><ResizablePanelGroup orientation="horizontal" aria-label="报告选择与阅读"><ResizablePanel defaultSize="30%" minSize="260px" maxSize="45%" className="min-w-0"><div className="h-full pr-2"><aside className="h-full min-w-0 overflow-y-auto rounded-lg border bg-card p-4">{files}</aside></div></ResizablePanel><ResizableHandle withHandle/><ResizablePanel defaultSize="70%" minSize="360px" className="min-w-0"><div className="h-full min-w-0 pl-2">{file ? <ReportPreview name={file.file.original_filename} rule={file.audit?.rule.title || '—'} reference={reference} report={report} ready={ready} issue={issue} adapter={adapter} share={{disabled: !sharingAdapter || !current.length && !task.report_share, onOpen: trigger => openShare(trigger, current)}}>{reference && report && (report.generation_request?.state === 'pending' || report.state === 'failed') && <div className="space-y-2">{report.generation_request?.state === 'pending' ? <><p role="status" data-request-id={report.generation_request.request_id}>{report.generation_request.reason}</p><Button variant="outline" disabled={actions.busy.includes(reference.report_id)} onClick={() => void actions.read(reference)}>读取生成结果</Button></> : <><Button variant="outline" disabled={!adapter || !report.regenerate_allowed || actions.busy.includes(reference.report_id)} onClick={() => void actions.regenerate(reference)}>重生成同一结果</Button>{(report.regenerate_reason || !report.regenerate_allowed) && <p className="text-xs text-muted-foreground">{report.regenerate_reason || '暂不能重新生成报告。'}</p>}</>}</div>}</ReportPreview> : <p className="text-sm text-muted-foreground">{rows.length ? '所选报告不可用，请从清单中重新选择。' : '没有进入审核的文件，未开始审核，也没有报告。'}</p>}</div></ResizablePanel></ResizablePanelGroup></div>
-    {shareScope !== null && sharingAdapter && <ReportShareDialog key={JSON.stringify(shareScope)} open={sharingOpen} share={task.report_share} contentFor={contentFor} describe={describe} reports={shareScope} adapter={sharingAdapter} actions={sharing} trigger={shareTrigger.current} onClose={() => setSharingOpen(false)}/>}
+    <div className="h-full min-h-[32rem]"><ResizablePanelGroup orientation="horizontal" aria-label="报告选择与阅读"><ResizablePanel defaultSize="30%" minSize="260px" maxSize="45%" className="min-w-0"><div className="h-full pr-2"><aside className="h-full min-w-0 overflow-y-auto rounded-lg border bg-card p-4">{files}</aside></div></ResizablePanel><ResizableHandle withHandle/><ResizablePanel defaultSize="70%" minSize="360px" className="min-w-0"><div className="h-full min-w-0 pl-2">{file ? <ReportPreview name={file.file.original_filename} rule={file.audit?.rule.title || '—'} reference={reference} report={report} ready={ready} issue={issue} adapter={adapter} share={{disabled: !current.length && !task.report_share, onOpen: trigger => openShare(trigger, current)}}>{reference && report && (report.generation_request?.state === 'pending' || report.state === 'failed') && <div className="space-y-2">{report.generation_request?.state === 'pending' ? <><p role="status" data-request-id={report.generation_request.request_id}>{report.generation_request.reason}</p><Button variant="outline" disabled={actions.busy.includes(reference.report_id)} onClick={() => void actions.read(reference)}>读取生成结果</Button></> : <><Button variant="outline" disabled={!report.regenerate_allowed || actions.busy.includes(reference.report_id)} onClick={() => void actions.regenerate(reference)}>重生成同一结果</Button>{(report.regenerate_reason || !report.regenerate_allowed) && <p className="text-xs text-muted-foreground">{report.regenerate_reason || '暂不能重新生成报告。'}</p>}</>}</div>}</ReportPreview> : <p className="text-sm text-muted-foreground">{rows.length ? '所选报告不可用，请从清单中重新选择。' : '没有进入审核的文件，未开始审核，也没有报告。'}</p>}</div></ResizablePanel></ResizablePanelGroup></div>
+    {shareScope !== null && <ReportShareDialog key={JSON.stringify(shareScope)} open={sharingOpen} share={task.report_share} contentFor={contentFor} describe={describe} reports={shareScope} adapter={sharingAdapter} actions={sharing} trigger={shareTrigger.current} onClose={() => setSharingOpen(false)}/>}
   </section>
 }

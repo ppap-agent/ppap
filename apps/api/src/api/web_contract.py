@@ -204,38 +204,6 @@ class RulesList(TypedDict):
     rules: list[Rule]
 
 
-class RuleLibraryScope(TypedDict):
-    customer: str
-    part: str
-    revision: str
-    allCustomers: bool
-    allParts: bool
-    allRevisions: bool
-
-
-class RuleLibraryEntry(TypedDict):
-    id: str
-    title: str
-    version: str
-    scope: RuleLibraryScope
-    reason: str
-    created_at: str
-    predecessor_id: str | None
-    clause_count: int
-    document_type: str
-    document_type_aliases: list[str]
-    suite_key: str | None
-    source_review: Literal["unchecked", "partial", "checked"]
-
-
-class RuleLibrary(TypedDict):
-    versions: list[RuleLibraryEntry]
-
-
-class RuleTypes(TypedDict):
-    types: list[str]
-
-
 class RuleParseRequest(TypedDict):
     request_id: str
     source_file_id: str
@@ -682,36 +650,6 @@ class RoundSummaryRule(TypedDict):
     title: str
 
 
-class RoundSummaryInput(TypedDict):
-    role: MaterialRole
-    original_filename: str
-    file_version_id: str
-    rule: RoundSummaryRule | None
-
-
-class RoundSummary(TypedDict):
-    id: str
-    source_draft_id: NotRequired[str | None]
-    task_id: NotRequired[str | None]
-    execution: str
-    has_execution_error: NotRequired[bool]
-    predecessor_id: str | None
-    created_at: str | None
-    updated_at: NotRequired[str | None]
-    inputs: list[RoundSummaryInput]
-    result_counts: dict[str, int]
-    reviewed_count: int
-    uncovered_count: NotRequired[int]
-    case_title: str
-    case_scope: str
-    deep_mode: NotRequired[bool]
-
-
-class RoundList(TypedDict):
-    rounds: list[RoundSummary]
-    next_offset: int | None
-
-
 class ReviewRequest(TypedDict):
     item_key: str
     judgment: str
@@ -719,25 +657,6 @@ class ReviewRequest(TypedDict):
     next_step: str
     version: int
     citations: NotRequired[list[ReviewCitation]]
-
-
-class UsageEvent(TypedDict):
-    id: str
-    created_at: str
-    consumed_points: int
-    is_free_trial: bool
-    round_id: NotRequired[str | None]
-    file_version_id: NotRequired[str | None]
-    external_status: NotRequired[str]
-    external_record_id: NotRequired[str | None]
-    external_confirmed_at: NotRequired[str | None]
-    ai_item_id: NotRequired[str]
-    charge: NotRequired[Literal["audit", "deep_surcharge"]]
-
-
-class UsageList(TypedDict):
-    events: list[UsageEvent]
-    next_offset: int | None
 
 
 class AuditDurationInterval(TypedDict):
@@ -1651,10 +1570,11 @@ class AuditUsageUnattributed(TypedDict):
 
 
 class CustomerTypeEntry(TypedDict):
-    """One document type of a customer's type set M: its PPAP code and the type name rules use."""
+    """One document type of a customer's type set M: its PPAP code, the type name rules use, and the name shown to people."""
 
     code: str
     rule_type: str
+    name: str
 
 
 class CustomerCoverage(TypedDict):

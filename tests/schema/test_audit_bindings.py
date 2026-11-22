@@ -196,12 +196,16 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertEqual(client.get("/support").status_code, 401)
         token = self.store.create_session(self.alice)
         client.cookies.set(SESSION_COOKIE, token)
-        before = [client.get(path).json() for path in ("/rounds", "/usage", "/drafts")]
+
+        def records():
+            return self.store.list_rounds(self.alice), self.store.list_usage_events(self.alice), client.get("/drafts").json()
+
+        before = records()
         info = client.get("/support")
         self.assertEqual(info.status_code, 200)
         self.assertEqual(info.json()["phone"], "+00 000 000")
         self.assertEqual(info.json()["state"], "configured")
-        self.assertEqual([client.get(path).json() for path in ("/rounds", "/usage", "/drafts")], before)
+        self.assertEqual(records(), before)
         self.store.revoke_session(token)
         self.assertEqual(client.get("/support").status_code, 401)
 
@@ -262,8 +266,15 @@ def check(context):
     return AuditResultItem(classification='基本信息', item='标题检查', priority='P0', status='PASS' if value == '控制计划' else 'NG',
                            suggestions='已读取本轮冻结原件A1', clause_id=context.clause_id, checks_performed=1, evidence=evidence)
 """
-        candidate = releases.save_candidate(self.alice, base.revision.id, {"rules.json": json.dumps(rules, ensure_ascii=False), "checker.py": code})
-        releases.publish(self.alice, base.revision.suite_key, candidate["id"], releases.active(self.alice, base.revision.suite_key)["revision"], str(uuid.uuid4()), force_unverified=True)
+        candidate = releases.suites.create_revision(
+            tenant_id=self.alice.tenant_id,
+            suite_key=base.revision.suite_key,
+            files={"rules.json": json.dumps(rules, ensure_ascii=False).encode(), "checker.py": code.encode()},
+            created_by=self.alice.user_id,
+            base_revision_id=base.revision.id,
+            related_suite_keys=base.revision.related_suite_keys,
+        )
+        releases.publish(self.alice, base.revision.suite_key, candidate.id, releases.active(self.alice, base.revision.suite_key)["revision"], str(uuid.uuid4()), force_unverified=True)
         draft = self.draft([{"file_version_id": file.id, "role": "target", "rule_version_id": rule["id"]} for file in files])
         accepted = self.store.accept_draft(self.alice, draft, "file-isolation")
         self.store.objects.delete(files[0].object_key)
@@ -1379,42 +1390,6 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual([row["id"] for row in self.store.list_audit_tasks(self.store.principal_for_fixture("bob"), target=work_item)], [task["id"]])
         self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("carol"), target=work_item), [])
 
-    def test_rule_directory_is_metadata_only_and_preserves_customer_scope_and_lineage(self):
-        import json
-        from unittest.mock import patch
-
-        file = self.upload("客户规则.docx")
-        first = self.store.publish_rule(self.alice, "客户要求", self.rule_body(), file.id)
-        body = {**self.rule_body(), "customers": []}
-        second = self.store.publish_rule(
-            self.alice,
-            "客户要求",
-            body,
-            file.id,
-            predecessor_id=first["id"],
-            case_context={
-                "registration": json.dumps(
-                    {
-                        "basis": {"source": {"version": "v2"}},
-                        "scope": {"customer": "", "part": "", "revision": "", "allCustomers": True, "allParts": True, "allRevisions": True},
-                        "reason": "明确适用范围",
-                    }
-                )
-            },
-        )
-        with patch.object(self.store, "_conn", wraps=self.store._conn) as connections:
-            directory = self.store.list_rule_library(self.alice.tenant_id)
-        self.assertEqual(connections.call_count, 1)
-        versions = {row["id"]: row for row in directory}
-        self.assertEqual(versions[second["id"]]["predecessor_id"], first["id"])
-        self.assertEqual(versions[second["id"]]["version"], "v2")
-        self.assertTrue(versions[second["id"]]["scope"]["allCustomers"])
-        self.assertEqual(versions[first["id"]]["scope"]["customer"], "测试客户")
-        self.assertEqual(versions[second["id"]]["clause_count"], 1)
-        self.assertEqual(versions[second["id"]]["reason"], "明确适用范围")
-        self.assertFalse(any("body" in row or "clauses" in row for row in directory))
-        self.assertEqual(self.store.list_rule_library(self.store.principal_for_fixture("carol").tenant_id), [])
-
     def test_round_list_query_count_does_not_grow_per_row(self):
         from unittest.mock import patch
 
@@ -1877,8 +1852,15 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         releases = SuiteReleaseStore(self.settings, self.store.objects, role="api")
         suite = releases.suites.resolve_suite(verification["suite_revision_id"], self.alice.tenant_id)
         active = releases.active(self.alice, suite.revision.suite_key)
-        candidate = releases.save_candidate(self.alice, suite.revision.id, {"checker.py": suite.files["checker.py"].decode() + "\n# later version\n"})
-        releases.publish(self.alice, suite.revision.suite_key, candidate["id"], active["revision"], str(uuid.uuid4()), force_unverified=True)
+        candidate = releases.suites.create_revision(
+            tenant_id=self.alice.tenant_id,
+            suite_key=suite.revision.suite_key,
+            files={"checker.py": suite.files["checker.py"] + b"\n# later version\n"},
+            created_by=self.alice.user_id,
+            base_revision_id=suite.revision.id,
+            related_suite_keys=suite.revision.related_suite_keys,
+        )
+        releases.publish(self.alice, suite.revision.suite_key, candidate.id, active["revision"], str(uuid.uuid4()), force_unverified=True)
         self.assertEqual(self.display_client.get(path).json()["files"][0]["audit"]["checker_verification"], verification)
         historical = self.display_client.get(f"/rounds/{task['round_id']}?read_view=true").json()
         self.assertEqual(historical["read_view"]["files"][0]["audit"]["checker_verification"], verification)

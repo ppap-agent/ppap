@@ -36,16 +36,3 @@ def test_rule_impact_follows_clause_text():
     assert rule_impact(suite("同一句原文", "before"), suite("同一句原文", "after"))["changed"] is False
     changed = rule_impact(suite("同一句原文", "before"), suite("另一句原文", "after"))
     assert changed["changed"] is True and changed["clauses"][0]["kind"] == "changed"
-
-
-def test_source_review_follows_checked_clauses_only():
-    from product.rules import source_review
-
-    def context(*checked):
-        clauses = [{"id": str(index), "checked": flag} for index, flag in enumerate(checked, start=1)]
-        return {"registration": json.dumps({"basis": {"clauses": clauses}})}
-
-    assert source_review(None) == "unchecked"
-    assert source_review(context(False, False)) == "unchecked"
-    assert source_review(context(True, False)) == "partial"
-    assert source_review(context(True, True)) == "checked"

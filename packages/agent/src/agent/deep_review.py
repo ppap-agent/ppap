@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from audit.checker_core import ExecutionSnapshot, FrozenTarget
+from audit.models import public_locator
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -33,14 +34,8 @@ CORRECTED_PREFIX = "深度复核订正"
 PROGRAM_STATUS_LABEL = {"PASS": "符合", "NG": "不符合", "UNABLE": "无法判断", "ERR": "技术错误", "NA": "不适用"}
 _IMAGES = frozenset({"png", "jpg", "jpeg", "webp"})
 _WORKBOOKS = frozenset({"xlsx", "xls", "xlsm"})
-_LOCATOR_KINDS: dict[str, dict[str, type]] = {
-    "xlsx_cell": {"sheet": str, "cell": str},
-    "xlsx_range": {"sheet": str, "start": str, "end": str},
-    "pdf_page": {"page": int},
-    "docx_paragraph": {"paragraph": int},
-    "docx_cell": {"table": int, "row": int, "column": int},
-}
-_CELL = re.compile(r"^[A-Z]{1,3}[1-9][0-9]{0,6}$")
+# The public locators the original reader can open here; a pdf_page region is not one.
+_REVIEW_LOCATOR_KINDS = frozenset({"xlsx_cell", "xlsx_range", "pdf_page", "docx_paragraph", "docx_cell"})
 
 
 class CitedEvidence(BaseModel):
@@ -168,18 +163,10 @@ class OriginalReader:
 
 
 def _typed_locator(raw: Mapping[str, Any]) -> dict[str, Any] | None:
-    fields = _LOCATOR_KINDS.get(str(raw.get("kind")))
-    if fields is None or set(raw) != {"kind", *fields}:
+    kind = raw.get("kind")
+    if not isinstance(kind, str) or kind not in _REVIEW_LOCATOR_KINDS or "region" in raw:
         return None
-    for key, expected in fields.items():
-        value = raw[key]
-        if type(value) is not expected or isinstance(value, int) and value < 1 or isinstance(value, str) and not value.strip():
-            return None
-    if raw["kind"] == "xlsx_cell" and not _CELL.fullmatch(raw["cell"]):
-        return None
-    if raw["kind"] == "xlsx_range" and not (_CELL.fullmatch(raw["start"]) and _CELL.fullmatch(raw["end"])):
-        return None
-    return dict(raw)
+    return public_locator(dict(raw))
 
 
 def check_evidence(item: CitedEvidence, reader: OriginalReader, unavailable: frozenset[str]) -> tuple[dict[str, Any] | None, str]:

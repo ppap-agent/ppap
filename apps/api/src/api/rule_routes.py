@@ -7,7 +7,7 @@ from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
 from product.files import ObjectMissing
 from product.logs import emit
-from product.rules import document_types, latest_rule_versions, normalize_document_type
+from product.rules import latest_rule_versions, normalize_document_type
 from worker.intake.rule_sources import rule_sources, validate_registration_sources
 
 from api import web_contract as wc
@@ -38,7 +38,7 @@ def customer_catalog(store, tenant_id: str) -> wc.AuditCustomerCatalog:
     return {"customers": rows, "unregistered": sorted(unregistered)}
 
 
-def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
+def register_rule_routes(app: FastAPI, store, principal_of):
     def sources(principal, file_id, version_id, version=None):
         version = version or store.get_version(file_id, version_id)
         if version is None or version.tenant_id != principal.tenant_id:
@@ -48,13 +48,6 @@ def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
             return version, rule_sources(version.original_filename, content)
         except Exception:
             raise ValueError("rule_source_unavailable") from None
-
-    @app.get("/rule-library", response_model=wc.RuleLibrary)
-    def read_rule_library(request: Request):
-        principal = principal_of(request)
-        if not principal:
-            return JSONResponse({"error": "unauthenticated"}, status_code=401, headers={"Cache-Control": "private, no-store"})
-        return JSONResponse({"versions": store.list_rule_library(principal.tenant_id)}, headers={"Cache-Control": "private, no-store"})
 
     @app.get("/files/{file_id}/versions/{version_id}/rule-sources", response_model=wc.RuleSources)
     def read_rule_sources(file_id: str, version_id: str, request: Request):
@@ -104,12 +97,6 @@ def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
             return JSONResponse({"error": "access_denied"}, status_code=403, headers=headers)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=409 if str(exc) == "customer_default_conflict" else 400, headers=headers)
-
-    @app.get("/rule-types", response_model=wc.RuleTypes)
-    def rules_types(request: Request):
-        if not principal_of(request):
-            return JSONResponse({"error": "unauthenticated"}, status_code=401)
-        return {"types": document_types()}
 
     @app.post("/rules/parse", response_model=wc.RuleParseJob, status_code=202, openapi_extra=wc.openapi_body(wc.RuleParseRequest))
     def rules_parse(request: Request, body: Any = Body(...)):

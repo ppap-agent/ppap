@@ -11,7 +11,7 @@ Do not change the load balancer ID, TLS secret, or `ppap.api.xixifusi.online`.
 
 TKE qcloud Ingress only accepts NodePort / LoadBalancer Service. `edition-proxy` stays NodePort.
 
-`kustomization.yaml` owns the Kubernetes manifests. CI renders them with pinned Kustomize 5.6.0 through `render-current.sh` and validates them with kubeconform. Operators deploy with the native commands below.
+`kustomization.yaml` owns the Kubernetes manifests. CI renders them with the Kustomize version pinned in `render-current.sh` and validates them with kubeconform. Operators deploy with the native commands below.
 
 ## Alpha 入口边界
 
@@ -98,7 +98,7 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 | `PPAP_MODEL_CODING_*` | 当前未设置：Coding 使用文本模型（grok-4.7） | 需要 Deep 专用模型时，在所有容器把 `PPAP_MODEL_CODING_*` 指向那个模型的分组 |
 | `PPAP_MODEL_DEEPSEEK_FLASH_4_1_MODEL`、`PPAP_MODEL_DEEPSEEK_FLASH_4_1_BASE_URL` | Secret `ppap-current` | API、Worker、Deep 的 `PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_BASE_URL` |
 | `PPAP_MODEL_DEEPSEEK_FLASH_4_1_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_VISION_API_KEY`；不向 Deep guest 注入 |
-| `PPAP_MODEL_{TEXT,VISION,CODING}_REASONING_EFFORT` | ConfigMap `ppap-current` | 各用途的推理强度：`low`、`none`（看图模型须支持）、`medium` |
+| `PPAP_MODEL_{TEXT,VISION,CODING}_REASONING_EFFORT` | ConfigMap `ppap-current` | 各用途的推理强度，取值见 `current.yaml`，含义见 [模型来源](../../docs/DEVELOPMENT.md#模型来源平台默认--企业-key) |
 | `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS`、`PPAP_DEEP_MODEL_MAX_REQUESTS` | ConfigMap `ppap-current` | API、Worker、Deep（企业 Key 的允许地址；每个 Deep Attempt 的请求次数熔断）|
 | 企业 Key（企业 BYOK） | 表 `product.tenant_model_credentials`（密文） | 运营用 `python -m product.tenant_models` 设置；无客户接口 |
 | `PPAP_MEEGO_AI_NODE_PLUGIN_ID`、`PPAP_MEEGO_AI_NODE_TOKEN`、`PPAP_MEEGO_AI_NODE_PLUGIN_SECRET` | Secret `ppap-current`（值记在仓库根目录不入 Git 的 `.env`） | API（飞书项目 AI 节点：事件验签、完成节点）|

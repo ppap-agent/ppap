@@ -13,6 +13,7 @@ from api import create_app
 from fastapi.testclient import TestClient
 from product import build_product_store
 from product.fixtures import RULE_A, USER_ALICE
+from product.identity import SESSION_COOKIE
 from product.settings import Settings
 from product.store.suite_releases import SuiteReleaseStore
 from psycopg import errors, sql
@@ -69,6 +70,15 @@ class AuditFlowTests(unittest.TestCase):
         self.client.cookies.clear()
         response = self.client.post("/isolated-dev/sessions", json={"subject": subject})
         self.assertEqual(response.status_code, 200)
+
+    def _principal(self):
+        return self.store.load_session(self.client.cookies.get(SESSION_COOKIE)).principal
+
+    def _rounds(self, **query):
+        return self.store.list_rounds(self._principal(), **query)
+
+    def _usage(self):
+        return self.store.list_usage_events(self._principal())
 
     def _upload(self, name: str, body: bytes, file_id: str | None = None) -> dict:
         if name.endswith(".xlsx"):
@@ -248,7 +258,7 @@ class AuditFlowTests(unittest.TestCase):
         accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "standard-writeback-fault"})
         self.assertEqual(accepted.status_code, 201, accepted.text)
         frozen = accepted.json()
-        usage = self.client.get("/usage").json()
+        usage = self._usage()
         worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
         job = worker.claim_job("standard-writeback")
         self.assertIsNotNone(job)
@@ -299,8 +309,8 @@ class AuditFlowTests(unittest.TestCase):
             for _ in range(2):
                 self.assertEqual(self.client.get(f"/rounds/{frozen['id']}").json(), loaded)
             self.assertIsNone(worker.claim_job("no-writeback-reexecution"))
-            self.assertEqual([row["id"] for row in self.client.get("/rounds").json()["rounds"]], [frozen["id"]])
-            self.assertEqual(self.client.get("/usage").json(), usage)
+            self.assertEqual([row["id"] for row in self._rounds()], [frozen["id"]])
+            self.assertEqual(self._usage(), usage)
         finally:
             with self.store._conn() as conn:
                 conn.execute(sql.SQL("DROP TRIGGER IF EXISTS {} ON product.findings").format(trigger))
@@ -379,19 +389,19 @@ class AuditFlowTests(unittest.TestCase):
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "rev"}).json()["id"]
         self._finish_worker()
         finding = self.client.get(f"/rounds/{round_id}").json()["findings"][0]
-        before_review = self.client.get("/rounds").json()["rounds"][0]
-        self.assertEqual([row["id"] for row in self.client.get("/rounds?unreviewed=true").json()["rounds"]], [round_id])
+        before_review = self._rounds()[0]
+        self.assertEqual([row["id"] for row in self._rounds(unreviewed=True)], [round_id])
         machine = finding["status"]
         saved = self.client.put(
             f"/rounds/{round_id}/reviews",
             json={"item_key": finding["item_key"], "judgment": "需修改", "rationale": "字段不清", "next_step": "补传", "version": 0},
         )
         self.assertEqual(saved.status_code, 200)
-        after_review = self.client.get("/rounds").json()["rounds"][0]
+        after_review = self._rounds()[0]
         self.assertEqual(after_review["created_at"], before_review["created_at"])
         self.assertGreater(after_review["updated_at"], before_review["updated_at"])
-        self.assertEqual(self.client.get("/rounds?unreviewed=true").json()["rounds"], [])
-        self.assertEqual(len(self.client.get("/rounds").json()["rounds"]), 1)
+        self.assertEqual(self._rounds(unreviewed=True), [])
+        self.assertEqual(len(self._rounds()), 1)
         again = saved.json()["findings"][0]
         self.assertEqual(again["status"], machine)
         self.assertEqual(again["review"]["judgment"], "需修改")
@@ -489,11 +499,8 @@ class AuditFlowTests(unittest.TestCase):
         self.assertFalse(body["coverage"]["locator_gap"])
 
     def test_round_history_lists_authorized_rounds_only(self):
-        self.assertEqual(self.client.get("/rounds").status_code, 401)
         self._login("alice")
-        empty = self.client.get("/rounds")
-        self.assertEqual(empty.status_code, 200)
-        self.assertEqual(empty.json()["rounds"], [])
+        self.assertEqual(self._rounds(), [])
         target = self._upload("report.xlsx", b"target-bytes")
         draft = self.client.post("/drafts").json()["id"]
         self.client.put(
@@ -501,22 +508,20 @@ class AuditFlowTests(unittest.TestCase):
             json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "history-1"}).json()["id"]
-        listed = self.client.get("/rounds").json()["rounds"]
+        listed = self._rounds()
         self.assertEqual([row["id"] for row in listed], [round_id])
         self.assertEqual(listed[0]["inputs"][0]["original_filename"], "report.xlsx")
         self.assertTrue(listed[0]["inputs"][0]["file_version_id"])
         self.assertGreaterEqual(listed[0]["updated_at"], listed[0]["created_at"])
         self.assertNotIn("findings", listed[0])
         self._finish_worker()
-        done = self.client.get("/rounds").json()["rounds"]
+        done = self._rounds()
         self.assertGreater(done[0]["result_counts"]["PASS"], 0)
         self.assertGreater(done[0]["updated_at"], listed[0]["updated_at"])
         self._login("carol")
-        other = self.client.get("/rounds")
-        self.assertEqual(other.status_code, 200)
-        self.assertEqual(other.json()["rounds"], [])
+        self.assertEqual(self._rounds(), [])
         self._login("bob")
-        bob_list = self.client.get("/rounds").json()["rounds"]
+        bob_list = self._rounds()
         self.assertEqual([row["id"] for row in bob_list], [round_id])
 
     def test_uploaded_rule_without_binding_cannot_claim_presence_pass(self):

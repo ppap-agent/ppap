@@ -2,13 +2,7 @@
 
 ## 当前 main
 
-当前仓库先通过唯一的 Bake build graph 构建应用镜像，再用 Docker Compose 启动 isolated-dev：
-
-```sh
-export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
-docker buildx bake release
-docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml up --no-build -d --wait
-```
+当前仓库先通过唯一的 Bake build graph 构建应用镜像，再用 Docker Compose 启动 isolated-dev，命令见 [isolated-dev](isolated-dev/README.md)。
 
 这会启动 PostgreSQL、[PGSTY Silo](https://github.com/pgsty/silo)、`psql` 角色/schema、对象桶，以及同一 Git revision 的 API / Worker / Checker Core Controller / nginx Web。用于开发演示，不代表 production deployment 已完成。
 
@@ -58,7 +52,7 @@ docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down
 
 真实部署把填好密钥的文件交给 `--env-file`（生产字段目录是仓库根 [`.env.production`](../.env.production)；`deploy/compose.env.example` 只是 verify fixture）。真实部署停服务用 `docker compose down`，不要带 `-v`，否则会删掉数据库与对象卷；`down -v` 只用于 CI 验证栈清理。
 
-`init-db` 是唯一读取 bootstrap/migrator 口令的组件：先用 `psql` 执行 `migrations/bootstrap.sql`（角色与库），再通过 `migrations/apply.sh` 按 numbered SQL filenames 的 lexical order 执行 schema migrations。`init-bucket` 用 Silo `mcli` 确保对象桶。API 与 Worker 只持有各自数据库角色口令加共享的对象存储/LLM/Web 配置，以及各自拥有的 capability。然后 API `GET /health`、`GET /version`、`GET /ready` 必须成功且 `git_sha` 与镜像一致。
+`init-db` 是唯一读取 bootstrap/migrator 口令的组件：先用 `psql` 执行 `migrations/bootstrap.sql`（角色与库），再执行 schema migrations（顺序见 [migrations/README](../migrations/README.md)）。`init-bucket` 用 Silo `mcli` 确保对象桶。API 与 Worker 只持有各自数据库角色口令加共享的对象存储/LLM/Web 配置，以及各自拥有的 capability。然后 API `GET /health`、`GET /version`、`GET /ready` 必须成功且 `git_sha` 与镜像一致。
 
 ### Backup / restore
 
@@ -82,6 +76,6 @@ Silo classic 基于 ubi-micro，容器里没有 `tar`；把 `silo-data` 挂到 `
 
 API 与 Worker 在 production 下向 stderr 写 JSON 行，字段包括 `request_id` / `tenant_id` / `round_id` / `job_id` / `attempt` 以及 HTTP method/path/status 或 job outcome。不记录 token 或客户内容。`GET /health` `/ready` `/version` `/public-config` 不打 INFO。响应带头 `X-Request-ID`。
 
-该 Compose 里的对象存储是 pinned 的 [PGSTY Silo](https://github.com/pgsty/silo) classic 镜像（MinIO 协议兼容 fork，`RELEASE.2026-09-16T00-00-00Z`，digest `sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46`）。S3 只在 compose 网络内（`http://silo:9000`），不发布到宿主机；根用户仍走 Silo 保留的 `MINIO_ROOT_*`，PPAP 继续用 `PPAP_S3_*`。不用 distroless；classic 是 ubi-micro（有 `sh`/`mcli`/`curl`，没有 `tar`）。不拉 `minio/minio`，也不再本地构建 MinIO。真实生产仍可把 `PPAP_S3_ENDPOINT` 换成自有 S3。当前 app image 保留 DOC 支持所需的受限 converter sandbox。
+该 Compose 里的对象存储是 pinned 的 [PGSTY Silo](https://github.com/pgsty/silo) classic 镜像（MinIO 协议兼容 fork，release 与 digest 见 [`compose.yaml`](compose.yaml)）。S3 只在 compose 网络内（`http://silo:9000`），不发布到宿主机；根用户仍走 Silo 保留的 `MINIO_ROOT_*`，PPAP 继续用 `PPAP_S3_*`。不用 distroless；classic 是 ubi-micro（有 `sh`/`mcli`/`curl`，没有 `tar`）。不拉 `minio/minio`，也不再本地构建 MinIO。真实生产仍可把 `PPAP_S3_ENDPOINT` 换成自有 S3。当前 app image 保留 DOC 支持所需的受限 converter sandbox。
 
 本仓生产运行不得把 Java PPAP 服务或 `ppap-agent` HTTP 当作 runtime dependency。这不表示拆除 `ppap-agent`：该仓继续服务其它用户，并作为新算法的验证基地和参考实现。

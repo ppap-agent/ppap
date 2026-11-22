@@ -21,9 +21,8 @@ export function readArchiveAddress(search: string) {
   } catch {invalid = true}
   return {documentId, reference, invalid, report: params.get('archiveReport') === '1'}
 }
-export function writeArchiveAddress(documentId: string | null, reference: ResultReference | null, report = false, replace = false, view: 'archive' | 'usage' = 'archive') {
+export function writeArchiveAddress(documentId: string | null, reference: ResultReference | null, report = false, replace = false) {
   const url = new URL(location.href)
-  url.searchParams.set('view', view)
   for (const [key, value] of Object.entries({archiveDoc: documentId, auditRef: reference ? resultKey(reference) : null, archiveReport: report ? '1' : null})) {
     if (value) url.searchParams.set(key, value); else url.searchParams.delete(key)
   }

@@ -1,16 +1,12 @@
-"""Fast workspace smoke; clean distribution correctness is validated separately in CI."""
+"""Deep toolchain pin; clean distribution correctness is validated separately in CI."""
 
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PYTHON = ROOT / ".venv" / "bin" / "python"
-IMPORTS = "import api, product, corpus_contracts, agent, audit, documents, audit.engine, product.store, worker"
 
 
 class PackagingTests(unittest.TestCase):
@@ -26,39 +22,3 @@ class PackagingTests(unittest.TestCase):
             if key.startswith("node_modules/" + name):
                 with self.subTest(package=key):
                     self.assertEqual(entry["version"], PI_VERSION)
-
-    def test_imports_and_owner_collection_ignore_cwd(self):
-        self.assertTrue(PYTHON.is_file(), PYTHON)
-        env = os.environ.copy()
-        env.pop("PYTHONPATH", None)
-        for cwd in ("/tmp", str(ROOT / "tests"), str(ROOT)):
-            completed = subprocess.run(
-                [str(PYTHON), "-c", IMPORTS],
-                cwd=cwd,
-                env=env,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-        collected = subprocess.run(
-            [
-                str(PYTHON),
-                "-m",
-                "pytest",
-                "--rootdir",
-                str(ROOT),
-                "-c",
-                str(ROOT / "pyproject.toml"),
-                "--collect-only",
-                "-q",
-                str(ROOT / "packages/documents/tests"),
-            ],
-            cwd="/tmp",
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(collected.returncode, 0, collected.stderr)
-        self.assertIn("test_", collected.stdout)

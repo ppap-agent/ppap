@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
-import unittest
+from types import SimpleNamespace
 
-from worker import run_claimed_job
+from worker import _process_claimed
 
 
-class ClaimedJobTests(unittest.TestCase):
-    def test_unknown_job_kind_is_unsupported(self):
-        result = run_claimed_job("heartbeat", {})
-        self.assertEqual(result, {"error": "unsupported_job_kind", "note": "unsupported_job_kind"})
+class Store:
+    def __init__(self):
+        self.completed = []
+
+    def complete_job(self, claimed, ident, result, outcome):
+        self.completed.append((result, outcome))
+        return True
+
+
+def test_unknown_job_kind_fails_without_running():
+    store = Store()
+    claimed = SimpleNamespace(id="job", attempt=1, round_id=None, tenant_id=None, kind="heartbeat", payload={})
+    result = _process_claimed(store, claimed, "worker")
+    assert result["error"] == "unsupported_job_kind"
+    assert store.completed == [(result, "failed")]

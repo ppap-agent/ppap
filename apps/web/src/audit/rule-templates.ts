@@ -1,5 +1,4 @@
 import type {components} from '../generated/openapi'
-import {documentTypeLabel} from './status-labels.ts'
 import {registeredCustomer, type RegisteredCustomer} from './customer-register.ts'
 
 type Rule = components['schemas']['Rule']
@@ -22,6 +21,12 @@ export function templateName(key: string): string {
   return key.replace(/^customer:/, '')
 }
 
+/** The rules in force: engine rules no other version names as its predecessor. */
+export function currentRules<Row extends Pick<Rule, 'id' | 'kind' | 'predecessor_id'>>(rules: Row[]): Row[] {
+  const replaced = new Set(rules.map(rule => rule.predecessor_id))
+  return rules.filter(rule => rule.kind === 'engine' && !replaced.has(rule.id))
+}
+
 export type RuleRow = {id: string; title: string; clauses: number | null; updatedAt: string}
 export type TypeRules = {code: string; type: string; label: string; rules: RuleRow[]}
 /** One registered customer on the rules page: its type set M with the current rules of each type; `types` is null when M is not configured. */
@@ -32,22 +37,22 @@ export type CustomerRules = {customer: RegisteredCustomer; types: TypeRules[] | 
  * A rule belongs to a customer only when it names one of the registered names; a rule outside M is not listed.
  */
 export function customerRules(customers: RegisteredCustomer[], rules: Rule[]): CustomerRules[] {
-  const replaced = new Set(rules.map(rule => rule.predecessor_id))
-  const current = rules.filter(rule => rule.kind === 'engine' && !replaced.has(rule.id))
+  const current = currentRules(rules)
   return customers.map(customer => {
     const types = customer.coverage?.types
     if (!types?.length) return {customer, types: null}
     const own = current.filter(rule => (rule.customers ?? []).some(value => registeredCustomer([customer], value)))
     return {customer, types: types.map(type => ({
-      code: type.code, type: type.rule_type, label: documentTypeLabel(type.rule_type),
+      code: type.code, type: type.rule_type, label: type.name,
       rules: own.filter(rule => rule.type === type.rule_type).map(rule => ({id: rule.id, title: rule.title, clauses: rule.clause_count ?? null, updatedAt: rule.created_at}))
         .sort((a, b) => a.title.localeCompare(b.title, 'zh-CN')),
     }))}
   })
 }
 
-/** Rule coverage N_r/M exactly as the backend counted it; null without M. */
-export function ruleCoverage(customer: RegisteredCustomer) {
-  const coverage = customer.coverage
+export type Coverage = {covered: number; total: number}
+/** Rule coverage N_r/M exactly as the backend counted it: types of M with a current rule, each once. Null without a customer or M. */
+export function ruleCoverage(customer: RegisteredCustomer | undefined): Coverage | null {
+  const coverage = customer?.coverage
   return coverage?.types.length ? {covered: coverage.rule_types.length, total: coverage.types.length} : null
 }

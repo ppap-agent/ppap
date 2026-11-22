@@ -19,40 +19,7 @@ CI consumes these physical owners. It does not maintain a second test manifest.
 
 ## Repository and Python modules
 
-Repository contract:
-
-```sh
-uv sync --locked
-git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
-uv run --no-sync python -m compileall -q packages apps/api apps/worker tests scripts
-uv run --no-sync ruff check packages apps/api apps/worker tests scripts
-uv run --no-sync ruff format --check packages apps/api apps/worker tests scripts
-uv run --no-sync mypy --no-incremental
-docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
-docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
-docker buildx bake --print >/dev/null
-docker buildx bake --check
-python3 -m scripts.ci_shards plan
-uv run --no-sync python -m pytest tests/repository
-```
-
-Distribution closure:
-
-```sh
-python3 -m scripts.ci_shards plan
-python3 scripts/validate_distribution.py --member audit
-```
-
-Python module groups:
-
-```sh
-# One pytest process per physical owner. CI discovers every packages/*/tests and apps/api/tests, apps/worker/tests, and/tests.
-uv run --no-sync pytest packages/product/tests
-uv run --no-sync pytest tests/corpus/contracts/tests
-uv run --no-sync pytest packages/agent/tests
-uv run --no-sync pytest packages/audit/tests
-uv run --no-sync pytest packages/documents/tests
-```
+Repository contract、Distribution closure 与 Python modules 的命令分别以 [Tests workflow](../.github/workflows/tests.yml) 的 `repository`、`distribution_closure`、`python_modules` job 为准；模块分组由 `python3 -m scripts.ci_shards plan` 发现，不在这里另列。
 
 API and Worker each need the real isolated-dev PostgreSQL fixture, in separate processes:
 
@@ -126,6 +93,10 @@ uv run --no-sync python -m corpus_contracts.uaes_evaluation .log/samples-report
 
 ### 官方 Suite 验证与发布
 
+官方 Suite 的安装、回归与发布是三个动作。仓库自带的目录叶子已离线验证，`product.seed_standard_suites --apply --publish-defaults` 在入库后直接把每个叶子设为官方默认（`repository_default`，不需要语料证明行），已有官方指针的规则组不会被覆盖，关联叶子先发布；企业未自选时自动跟随，显示为已验证。`product.seed_standard_suites --apply` 只保存 `checkers/<客户>/<规则组>/` 目录叶子的不可变候选。平台以 migrator 角色调用 `SuiteReleaseStore.record_official_validation` 保存独立回归证明，再调用 `publish_official(revision_id, expected_revision=..., expected_validation_revision=...)` 发布；发布前用 `official_active(suite_key)` 读取官方指针修订（首次为 0）。发布在同一事务内重查证明、当前关联 Suite、共享库版本及对象字节，并以 CAS 更新唯一官方指针。验证或保存新候选不会替换当前官方版本；回滚也须显式发布准确旧版本。
+
+首次启用先按关联依赖顺序验证并发布官方 Suite，再受理跟随官方版本的审核。既有 latest 或验证记录不被当作发布批准，未激活的官方源仍可按 revision 查看。没有固定企业版本的租户仅跟随已发布官方指针，企业明确固定某个官方或企业 revision 后不会被后续官方发布覆盖。显式发布只影响之后的新 Round，已冻结 Round 继续使用原修订。
+
 `python -m scripts.official_suites` 是平台侧的显式发布工具，使用已有 Suite validation 和 official head，不新增发布台账。普通 corpus 测试通过、known-gap 放行或官方来源标签都不算发布证明。默认读取当前配置；执行前必须确认是本次授权的环境，开发测试不能借此操作生产。
 
 ```sh
@@ -143,7 +114,7 @@ uv run --no-sync python -m scripts.official_suites publish --revision-id <offici
 
 操作人员用 `--revision-id` 选定确切版本。验证只消费仓库当前完整 corpus 中规则含义与该版本相同的全部目标，其他代际（如 v2 与 v3）的标记不沿用也不阻断；没有样本筛选或 proof JSON 导入选项。每个样本保留整个原件组合，只执行所选 Suite。运行正式 Core 的固定程序子进程，默认 `--model disabled` 不提供模型授权；`--model live` 显式允许文本 LLM 和模型 OCR 读取原件。两种模式都不录制或回放模型答案，不更改现有 timeout。它只适用于已审阅的平台程序；本地子进程不是敌对代码沙箱，不能据此声称具备生产隔离。
 
-Live 与生产相同，按用途读取平台模型：文本 `PPAP_MODEL_TEXT_*`，视觉 `PPAP_MODEL_VISION_*`（默认关闭推理），编码 `PPAP_MODEL_CODING_*`（未配置时用文本模型）；没有文本或视觉 key 时不调用模型。`PPAP_CORPUS_OFFLINE=1` 与 live 冲突，普通 corpus 的 `PPAP_CORPUS_MODEL` 不会悄悄改变官方 runner 的模式。密钥只留在 host，子进程只拿本次 loopback 临时 grant。
+Live 与生产相同，按用途读取平台模型：文本 `PPAP_MODEL_TEXT_*`，视觉 `PPAP_MODEL_VISION_*`，编码 `PPAP_MODEL_CODING_*`（未配置时用文本模型）；没有文本或视觉 key 时不调用模型。`PPAP_CORPUS_OFFLINE=1` 与 live 冲突，普通 corpus 的 `PPAP_CORPUS_MODEL` 不会悄悄改变官方 runner 的模式。密钥只留在 host，子进程只拿本次 loopback 临时 grant。
 
 CI 和开发环境的模型用量属于开发预算，不设限额。每个样本后输出已知用量，结束撤销授权并输出最终回执；用量未知会阻断验证，不自动重试。进程被外部终止可能没有最终回执，先核对既有输出和供应商账单，不能假定没有计费。回执只保留所选模型身份、endpoint 摘要和供应商确认的 token 数，不含密钥、原件、提示词或模型原始回答；返回模型名称和货币费用仍未知。证明绑定本次模型身份，`read` / `publish` 不需要模型密钥，也不调用模型。
 
@@ -151,7 +122,7 @@ CI 和开发环境的模型用量属于开发预算，不设限额。每个样�
 
 发布要求每条人工答案有已确认的判定人、ISO 日期和完整条款覆盖，并绑定确切原件、文件身份及已复核的 Suite／条款含义。人工确认的 PASS 可以不写人工判定依据，已有依据原样保留；NG、NA 仍须说明依据，UNABLE 仍是未解决结论。不能用自动生成的通用说明替代人工判断。至少四个不同原件样本，第四个及其倍数为独立验证样本，不能与训练样本共享任何原件。当前缺失的必填人工字段不会自动补齐。证据不足时返回 `not_started_evidence_incomplete`、具体原因和零个已执行样本，不启动检查、不把缺失当通过；返回码为 2。执行中断标记 `incomplete`，不自动重跑。人工 PASS 的说明可空不免除实际运行的取证要求：只有实际结果完全符合人工答案、断言数大于零且证据可定位时才可验证；UNABLE、ERR、缺失和 known-gap 都不能豁免。
 
-证明绑定官方 Suite revision／完整内容、程序、共享库、当前直接依赖的 revision／内容、全组合输入与该 Suite 所属客户的两份人工表（cases、oracle）的身份。写入前检查原件仍相同；发布重新核对当前 corpus，并在现有官方事务锁下同时检查 head、validation revision、proof digest 和依赖选择。先发布直接依赖，例如 U12/U16 → U07 → U08 → U05；保存候选或完成验证不会自动更新下游。
+证明绑定官方 Suite revision／完整内容、程序、共享库、当前直接依赖的 revision／内容、全组合输入与该 Suite 所属客户的两份人工表（cases、oracle）的身份。写入前检查原件仍相同；发布重新核对当前 corpus，并在现有官方事务锁下同时检查 head、validation revision、proof digest 和依赖选择。先发布直接依赖（依赖关系见各 Suite `rules.json` 的 `related_suite_keys`）；保存候选或完成验证不会自动更新下游。
 
 操作使用不可变、已审阅的发布 checkout 和原件；运行期间不能编辑它们。库或文件改变须重新验证。工具在写入前输出本次 proof／CAS 身份，异常不自动重试。结果未知时先用原 revision 执行 `read`，核对原 proof digest、验证 revision，以及发布后的目标和 head revision。读不到相同记录或已被后续写入覆盖时仍属未知，不能据此断言原写入未发生。测试中的四个程序化工作簿只证明执行和发布协议，不是客户效果验收或生产发布证据。
 
@@ -163,7 +134,7 @@ CI 和开发环境的模型用量属于开发预算，不设限额。每个样�
 
 ### 模型回答
 
-默认回放：完整请求摘要与录制一致才复用回答，摘要包括图片内容、提示词、Schema、预算、视觉请求选项和独立观察编号；图片尺寸只用于可读展示。视觉选项是配置的推理强度 `PPAP_MODEL_VISION_REASONING_EFFORT`（部署为 `none`；本地未设置时语料入口取 `.env.production` 的值），严格离线、带 Key 回放、CI 与线上一致。缺少匹配录制时，只有显式配置测试模型才真实调用，用例通过后记录回答。用例失败时不记录，下次重新询问；因此通过用例的录制仅作逻辑回归样本，不作为准确率或稳定性统计。测试通过独立的 ModelAccess scope 授权 Core，优先使用完整 PPAP_MODEL_VISION_* 配置，其次完整 PPAP_MODEL_TEXT_* 配置，同一测试的文本和视觉工具共享该凭据、endpoint 和模型。生产无凭据 scope 不受此测试逻辑影响。
+默认回放：完整请求摘要与录制一致才复用回答，摘要包括图片内容、提示词、Schema、预算、视觉请求选项和独立观察编号；图片尺寸只用于可读展示。视觉选项是配置的推理强度 `PPAP_MODEL_VISION_REASONING_EFFORT`（语义见 [模型来源](../docs/DEVELOPMENT.md#模型来源平台默认--企业-key)；本地未设置时语料入口取 `.env.production` 的值），严格离线、带 Key 回放、CI 与线上一致。缺少匹配录制时，只有显式配置测试模型才真实调用，用例通过后记录回答。用例失败时不记录，下次重新询问；因此通过用例的录制仅作逻辑回归样本，不作为准确率或稳定性统计。测试通过独立的 ModelAccess scope 授权 Core，优先使用完整 PPAP_MODEL_VISION_* 配置，其次完整 PPAP_MODEL_TEXT_* 配置，同一测试的文本和视觉工具共享该凭据、endpoint 和模型。生产无凭据 scope 不受此测试逻辑影响。
 
 本地无付费验证使用 `PPAP_CORPUS_OFFLINE=1`；即使环境已有 Key，也只回放缓存，任何缺失记录都令测试失败且不会调用提供方。没有测试凭据时同样只读回放。`PPAP_CORPUS_MODEL=live` 必须有完整测试配置，不能与 offline 同时使用。回放验证取证和判定逻辑，不验证新模型或部署的能力；真实视觉验收使用预先固定的样本和运行次数，并保留全部运行结果。
 
@@ -237,11 +208,3 @@ docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-l
 ```
 
 Fact-answer and checker-workspace journeys under `tests/integration/product/` document their own scope and local-only overrides in their module docstrings; they run with the Product integration prerequisites above.
-
-## Outside the CI Gate
-
-LLM readiness and Feishu readiness keep `workflow_dispatch` and add a weekly schedule; they probe real credentials and endpoints and stay outside the default `CI Gate`.
-
-## CI Gate
-
-The default merge contract is the required groups: Web, Design enforcement, Repository contract, Python modules, Distribution closure, Schema, Corpus, Product contracts, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Repository-side merge-contract semantics are therefore stable even when internal matrix groups evolve; whether the hosting plan can enforce `CI Gate` through branch protection/rulesets is a separate platform capability.

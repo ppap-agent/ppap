@@ -4,9 +4,9 @@
 
 ## 走的是哪条路径
 
-与线上 Controller 相同：在从 `HEAD` 构建的深度镜像里，以 root 启动本地模型网关和 `ContainerRuntime`，guest 降权为 uid 10001、在 `prlimit` 下运行，由 `CoreRuntime.execute_snapshot` 在一个 guest 中执行整轮、同组共享上下文：逐份运行已验证的 Suite 程序（允许模型读取，每份 3 分钟），再逐份由 Pi 按 `deep_agent/AGENTS.md` 复核（每份 6 分钟），宿主校验并合并订正。某份复核未完成时，这份保留程序结论，记为未复核。
+与线上 Controller 相同：在从 `HEAD` 构建的深度镜像里，以 root 启动本地模型网关和 `ContainerRuntime`，guest 降权为 uid 10001、在 `prlimit` 下运行，由 `CoreRuntime.execute_snapshot` 在一个 guest 中执行整轮、同组共享上下文：逐份运行已验证的 Suite 程序（允许模型读取），再逐份由 Pi 按 `deep_agent/AGENTS.md` 复核，宿主校验并合并订正；每份的时限与线上相同，见 [deploy/deep](../../deploy/deep/README.md)。某份复核未完成时，这份保留程序结论，记为未复核。
 
-- 模型：平台模型（`.env` 中的 `PPAP_MODEL_TEXT_*` / `VISION_*` / `CODING_*`），按未配置企业 Key 的租户冻结身份；推理强度、请求上限、沙箱配置取自 `.env.production`。检查用文本与看图模型，复核（Pi）用 coding 模型，强度为 `PPAP_MODEL_CODING_REASONING_EFFORT`（网关以配置的强度为准）。
+- 模型：平台模型（`.env` 中的 `PPAP_MODEL_TEXT_*` / `VISION_*` / `CODING_*`），按未配置企业 Key 的租户冻结身份；推理强度、请求上限、沙箱配置取自 `.env.production`。检查用文本与看图模型，复核（Pi）用 coding 模型，强度为 `PPAP_MODEL_CODING_REASONING_EFFORT`（含义见 [模型来源](../../docs/DEVELOPMENT.md#模型来源平台默认--企业-key)；网关以配置的强度为准）。
 - 可调的只有复核强度：`--effort low|medium|high|xhigh`。模型一律用配置的，检查不受影响。实际的复核模型与强度写进 `meta.json`。
 - 用例：`assets/corpus` 中 UAES 的人工 Oracle（`uaes-cases.csv`、`uaes-oracle.csv`、`uaes-reviewed-rules.json`）。语料合同照常检查条款正文与人工复核语义是否一致，不一致即报错，不评测过期真值。
 - 用量与费用：每次模型请求都经过本进程托管的网关，逐次记下用途、模型、实际强度和服务商返回的用量（输入、其中缓存命中、输出、其中推理），按发出时正在进行的任务归到对应文件的检查或复核。费用按 [prices.json](prices.json) 的公开价计算（美元），价格表由人维护，写明来源与读取日期。
@@ -53,7 +53,7 @@ uv run --no-sync python bench/deep-audit/deep_eval.py report bench/deep-audit/ru
 | 订正被拒 | 复核给出的订正没有通过宿主的证据核对，保留程序结论 |
 | 无法判断被定下 | 程序结论为 UNABLE 的条款，复核后给出确定结论的条数，及其中与真值一致的条数 |
 | 费用 | 公开价下的美元费用：合计、按检查 / 复核、按模型与强度，以及每份文件检查和复核费用的中位 / P90 / 最大；缓存命中占输入的比例；每份与单轮请求数（对照每轮 `PPAP_DEEP_MODEL_MAX_REQUESTS`） |
-| 每份检查 / 复核耗时 | guest 每开始一项任务就报告一次进度，一项任务持续到下一项开始；与线上时限（检查 3 分钟、复核 6 分钟）对照 |
+| 每份检查 / 复核耗时 | guest 每开始一项任务就报告一次进度，一项任务持续到下一项开始；与线上每份检查、复核的时限对照 |
 
 ## 比较两种做法
 

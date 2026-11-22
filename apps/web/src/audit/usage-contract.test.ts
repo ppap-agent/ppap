@@ -21,8 +21,12 @@ test('technical result attempts cannot become separate per-file business charges
   assert.equal(validUsagePage({...page, entries: [entry, retry], total: 2}, query, 'org-1'), false)
 })
 
-test('one file audit has the confirmed 500-point business obligation', () => {
-  assert.equal(validUsagePage({...page, entries: [{...entry, points: 1000, allocation: {...entry.allocation, paid_points: 800}}]} as unknown as UsagePage, query, 'org-1'), false)
+test('an entry holds whatever the server charged: a positive whole number its allocation adds up to', () => {
+  // The price belongs to the server; an older record at another price is still a valid record.
+  assert.equal(validUsagePage({...page, entries: [{...entry, points: 1000, allocation: {...entry.allocation, paid_points: 800}}]}, query, 'org-1'), true)
+  assert.equal(validUsagePage({...page, entries: [{...entry, points: 750, settlement: {state: 'trial', reason: null}, debited_at: null, orders: [], order_reason: '全部使用免费额度，无飞书订单。', allocation: {free_points: 750, paid_points: 0, reason: null}}]}, query), true)
+  for (const points of [0, -500, 500.5]) assert.equal(validUsagePage({...page, entries: [{...entry, points}]}, query, 'org-1'), false)
+  assert.equal(validUsagePage({...page, entries: [{...entry, points: 1000}]}, query, 'org-1'), false)
 })
 
 test('unmapped history keeps its fee without inventing an audit sequence or hiding older aggregate fees', () => {
@@ -47,9 +51,4 @@ test('usage projections bind organization, query and natural month and keep unkn
   assert.equal(validUsagePage({...page, summary: {...page.summary, charged_points: {value: null, reason: 'Awaiting receipt'}}}, query, 'org-1'), true)
   assert.equal(validUsagePage({...page, summary: {...page.summary, charged_points: known(0)}}, query, 'org-1'), true)
   for (const change of [{organization_id: 'other-org'}, {query: {...query, search: 'other'}}, {summary: {...page.summary, month: '2026-09'}}, {summary: {...page.summary, charged_points: {value: null, reason: null}}}, {summary: {...page.summary, free_remaining: known(1001)}}, {entries: [{...entry, orders: [{...entry.orders[0], order_id: ''}]}]}, {entries: [{...entry, allocation: {...entry.allocation, paid_points: 301}}]}, {entries: [{...entry, reference: {...entry.reference, file_version_id: ''}}]}]) assert.equal(validUsagePage({...page, ...change}, query, 'org-1'), false)
-})
-
-test('a file whose deep result was committed is one 750-point obligation', () => {
-  assert.equal(validUsagePage({...page, entries: [{...entry, points: 750, allocation: {free_points: 200, paid_points: 550, reason: null}}]}, query), true)
-  assert.equal(validUsagePage({...page, entries: [{...entry, points: 750, settlement: {state: 'trial', reason: null}, debited_at: null, orders: [], order_reason: '全部使用免费额度，无飞书订单。', allocation: {free_points: 750, paid_points: 0, reason: null}}]}, query), true)
 })

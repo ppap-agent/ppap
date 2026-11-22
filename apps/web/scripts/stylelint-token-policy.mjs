@@ -9,7 +9,7 @@ const messages = stylelint.utils.ruleMessages(ruleName, {
   structural: (name) => `Structural custom property ${name} cannot supply a visual value.`,
 });
 
-const meta = { url: "https://github.com/ppap-agent/ppap/blob/main/docs/DESIGN_SYSTEM.md" };
+const meta = { url: "https://github.com/ppap-agent/ppap/blob/main/apps/web/tokens/README.md" };
 const visualProperty = /^(?:color|background(?:-color)?|border(?:-color|-radius)?|box-shadow|outline(?:-color)?|fill|stroke|caret-color|text-decoration-color)$/;
 
 export function aliasTarget(value) {

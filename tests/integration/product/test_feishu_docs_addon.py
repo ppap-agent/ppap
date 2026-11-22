@@ -207,10 +207,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self._env.stop()
 
     def _usage_events(self):
-        response = self.client.get("/usage")
-        self.assertEqual(response.status_code, 200)
-        self.assertIsNone(response.json()["next_offset"])
-        return response.json()["events"]
+        return self.store.list_usage_events(self.store.principal_for_fixture("alice"))
 
     def _draft_for_imported_file(self):
         imported = self.client.post("/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"})

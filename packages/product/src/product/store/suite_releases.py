@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import json
 import uuid
 from contextlib import nullcontext
@@ -14,10 +13,10 @@ from psycopg.types.json import Jsonb
 
 from product.db import connect
 from product.suite_releases import adoption_block, empty_validation, publication_fingerprint
-from product.suites import MAX_SUITE_DEPTH, canonical_json, content_digest
+from product.suites import MAX_SUITE_DEPTH
 
 if TYPE_CHECKING:
-    from product.checker_validation import SuiteValidationReport
+    from audit.checker_validation import SuiteValidationReport
 
 
 def _id(value: str) -> str:
@@ -533,92 +532,6 @@ class SuiteReleaseStore:
             )
             result = _receipt(cur.fetchone(), published_by_name=_display_name(conn, principal.user_id, principal.tenant_id))
         return result
-
-    def save_candidate(self, principal, base_revision_id: str, files: dict[str, str], *, suite_key: str | None = None, operation_id: str | None = None, conn=None) -> dict:
-        base_revision_id = _id(base_revision_id)
-        operation_id = _id(operation_id) if operation_id is not None else str(uuid.uuid4())
-        if not isinstance(files, dict) or not files or any(not isinstance(value, str) for value in files.values()):
-            raise ValueError("invalid_suite_candidate")
-        if "templates.json" in files:
-            try:
-                templates = json.loads(files["templates.json"])
-            except (ValueError, TypeError):
-                raise ValueError("invalid_template_reference") from None
-            if not isinstance(templates, list) or any(not isinstance(item, dict) or (item.get("kind") == "licensed_blank" and item.get("distributable") is not True) for item in templates):
-                raise ValueError("template_distribution_not_authorized")
-
-        def _persist(conn) -> str:
-            _member(conn, principal)
-            base = _revision(conn, base_revision_id, principal.tenant_id)
-            if suite_key is not None and base["suite_key"] != _key(suite_key):
-                raise ValueError("suite_key_mismatch")
-            fingerprint = content_digest(canonical_json({"base_revision_id": base_revision_id, "files": files, "created_by": principal.user_id}))
-            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("suite-candidate:" + principal.tenant_id + ":" + operation_id,))
-            prior = conn.execute(
-                "SELECT revision_id,request_fingerprint FROM product.suite_candidate_operations WHERE tenant_id=%s AND operation_id=%s", (principal.tenant_id, operation_id)
-            ).fetchone()
-            if prior:
-                if prior[1] != fingerprint:
-                    raise ValueError("suite_operation_conflict")
-                revision_id = str(prior[0])
-            else:
-                if {"checker.py", "resources.py"} & files.keys():
-                    selected = self.suites.resolve_suite(base_revision_id, principal.tenant_id, conn=conn)
-                    merged = {**selected.files, **{path: value.encode() for path, value in files.items()}}
-                    program = {path: body for path, body in merged.items() if path in {"checker.py", "resources.py"}}
-                    previous = {path: body for path, body in selected.files.items() if path in {"checker.py", "resources.py"}}
-                    if program != previous:
-                        factory = False
-                        for snapshot in (selected.files, merged):
-                            try:
-                                rules = json.loads(snapshot["rules.json"])
-                                binding = rules.get("checker_binding") or {}
-                                factory |= isinstance(binding, dict) and "checker:create_audit" in binding.values()
-                                tree = ast.parse(snapshot["checker.py"])
-                                factory |= any(
-                                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-                                    and node.name == "create_audit"
-                                    or isinstance(node, ast.Name)
-                                    and isinstance(node.ctx, ast.Store)
-                                    and node.id == "create_audit"
-                                    or isinstance(node, ast.alias)
-                                    and (node.asname or node.name) == "create_audit"
-                                    for node in ast.walk(tree)
-                                )
-                            except (SyntaxError, ValueError, AttributeError):
-                                pass  # Content validation below still owns malformed revisions.
-                        if factory:
-                            from audit.checker_lib.imports import import_violations
-
-                            for source in program.values():
-                                try:
-                                    tree = ast.parse(source)
-                                except (SyntaxError, ValueError):
-                                    raise ValueError("invalid_suite_candidate") from None
-                                if import_violations(tree):
-                                    raise ValueError("checker_cross_version_import")
-                revision = self.suites.create_revision(
-                    tenant_id=principal.tenant_id,
-                    suite_key=base["suite_key"],
-                    files={path: value.encode() for path, value in files.items()},
-                    created_by=principal.user_id,
-                    base_revision_id=base_revision_id,
-                    related_suite_keys=tuple(base["related_suite_keys"]),
-                    conn=conn,
-                )
-                revision_id = revision.id
-                conn.execute(
-                    """INSERT INTO product.suite_candidate_operations (tenant_id,operation_id,base_revision_id,revision_id,request_fingerprint,created_by)
-                       VALUES (%s,%s,%s,%s,%s,%s)""",
-                    (principal.tenant_id, operation_id, base_revision_id, revision_id, fingerprint, principal.user_id),
-                )
-            return revision_id
-
-        if conn is None:
-            with self._conn() as owned, owned.transaction():
-                revision_id = _persist(owned)
-            return self.detail(principal, revision_id)
-        return {"id": _persist(conn)}
 
     def detail(self, principal, revision_id: str) -> dict:
         with self._conn() as conn, conn.transaction():

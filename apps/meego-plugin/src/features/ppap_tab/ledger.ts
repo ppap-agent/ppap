@@ -207,7 +207,7 @@ const sameCustomer = (left: string, right: string) => {
 };
 
 /** A registered customer as GET /audit-customers lists it: full and short name, and its document type set. */
-export type RegisteredCustomer = { customer_id: string; name: string; full_name: string; short_name: string; coverage: { types: { code: string; rule_type: string }[] } | null };
+export type RegisteredCustomer = { customer_id: string; name: string; full_name: string; short_name: string; coverage: { types: { code: string; rule_type: string; name: string }[] } | null };
 
 /** The registered customer a recorded value names exactly (full or short name, or its rule name); nothing is matched by prefix. */
 export const registeredCustomer = (customers: RegisteredCustomer[] | null, value: string | null) => {
@@ -216,6 +216,15 @@ export const registeredCustomer = (customers: RegisteredCustomer[] | null, value
 };
 /** The registered full name; an unregistered value is shown as recorded. */
 export const customerFullName = (customers: RegisteredCustomer[] | null, value: string | null) => registeredCustomer(customers, value)?.full_name ?? value?.trim() ?? '';
+
+/** A document type's name as the register lists it (by code or rule type); an unlisted type is shown as recorded. */
+export function documentTypeName(customers: RegisteredCustomer[] | null, type: string): string {
+  for (const customer of customers ?? []) {
+    const found = customer.coverage?.types.find(entry => entry.code === type || entry.rule_type === type);
+    if (found) return found.name;
+  }
+  return type;
+}
 
 /** The document types of the customer's registered type set; the customer type decides what a part must submit. */
 export function requiredTypes(customers: RegisteredCustomer[] | null, customer: string | null): string[] {

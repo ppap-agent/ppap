@@ -12,9 +12,9 @@ import type { Revise } from './Confirm';
 import { PdfView } from './Evidence';
 import { Guide } from './Guide';
 import { Issue, openFacts } from './Issue';
-import { buildPackage, currentTemplate, customerFullName, openTotals, pendingStart, rectification, rememberedTemplate, rememberStart, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
-import type { Doc, OpenIssue, Package } from './ledger';
-import { bucket, bucketColor, bucketLabel, byUrgency, conclusionLabel, documentTypeLabel, openCount, pendingNote, reviewOf, verdictLabel, when, withRuleVersion } from './model';
+import { buildPackage, currentTemplate, customerFullName, documentTypeName, openTotals, pendingStart, rectification, rememberedTemplate, rememberStart, rememberTemplate, requiredTypes, standing, templateName, templateOwner, templates, unaudited, verdict } from './ledger';
+import type { Doc, OpenIssue, Package, RegisteredCustomer } from './ledger';
+import { bucket, bucketColor, bucketLabel, byUrgency, conclusionLabel, openCount, pendingNote, reviewOf, verdictLabel, when, withRuleVersion } from './model';
 import type { Choice, FactView, FileVersion, Job, Task, TaskFile } from './model';
 import { bytes, call, newId, PpapError, save, say, taskLink, waitFor } from './ppap';
 
@@ -427,7 +427,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
         <h3 id="ppap-docs">资料<span className="count">{docs.length}</span></h3>
         {docs.length > 0 && uploader}
       </div>
-      <DocTable uploader={uploader} docs={docs} fields={data.fields} flight={flight} revise={revise} selectable={choosing && !busy} busy={Boolean(busy)} picked={picked} onPick={setPicked} onIssues={goToIssues} onReport={setReport} onDownload={row => void download(row)} onRegenerate={row => void regenerate(row)} onRefresh={() => void refresh().catch(failure => setNotice(say(failure)))} />
+      <DocTable uploader={uploader} docs={docs} fields={data.fields} customers={data.customers} flight={flight} revise={revise} selectable={choosing && !busy} busy={Boolean(busy)} picked={picked} onPick={setPicked} onIssues={goToIssues} onReport={setReport} onDownload={row => void download(row)} onRegenerate={row => void regenerate(row)} onRefresh={() => void refresh().catch(failure => setNotice(say(failure)))} />
       {customer && missing.length > 0 && (
         <div className="missing">
           <Text type="tertiary">{customerFullName(data.customers, customer)} 要求的资料中，还有 {missing.length} 类没有提交。</Text>
@@ -435,7 +435,7 @@ export function Workspace({ item, data, user, stalled, refresh, onWritten, onDis
           {showMissing && (
             <div className="missing-list">
               {unknownDocs > 0 && <Text type="tertiary" size="small">有 {unknownDocs} 份附件还没有识别类型，审核后这里会更新。</Text>}
-              <Text>{missing.map(documentTypeLabel).join('、')}</Text>
+              <Text>{missing.map(type => documentTypeName(data.customers, type)).join('、')}</Text>
             </div>
           )}
         </div>
@@ -562,10 +562,10 @@ const ATTACHMENT_LIMIT = 50;
 
 // The documents ---------------------------------------------------------
 
-type DocTableProps = { uploader: ReactNode; docs: Doc[]; fields: Record<string, string>; flight: Task | null; revise: Revise; selectable: boolean; busy: boolean; picked: Set<string>; onPick: (next: Set<string>) => void; onIssues: () => void; onReport: (row: TaskFile) => void; onDownload: (row: TaskFile) => void; onRegenerate: (row: TaskFile) => void; onRefresh: () => void };
+type DocTableProps = { uploader: ReactNode; docs: Doc[]; fields: Record<string, string>; customers: RegisteredCustomer[] | null; flight: Task | null; revise: Revise; selectable: boolean; busy: boolean; picked: Set<string>; onPick: (next: Set<string>) => void; onIssues: () => void; onReport: (row: TaskFile) => void; onDownload: (row: TaskFile) => void; onRegenerate: (row: TaskFile) => void; onRefresh: () => void };
 
 function DocTable(props: DocTableProps) {
-  const { docs, fields, selectable, picked } = props;
+  const { docs, fields, customers, selectable, picked } = props;
   if (!docs.length)
     return (
       <Empty title="这个工作项还没有资料" description="上传这一包 PPAP 文件，可以一次选择整个文件夹。在工作项里直接添加的附件，刷新后也会出现。">
@@ -582,7 +582,7 @@ function DocTable(props: DocTableProps) {
       render: (_: unknown, doc: Doc) => (
         <div className="doc-name">
           <Text ellipsis={{ showTooltip: true }}>{doc.attachment.name}</Text>
-          <Text type="tertiary" size="small">{[doc.type && documentTypeLabel(doc.type), fields[doc.attachment.field_key], doc.attachment.size].filter(Boolean).join(' · ')}</Text>
+          <Text type="tertiary" size="small">{[doc.type && documentTypeName(customers, doc.type), fields[doc.attachment.field_key], doc.attachment.size].filter(Boolean).join(' · ')}</Text>
         </div>
       ),
     },

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 from audit.checker_core import checker_digest
+from audit.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from audit.standard_suites import library_revision
-from product.checker_validation import CaseEvaluation, ClauseEvaluation, SuiteValidationReport
 from product.settings import Settings
 from product.store.suite_releases import SuiteReleaseStore, _lock, _member, current_selection
 from product.store.suites import SuiteStore
@@ -25,6 +25,18 @@ def seed(auth_store_factory):
     suites = SuiteStore(store.settings, store.objects, role="migrator")
     releases = SuiteReleaseStore(store.settings, store.objects, role="api")
     return store, suites, releases, alice, bob
+
+
+def changed(releases, principal, base, files):
+    """The tenant's Suite revision changing `files` on top of `base`."""
+    return releases.suites.create_revision(
+        tenant_id=principal.tenant_id,
+        suite_key=base.suite_key,
+        files=files,
+        created_by=principal.user_id,
+        base_revision_id=base.id,
+        related_suite_keys=base.related_suite_keys,
+    )
 
 
 def proof_for(suites, principal, revision, *, related=None, version=None, expected="PASS", actual="PASS", clause="R1"):
@@ -73,10 +85,10 @@ def test_verification_is_whole_suite_and_related_invalidation_is_only_one_hop(au
         activate_official(store, suites, alice, revision, related=related)
         assert releases.active(bob, revision.suite_key)["validation"]["status"] == "verified"
     # Editing the rules creates a new whole-Suite candidate with no inherited proof.
-    candidate = releases.save_candidate(alice, first.id, {"rules.json": json.dumps({"rules": [{"id": "R1", "rule_to_check": "Changed wording"}]})})
-    assert candidate["validation"]["status"] == "unverified"
+    candidate = changed(releases, alice, first, {"rules.json": json.dumps({"rules": [{"id": "R1", "rule_to_check": "Changed wording"}]}).encode()})
+    assert releases.detail(alice, candidate.id)["validation"]["status"] == "unverified"
     assert releases.active(bob, "second")["validation"]["status"] == "verified"
-    releases.publish(bob, "first", candidate["id"], 0, str(uuid.uuid4()), force_unverified=True)
+    releases.publish(bob, "first", candidate.id, 0, str(uuid.uuid4()), force_unverified=True)
     assert releases.active(alice, "second")["validation"]["status"] == "stale"
     assert releases.active(alice, "third")["validation"]["status"] == "verified"
     with store._conn() as conn:
@@ -117,13 +129,13 @@ def test_incomplete_clause_coverage_cannot_claim_verified(auth_store_factory):
 def test_creator_deletion_preserves_adopted_bytes_and_anonymizes_release(auth_store_factory):
     store, suites, releases, alice, bob = seed(auth_store_factory)
     official = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
-    candidate = releases.save_candidate(alice, official.id, {"checker.py": "def check(context): return []\n"})
-    releases.publish(alice, "control-plan", candidate["id"], 0, str(uuid.uuid4()), True)
+    candidate = changed(releases, alice, official, {"checker.py": b"def check(context): return []\n"})
+    releases.publish(alice, "control-plan", candidate.id, 0, str(uuid.uuid4()), True)
     with store._conn() as conn, conn.transaction():
         conn.execute("DELETE FROM product.identities WHERE user_id = %s", (alice.user_id,))
         conn.execute("DELETE FROM product.memberships WHERE user_id = %s", (alice.user_id,))
         conn.execute("DELETE FROM product.users WHERE id = %s", (alice.user_id,))
-    retained = releases.detail(bob, candidate["id"])
+    retained = releases.detail(bob, candidate.id)
     assert retained["created_by"] is None
     assert retained["created_by_name"] == "已删除成员"
     assert retained["files"]["checker.py"] == "def check(context): return []\n"
@@ -132,7 +144,7 @@ def test_creator_deletion_preserves_adopted_bytes_and_anonymizes_release(auth_st
     assert history[0]["published_by_name"] == "已删除成员"
     with store._conn() as conn, conn.transaction():
         frozen = current_selection(conn, bob.tenant_id, "control-plan")
-    assert frozen["revision_id"] == candidate["id"]
+    assert frozen["revision_id"] == candidate.id
     assert frozen["verification_status"] == "unverified"
 
 
@@ -149,8 +161,8 @@ def test_official_proof_is_trusted_global_and_dependency_bound(auth_store_factor
     platform.publish_official(second.id, expected_revision=0, expected_validation_revision=1)
     untouched = store.upsert_feishu_identity("untouched", "reader")
     assert releases.active(untouched, "second")["validation"]["verified"] is True
-    candidate = releases.save_candidate(alice, first.id, {"checker.py": "def check(c): return [1]\n"})
-    releases.publish(bob, "first", candidate["id"], 0, str(uuid.uuid4()), True)
+    candidate = changed(releases, alice, first, {"checker.py": b"def check(c): return [1]\n"})
+    releases.publish(bob, "first", candidate.id, 0, str(uuid.uuid4()), True)
     # The official proof cannot be reused for a tenant's changed direct dependency.
     assert releases.active(alice, "second")["validation"]["status"] == "stale"
     assert releases.active(untouched, "second")["validation"]["status"] == "verified"
@@ -187,11 +199,11 @@ def test_every_suite_content_change_requires_new_bound_proof(auth_store_factory,
     official = suites.create_revision(tenant_id=None, suite_key="control-plan", files=FILES, created_by=None)
     platform = SuiteReleaseStore(store.settings, store.objects, role="migrator")
     assert platform.record_official_validation(official.id, proof_for(suites, alice, official), expected_revision=0)["verified"] is True
-    candidate = releases.save_candidate(alice, official.id, {path: body})
-    assert candidate["validation"]["verified"] is False
+    candidate = changed(releases, alice, official, {path: body.encode()})
+    assert releases.detail(alice, candidate.id)["validation"]["verified"] is False
     with pytest.raises(ValueError, match="suite_confirmation_required"):
-        releases.publish(alice, "control-plan", candidate["id"], 0, str(uuid.uuid4()))
-    receipt = releases.publish(alice, "control-plan", candidate["id"], 0, str(uuid.uuid4()), True)
+        releases.publish(alice, "control-plan", candidate.id, 0, str(uuid.uuid4()))
+    receipt = releases.publish(alice, "control-plan", candidate.id, 0, str(uuid.uuid4()), True)
     assert receipt["verification_status"] == "unverified"
 
 
@@ -218,15 +230,15 @@ def test_official_validation_cannot_use_tenant_dependency_content(auth_store_fac
     store, suites, releases, alice, _ = seed(auth_store_factory)
     first = suites.create_revision(tenant_id=None, suite_key="first", files=FILES, created_by=None)
     second = suites.create_revision(tenant_id=None, suite_key="second", files=FILES, created_by=None, related_suite_keys=("first",))
-    candidate = releases.save_candidate(alice, first.id, {"resources.py": "LOCATION = 'C1'\n"})
-    releases.publish(alice, "first", candidate["id"], 0, str(uuid.uuid4()), True)
-    tenant_report = proof_for(suites, alice, second, related={"first": candidate["resolved_digest"]})
+    candidate = changed(releases, alice, first, {"resources.py": b"LOCATION = 'C1'\n"})
+    releases.publish(alice, "first", candidate.id, 0, str(uuid.uuid4()), True)
+    tenant_report = proof_for(suites, alice, second, related={"first": candidate.resolved_digest})
     assert record_tenant_validation(releases, alice, second.id, tenant_report, 0)["verified"] is True
     platform = SuiteReleaseStore(store.settings, store.objects, role="migrator")
     with pytest.raises(ValueError, match="suite_validation_inputs_changed"):
         platform.record_official_validation(second.id, tenant_report, expected_revision=0)
     with pytest.raises(KeyError):
-        platform.record_official_validation(candidate["id"], tenant_report, expected_revision=0)
+        platform.record_official_validation(candidate.id, tenant_report, expected_revision=0)
 
 
 def test_release_migration_replay_preserves_adoption_proof_and_lineage(auth_store_factory):

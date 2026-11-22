@@ -21,7 +21,6 @@ import uuid
 from copy import deepcopy
 from typing import Any
 
-SCHEMA_VERSION = "1.0"
 # Feishu object types PPAP can read as an audit input. Folders are walked by the runtime; one left over was too deep.
 IMPORTABLE = frozenset({"file", "sheet", "doc", "docx", "bitable"})
 SETTLED_CHECKS = frozenset({"valid", "invalid", "error"})

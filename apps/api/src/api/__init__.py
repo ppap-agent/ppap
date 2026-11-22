@@ -274,9 +274,6 @@ def create_app(
             return principal, JSONResponse({"error": "access_denied"}, status_code=403)
         return principal, None
 
-    def require_file_read(request: Request, file_id: str):
-        return require_file(request, file_id)
-
     def require_file_version(request: Request, file_id: str, version_id: str):
         principal = principal_of(request)
         if not principal:
@@ -972,7 +969,7 @@ def create_app(
     from api.rulebooks import register_rulebook_routes
 
     register_rulebook_routes(app, principal_of, settings)
-    register_rule_routes(app, store, principal_of, require_file_read)
+    register_rule_routes(app, store, principal_of)
     register_suite_routes(app, store, principal_of)
     register_support_routes(app, principal_of, settings)
     register_template_routes(app, store, session_of, http, settings)

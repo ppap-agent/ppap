@@ -11,7 +11,7 @@
 用法示例:
     from documents.extractors import get_extractor, PDFExtractor
 
-    # 使用工厂模式
+    # 按扩展名取提取器
     extractor = get_extractor('.pdf')
     text_content = extractor.extract_text(file_content)
 
@@ -22,13 +22,7 @@
 
 from .base import BaseExtractor, ExtractionError
 from .excel import ExcelExtractor
-from .factory import (
-    ExtractorFactory,
-    extractor_factory,
-    get_extractor,
-    get_extractor_for_file,
-    is_supported_file_type,
-)
+from .factory import get_extractor
 from .image import ImageExtractor
 from .markdown import MarkdownExtractor
 from .pdf import CharacterBox, PDFExtractor, PDFStructure, SpanBox, TextBox, WordBox
@@ -52,10 +46,6 @@ __all__ = [
     "SpanBox",
     "WordBox",
     "PDFStructure",
-    # 工厂相关
-    "ExtractorFactory",
-    "extractor_factory",
+    # 按扩展名取提取器
     "get_extractor",
-    "get_extractor_for_file",
-    "is_supported_file_type",
 ]

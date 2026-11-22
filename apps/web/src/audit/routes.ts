@@ -23,7 +23,7 @@ export function writeAuditAddress(url: URL | string, mode: 'push' | 'replace' = 
 export function requestAddress(url: URL, taskId: string, kind: 'recognitionRequest' | 'acceptRequest', requestId: string): string {
   const next = new URL(url)
   next.pathname = taskAddress(taskId); next.searchParams.delete('task')
-  next.searchParams.delete('view'); next.searchParams.set(kind, requestId)
+  next.searchParams.set(kind, requestId)
   return next.pathname + next.search + next.hash
 }
 export function rememberRequest(taskId: string, kind: 'recognitionRequest' | 'acceptRequest', requestId: string) {

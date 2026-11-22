@@ -5,11 +5,8 @@ import {fileDisplayValues} from './display-info-contract.ts'
 export type TaskSummary = components['schemas']['AuditTaskSummary']
 type Task = components['schemas']['AuditTask']
 
-export function hasExecutionError(value: {has_execution_error?: boolean; execution?: string; state?: string; result_counts?: Record<string, number>}): boolean {
-  if (value.has_execution_error !== undefined) return value.has_execution_error
-  const finished = value.execution ? ['completed', 'failed'].includes(value.execution) : value.state === 'completed'
-  return finished && (value.execution === 'failed' || (value.result_counts?.ERR ?? 0) > 0)
-}
+/** The server states it for every task with a Round; a task without one has no execution error. */
+export const hasExecutionError = (value: {has_execution_error?: boolean}): boolean => value.has_execution_error ?? false
 
 type Subject = NonNullable<TaskSummary['subject']>
 /** The task's title in lists: "客户 · 车型 零件名" from the first selected file that names any of them. */
@@ -30,9 +27,8 @@ export function summarizeTask(task: Task): TaskSummary {
   const checks = audits.flatMap(audit => audit.checks)
   const counts: Record<string, number> = {PASS: 0, NG: 0, ERR: 0, UNABLE: 0, NA: 0}
   for (const finding of [...checks.flatMap(check => check.finding ? [check.finding] : []), ...audits.flatMap(audit => audit.unmapped_findings || [])]) if (Object.hasOwn(counts, finding.status)) counts[finding.status]++
-  const finished = task.execution ? ['completed', 'failed'].includes(task.execution) : task.state === 'completed'
   return {id, number, state, created_at, updated_at, creator, round_id, completion_reason, deep_mode: task.deep_mode, input_revision: task.input_revision ?? 0,
-    ...(round_id ? {execution: task.execution ?? (finished && audits.length > 0 && audits.every(audit => audit.execution === 'completed') ? 'completed' as const : undefined), has_execution_error: task.has_execution_error ?? (finished && (task.execution === 'failed' || audits.some(audit => audit.execution === 'review_failed') || counts.ERR > 0)), result_counts: counts, uncovered_count: checks.filter(check => check.coverage !== 'executed').length, reviewed_count: checks.filter(reviewed).length} : {}),
+    ...(round_id ? {execution: task.execution, has_execution_error: hasExecutionError(task), result_counts: counts, uncovered_count: checks.filter(check => check.coverage !== 'executed').length, reviewed_count: checks.filter(reviewed).length} : {}),
     ...(taskSubject(task) ? {subject: taskSubject(task)} : {}),
     files: task.files.map(({file, selection}) => ({file, selection}))}
 }

@@ -30,7 +30,7 @@ CUSTOMER = {
     "name": "测试客户",
     "full_name": "测试客户有限公司",
     "short_name": "测试客户",
-    "coverage": {"version": "1", "effective_from": "2026-01-01", "types": [{"code": "P10", "rule_type": "控制计划"}], "template_types": [], "rule_types": ["P10"]},
+    "coverage": {"version": "1", "effective_from": "2026-01-01", "types": [{"code": "P10", "rule_type": "控制计划", "name": "控制计划"}], "template_types": [], "rule_types": ["P10"]},
 }
 
 
@@ -401,8 +401,6 @@ class RuleInteractionTests(unittest.TestCase):
                 )
             elif path == "/audit-customers/default" and request.method == "GET":
                 route.fulfill(json={"customer_preference": None, "revision": 0}, headers=cors)
-            elif path == "/rule-types":
-                route.fulfill(json={"types": ["控制计划"]}, headers=cors)
             elif path == "/audit-tasks" and request.method == "GET":
                 route.fulfill(json={"tasks": [], "next_offset": None}, headers=cors)
             elif path == "/rules" and request.method == "GET":

@@ -156,7 +156,19 @@ class SchemaUpgradeTests(unittest.TestCase):
             self.assertIn("usage_events", names)
             self.assertIn("jobs", names)
             # Replayed creations of retired tables end dropped again.
-            self.assertTrue(names.isdisjoint({"rule_formalizations", "rule_formalization_operations", "rule_formalization_confirmations", "suite_upgrade_operations", "suite_official_update_views"}))
+            self.assertTrue(
+                names.isdisjoint(
+                    {
+                        "rule_formalizations",
+                        "rule_formalization_operations",
+                        "rule_formalization_confirmations",
+                        "suite_upgrade_operations",
+                        "suite_official_update_views",
+                        "suite_candidate_operations",
+                        "template_feedback",
+                    }
+                )
+            )
             # Checker history import columns, triggers and functions end dropped again.
             for database in (empty, previous):
                 history = self.schema.psql(

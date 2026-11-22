@@ -9,7 +9,7 @@ REJECTED = [
     ("import audit.checkers.uaes.U08", "audit.checkers.uaes.U08"),
     ("from audit.checkers.li.L01 import checker", "audit.checkers.li.L01"),
     ("from audit import checkers", "audit.checkers"),
-    ("from audit.standard_library import check_clause, check_factory", "audit.standard_library.check_clause"),
+    ("from audit.standard_library import check_clause, check_factory", "audit.standard_library"),
     ("import audit.checker_lib.nio.excel_agent", "audit.checker_lib.nio.excel_agent"),
     ("import audit.engine.routing as old", "audit.engine.routing"),
     ("from audit.engine.routing import resolve_engine_agent_class as select", "audit.engine.routing"),

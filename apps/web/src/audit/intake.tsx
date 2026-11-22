@@ -41,15 +41,14 @@ import type {AuditSharingAdapter} from './sharing-contract'
 import {AuditArchive} from './archive'
 import type {AuditArchiveAdapter} from './archive-contract'
 import {AuditSupport, SupportEntryContext, type SupportSnapshot, type AuditSupportAdapter} from './support'
-import {TEMPLATE_GUIDE_URL} from './template-links'
-import {documentTypeLabel, executionLabel} from './status-labels'
+import {executionLabel} from './status-labels'
 import {AuditUsage} from './usage'
 import type {AuditUsageAdapter} from './usage-contract'
 import {reconcileTaskDisplay, type DisplayInfo, type DisplayReference} from './display-info-contract'
 import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
 import {ReviewEditorContext} from './review-editor'
 import {reconcileTaskSummary, subjectLabel, summarizeTask, taskIsBehindSummary, type TaskSummary} from './task-summary'
-import {auditAddressChanged, readAuditRoute, ruleAddressChanged, rulesAddressKeys, surfaceAddress, taskAddress as taskHref, writeAuditAddress} from './routes'
+import {auditAddressChanged, readAuditRoute, ruleAddressChanged, rulesAddressKeys, surfaceAddress, taskAddress as taskHref, writeAuditAddress, type ProductSurface} from './routes'
 import {templateName} from './rule-templates'
 import type {ReadRound} from './workspace'
 import {TaskRecovery, type TaskRecoveryState} from './task-recovery'
@@ -62,7 +61,7 @@ import {createUploadPreparation, describeUploads, preparationFiles, restoreUploa
 
 import {CustomerMode, acceptedUploads, type CustomerDefaultAdapter} from './customer-mode'
 import {customerCoverage, customerFileSlots, customerTypeSetMissing, type CoverageSource} from './customer-coverage'
-import {customerFullName, customerShortName} from './customer-register'
+import {customerFullName, customerShortName, documentTypeName} from './customer-register'
 import {AuditDurationEstimate} from './duration-estimate'
 import {listedTypes, matchStatus, recognitionHold, sourceMismatches, uploadFileStatus, type UploadFileStatus} from './upload-board'
 import {newerRuleOf, ruleName, ruleVersionChoice, withRuleVersion, type RuleVersionChoice} from './reaudit-intent'
@@ -107,7 +106,6 @@ const productLinks = [
   {view: 'requirements', label: '审核规则库', short: '规则库', icon: iconSliders},
   {view: 'usage', label: '用量记录', short: '用量', icon: iconChartPie},
 ] as const
-type ProductSurface = typeof productLinks[number]['view']
 type PageKind = 'upload' | 'match' | 'results' | 'library'
 const pageFrames: Record<PageKind, {taskList: 'open' | 'folded' | 'none'; flow: boolean; heading: 'frame' | 'page'}> = {
   upload: {taskList: 'folded', flow: true, heading: 'frame'},
@@ -152,12 +150,12 @@ function mergeTaskSnapshot(previous: AuditTask | null | undefined, next: AuditTa
 }
 
 /** Controlled data comes through the adapter; this view never calls business APIs. */
-export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = true, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, supportAdapter, usageAdapter, displayAdapter, templateAdapter}: {templateAdapter?: TemplateLibraryAdapter; adapter: AuditIntakeAdapter; rules?: (active: boolean, headerActions?: HTMLElement | null) => ReactNode; onRefreshCustomers?: () => void; autoObserve?: boolean; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; supportAdapter?: AuditSupportAdapter; usageAdapter?: AuditUsageAdapter; displayAdapter?: AuditDisplayAdapter}) {
+export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, supportAdapter, usageAdapter, displayAdapter, templateAdapter}: {templateAdapter: TemplateLibraryAdapter; adapter: AuditIntakeAdapter; rules?: (active: boolean, headerActions?: HTMLElement | null) => ReactNode; onRefreshCustomers?: () => void; renderOriginal?: OriginalRenderer; reportAdapter: AuditReportAdapter; sharingAdapter: AuditSharingAdapter; archiveAdapter: AuditArchiveAdapter; supportAdapter: AuditSupportAdapter; usageAdapter: AuditUsageAdapter; displayAdapter: AuditDisplayAdapter}) {
   const access = useAccess()
   const reviewEditor = useContext(ReviewEditorContext), reviewRevision = useRef(reviewEditor?.revision)
   const readSurface = (): ProductSurface => {
     const {surface} = readAuditRoute(new URL(location.href))
-    return surface === 'templates' && !templateAdapter ? 'audit' : surface === 'requirements' && !rules ? 'audit' : surface
+    return surface === 'requirements' && !rules ? 'audit' : surface
   }
   const [surface, setSurface] = useState<ProductSurface>(readSurface)
   // Fixed for the page's life: the frame never switches shells while someone works.
@@ -299,7 +297,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const uploadingCount = uploads.rows.filter(row => !row.removed && row.receipt.state === 'uploading').length
   const blocked = recognitionHold({recognizing: false, saving: false, preparationPending: false, needsCurrent: false, transferBlocked, uploading: uploadingCount, checking: waiting.length, exceptions: exceptions.length, selected: selected.length})
   const matchingFiles = task ? files.filter(row => row.selection === 'selected') : []
-  const matchFields = (row: typeof matchingFiles[number]) => [['文件类型', row.match?.document_type ? documentTypeLabel(row.match.document_type) : undefined], ['客户名称', row.match?.metadata.customer ? customerShortName(coverageSource?.customers, row.match.metadata.customer) : undefined], ['车型', row.match?.metadata.model], ['零件号', row.match?.metadata.part_number], ['零件名称', row.match?.metadata.part]] as const
+  const matchFields = (row: typeof matchingFiles[number]) => [['文件类型', row.match?.document_type ? documentTypeName(coverageSource?.customers, row.match.document_type) : undefined], ['客户名称', row.match?.metadata.customer ? customerShortName(coverageSource?.customers, row.match.metadata.customer) : undefined], ['车型', row.match?.metadata.model], ['零件号', row.match?.metadata.part_number], ['零件名称', row.match?.metadata.part]] as const
   const matched = matchingFiles.filter(row => row.match?.state === 'matched' && row.match.rule)
   const references = matchingFiles.filter(row => row.match?.state === 'reference')
   const matchPending = (row: typeof matchingFiles[number]) => !row.match || row.match.state === 'matching' || row.match.state === 'pending'
@@ -495,7 +493,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (id) url.searchParams.set('task', id); else url.searchParams.delete('task')
     if (!keepSurface) {
       url.pathname = taskHref(id); url.searchParams.delete('task')
-      url.searchParams.delete('report'); url.searchParams.delete('view'); url.searchParams.delete('packageRequest')
+      url.searchParams.delete('report'); url.searchParams.delete('packageRequest')
       url.searchParams.delete('uploadDraft')
       for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'fromRound', 'file', 'clause', 'focus', 'recognitionRequest', 'acceptRequest', 'checkFilter', 'round']) url.searchParams.delete(key)
     }
@@ -791,7 +789,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }, [reviewEditor?.revision])
   // The report center observes the same task until its PDF reaches a terminal state.
   const observedTaskEpoch = task ? taskReadEpoch.current.get(task.id) : undefined
-  const observation = useTaskObservation(task?.id, autoObserve && surface === 'audit' && !recovery && canObserveTask(task) && (step === 'match' || step === 'upload' && task?.state === 'matching'), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && (stepRef.current === 'match' || stepRef.current === 'upload') && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null), adapter.events?.task)
+  const observation = useTaskObservation(task?.id, surface === 'audit' && !recovery && canObserveTask(task) && (step === 'match' || step === 'upload' && task?.state === 'matching'), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && (stepRef.current === 'match' || stepRef.current === 'upload') && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null), adapter.events?.task)
   // An unclear recognition receipt is read once from the original request. Do not start another recognition.
   useEffect(() => {
     if (step !== 'upload' || recognitionState?.phase !== 'unknown') return
@@ -870,7 +868,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     const url = new URL(location.href)
     for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'packageRequest', 'round']) url.searchParams.delete(key)
     url.pathname = value === 'audit' ? taskHref(activeTaskId.current) : surfaceAddress(value)
-    url.searchParams.delete('view'); url.searchParams.delete('task'); url.searchParams.delete('report')
+    url.searchParams.delete('task'); url.searchParams.delete('report')
     // One page's own address state (rule tabs, chosen rule or checker) must not follow the person to another page.
     if (value !== 'requirements') for (const key of rulesAddressKeys) url.searchParams.delete(key)
     history.pushState(history.state, '', url)
@@ -898,18 +896,14 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const topNavigation = <nav aria-label="产品导航" className="flex min-w-0 items-center gap-1 overflow-x-auto">
     {productLinks.filter(link => link.view !== 'requirements' || rules).map(({view, label, short, icon}) => {
       const content = <><Icon icon={icon} aria-hidden="true" className="size-3.5 text-muted-foreground"/><span aria-hidden="true">{short}</span></>
-      return view === 'templates' && !templateAdapter
-        ? <a key={view} className={pillItem} href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer" aria-label="模板库（在飞书新窗口打开）">{content}</a>
-        : <button key={view} type="button" className={pillItem} aria-label={label} aria-current={surface === view ? 'page' : undefined} onClick={() => view === 'requirements' ? openRules() : showSurface(view)}>{content}</button>
+      return <button key={view} type="button" className={pillItem} aria-label={label} aria-current={surface === view ? 'page' : undefined} onClick={() => view === 'requirements' ? openRules() : showSurface(view)}>{content}</button>
     })}
   </nav>
   const navigation = <nav aria-label="产品导航" className="grid justify-items-center gap-2">
     {productLinks.filter(link => link.view !== 'requirements' || rules).map(({view, label, short, icon}) => {
       const active = surface === view
       const content = <><Icon icon={icon} aria-hidden="true" className="size-4.5"/><span aria-hidden="true" className="text-2xs leading-none">{short}</span></>
-      return <Tooltip key={view}><TooltipTrigger asChild>{view === 'templates' && !templateAdapter
-        ? <a className={railItem} href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer" aria-label="模板库（在飞书新窗口打开）">{content}</a>
-        : <button type="button" className={railItem} aria-label={label} aria-current={active ? 'page' : undefined} onClick={() => view === 'requirements' ? openRules() : showSurface(view)}>{content}</button>}</TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>
+      return <Tooltip key={view}><TooltipTrigger asChild><button type="button" className={railItem} aria-label={label} aria-current={active ? 'page' : undefined} onClick={() => view === 'requirements' ? openRules() : showSurface(view)}>{content}</button></TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>
     })}
   </nav>
   // Files stopped for the same reason need the same action, so the advice appears once above them.
@@ -987,7 +981,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
               : row.match?.state === 'reference' ? null
               : row.match?.state === 'matching' || !row.match || row.match.state === 'pending' ? <ReadSkeleton label="等待识别结果…" kind="inline"/>
               : sectionOf(row) === 'outside' ? <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">{precheck.result?.statuses.find(status => status.code === 'S01' && status.file_version_id === row.file.id)?.note}</p><Button variant="ghost" size="sm" onClick={() => remove(row.file.id)}>移除</Button></div>
-              : row.match.state === 'unmatched' || row.match.gaps.some(isMatchingReason) ? <MatchingFeedback gaps={row.match.gaps} candidates={row.match.candidates} onCheck={() => setStep('upload')} onRules={rules ? () => showSurface('requirements') : undefined} onTemplates={templateAdapter ? openTemplates : undefined} onRemove={() => remove(row.file.id)}/>
+              : row.match.state === 'unmatched' || row.match.gaps.some(isMatchingReason) ? <MatchingFeedback gaps={row.match.gaps} candidates={row.match.candidates} onCheck={() => setStep('upload')} onRules={rules ? () => showSurface('requirements') : undefined} onTemplates={openTemplates} onRemove={() => remove(row.file.id)}/>
               : checkerSuiteUnavailable(row.match) ? cardNotice('这类文件还没有可用的检查程序', '文件本身没有问题。检查程序由平台离线准备；如需准备或更新，请联系支持。准备好后回到这里读取最新结果。', <Button variant="outline" size="sm" onClick={() => openSupport({scenario: '准备检查程序', facts: [{label: '文件', value: row.file.original_filename}, ...(row.match?.rule ? [{label: '规则', value: row.match.rule.title}] : [])]})}>联系支持</Button>)
               : cardNotice('暂时无法确认匹配结果', '请返回检查文件后重新识别。')}
             {row.match?.gaps.filter(gap => !isMatchingReason(gap)).map(gap => analysisNotice(gap)).filter((notice): notice is string => Boolean(notice)).map(notice => <p key={notice} className="text-xs text-muted-foreground">{notice}</p>)}
@@ -1119,13 +1113,13 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         {taskRail}
         <div className={surface === 'audit' && workbench && !reportView ? 'h-full w-full min-w-0' : flowPage ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden' : surface === 'archive' || surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-6' : 'min-w-0 flex-1 overflow-y-auto p-6'}>
         <div className={surface === 'audit' && workbench && !reportView ? 'h-full' : flowPage ? 'flex min-h-0 min-w-0 flex-1 flex-col' : surface === 'archive' || surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) ? 'flex min-h-0 min-w-0 flex-1 flex-col' : `mx-auto w-full space-y-6 ${recovery || workbench || surface !== 'audit' ? '' : step === 'match' ? '' : 'max-w-5xl'}`}>
-        {archiveOpened && <div className={surface === 'archive' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}>{archiveAdapter ? <AuditArchive active={surface === 'archive'} headerTitle={surface === 'archive' && !inFeishu ? pageTitle : null} adapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} precheckAdapter={adapter.precheck} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>审核文件暂不可用</AlertTitle><AlertDescription>请稍后重试。</AlertDescription></Alert>}</div>}
+        {archiveOpened && <div className={surface === 'archive' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}><AuditArchive active={surface === 'archive'} headerTitle={surface === 'archive' && !inFeishu ? pageTitle : null} adapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} precheckAdapter={adapter.precheck} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/></div>}
         {rulesOpened && <div className={surface !== 'requirements' ? 'hidden' : ruleDetailOpen ? 'min-w-0' : 'flex min-h-0 min-w-0 flex-1 flex-col'}>{rules?.(surface === 'requirements', surface === 'requirements' ? pageActions : null)}</div>}
-        {templatesOpened && templateAdapter && <div className={surface === 'templates' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}><TemplateLibraryPage adapter={templateAdapter}/></div>}
+        {templatesOpened && <div className={surface === 'templates' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}><TemplateLibraryPage adapter={templateAdapter}/></div>}
         {usageOpened && <div hidden={surface !== 'usage'}><AuditUsage headerActions={surface === 'usage' ? pageActions : null} active={surface === 'usage'} adapter={usageAdapter} archiveAdapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}} onSupport={notice => openSupport({scenario: `用量记录 · ${notice}`})}/></div>}
         <div className={surface !== 'audit' ? 'hidden' : workbench && !reportView ? 'flex h-full flex-col' : flowPage ? 'flex min-h-0 flex-1 flex-col' : 'space-y-6'}>
         {!flowPage && notices}
-        {recovery ? <TaskRecovery recovery={recovery} report={reportView} onRead={() => void recover(recovery.id, recovery.state === 'unauthenticated')} onSupport={() => openSupport({scenario: '读取审核任务', traceId: recovery.traceId, facts: [{label: '任务标识', value: recovery.id}, {label: '服务说明', value: recovery.message}]})}/> : workbench && task ? <AuditWorkspace live={observation.mode === 'live'} steps={observation.steps} onFileOpen={setFileOpen} readRound={adapter.readRound} onReaudit={adapter.prepareReaudit ? () => void prepareReaudit(task.round_id!) : undefined} headerActions={surface === 'audit' ? pageActions : null} headerTitle={surface === 'audit' ? pageTitle : null} key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onReadSupport={() => contactReadSupport(task)} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal} reportAdapter={reportAdapter} notificationAdapter={adapter.notifications} onReportChange={changeReport} onReportView={setReportView} sharingAdapter={sharingAdapter} onEditDisplay={displayAdapter ? file => displayEditor.open({task_id: task.id, round_id: task.round_id!, file_version_id: file.file.id}, file) : undefined}/> : task?.state === 'completed' ? <section aria-labelledby="zero-target-title" className="space-y-4 py-8">
+        {recovery ? <TaskRecovery recovery={recovery} report={reportView} onRead={() => void recover(recovery.id, recovery.state === 'unauthenticated')} onSupport={() => openSupport({scenario: '读取审核任务', traceId: recovery.traceId, facts: [{label: '任务标识', value: recovery.id}, {label: '服务说明', value: recovery.message}]})}/> : workbench && task ? <AuditWorkspace live={observation.mode === 'live'} steps={observation.steps} onFileOpen={setFileOpen} readRound={adapter.readRound} onReaudit={adapter.prepareReaudit ? () => void prepareReaudit(task.round_id!) : undefined} headerActions={surface === 'audit' ? pageActions : null} headerTitle={surface === 'audit' ? pageTitle : null} key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onReadSupport={() => contactReadSupport(task)} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal} reportAdapter={reportAdapter} notificationAdapter={adapter.notifications} onReportChange={changeReport} onReportView={setReportView} sharingAdapter={sharingAdapter} onEditDisplay={file => displayEditor.open({task_id: task.id, round_id: task.round_id!, file_version_id: file.file.id}, file)}/> : task?.state === 'completed' ? <section aria-labelledby="zero-target-title" className="space-y-4 py-8">
           {/* A task with nothing to submit completes here on the confirm page: no Round, no report, no charge. */}
           <Icon icon={iconCheck} aria-hidden="true" className="size-8 text-success"/><h1 id="zero-target-title" className="text-xl font-semibold">本次任务无送审文件</h1>
           <p>{zeroTargetNote(task.files)}未开始审核，未扣费，也没有生成审核报告。</p>
@@ -1171,7 +1165,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
             <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold tracking-tight">预检并匹配规则</h1>{reauditing && <Badge variant="info">关联重审</Badge>}</div>
             {task && <p className="text-xs text-muted-foreground">{reauditing ? reauditNote : '系统识别每份文件的要素并匹配客户规则；核对规则后点击【开始审核】。'}</p>}
             {task && foreign && <p className="text-xs text-muted-foreground">{task.creator.name || '同事'} 发起，只有发起人可以确认规则和开始审核。</p>}
-          </div>{task?.state === 'pending_confirm' && <p role="status" className="pt-1 text-xs tabular-nums text-muted-foreground">当前客户：{task.customer_preference ? customerShortName(coverageSource?.customers, task.customer_preference) : '自动识别'}{taskCoverage && <> · 规则覆盖 {taskCoverage.supported}/{taskCoverage.total} 类</>} · {verdict}</p>}</header>
+          </div>{task?.state === 'pending_confirm' && <p role="status" className="pt-1 text-xs tabular-nums text-muted-foreground">当前客户：{task.customer_preference ? customerShortName(coverageSource?.customers, task.customer_preference) : '自动识别'}{taskCoverage && <> · 规则覆盖 {taskCoverage.covered}/{taskCoverage.total} 类</>} · {verdict}</p>}</header>
           {task ? <>{/* One row: the customer rules on the left, the step line on the right, kept there when there is no rule choice. */}
           <div className="flex flex-wrap items-center justify-between gap-3">{task.state === 'pending_confirm' && templates.length > 0 ? <div className="flex flex-wrap items-center gap-3"><Label htmlFor="rule-template">客户规则</Label><Select value={templateChoice || undefined} disabled={recognitionLocked || confirmationLocked || Boolean(blocked)} onValueChange={chooseTemplate}><SelectTrigger id="rule-template" aria-describedby="rule-template-note" className="w-64 max-w-full"><SelectValue placeholder="按文件自动匹配"/></SelectTrigger><SelectContent>{templates.map(key => <SelectItem key={key} value={key} description={key === lastTemplate() ? '上次使用' : undefined}>{templateName(key)}</SelectItem>)}</SelectContent></Select><span id="rule-template-note" className="text-xs text-muted-foreground">改选后将按新规则重新识别本批全部文件</span></div> : <span/>}{stepper}</div></> : <div className="flex justify-end">{stepper}</div>}
         </>} bottom={task && <>
@@ -1203,7 +1197,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
                 {section.selectable ? <label className="flex items-center gap-1.5 text-xs text-foreground"><Checkbox aria-label={`全选${section.title}`} disabled={confirmationLocked} checked={section.rows.every(row => row.selection === 'selected') ? true : section.rows.some(row => row.selection === 'selected') ? 'indeterminate' : false} onCheckedChange={value => section.rows.forEach(row => toggle(row.file.id, value === true))}/>全选</label>
                   : (section.key === 'block' || section.key === 'handle' && section.rows.length > 1) && <Button variant="outline" size="sm" disabled={confirmationLocked} onClick={() => section.rows.forEach(row => remove(row.file.id))}>全部移除</Button>}</div>
               {(section.key === 'handle' || section.key === 'unmatched' ? sameReasonBatches(section.rows) : section.rows.map(row => [row])).map(batch => batch.length > 1 ? <section key={batch[0].file.id} className="space-y-2">
-            <MatchingFeedback gaps={batch[0].match!.gaps} onCheck={() => setStep('upload')} onRules={rules ? () => showSurface('requirements') : undefined} onTemplates={templateAdapter ? openTemplates : undefined}/>
+            <MatchingFeedback gaps={batch[0].match!.gaps} onCheck={() => setStep('upload')} onRules={rules ? () => showSurface('requirements') : undefined} onTemplates={openTemplates}/>
             <ul aria-label="同一原因的文件" className="divide-y rounded-lg bg-card">{batch.map(row => <li key={row.file.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-3 py-2"><h3 className="min-w-0 flex-1 basis-64 font-medium"><FileName name={row.file.original_filename}/></h3><dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs">{matchFields(row).filter(([, value]) => value).map(([label, value]) => <div className="flex min-w-0 gap-1.5" key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-words">{value}</dd></div>)}</dl>{ruleChoiceButton(row)}<Button variant="ghost" size="sm" onClick={() => remove(row.file.id)}>移除</Button>{ruleChoiceOpen(row) && <div className="basis-full pt-2">{ruleChoice(row)}</div>}</li>)}</ul>
           </section> : matchRow(batch[0], true, section.card, Boolean(section.selectable)))}
             </section>)}

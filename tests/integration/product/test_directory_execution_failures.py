@@ -76,7 +76,16 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
             resource["methods"].pop("U08:6")
             changes["resources.py"] = "RESOURCE = " + repr(resource) + "\n"
         if changes:
-            selected = SuiteReleaseStore(settings, v4_objects).save_candidate(principal, selected, changes)["id"]
+            base = suites.get_revision(selected, principal.tenant_id)
+            candidate = SuiteReleaseStore(settings, v4_objects).suites.create_revision(
+                tenant_id=principal.tenant_id,
+                suite_key=base.suite_key,
+                files={name: body.encode() for name, body in changes.items()},
+                created_by=principal.user_id,
+                base_revision_id=base.id,
+                related_suite_keys=base.related_suite_keys,
+            )
+            selected = candidate.id
             adopted = client.put("/suites/UAES:U08/active", json={"revision_id": selected, "expected_revision": 1, "operation_id": str(uuid4()), "force_unverified": True})
             assert adopted.status_code == 200, adopted.text
         resolved = suites.resolve_suite(selected, principal.tenant_id)

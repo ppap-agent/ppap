@@ -25,14 +25,13 @@ export function reportPackageAddress(taskId: string, requestId: string | null) {
   if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: taskId, report: url.searchParams.get('report'), packageRequest: requestId}, location.origin)
 }
 
-export function LinkedReportPackage({task, requestId, adapter, nameFor, busy, onDownload, onExit, downloadError}: {task: Task; requestId: string; adapter?: AuditReportAdapter; nameFor: (reference: Reference) => string; busy: boolean; onDownload: (job: Job) => void; onExit: () => void; downloadError: string}) {
+export function LinkedReportPackage({task, requestId, adapter, nameFor, busy, onDownload, onExit, downloadError}: {task: Task; requestId: string; adapter: AuditReportAdapter; nameFor: (reference: Reference) => string; busy: boolean; onDownload: (job: Job) => void; onExit: () => void; downloadError: string}) {
   const [job, setJob] = useState<Job | null>(null), [reading, setReading] = useState(false), [error, setError] = useState('')
   const epoch = useRef(0), latest = useRef(task); latest.current = task
   const scopeError = taskPackageScopeError({...task, report_package: job})
   function commit(next: Job) {epoch.current += 1; setReading(false); setJob(next); setError(''); reportPackageAddress(task.id, next.receipt.request_id)}
   const actions = useReportPackage(job, commit, reference => latest.current.files.some(row => sameSnapshot(reportReference(latest.current, row), reference)), adapter, scopeError)
   async function read() {
-    if (!adapter) {setError('ZIP 服务暂不可用，已有 PDF 不受影响。'); return}
     const request = ++epoch.current
     setReading(true); setError('')
     try {const next = await readTaskReportPackage(adapter, latest.current, requestId); if (request === epoch.current) setJob(next)}

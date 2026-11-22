@@ -14,9 +14,10 @@ import json
 import os
 import re
 import subprocess
-import tomllib
 import unittest
 from pathlib import Path
+
+from scripts.validate_distribution import load_toml, workspace_members
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_ROOTS = ("packages", "apps")
@@ -28,10 +29,6 @@ def _repository_files() -> set[Path]:
     """Check repository inputs, including new files, without scanning ignored runs."""
     names = subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=ROOT).decode().split("\0")
     return {ROOT / name for name in names if name and (ROOT / name).is_file()}
-
-
-def _pyproject(path: Path) -> dict:
-    return tomllib.loads(path.read_text())
 
 
 def _compose_config(path: Path, env_file: Path | None = None, *, env: dict[str, str] | None = None) -> dict:
@@ -63,20 +60,9 @@ def _member_dirs() -> set[Path]:
     return found
 
 
-def _dependency_name(spec: str) -> str:
-    match = re.match(r"[A-Za-z0-9_.-]+", spec)
-    if match is None:
-        raise AssertionError(f"invalid dependency spec: {spec}")
-    return match.group(0).lower().replace("_", "-")
-
-
 def _production_graph() -> dict[str, set[str]]:
-    projects = {}
-    for member in _member_dirs():
-        project = _pyproject(member / "pyproject.toml")["project"]
-        projects[project["name"]] = project
-    names = set(projects)
-    return {name: {dependency for spec in project.get("dependencies", []) if (dependency := _dependency_name(spec)) in names} for name, project in projects.items()}
+    members = workspace_members()
+    return {name: {dependency for dependency in member.dependencies if dependency in members} for name, member in members.items()}
 
 
 class ArchitectureTests(unittest.TestCase):
@@ -115,12 +101,12 @@ class ArchitectureTests(unittest.TestCase):
                     self.assertEqual(services[service]["environment"]["PPAP_WEB_URL"], env["PPAP_WEB_URL"])
 
     def test_workspace_members_match_physical_owners(self):
-        root = _pyproject(ROOT / "pyproject.toml")
+        root = load_toml(ROOT / "pyproject.toml")
         members = {ROOT / path for path in root["tool"]["uv"]["workspace"]["members"]}
         self.assertEqual(members, _member_dirs())
         sources = root["tool"]["uv"]["sources"]
         for member in members:
-            project = _pyproject(member / "pyproject.toml")
+            project = load_toml(member / "pyproject.toml")
             name = project["project"]["name"]
             import_name = name.replace("-", "_")
             self.assertEqual(sources[name], {"workspace": True})
@@ -195,7 +181,7 @@ class ArchitectureTests(unittest.TestCase):
         self.assertEqual(offenders, [])
 
     def test_physical_owner_test_directories_belong_to_workspace_members(self):
-        members = _member_dirs()
+        members = {member.path for member in workspace_members().values()}
         found = set()
         for base in PRODUCTION_ROOTS:
             for tests in (ROOT / base).glob("*/tests"):

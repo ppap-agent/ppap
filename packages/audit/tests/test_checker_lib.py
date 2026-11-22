@@ -18,7 +18,7 @@ _COMPANIES = ("uaes", "li", "nio")
 def test_public_fingerprint_includes_company_implementations_not_company_leaves():
     relative = [path.relative_to(_AUDIT).as_posix() for path in library_files("audit", _AUDIT)]
     assert "checker_lib/excel.py" in relative
-    assert "checker_lib/pdf.py" in relative
+    assert "checker_lib/tables.py" in relative
     assert "checker_lib/visual.py" in relative
     assert "engine/checkers/pdf_field_region.py" in relative
     assert "checkers/__init__.py" in relative

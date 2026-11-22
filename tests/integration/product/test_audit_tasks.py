@@ -44,6 +44,18 @@ def task_system(auth_store_factory, core_system):
     client.close()
 
 
+def rounds_of(store, client):
+    """The rounds the client's signed-in enterprise has, read back with the API's database role."""
+    api = build_product_store(store.settings, objects=store.objects, role="api")
+    return api.list_rounds(api.load_session(client.cookies.get(SESSION_COOKIE)).principal)
+
+
+def usage_of(store, client):
+    """The usage events the client's signed-in enterprise has, read back with the API's database role."""
+    api = build_product_store(store.settings, objects=store.objects, role="api")
+    return api.list_usage_events(api.load_session(client.cookies.get(SESSION_COOKIE)).principal)
+
+
 def checked_file(client, worker, name="控制计划.xlsx", document_type="控制计划", *, content=None):
     if content is None:
         stream = io.BytesIO()
@@ -122,7 +134,7 @@ def test_preparation_writeback_target_uses_the_same_revision_and_promotion_lock(
     assert save(targets[0], 2).json()["error"] == "task_input_locked"
     assert client.post("/audit-tasks", json=request).status_code == 202
     assert stored_target() == winner
-    assert client.get("/usage").json()["events"] == []
+    assert usage_of(worker, client) == []
 
 
 def test_writeback_target_given_at_creation_is_fixed_with_the_first_inputs(task_system):
@@ -162,8 +174,8 @@ def test_unknown_native_upload_is_a_discoverable_draft_not_a_task_and_survives_a
     assert client.post("/drafts", json=body).json() == saved
     assert saved["case_context"] == {}
     assert client.get("/audit-tasks").json()["tasks"] == []
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(worker, client) == []
+    assert usage_of(worker, client) == []
     assert worker.claim_job("no-recognition-before-start") is None
     # A fresh HTTP client/session can find the original unknown request without
     # transmitting bytes or inventing an upload/Task result.
@@ -207,7 +219,7 @@ def test_native_preparation_saves_ready_selection_and_removal_with_compare_and_s
     assert client.get(path).json() == saved
     assert client.put(path, json={"items": []}).status_code == 400
     assert client.post(path + "/accept", json={"idempotency_key": "cannot-bypass-recognition"}).status_code == 409
-    assert client.get("/rounds").json()["rounds"] == []
+    assert rounds_of(worker, client) == []
     assert worker.claim_job("still-not-a-task") is None
 
 
@@ -241,7 +253,7 @@ def test_native_preparation_promotes_the_same_draft_once_and_late_writes_cannot_
     job = worker.claim_job("one-recognition")
     assert job.kind == "file_analysis" and job.id == request_id and job.payload["task_id"] == draft_id
     assert worker.claim_job("no-duplicate-recognition") is None
-    assert client.get("/rounds").json()["rounds"] == [] and client.get("/usage").json()["events"] == []
+    assert rounds_of(worker, client) == [] and usage_of(worker, client) == []
 
 
 def test_native_preparation_save_and_promotion_have_one_revision_winner(task_system):
@@ -263,7 +275,7 @@ def test_native_preparation_save_and_promotion_have_one_revision_winner(task_sys
     else:
         assert restored["task_id"] == draft_id
         assert len(client.get("/audit-tasks").json()["tasks"]) == 1
-    assert client.get("/rounds").json()["rounds"] == []
+    assert rounds_of(worker, client) == []
 
 
 def test_native_preparation_saved_removal_reason_matches_the_recognition_normalization(task_system):
@@ -288,7 +300,7 @@ def test_native_preparation_saved_removal_reason_matches_the_recognition_normali
     assert by_file[excluded["file_version_id"]]["removal_reason"] == "用户移除"
     assert by_file[selected["file_version_id"]]["selection"] == "selected"
     assert client.post("/audit-tasks", json=body).json() == task
-    assert client.get("/rounds").json()["rounds"] == [] and client.get("/usage").json()["events"] == []
+    assert rounds_of(worker, client) == [] and usage_of(worker, client) == []
 
 
 @pytest.mark.parametrize("subject", ["bob", "carol"])
@@ -585,7 +597,7 @@ def test_round_read_view_projects_the_same_authorized_task_report_without_creati
     assert expected["report"]["state"] == report_state
     round_path = f"/rounds/{accepted['round_id']}"
     frozen = client.get(round_path).json()
-    usage = client.get("/usage").json()
+    usage = usage_of(worker, client)
     response = client.get(round_path, params={"read_view": True})
     assert response.status_code == 200, response.text
     observed = response.json()
@@ -597,7 +609,7 @@ def test_round_read_view_projects_the_same_authorized_task_report_without_creati
     assert {key: value for key, value in observed.items() if key != "read_view"} == frozen
     assert client.get(round_path, params={"read_view": True}).json() == response.json()
     assert client.get(path).json() == task
-    assert client.get("/usage").json() == usage
+    assert usage_of(worker, client) == usage
     assert client.get(round_path).json() == frozen
     if report_state == "ready":
         assert worker.claim_job("round-report-no-read-side-effect") is None
@@ -676,7 +688,7 @@ def test_concurrent_task_confirmation_and_cross_task_key_reuse(matched_task):
     assert client.post(other_path + "/confirm", json=winning).status_code == 409
     assert client.get(other_path).json()["round_id"] is None
     assert client.get(other_path, params={"request_id": winning["request_id"]}).json()["acceptance"]["state"] == "pending"
-    assert len(client.get("/rounds").json()["rounds"]) == 1
+    assert len(rounds_of(worker, client)) == 1
     assert worker.claim_job("no-second-audit") is None
 
 
@@ -695,8 +707,8 @@ def test_confirmation_requires_current_revision_and_server_quota(matched_task):
     assert denied.status_code == 409
     assert denied.json() == {"error": "usage_quota_unavailable"}
     assert client.get(path).json()["state"] == "pending_confirm"
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(worker, client) == []
+    assert usage_of(worker, client) == []
     assert worker.claim_job("no-audit") is None
 
 
@@ -740,7 +752,7 @@ def test_pdf_download_keeps_complete_task_authority(executable_task, auth_store_
     download_path = path + f"/reports/{report['report_id']}/pdf"
     reference = {"round_id": task["round_id"], "file_version_id": target["file"]["id"], "result_attempt": target["audit"]["result_attempt"], "artifact_id": report["artifact"]["artifact_id"]}
     frozen = client.get(f"/rounds/{task['round_id']}").json()
-    usage = client.get("/usage").json()
+    usage = usage_of(worker, client)
     original_pdf = client.get(download_path, params=reference)
     assert original_pdf.status_code == 200 and original_pdf.content.startswith(b"%PDF-")
     migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
@@ -776,7 +788,7 @@ def test_pdf_download_keeps_complete_task_authority(executable_task, auth_store_
                 conn.execute("UPDATE product.audit_rounds SET result_attempt = %s WHERE id = %s", (reference["result_attempt"], task["round_id"]))
     assert client.get(download_path, params=reference).content == original_pdf.content
     assert client.get(f"/rounds/{task['round_id']}").json() == frozen
-    assert client.get("/usage").json() == usage
+    assert usage_of(worker, client) == usage
     assert client.get(path).json() == task
     assert worker.claim_job("download-no-new-work") is None
 
@@ -836,7 +848,7 @@ def test_zip_bulk_sources_keep_each_frozen_reference_and_reject_one_invalid_memb
         for file in reversed(task["files"])
     ]
     frozen = client.get(f"/rounds/{task['round_id']}").json()
-    usage = client.get("/usage").json()
+    usage = usage_of(worker, client)
     invalid_members = [
         ([reports[0], {**reports[1], "report_id": str(uuid.uuid4())}], 403, "access_denied"),
         ([reports[0], {**reports[1], "report_id": reports[0]["report_id"]}], 403, "access_denied"),
@@ -878,7 +890,7 @@ def test_zip_bulk_sources_keep_each_frozen_reference_and_reject_one_invalid_memb
             conn.execute("UPDATE engine.jobs SET status = %s, result = %s WHERE id = %s", (status, Jsonb(result), reports[1]["report_id"]))
     assert client.get(package_path).json() == ready
     assert client.get(f"/rounds/{task['round_id']}").json() == frozen
-    assert client.get("/usage").json() == usage
+    assert usage_of(worker, client) == usage
     assert worker.claim_job("bulk-source-no-new-work") is None
 
 
@@ -930,11 +942,11 @@ def test_task_list_and_detail_keep_execution_faults_separate_from_round_completi
     assert loaded["files"][0]["audit"]["execution"] == ("review_failed" if failed else "completed")
     round = client.get(f"/rounds/{loaded['round_id']}").json()
     assert round["execution"] == "completed"
-    historical = next(row for row in client.get("/rounds").json()["rounds"] if row["id"] == round["id"])
+    historical = next(row for row in rounds_of(worker, client) if row["id"] == round["id"])
     assert historical["execution"] == "completed" and historical["has_execution_error"] is failed
     assert client.get(path).json() == loaded
     assert client.get("/audit-tasks").json()["tasks"] == [summary]
-    assert client.get("/usage").json()["events"] == []
+    assert usage_of(worker, client) == []
     assert worker.claim_job("summary-no-new-work") is None
 
 
@@ -947,14 +959,14 @@ def test_charged_confirmation_records_a_split_file_once_and_replay_needs_no_quot
         command = confirmation_command(client, path, 0)
         accepted = client.post(path + "/confirm", json=command)
         assert accepted.status_code == 201, accepted.text
-        usage = client.get("/usage").json()["events"]
+        usage = usage_of(worker, client)
         assert sorted((row["consumed_points"], row["is_free_trial"], row["external_status"]) for row in usage) == [(1, True, "none"), (499, False, "pending")]
         assert {row["round_id"] for row in usage} == {accepted.json()["round_id"]}
         assert {row["file_version_id"] for row in usage} == {body["files"][0]["file_version_id"]}
         assert len(calls) == 1
         item["enabled"] = False
         assert client.post(path + "/confirm", json=command).json() == accepted.json()
-        assert len(client.get("/usage").json()["events"]) == 2
+        assert len(usage_of(worker, client)) == 2
         assert len(calls) == 1
         job = worker.claim_job("charged-audit")
         assert job.round_id == accepted.json()["round_id"]
@@ -976,8 +988,8 @@ def test_a_tenant_with_its_own_trial_amount_is_charged_from_it(matched_task):
     try:
         accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
         assert accepted.status_code == 201, accepted.text
-        usage = client.get("/usage").json()
-        assert [(row["consumed_points"], row["is_free_trial"]) for row in usage["events"]] == [(500, True)]
+        usage = usage_of(worker, client)
+        assert [(row["consumed_points"], row["is_free_trial"]) for row in usage] == [(500, True)]
     finally:
         worker.settings.feishu_trial_quota_overrides = {}
         client.close()
@@ -994,8 +1006,8 @@ def test_charging_policy_is_not_client_authority_and_rejection_preserves_task(ma
         assert blocked.status_code == 409
         assert blocked.json()["error"] in {"usage_ai_disabled", "usage_balance_empty"}
         assert client.get(path).json()["state"] == "pending_confirm"
-        assert client.get("/usage").json()["events"] == []
-        assert client.get("/rounds").json()["rounds"] == []
+        assert usage_of(worker, client) == []
+        assert rounds_of(worker, client) == []
         new = client.post("/audit-tasks", json={**body, "request_id": str(uuid.uuid4())})
         assert new.status_code == 409
         assert new.json() == blocked.json()
@@ -1020,7 +1032,7 @@ def test_two_confirmations_cannot_both_spend_the_last_free_allocation(matched_ta
             replies = list(pool.map(lambda item: charged.post(item[0] + "/confirm", json=item[1]), commands))
         assert sorted(row.status_code for row in replies) == [201, 409]
         assert next(row for row in replies if row.status_code == 409).json() == {"error": "usage_balance_empty"}
-        usage = charged.get("/usage").json()["events"]
+        usage = usage_of(worker, charged)
         assert len(usage) == 1
         assert usage[0]["is_free_trial"] is True
         assert usage[0]["consumed_points"] == 500
@@ -1043,7 +1055,7 @@ def test_charged_task_allocates_only_matched_selected_files_and_p8_counts_files(
     try:
         accepted = charged.post(f"/audit-tasks/{task['id']}/confirm", json=confirmation_command(charged, f"/audit-tasks/{task['id']}", 0))
         assert accepted.status_code == 201, accepted.text
-        ledger = charged.get("/usage").json()["events"]
+        ledger = usage_of(worker, charged)
         assert len(ledger) == 3
         for source in files[:2]:
             assert sum(row["consumed_points"] for row in ledger if row["file_version_id"] == source["file_version_id"]) == 500
@@ -1155,8 +1167,8 @@ def test_charged_report_and_zip_recovery_check_quota_without_new_audit_fees(matc
         item["user_quota"] = 0
         assert charged.post(package_path + "/retries", json=retry).status_code == 202
         assert len(calls) == count
-        assert charged.get("/usage").json()["events"] == []
-        assert len(charged.get("/rounds").json()["rounds"]) == 1
+        assert usage_of(worker, charged) == []
+        assert len(rounds_of(worker, charged)) == 1
     finally:
         charged.close()
         http.close()
@@ -1179,8 +1191,8 @@ def test_superseded_candidate_requires_explicit_rematching_before_confirmation(m
     assert current["state"] == "pending_confirm"
     assert current["round_id"] is None
     assert current["files"][0]["match"]["rule"]["id"] == old["id"]
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(worker, client) == []
+    assert usage_of(worker, client) == []
     assert worker.claim_job("no-audit-after-refusal") is None
     revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0}
     assert client.post("/audit-tasks", json=revised).status_code == 202
@@ -1274,8 +1286,8 @@ def test_queue_insert_failure_rolls_back_the_task_round_and_frozen_inputs(matche
         restored = client.get(path).json()
         assert restored["round_id"] is None
         assert restored["state"] == "pending_confirm"
-        assert client.get("/rounds").json()["rounds"] == []
-        assert client.get("/usage").json()["events"] == []
+        assert rounds_of(worker, client) == []
+        assert usage_of(worker, client) == []
         assert worker.claim_job("no-orphan-job") is None
     finally:
         with migrator._conn() as conn:
@@ -1324,8 +1336,8 @@ def test_recognition_is_persistent_and_zero_match_ends_without_an_audit(task_sys
     assert_task_summary(summaries[0], ended.json())
     assert client.get("/audit-tasks", params={"state": "matching"}).json()["tasks"] == []
     assert client.get("/audit-tasks", params={"q": "不存在的文件"}).json()["tasks"] == []
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(worker, client) == []
+    assert usage_of(worker, client) == []
     assert worker.claim_job("unexpected-audit") is None
 
 
@@ -1346,8 +1358,8 @@ def test_customer_recovery_rematches_and_finishes_the_original_task_without_chan
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=CustomerUnknownAI())
     unmatched = client.get(path).json()
     assert unmatched["files"][0]["match"]["gaps"] == ["matching_customer_required"]
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(worker, client) == []
+    assert usage_of(worker, client) == []
 
     revised = {**body, "request_id": str(uuid.uuid4()), "task_id": task["id"], "expected_revision": 0, "customer_preference": "测试客户"}
     assert client.post("/audit-tasks", json=revised).status_code == 202
@@ -1377,8 +1389,8 @@ def test_customer_recovery_rematches_and_finishes_the_original_task_without_chan
     assert (finished["id"], finished["round_id"], finished["state"], finished["completion_reason"]) == (task["id"], round_id, "completed", "processed")
     assert finished["files"][0]["audit"]["report"]["state"] == "ready"
     assert finished["files"][0]["file"]["id"] == file["file_version_id"]
-    assert len(client.get("/rounds").json()["rounds"]) == 1
-    assert client.get("/usage").json()["events"] == []
+    assert len(rounds_of(worker, client)) == 1
+    assert usage_of(worker, client) == []
 
 
 def test_two_selected_files_with_the_same_content_are_not_accepted(task_system):
@@ -1412,7 +1424,7 @@ def test_legacy_draft_operations_cannot_replace_or_accept_a_recognition_task(tas
     assert accepted.status_code == 409
     assert accepted.json() == {"error": "task_input_locked"}
     assert client.get(f"/audit-tasks/{task['id']}").json() == task
-    assert client.get("/rounds").json()["rounds"] == []
+    assert rounds_of(worker, client) == []
 
 
 def test_task_round_cannot_prepare_a_legacy_retry(matched_task):
@@ -1422,7 +1434,7 @@ def test_task_round_cannot_prepare_a_legacy_retry(matched_task):
     assert job.round_id == accepted["round_id"]
     assert worker.complete_job(job, "terminal-audit", {"failure": {"code": "test_failure", "message": "受控执行失败", "retryable": False}}, outcome="failed")
     original = client.get(f"/rounds/{accepted['round_id']}").json()
-    usage = client.get("/usage").json()
+    usage = usage_of(worker, client)
     prepared = client.post("/drafts", json={"request_id": str(uuid.uuid4()), "predecessor_id": original["id"]})
     assert prepared.status_code == 409
     assert prepared.json() == {"error": "task_input_locked"}
@@ -1430,14 +1442,14 @@ def test_task_round_cannot_prepare_a_legacy_retry(matched_task):
     assert client.get(path).json()["files"][0]["audit"]["execution"] == "review_failed"
     assert client.get(f"/rounds/{original['id']}").json() == original
     assert client.get("/drafts").json()["drafts"] == []
-    assert client.get("/usage").json() == usage
+    assert usage_of(worker, client) == usage
     manual = client.post("/drafts", json={"items": [{key: item[key] for key in ("file_version_id", "role", "rule_version_id")} for item in original["inputs"]]}).json()
     bypass = client.post(f"/drafts/{manual['id']}/accept", json={"idempotency_key": "task-predecessor-bypass", "predecessor_id": original["id"]})
     assert bypass.status_code == 409
     assert bypass.json() == {"error": "task_input_locked"}
     assert client.get(f"/drafts/{manual['id']}").json()["status"] == "open"
-    assert [row["id"] for row in client.get("/rounds").json()["rounds"]] == [original["id"]]
-    assert client.get("/usage").json() == usage
+    assert [row["id"] for row in rounds_of(worker, client)] == [original["id"]]
+    assert usage_of(worker, client) == usage
 
 
 def test_linked_reaudit_keeping_the_original_rule_reruns_its_frozen_program_without_copying_results(matched_task):
@@ -1552,7 +1564,7 @@ def test_excluded_reaudit_replacement_retains_its_binding_across_readback_and_re
     accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0)).json()
     worker.complete_job(worker.claim_job("old"), "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
     original_round = client.get(f"/rounds/{accepted['round_id']}").json()
-    usage = client.get("/usage").json()
+    usage = usage_of(worker, client)
     newer = publish_rule(client, body["files"][0], predecessor=old["id"])
     replacement = checked_file(client, worker, "暂不选择的补件.xlsx")
     original = {**body["files"][0], "preferred_rule_version_id": old["id"]}
@@ -1587,7 +1599,7 @@ def test_excluded_reaudit_replacement_retains_its_binding_across_readback_and_re
     assert actual["replacement_of_file_version_id"] == original["file_version_id"]
     assert actual["match"]["rule"]["id"] == old["id"]
     assert client.get(f"/rounds/{accepted['round_id']}").json() == original_round
-    assert client.get("/usage").json() == usage
+    assert usage_of(worker, client) == usage
 
 
 def test_excluded_replacement_survives_removal_of_its_receipt_anchor_at_acceptance(matched_task):
@@ -1653,13 +1665,13 @@ def test_reaudit_source_authorization_and_scope_cannot_be_bypassed(matched_task,
 
 
 def test_unrelated_task_cannot_pin_a_superseded_rule(matched_task):
-    client, _worker, _path, body, old = matched_task
+    client, worker, _path, body, old = matched_task
     publish_rule(client, body["files"][0], predecessor=old["id"])
     command = {**body, "request_id": str(uuid.uuid4()), "files": [{**body["files"][0], "preferred_rule_version_id": old["id"]}]}
     denied = client.post("/audit-tasks", json=command)
     assert denied.status_code == 409
     assert denied.json() == {"error": "rule_candidate_expired"}
-    assert client.get("/rounds").json()["rounds"] == []
+    assert rounds_of(worker, client) == []
 
 
 def test_explicit_candidate_resolves_ambiguity_without_selecting_the_first_rule(task_system):
@@ -1705,7 +1717,7 @@ def test_native_preparation_ambiguity_is_resolved_by_explicit_rematching_before_
     invalid = {"request_id": str(uuid.uuid4()), "expected_revision": 0, "expected_confirmation_basis_digest": ambiguous["confirmation_basis_digest"]}
     refused = client.post(path + "/confirm", json=invalid)
     assert refused.status_code == 400 and refused.json() == {"error": "invalid_task_confirmation"}
-    assert client.get("/rounds").json()["rounds"] == []
+    assert rounds_of(worker, client) == []
 
     rematch = {
         "request_id": str(uuid.uuid4()),
@@ -1746,8 +1758,8 @@ def test_native_preparation_ambiguity_is_resolved_by_explicit_rematching_before_
     assert restored["id"] == draft_id and restored["task_id"] == draft_id
     assert restored["upload_preparation"] == preparation
     assert [row["id"] for row in client.get("/audit-tasks").json()["tasks"]] == [draft_id]
-    assert [row["id"] for row in client.get("/rounds").json()["rounds"]] == [frozen["id"]]
-    assert client.get("/usage").json()["events"] == []
+    assert [row["id"] for row in rounds_of(worker, client)] == [frozen["id"]]
+    assert usage_of(worker, client) == []
     assert worker.objects.data == original_objects
     assert worker.claim_job("one-audit").round_id == frozen["id"]
     assert worker.claim_job("no-extra-recognition-or-audit") is None
@@ -1808,8 +1820,8 @@ def test_rematching_keeps_the_task_and_ignores_a_previous_revision_result(task_s
     assert client.post("/audit-tasks", json=revised).json() == recovered
     assert client.post("/audit-tasks", json=body).json() == recovered
     assert len(client.get("/audit-tasks").json()["tasks"]) == 1
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(worker, client) == []
+    assert usage_of(worker, client) == []
 
 
 def test_recognition_receipts_survive_lost_responses_and_keep_their_original_revision(task_system):
@@ -2024,7 +2036,7 @@ def test_explicit_customer_scope_and_reference_survive_acceptance_and_recovery(t
         target["file_version_id"]: ("target", confirmed["id"]),
         reference["file_version_id"]: ("reference", None),
     }
-    assert client.get("/usage").json()["events"] == []
+    assert usage_of(worker, client) == []
     audit = worker.claim_job("reference-test")
     assert worker.complete_job(
         audit, "reference-test", {"findings": [], "coverage": {"rule_items": [{"file_version_id": target["file_version_id"], "id": "1", "coverage": "unsupported"}]}}, "succeeded"
@@ -2130,8 +2142,8 @@ def test_three_document_types_match_their_own_rules_without_accepting_an_audit(t
     assert [row["match"]["document_type"] for row in recovered["files"]] == [rule["body"]["type"] for rule in rules]
     assert recovered["estimated_points"] == 1500
     assert recovered["round_id"] is None
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(worker, client) == []
+    assert usage_of(worker, client) == []
 
 
 @pytest.mark.parametrize("source_missing", [False, True], ids=["readable-ng", "source-read-error"])
@@ -2169,8 +2181,8 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
     summaries = client.get("/audit-tasks", params={"state": "reviewing"}).json()["tasks"]
     assert len(summaries) == 1
     assert_task_summary(summaries[0], accepted)
-    assert len(client.get("/rounds").json()["rounds"]) == 1
-    assert client.get("/usage").json()["events"] == []
+    assert len(rounds_of(worker, client)) == 1
+    assert usage_of(worker, client) == []
     job = worker.claim_job("one-audit")
     assert job.round_id == accepted["round_id"]
     assert worker.claim_job("no-second-audit") is None
@@ -2220,7 +2232,7 @@ def test_tenant_peer_reads_the_task_round_and_original_but_cannot_change_them(ta
     assert shared.json()["creator"]["mine"] is False
     assert client.post(path + "/confirm", json=command).status_code == 403
     assert client.get(round_path).status_code == 200
-    assert [row["id"] for row in client.get("/rounds").json()["rounds"]] == [accepted["round_id"]]
+    assert [row["id"] for row in rounds_of(worker, client)] == [accepted["round_id"]]
     source = f"/files/{version['file_id']}/versions/{version['id']}"
     assert client.get(round_path + source + "/download").status_code == 200
     assert client.put(round_path + "/reviews", json={"item_key": "1", "judgment": "confirm", "rationale": "peer", "next_step": "", "version": 0}).status_code == 403
@@ -2228,7 +2240,7 @@ def test_tenant_peer_reads_the_task_round_and_original_but_cannot_change_them(ta
     assert client.post("/isolated-dev/sessions", json={"subject": "carol"}).status_code == 200
     assert client.get(path).status_code == 403
     assert client.get(round_path).status_code == 403
-    assert client.get("/rounds").json()["rounds"] == []
+    assert rounds_of(worker, client) == []
     assert client.get(round_path + source + "/download").status_code == 403
     assert client.get(round_path + source + "/preview").status_code == 403
     assert client.get(source + "/office", params={"round_id": accepted["round_id"]}).status_code == 403
@@ -2264,7 +2276,7 @@ def test_ambiguous_rules_are_not_reported_as_definitive_zero_match(task_system):
     assert {row["id"]: row["title"] for row in recovered["files"][0]["match"]["candidates"]} == {rule["id"]: rule["title"] for rule in (first, second)}
     assert recovered["estimated_points"] is None
     assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 409
-    assert client.get("/rounds").json()["rounds"] == []
+    assert rounds_of(worker, client) == []
 
 
 def test_reference_only_task_can_end_without_a_round_report_or_charge(task_system):
@@ -2285,8 +2297,8 @@ def test_reference_only_task_can_end_without_a_round_report_or_charge(task_syste
     assert ended.json()["state"] == "completed"
     assert ended.json()["round_id"] is None
     assert ended.json()["files"][0]["selection"] == "selected"
-    assert client.get("/usage").json()["events"] == []
-    assert client.get("/rounds").json()["rounds"] == []
+    assert usage_of(worker, client) == []
+    assert rounds_of(worker, client) == []
 
 
 def test_task_is_read_by_the_enterprise_and_changed_only_by_its_creator(task_system):
@@ -2344,7 +2356,7 @@ def test_failed_and_unknown_recognition_are_not_definitive_zero_matches(task_sys
     assert failed["estimated_points"] is None
     assert "private provider" not in json.dumps(failed)
     assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 409
-    assert client.get("/rounds").json()["rounds"] == []
+    assert rounds_of(worker, client) == []
 
 
 def test_user_can_end_after_unselecting_all_matched_targets(task_system):
@@ -2366,8 +2378,8 @@ def test_user_can_end_after_unselecting_all_matched_targets(task_system):
     assert ended.json()["estimated_points"] == 0
     assert client.post(path + "/end", json=command).json() == ended.json()
     assert client.post(path + "/confirm", json=confirmation).status_code == 409
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(worker, client) == []
+    assert usage_of(worker, client) == []
 
 
 def test_zero_target_end_rejects_foreign_or_stale_selection_intent(task_system):
@@ -2431,8 +2443,8 @@ def test_v4_t12_explicit_reference_remains_free_and_restores_its_role(auth_store
     refused = client.post(path + "/confirm", json=invalid)
     assert refused.status_code == 400 and refused.json() == {"error": "invalid_task_confirmation"}
     assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 200
-    assert client.get("/rounds").json()["rounds"] == []
-    assert client.get("/usage").json()["events"] == []
+    assert rounds_of(worker, client) == []
+    assert usage_of(worker, client) == []
     client.close()
 
 
@@ -2522,7 +2534,7 @@ def test_a_file_whose_deep_review_did_not_complete_keeps_the_standard_result_at_
         target = next(row for row in task["files"] if row["file"]["id"] == body["files"][0]["file_version_id"])
         assert task["deep_mode"] is True and target["audit"]["execution"] == "completed"
         assert target["deep_review"] == {"state": "degraded", "reason": "deep_review_failed"}
-        events = client.get("/usage").json()["events"]
+        events = usage_of(worker, client)
         assert [(row["consumed_points"], row["charge"]) for row in events] == [(500, "audit")]
         assert [row["points"] for row in client.get("/audit-usage").json()["entries"]] == [500]
         assert core_system.audit_jobs[-1].analysis_mode == "deep"
@@ -2547,7 +2559,7 @@ def test_a_committed_deep_result_adds_no_charge(matched_task, deep_offered, stat
         assert worker.complete_job(claimed, "deep-commit", result, "succeeded") is True
         round_input = next(row for row in client.get(f"/rounds/{accepted.json()['round_id']}").json()["inputs"] if row["file_version_id"] == version)
         assert round_input["deep_review"] == review
-        assert [(row["consumed_points"], row["charge"]) for row in client.get("/usage").json()["events"]] == [(500, "audit")]
+        assert [(row["consumed_points"], row["charge"]) for row in usage_of(worker, client)] == [(500, "audit")]
         assert [row["points"] for row in client.get("/audit-usage").json()["entries"]] == [500]
     finally:
         client.close()

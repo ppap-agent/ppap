@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
-from scripts.ci_shards import Target, discover_distributions, discover_modules, partition, with_postgres
+from scripts.ci_shards import SHARDS, Target, discover_distributions, discover_modules, partition, with_postgres
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.mark.parametrize("discover", [discover_modules, discover_distributions])
 def test_shards_cover_every_discovered_target_exactly_once(discover):
     targets = discover()
-    shards = partition(targets, 3)
-    assert len(shards) == 3
+    shards = partition(targets, SHARDS)
+    assert len(shards) == SHARDS
     assert all(shards)
     assert sorted(target.name for group in shards for target in group) == sorted(target.name for target in targets)
     api = [target for target in targets if target.name == "api"]
@@ -84,13 +84,7 @@ def test_service_fixture_lifetime(silo):
         assert len(events) == 4  # No network lifecycle operations between launch and child exit.
 
 
-def test_ci_cli_module_invocation_discovers_all_targets():
-    completed = subprocess.run(
-        [sys.executable, "-m", "scripts.ci_shards", "plan"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert f"modules: {len(discover_modules())} targets in 3 shards" in completed.stdout
-    assert f"distributions: {len(discover_distributions())} targets in 3 shards" in completed.stdout
+def test_ci_matrices_run_every_shard():
+    jobs = yaml.load((ROOT / ".github/workflows/tests.yml").read_text(), Loader=yaml.BaseLoader)["jobs"]
+    for job in ("distribution_closure", "python_modules"):
+        assert jobs[job]["strategy"]["matrix"]["shard"] == [str(index) for index in range(SHARDS)], job
