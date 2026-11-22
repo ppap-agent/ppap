@@ -4,18 +4,13 @@ The rules page (P12) is read only: customers on the left, each customer's file t
 and a read-only rule detail. Rules are delivered by the platform; the Web has no upload, draft or publication.
 """
 
-import os
 import unittest
 from urllib.parse import urlsplit
 
-from .conftest import pick_audit_files, wait_until  # noqa: E402
+from playwright.sync_api import expect, sync_playwright
 
-try:
-    from playwright.sync_api import sync_playwright
-except ImportError:  # pragma: no cover - optional until the e2e job installs Playwright
-    sync_playwright = None
+from .conftest import WEB, pick_audit_files, route_api_address, wait_until
 
-WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 BODY = {
     "kind": "engine",
     "type": "控制计划",
@@ -34,8 +29,6 @@ CUSTOMER = {
 
 
 def open_customer_requirements(page):
-    from playwright.sync_api import expect
-
     button = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则库", exact=True)
     # The login shell also has a banner; wait for authorized product navigation.
     button.wait_for(state="visible")
@@ -57,11 +50,8 @@ def listed(rule):
     }
 
 
-@unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
     def test_rule_navigation_waits_for_authorized_shell(self):
-        from playwright.sync_api import expect
-
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
@@ -97,8 +87,6 @@ class RuleInteractionTests(unittest.TestCase):
             browser.close()
 
     def test_native_history_timeout_offers_explicit_read_of_the_same_document(self):
-        from playwright.sync_api import expect
-
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
@@ -142,8 +130,6 @@ class RuleInteractionTests(unittest.TestCase):
             browser.close()
 
     def test_rule_directory_reads_only_the_opened_rule_and_ignores_late_reads(self):
-        from playwright.sync_api import expect
-
         rules = {}
         for identity, title, text, at, parent in (
             ("rule-a1", "规则 A", "旧版条款 A", "2026-10-16T00:00:00Z", None),
@@ -205,7 +191,6 @@ class RuleInteractionTests(unittest.TestCase):
 
     def test_built_in_rules_are_listed_under_their_customer(self):
         from audit.presets import customer_presets, preset_rule_body
-        from playwright.sync_api import expect
         from product import customers as register
 
         rules = {}
@@ -285,8 +270,6 @@ class RuleInteractionTests(unittest.TestCase):
         return preparation
 
     def test_native_validation_read_failure_keeps_other_file_without_creating_another_job(self):
-        from playwright.sync_api import expect
-
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
@@ -407,7 +390,7 @@ class RuleInteractionTests(unittest.TestCase):
             else:
                 route.fulfill(status=404, json={"error": "unexpected_test_request"}, headers=cors)
 
-        page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+        route_api_address(page)
         page.route("**/api/**", respond)
 
     def rule_routes(self, page, customers, rules):
@@ -428,7 +411,3 @@ class RuleInteractionTests(unittest.TestCase):
 
         page.route("**/api/rules/*", detail)
         return state
-
-
-if __name__ == "__main__":
-    unittest.main()

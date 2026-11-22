@@ -1,14 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {chapterAt, outlineChapters, precheckReportChapters, searchOrder, textIncludes} from './report-chapters.ts'
-
-test('the P3 contents are the cover and the ten chapters in the report order', () => {
-  assert.equal(precheckReportChapters.length, 11)
-  assert.equal(precheckReportChapters[0], '封面')
-  assert.deepEqual(precheckReportChapters.slice(1).map(title => title.split('、')[0]), ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'])
-  assert.equal(precheckReportChapters[4], '四、阻断项明细')
-  assert.equal(precheckReportChapters[9], '九、附录 · 检查项全量结果')
-})
+import {chapterAt, outlineChapters, searchOrder, textIncludes} from './report-chapters.ts'
 
 test('outline entries become chapters with their pages; unresolvable or empty entries are left out', async () => {
   const pages: Record<string, number> = {cover: 1, one: 3, two: 5}

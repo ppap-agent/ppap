@@ -116,6 +116,7 @@ class RuleApiTests(unittest.TestCase):
     def setUp(self):
         from api import create_app
         from fastapi.testclient import TestClient
+        from product import build_product_store
         from product.settings import Settings
 
         env = {key: value for key, value in os.environ.items() if not key.startswith(("PPAP_", "FEISHU_"))}
@@ -127,7 +128,8 @@ class RuleApiTests(unittest.TestCase):
         self.ai = FakeRuleAI()
         self.ai_boundary = patch("documents.ai.run_json", self.ai)
         self.ai_boundary.start()
-        self.client = TestClient(create_app(self.settings, lambda _: {"state": "ok"}, lambda _: {"state": "ok"}, self.store))
+        api = build_product_store(self.settings, objects=self.store.objects, role="api")
+        self.client = TestClient(create_app(self.settings, lambda _: {"state": "ok"}, lambda _: {"state": "ok"}, api))
         self.login("alice")
 
     def tearDown(self):
@@ -327,31 +329,36 @@ class RuleApiTests(unittest.TestCase):
         self.assertEqual(self.ai.requests, [])
 
     def test_same_request_resumes_one_job_and_unknown_is_not_automatically_reexecuted(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        from product import build_product_store
         from worker import process_claimed
 
+        worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
         source = self.upload()
         request_id = str(uuid.uuid4())
-        accepted = self.submit_parse(source, request_id)
-        self.assertEqual(accepted.status_code, 202)
-        self.assertEqual(self.submit_parse(source, request_id).json()["id"], request_id)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            accepted = list(pool.map(lambda _: self.submit_parse(source, request_id), range(2)))
+        self.assertEqual([(response.status_code, response.json()["id"]) for response in accepted], [(202, request_id)] * 2)
         self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 1)
         self.assertEqual(self.submit_parse(source, request_id, document_type="控制计划").status_code, 409)
-        job = self.store.claim_job("first")
-        self.assertFalse(self.store.renew_job_lease(job, "other"))
-        self.assertTrue(self.store.renew_job_lease(job, "first"))
+        job = worker.claim_job("first")
+        self.assertFalse(worker.renew_job_lease(job, "other"))
+        self.assertTrue(worker.renew_job_lease(job, "first"))
         self._execute(
             "UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s",
             (job.id,),
         )
         self.assertEqual(self.client.get("/rules/parse/" + request_id).json()["status"], "unknown")
-        self.assertIsNone(self.store.claim_job("second"))
+        self.assertIsNone(worker.claim_job("second"))
         self.assertEqual(self.submit_parse(source, request_id).json()["status"], "unknown")
         self.assertEqual(self.ai.requests, [])
-        process_claimed(self.store, job, "first", rule_ai=self.ai)
+        process_claimed(worker, job, "first", rule_ai=self.ai)
         loaded = self.client.get("/rules/parse/" + request_id).json()
         self.assertEqual(loaded["status"], "succeeded")
         self.assertEqual(loaded["result"]["body"], rule_body())
-        self.assertFalse(self.store.complete_job(job, "other", {"error": "late"}, "failed"))
+        self.assertFalse(worker.complete_job(job, "other", {"error": "late"}, "failed"))
+        self.assertEqual(self._scalar("SELECT count(*) FROM engine.attempts WHERE job_id = %s", (job.id,)), 1)
         self.assertEqual(self.client.get("/rules/parse/" + request_id).json(), loaded)
         second = self.submit_parse(source)
         self.assertNotEqual(second.json()["id"], request_id)

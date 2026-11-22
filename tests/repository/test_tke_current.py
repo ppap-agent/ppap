@@ -17,7 +17,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 TKE = ROOT / "deploy" / "tke"
-KUSTOMIZE = "registry.k8s.io/kustomize/kustomize:v5.6.0"
 KUBECONFORM = "ghcr.io/yannh/kubeconform:v0.6.7"
 YQ = "mikefarah/yq:4.44.6"
 REGISTRY = "(?:" + "|".join(re.escape(prefix) for prefix in runpy.run_path(str(TKE / "build-current.py"))["PREFIXES"].values()) + ")"

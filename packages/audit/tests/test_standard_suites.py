@@ -1,14 +1,12 @@
 """Standard source identity/coverage, separate from human corpus correctness."""
 
 import importlib
-import json
 from types import SimpleNamespace
 
 import pytest
 from audit.checker_lib.agents import AgentAudit
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
-from audit.engine.checkers.rule_declarations import discover_declared_rules
-from audit.presets import customer_presets, preset_rule_body
+from audit.presets import preset_rule_body
 from audit.standard_suites import predefined_directory_suites
 
 COMPANY_MODULES = {"li": "audit.checker_lib.li", "nio": "audit.checker_lib.nio"}
@@ -24,31 +22,6 @@ def leaf(key):
     return next(suite for suite in predefined_directory_suites() if suite.suite_key == key)
 
 
-def check_clause(context, resource):
-    """Run one clause through the leaf adapter; a prepared implementation may be injected through the cache."""
-    audit = AgentAudit(context.audit_file, getattr(context, "rule", None), getattr(context, "group_context", None), resource=resource)
-    path = resource["carriers"].get("." + context.audit_file.file_url.rsplit(".", 1)[-1].lower())
-    injected = getattr(context, "cache", {}).get(("standard-checker", context.audit_file.audit_id, path))
-    if injected is not None:
-        audit._agent = injected
-    return audit.evaluate(context.clause_id)
-
-
-def test_every_company_leaf_binds_each_clause_to_a_declared_implementation_method():
-    suites = predefined_directory_suites()
-    assert {s.suite_key for s in suites} == {f"{p.customer}:{p.entry_id}" for p in customer_presets()}
-    for suite in suites:
-        rules = json.loads(suite.files["rules.json"])
-        source = resources(suite)
-        assert set(source["methods"]) == set(suite.entrypoints) == {rule["id"] for rule in rules["rules"]}
-        for class_path in set(source["carriers"].values()):
-            module, name = class_path.split(":")
-            cls = getattr(importlib.import_module(module), name)
-            declared = cls.TARGET_EXCEL_AGENT_CLASS if getattr(cls, "TARGET_EXCEL_AGENT_CLASS", None) else cls
-            assert set(source["methods"].values()) <= dict(discover_declared_rules(declared)).keys()
-        assert rules["checker_binding"] == dict(suite.entrypoints)
-
-
 def test_standard_content_has_stable_immutable_identity():
     assert [dict(suite.files) for suite in predefined_directory_suites()] == [dict(suite.files) for suite in predefined_directory_suites()]
     suite = predefined_directory_suites()[0]
@@ -60,14 +33,13 @@ def test_standard_content_has_stable_immutable_identity():
         raise AssertionError("mutable standard source")
 
 
-def test_unsupported_carrier_never_falls_back_to_legacy_checker():
+def test_unsupported_carrier_is_unable():
     suite = leaf("理想:L11")
-    ctx = SimpleNamespace(clause_id=next(iter(suite.entrypoints)), audit_file=AuditInput(audit_id="frozen", file_url="/not/read/document.txt"))
-    result = check_clause(ctx, resources(suite))
-    assert result.status == "UNABLE"
+    audit = AgentAudit(AuditInput(audit_id="frozen", file_url="/not/read/document.txt"), None, resource=resources(suite))
+    assert audit.evaluate(next(iter(suite.entrypoints))).status == "UNABLE"
 
 
-def test_editable_u12_l11_n03_starters_execute_source_clauses(tmp_path):
+def test_u12_l11_n03_leaves_execute_every_source_clause(tmp_path):
     from openpyxl import Workbook
 
     for key, rows, title in [
@@ -85,21 +57,16 @@ def test_editable_u12_l11_n03_starters_execute_source_clauses(tmp_path):
         workbook.close()
         audit = AuditInput(audit_id="frozen-version", file_url=str(path))
         rule = RuleInput.of(preset_rule_body(suite.customer, suite.source_entry), rule_id="standard-revision")
-        closeables = []
-        context = SimpleNamespace(audit_file=audit, rule=rule, group_context=GroupContextInput(by_audit_id={audit.audit_id: audit}), cache={}, on_close=closeables.append)
+        checker = AgentAudit(audit, rule, GroupContextInput(by_audit_id={audit.audit_id: audit}), resource=resources(suite))
         try:
             for clause in suite.entrypoints:
-                context.clause_id = clause
-                item = check_clause(context, resources(suite))
+                item = checker.evaluate(clause)
                 assert item.clause_id == clause
                 assert item.status in {"PASS", "NG", "UNABLE", "ERR", "NA"}
                 # The uaes implementation locates evidence for every PASS; li/nio report as their baseline did.
                 assert item.status != "PASS" or item.evidence is not None or suite.customer != "UAES"
         finally:
-            for checker in closeables:
-                close = getattr(checker, "close", None)
-                if close:
-                    close()
+            checker.close()
 
 
 def test_authored_factory_results_bind_by_ids_without_historical_class():
@@ -131,7 +98,6 @@ def test_authored_factory_results_bind_by_ids_without_historical_class():
 
 
 def test_authored_factory_failure_is_not_repeated_for_later_clauses():
-    import pytest
     from audit.standard_library import check_factory
 
     calls = []
@@ -157,7 +123,6 @@ def test_authored_factory_failure_is_not_repeated_for_later_clauses():
 
 
 def test_authored_collective_failure_is_not_repeated_for_later_clauses():
-    import pytest
     from audit.standard_library import check_factory
 
     calls = []

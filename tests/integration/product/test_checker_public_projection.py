@@ -213,7 +213,6 @@ def test_pdf_page_keeps_a_related_file_cell(tmp_path: Path) -> None:
     check = viewed["files"][0]["audit"]["checks"][0]
 
     assert check["verification_scope"] == "checker_execution"
-    assert check["evidence_verified"] is False
     assert [(item["file_version_id"], item["locator"], item["location_gap"]) for item in check["evidence"]] == [
         ("pdf-version", {"kind": "pdf_page", "page": 3, "region": [0, 12, 400, 700]}, None),
         ("related-version", {"kind": "xlsx_cell", "sheet": "特殊特性清单", "cell": "B2"}, None),
@@ -474,7 +473,6 @@ def test_checker_results_keep_clause_status_in_the_task_view_and_public_contract
     audit = viewed["files"][0]["audit"]
     by_id = {check["rule_item"]["id"]: check for check in audit["checks"]}
     assert by_id["A"]["finding"]["status"] == "UNABLE"
-    assert by_id["A"]["evidence_verified"] is False
     assert by_id["A"]["verification_scope"] == "checker_execution"
     assert by_id["A"]["scope_notice"] == "表头有两种读法。"
     assert by_id["B"]["finding"]["status"] == "NG"

@@ -1,5 +1,6 @@
-"""Directory identity for predefined checkers. Legacy carriers stay untouched."""
+"""Directory identity for predefined checkers."""
 
+import importlib
 import json
 import shutil
 import subprocess
@@ -7,7 +8,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from audit.presets import customer_presets, preset_rule
+from audit.presets import customer_presets
 from audit.standard_suites import _CHECKERS_ROOT, customer_directory, customer_name, load_predefined_checkers, predefined_directory_suites, predefined_sources
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -27,55 +28,40 @@ def write_leaf(root: Path, source_path: str, *, checker: str = CHECKER, rules: d
     return directory
 
 
-def test_installed_u08_leaf_reads_its_own_files():
-    suites = predefined_directory_suites()
-    suite = next(item for item in suites if item.source_path == "uaes/U08")
-    assert suite.suite_key == "UAES:U08"
-    assert suite.customer == "UAES" and suite.source_entry == "U08" and suite.document_type == "控制计划"
-    assert suite.related_suite_keys == ("UAES:U07", "UAES:U16")
-    disk = _CHECKERS_ROOT / "uaes" / "U08"
-    for name in LEAF:
-        assert suite.files[name] == (disk / name).read_bytes() == (ROOT / "packages/audit/src/audit/checkers/uaes/U08" / name).read_bytes()
-    rules = json.loads(suite.files["rules.json"])
-    assert rules["directory_coverage"] == "complete"
-    assert rules["related_suite_keys"] == ["UAES:U07", "UAES:U16"]
-    preset = preset_rule("UAES", "U08")
-    assert [row["id"] for row in rules["rules"]] == [clause.id for clause in preset.clauses]
-    assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
-    assert rules["checker_binding"] == {clause.id: "checker:create_audit" for clause in preset.clauses}
-    assert "rule_profile" not in rules
-    assert suite.entrypoints == rules["checker_binding"]
+def test_every_preset_has_exactly_one_complete_leaf_that_names_its_own_implementation():
+    from audit.engine.checkers.rule_declarations import discover_declared_rules
 
-
-def test_every_preset_has_a_complete_leaf_that_names_its_implementation():
     directory = {suite.suite_key: suite for suite in predefined_directory_suites()}
+    assert set(directory) == {f"{preset.customer}:{preset.entry_id}" for preset in customer_presets()}
     for preset in customer_presets():
         suite = directory[f"{preset.customer}:{preset.entry_id}"]
+        for name in LEAF:
+            assert suite.files[name] == (_CHECKERS_ROOT / suite.source_path / name).read_bytes()
         rules = json.loads(suite.files["rules.json"])
         clause_ids = [clause.id for clause in preset.clauses]
-        assert rules["checker_binding"] == {clause_id: "checker:create_audit" for clause_id in clause_ids}
+        assert suite.document_type == rules["type"]
+        assert [row["id"] for row in rules["rules"]] == clause_ids
+        assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
+        assert rules["checker_binding"] == dict(suite.entrypoints) == {clause_id: "checker:create_audit" for clause_id in clause_ids}
         namespace: dict = {}
         exec(suite.files["resources.py"], namespace)
         resource = namespace["RESOURCE"]
         assert resource["customer"] == preset.customer and resource["preset_key"] == preset.entry_id
         assert set(resource["methods"]) == set(clause_ids)
-        assert all(path.startswith("audit.checker_lib." + customer_directory(preset.customer) + ".") for path in resource["carriers"].values())
-        assert [row["rule_to_check"] for row in rules["rules"]] == [clause.text for clause in preset.clauses]
+        for path in set(resource["carriers"].values()):
+            assert path.startswith("audit.checker_lib." + customer_directory(preset.customer) + "."), path
+            module, name = path.split(":", 1)
+            cls = getattr(importlib.import_module(module), name)
+            declared = getattr(cls, "TARGET_EXCEL_AGENT_CLASS", None) or cls
+            assert set(resource["methods"].values()) <= dict(discover_declared_rules(declared)).keys(), path
 
 
 def _carriers(leaf_resource, suite) -> list[tuple[str, type]]:
-    import importlib
-
     found = []
     for suffix, path in leaf_resource(suite.source_path)["carriers"].items():
         module, name = path.split(":", 1)
         found.append((suffix, getattr(importlib.import_module(module), name)))
     return found
-
-
-def test_every_leaf_carrier_imports(leaf_resource):
-    for suite in predefined_directory_suites():
-        assert _carriers(leaf_resource, suite), suite.source_path
 
 
 def test_li_and_nio_carriers_read_their_suffix_and_the_leaf_document_type(leaf_resource):
@@ -206,11 +192,8 @@ def test_related_keys_come_from_the_leaf_and_do_not_fall_back(tmp_path):
     )
     found = {suite.source_path: suite for suite in load_predefined_checkers(tmp_path)}
     assert found["示例客户/Z99"].related_suite_keys == ("示例客户:Z01",)
-    assert "UAES:U99" not in found["示例客户/Z99"].related_suite_keys
     assert found["uaes/U08"].related_suite_keys == ("UAES:U07",)
-    assert "UAES:U12" not in found["uaes/U08"].related_suite_keys
     assert not (tmp_path / "示例客户" / "Z01").exists()
-    assert not (tmp_path / "v4").exists()
 
 
 def test_bytecode_cache_does_not_drop_an_installed_leaf(tmp_path):
@@ -269,11 +252,11 @@ def test_directory_failures_do_not_fall_back(tmp_path, mutate, code):
         elif mutate == "factory":
             checker = "def check(context):\n    return None\n"
         elif mutate == "legacy":
-            checker = "from audit.checkers.v4.uaes.control_plan import UaesControlPlanAgent\n\ndef create_audit(audit_file, rule, group_context=None):\n    return UaesControlPlanAgent\n"
+            checker = "from audit.checker_lib.uaes.control_plan import UaesControlPlanAgent\n\ndef create_audit(audit_file, rule, group_context=None):\n    return UaesControlPlanAgent\n"
         elif mutate == "coverage":
             rules = {"rules": [{"id": "C1", "rule_to_check": "clause"}], "checker_binding": {"C1": "checker:create_audit"}, "directory_coverage": "partial"}
         elif mutate == "related":
-            rules = {"rules": [{"id": "C1", "rule_to_check": "clause"}], "checker_binding": {"C1": "checker:create_audit"}, "related_suite_keys": ["v4/uaes/U07"]}
+            rules = {"rules": [{"id": "C1", "rule_to_check": "clause"}], "checker_binding": {"C1": "checker:create_audit"}, "related_suite_keys": ["uaes/U07"]}
         elif mutate == "partial":
             rules = {"rules": [{"id": "C1", "rule_to_check": "clause"}], "checker_binding": {}}
         write_leaf(tmp_path, "uaes/U08", checker=checker, rules=rules, extra=extra)

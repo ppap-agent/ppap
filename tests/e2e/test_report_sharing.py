@@ -2,16 +2,13 @@
 
 import hashlib
 import io
-import os
 import zipfile
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from playwright.sync_api import expect, sync_playwright
 
-pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import expect, sync_playwright  # noqa: E402
-
-WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
+from .conftest import WEB, route_api_address
 
 
 @pytest.mark.parametrize("stall", [False, True], ids=["ready", "stalled"])
@@ -76,7 +73,7 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
                 r"/\/audit-report-shares\/shared-one\/(pdf|zip)\?/.test(String(url)) ? {...init, signal: undefined} : init)"
             )
         page.on("download", lambda download: downloads.append(download.suggested_filename))
-        page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+        route_api_address(page)
         page.on("response", lambda response: decoder_reads.append((urlsplit(response.url).path, response.status)) if "/cmaps/" in response.url else None)
 
         def api(route):
@@ -244,7 +241,6 @@ def test_directory_timeout_retries_the_same_page_and_ignores_its_late_reply():
                     "finding": {"item_key": "1", "status": "NG", "item": "签字为空", "classification": "签字", "suggestions": "", "priority": None, "locator": None, "review": None},
                     "evidence": [],
                     "scope": None,
-                    "evidence_verified": False,
                     "review": None,
                 }
             ],
@@ -288,7 +284,7 @@ def test_directory_timeout_retries_the_same_page_and_ignores_its_late_reply():
             ],
         }
         calls = []
-        page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+        route_api_address(page)
 
         def api(route):
             path = urlsplit(route.request.url).path.removeprefix("/api")

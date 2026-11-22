@@ -11,6 +11,7 @@ from urllib.parse import quote
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from product import customers as register
 from product import template_library as library
 from product.settings import Settings
 
@@ -51,7 +52,7 @@ def test_catalog_lists_clean_names_and_only_present_files(tmp_path):
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-store"
     customers = {row["id"]: row for row in response.json()["customers"]}
-    assert [customers[key]["name"] for key in ("li", "nio", "uaes")] == ["理想/Li Auto", "蔚来/Nio", "联电科技/UAES"]
+    assert all(row["name"] == register.find(key).name for key, row in customers.items())
     present = {customer.id: {template.id for template in customer.templates} - {"nio-control-plan"} for customer in library.CUSTOMERS}
     assert {key: {template["id"] for template in row["templates"]} for key, row in customers.items()} == present
     approval = next(row for row in customers["uaes"]["templates"] if row["id"] == "uaes-sample-approval")
@@ -66,12 +67,15 @@ def test_catalog_lists_clean_names_and_only_present_files(tmp_path):
 
 def test_template_coverage_counts_available_templates_against_the_customer_type_set(tmp_path):
     rows = {row["id"]: row["coverage"] for row in client_for(template_root(tmp_path), signed_in()).get("/template-library").json()["customers"]}
-    # N_t/M from the register's M: 理想 has no T03 template; UAES counts E01/E02/E10/E11/T04/T17 but never the counterpart-only E12.
-    assert {key: (value["covered"], value["total"]) for key, value in rows.items()} == {"li": (16, 17), "nio": (5, 5), "uaes": (6, 19)}
-    assert all(value["version"] == "V3.33" for value in rows.values())
+    # N_t/M against the register's M: a template counts once per type of M; the counterpart-only E12 template never counts.
+    for customer in library.CUSTOMERS:
+        types = register.find(customer.id).type_set
+        codes = {template.type_code for template in customer.templates} & set(types.types)
+        assert (rows[customer.id]["covered"], rows[customer.id]["total"], rows[customer.id]["version"]) == (len(codes), len(types.types), types.version)
+    assert "E12" in {template.type_code for template in library.find_customer("uaes").templates} and "E12" not in register.find("uaes").type_set.types
     # A missing template lowers only the template numerator.
     missing = {row["id"]: row["coverage"] for row in client_for(template_root(tmp_path / "missing", skip={"nio-control-plan"}), signed_in()).get("/template-library").json()["customers"]}
-    assert (missing["nio"]["covered"], missing["nio"]["total"]) == (4, 5)
+    assert (missing["nio"]["covered"], missing["nio"]["total"]) == (rows["nio"]["covered"] - 1, rows["nio"]["total"])
 
 
 def test_download_one_template_with_utf8_filename(tmp_path):

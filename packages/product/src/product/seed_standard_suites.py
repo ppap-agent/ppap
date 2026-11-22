@@ -59,15 +59,16 @@ def install_official_sources(store: Any, suites) -> list[dict[str, str]]:
     suites = tuple(suites)
     prepared = []
     for suite in suites:
-        if persisted_source_path(suite.source_path) is None:
+        persisted = persisted_source_path(suite.source_path)
+        if persisted is None:
             raise ValueError("historical_source_not_seedable")
         digest = resolved_digest(suite.suite_key, suite.related_suite_keys, {name: content_digest(body) for name, body in suite.files.items()})
-        prepared.append((suite, digest))
+        prepared.append((suite, digest, persisted))
     results = []
     with store._conn() as conn, conn.transaction():
         # All platform seeding writers use the same transaction-level lock.
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('ppap-standard-suite-seed', 0))")
-        for suite, digest in prepared:
+        for suite, digest, persisted in prepared:
             rows = [
                 (str(row[0]), row[1])
                 for row in conn.execute(
@@ -77,9 +78,6 @@ def install_official_sources(store: Any, suites) -> list[dict[str, str]]:
                     (suite.suite_key, digest),
                 ).fetchall()
             ]
-            persisted = persisted_source_path(suite.source_path)
-            if persisted is None:
-                raise ValueError("historical_source_not_seedable")
             revision_id = match_official_revision(rows, persisted_path=persisted)
             if revision_id is None:
                 revision = store.create_revision(

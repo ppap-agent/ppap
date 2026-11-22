@@ -206,7 +206,7 @@ def _cell_differences(first: dict[str, list[list[str]]], other: dict[str, list[l
             for c in range(max(len(left), len(right))):
                 x, y = left[c] if c < len(left) else "", right[c] if c < len(right) else ""
                 if x != y:
-                    found.append(f"{sheet}!{get_column_letter(c + 1)}{r + 1}：{x or '(空)'} → {y or '(空)'}")
+                    found.append(f"工作表「{sheet}」{get_column_letter(c + 1)}{r + 1}：{x or '(空)'} → {y or '(空)'}")
     return found
 
 

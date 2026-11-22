@@ -256,13 +256,12 @@ def test_an_operation_without_model_access_never_uses_environment_key(monkeypatc
 
     program = PROGRAM.replace(b"context.cache['count'] =", b"from documents.model_access import current_model_access\n    current_model_access()\n    context.cache['count'] =")
     monkeypatch.setenv("PPAP_MODEL_TEXT_API_KEY", "host-key")
-    monkeypatch.setenv("PPAP_MODEL_TEXT_API_KEY", "host-key")
     with model_access_scope(None):
         result = run_audit(*request(program))
     assert all(row["status"] == "UNABLE" and row["suggestions"] == "model_unavailable" for row in result["findings"])
 
 
-def test_clause_deadline_cannot_be_swallowed_by_legacy_fallback():
+def test_clause_deadline_cannot_be_swallowed_by_the_program():
     program = PROGRAM.replace(
         b"context.cache['count'] =",
         b"if context.clause_id == 'a':\n        try:\n            import time; time.sleep(1)\n        except Exception:\n            pass\n    context.cache['count'] =",

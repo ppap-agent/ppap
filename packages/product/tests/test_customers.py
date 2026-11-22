@@ -23,10 +23,8 @@ def test_type_sets_and_rule_coverage_from_the_installed_presets():
         value = customers.coverage(customer, (), customers.rule_type_codes(customer, rules))
         # The installed presets cover every type of the customer's M (蔚来's presets also cover types outside it).
         assert value["rule_types"] == [entry["code"] for entry in value["types"]] == list(customer.type_set.types), customer.id
-    # UAES: E12–E14 are counterpart documents only.
-    uaes = customers.find("uaes").type_set.types
-    assert [code for code in uaes if code.startswith("E")] == [f"E{index:02d}" for index in range(1, 12)]
-    assert {"E12", "E13", "E14"}.isdisjoint(uaes)
+    # UAES: E12 is a counterpart document only.
+    assert "E12" not in customers.find("uaes").type_set.types
 
 
 def test_the_inspection_report_is_t01_for_li_and_t01a_for_nio():
@@ -69,7 +67,7 @@ def test_every_shown_type_has_one_readable_name():
             assert name and name != entry["code"], (customer.id, entry)
             assert entry["code"].startswith("E") or name == entry["rule_type"], (customer.id, entry)
     # Counterpart documents are named too, though in no M.
-    assert names["E12"] == "采购件质量计划（PGQP1）"
+    assert names["E12"] and names["E12"] != "E12"
 
 
 def test_missing_type_set_yields_no_coverage():

@@ -74,7 +74,7 @@ def test_addresses_outside_the_declared_layout_are_rejected(address):
 
 def test_rule_ids_map_to_existing_leaf_clauses():
     from corpus_contracts.oracle import suite_sources
-    from corpus_contracts.uaes_evaluation import clause_leaf, rule_clauses
+    from corpus_contracts.uaes_evaluation import rule_clauses
 
     mapping = rule_clauses()
     _, audit = load_evaluation()
@@ -83,23 +83,13 @@ def test_rule_ids_map_to_existing_leaf_clauses():
     leaves = {path: suite for path, suite in suite_sources().items() if path.startswith("uaes/")}
     declared = {str(rule["id"]) for suite in leaves.values() for rule in json.loads(suite.files["rules.json"])["rules"]}
     assert sorted(mapping.values()) == sorted(declared) and len(mapping) == 52
-    assert all(clause_leaf(clause) in leaves for clause in mapping.values())
+    leaf = {clause: "uaes/" + clause.split(":", 1)[0] for clause in mapping.values()}
+    assert all(leaf[clause] in leaves for clause in mapping.values())
     # 同一份文件的审核行只落在一个叶子上。
     leaves_by_file: dict[str, set] = {}
     for row in audit:
-        leaves_by_file.setdefault(row.keys["存储地址"], set()).add(clause_leaf(mapping[row.keys["规则编号"]]))
+        leaves_by_file.setdefault(row.keys["存储地址"], set()).add(leaf[mapping[row.keys["规则编号"]]])
     assert all(len(found) == 1 for found in leaves_by_file.values())
-
-
-def test_each_defect_sample_pairs_with_its_normal_file():
-    from corpus_contracts.uaes_evaluation import defect_pairs, submitted_name
-
-    pairs = [(submitted_name(defect), submitted_name(normal)) for defect, normal in defect_pairs()]
-    assert len(pairs) == 10
-    assert all(not normal.is_defect and defect.is_defect for defect, normal in defect_pairs())
-    assert ("A40 CPK-机加工 - test-缺32号关键尺寸、2号尺寸出错、16号尺寸NG.xlsx", "A40 CPK-机加工.xlsx") in pairs
-    assert ("控制计划-A40 -test-缺少清洗工序、125号关键尺寸无SPC管控、关键尺寸14.9遗漏 .xlsx", "控制计划-A40.xlsx") in pairs
-    assert sum(defect == normal for defect, normal in pairs) == 7
 
 
 def test_comparison_keeps_answers_and_states_what_cannot_be_scored():

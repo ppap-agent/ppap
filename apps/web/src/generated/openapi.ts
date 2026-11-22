@@ -2047,8 +2047,6 @@ export interface components {
             coverage: "mapped" | "unsupported" | "executed" | "execution_error";
             /** Evidence */
             evidence: components["schemas"]["AuditEvidenceReference"][];
-            /** Evidence Verified */
-            evidence_verified: boolean;
             /**
              * Execution
              * @enum {string}

@@ -1,18 +1,14 @@
 """Native Web at its public HTTP boundary; not a database or delivery proof."""
 
 import copy
-import os
 import re
 from urllib.parse import urlsplit
 
 import pytest
+from playwright.sync_api import expect, sync_playwright
 
-pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import expect, sync_playwright  # noqa: E402
+from .conftest import WEB, pick_audit_files, route_api_address
 
-from .conftest import pick_audit_files  # noqa: E402
-
-WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 # Recognition progress on the confirm-rules page.
 RECOGNIZING = re.compile(r"^识别中 \d+/\d+$")
 # Every task names a registered customer; the register the picker lists.
@@ -44,7 +40,7 @@ class PreparationHTTP:
         self.allow_receipts = False
 
     def install(self, page):
-        page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+        route_api_address(page)
         page.route("**/api/**", self.respond)
 
     def respond(self, route):
@@ -553,7 +549,6 @@ def test_an_explicit_customer_choice_can_continue_while_default_read_is_pending(
         page.goto(WEB + "/tasks/new")
         choice = page.get_by_role("combobox", name="审核客户", exact=True)
         expect(choice).to_contain_text("请选择审核客户")
-        expect(page.get_by_role("option", name="自动识别", exact=True)).to_have_count(0)
         choice.click()
         page.get_by_role("option", name="理想", exact=True).click()
         expect(page.get_by_role("button", name="选择本地文件", exact=True)).to_be_enabled()

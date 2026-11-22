@@ -35,7 +35,7 @@ class Grid:
 
     def ref(self, r: int, c: int | None = None) -> str:
         if self.kind == "xlsx":
-            return f"{self.name}!{get_column_letter(c + 1)}{r + 1}" if c is not None else f"{self.name} 第 {r + 1} 行"
+            return f"工作表「{self.name}」{get_column_letter(c + 1)}{r + 1}" if c is not None else f"工作表「{self.name}」第 {r + 1} 行"
         return f"{self.name} 第 {r + 1} 行" + (f"第 {c + 1} 列" if c is not None else "")
 
 

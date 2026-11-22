@@ -38,11 +38,7 @@ def pytest_addoption(parser: Any) -> None:
 
 
 def pytest_make_parametrize_id(config: Any, val: Any, argname: Any) -> Any:
-    if isinstance(val, str):
-        return val
-    if hasattr(val, "file_name"):
-        return val.file_name
-    return None
+    return val if isinstance(val, str) else None
 
 
 # Recordings are uploaded as CI artifacts, whose paths forbid these characters.

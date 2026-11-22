@@ -112,7 +112,6 @@ class OpenAPIContractTests(unittest.TestCase):
             "execution": "failed",
             "coverage": "execution_error",
             "finding": None,
-            "evidence_verified": False,
             "scope": None,
             "scope_notice": "本条审核执行失败。",
             "evidence": [],

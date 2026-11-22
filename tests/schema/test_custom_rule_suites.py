@@ -1,35 +1,21 @@
 """SQL permits rules-only publication only for byte-identical inert starters."""
 
-import os
 import uuid
 
 import psycopg
 import pytest
 from product.db import connect
-from product.settings import Settings
 from product.store.suites import SuiteStore
 from product.suites import UNIMPLEMENTED_CHECKER_SOURCE
 
 
 @pytest.fixture
-def custom_suite_db(schema_tools, memory_objects_type):
-    schema_tools.require_postgres()
-    database = "ppap_custom_" + uuid.uuid4().hex[:10]
-    schema_tools.require(
-        schema_tools.psql(schema_tools.bootstrap_user(), schema_tools.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {database} OWNER {schema_tools.migrator_user()} TEMPLATE ppap"),
-        "create custom Suite database",
-    )
-    settings = Settings(pg_database=database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")))
+def custom_suite_db(schema_database, memory_objects_type):
     tenant, author = str(uuid.uuid4()), str(uuid.uuid4())
-    with connect(settings, "migrator") as conn:
+    with connect(schema_database, "migrator") as conn:
         conn.execute("INSERT INTO product.tenants(id,provider,external_key,display_name) VALUES(%s,'test',%s,'test')", (tenant, tenant))
         conn.execute("INSERT INTO product.users(id) VALUES(%s)", (author,))
-    try:
-        yield settings, SuiteStore(settings, memory_objects_type()), tenant, author
-    finally:
-        schema_tools.require(
-            schema_tools.psql(schema_tools.bootstrap_user(), schema_tools.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {database} WITH (FORCE)"), "drop custom Suite database"
-        )
+    return schema_database, SuiteStore(schema_database, memory_objects_type()), tenant, author
 
 
 def test_unverified_sql_publication_checks_inherited_code_and_resources(custom_suite_db):

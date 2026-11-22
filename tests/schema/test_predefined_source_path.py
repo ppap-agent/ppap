@@ -1,6 +1,5 @@
 """Official source_path is a nullable directory identity. Legacy rows stay NULL."""
 
-import os
 import uuid
 from dataclasses import replace
 
@@ -9,32 +8,12 @@ import pytest
 from audit.standard_suites import predefined_directory_suites
 from product.db import connect
 from product.seed_standard_suites import install_official_sources, seed_standard_suites
-from product.settings import Settings
 from product.store.suites import SuiteStore
 
 
 @pytest.fixture
-def suite_db(schema_tools, memory_objects_type):
-    schema_tools.require_postgres()
-    database = "ppap_source_path_" + uuid.uuid4().hex[:10]
-    schema_tools.require(
-        schema_tools.psql(
-            schema_tools.bootstrap_user(),
-            schema_tools.bootstrap_password(),
-            "postgres",
-            "-c",
-            f"CREATE DATABASE {database} OWNER {schema_tools.migrator_user()} TEMPLATE ppap",
-        ),
-        "create source path database",
-    )
-    settings = Settings(pg_database=database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")))
-    try:
-        yield settings, memory_objects_type()
-    finally:
-        schema_tools.require(
-            schema_tools.psql(schema_tools.bootstrap_user(), schema_tools.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {database} WITH (FORCE)"),
-            "drop source path database",
-        )
+def suite_db(schema_database, memory_objects_type):
+    return schema_database, memory_objects_type()
 
 
 def test_real_postgres_source_path_shape_and_seed_do_not_backfill_null(suite_db):

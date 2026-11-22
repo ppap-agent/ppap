@@ -35,7 +35,6 @@ type ReviewCitation = components['schemas']['ReviewCitation']
 type SelectedSource = {kind: 'machine'; reference: AuditEvidence} | {kind: 'review'; reference: ReviewCitation}
 export type AuditEvidence = components['schemas']['AuditEvidenceReference']
 export type OriginalRenderer = (file: components['schemas']['FileVersion'], evidence: AuditEvidence | null, roundId?: string) => ReactNode
-const evidenceText = (evidence: AuditEvidence, verified: boolean) => evidence.excerpt || (verified ? '该位置内容为空。' : '未提供摘录。')
 function checkTone(check: Evaluation): ResultTone {
   if (check.execution === 'queued' || check.execution === 'running') return 'outline'
   if (check.execution === 'failed') return resultTone('ERR')
@@ -165,7 +164,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       const name = target?.file?.original_filename || '本轮证据原件'
       return <section key={version} aria-label={'关联原件 ' + name} data-file-version={version} className="min-w-0 space-y-3">
         <h3 className="font-semibold"><FileName name={name}/></h3>
-        <div className="space-y-2 text-sm">{evidence.map((item, index) => <div key={index} className="space-y-1"><p className="text-muted-foreground">{locationText(item)}</p>{item.locator && item.location_gap && <p className="text-muted-foreground">{item.location_gap}</p>}<p className="whitespace-pre-wrap">{evidenceText(item, check!.evidence_verified)}</p></div>)}</div>
+        <div className="space-y-2 text-sm">{evidence.map((item, index) => <div key={index} className="space-y-1"><p className="text-muted-foreground">{locationText(item)}</p>{item.locator && item.location_gap && <p className="text-muted-foreground">{item.location_gap}</p>}<p className="whitespace-pre-wrap">{item.excerpt || '未提供摘录。'}</p></div>)}</div>
         {!target ? <Alert variant="destructive"><AlertTitle>不能读取此证据原件</AlertTitle><AlertDescription>此证据不在本次审核的文件中。</AlertDescription></Alert> : !target.file ? <Alert><AlertTitle>本次原件不可访问</AlertTitle><AlertDescription>暂时无法读取此原件。</AlertDescription></Alert> : renderOriginal ? renderOriginal(target.file, evidence[0], roundId) : <Alert><AlertTitle>原件暂不可预览</AlertTitle><AlertDescription>请下载原件查看。</AlertDescription></Alert>}
       </section>
     })}</div>
@@ -177,11 +176,11 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       <p className="whitespace-pre-wrap break-words"><HighlightText text={observation} query={query}/></p>
       {row.scope && (row.scope.unknown > 0 || row.scope.checked < row.scope.total) && <p className="text-xs text-muted-foreground">检查范围：已查 {row.scope.checked}/{row.scope.total}，未知 {row.scope.unknown}。</p>}
       {/* Places the checker program read from the original are its own reading; only other evidence asks to be checked. */}
-      {row.finding && row.evidence.length > 0 && !row.evidence_verified && row.verification_scope !== 'checker_execution' && <p className="text-xs text-warning">证据未经核实，请对照原件确认。</p>}
+      {row.finding && row.evidence.length > 0 && row.verification_scope !== 'checker_execution' && <p className="text-xs text-warning">证据未经核实，请对照原件确认。</p>}
       {row.evidence.length > 0 && <ul aria-label="证据位置" className="space-y-1 text-xs">{row.evidence.map((item, index) => {
         const target = authorizedOriginal(item.file_version_id)
         const name = item.file_version_id !== file.file.id ? target?.file?.original_filename || '本轮证据原件' : ''
-        const excerpt = item.excerpt || (row.evidence_verified && item.locator ? evidenceText(item, true) : '')
+        const excerpt = item.excerpt || ''
         return <li key={item.file_version_id + '-' + index} data-file-version={item.file_version_id} className="min-w-0 break-words">
           {name && <span className="text-muted-foreground">{name} · </span>}
           {!item.label ? <span className="text-muted-foreground">无法定位：{item.location_gap || '未提供具体位置，请对照原件。'}</span> : target ? <Button variant="link" size="xs" className="h-auto whitespace-normal text-left" onClick={() => openOriginal(row, item)}>{item.label}</Button> : <span>{item.label}<span className="text-muted-foreground">（原件不在本次审核中，无法打开）</span></span>}
@@ -204,8 +203,8 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       const target = authorizedOriginal(evidence.file_version_id)
       return <div key={evidence.file_version_id + '-' + index} data-file-version={evidence.file_version_id} className="space-y-3 border-t pt-3">
         <FileName name={target?.file?.original_filename || '本轮证据原件'}/>
-        {evidence.excerpt === clauseObservation(check) ? null : evidence.excerpt || check.evidence_verified ? <p className="whitespace-pre-wrap text-sm">{evidenceText(evidence, check.evidence_verified)}</p> : <p className="text-sm text-muted-foreground">{evidence.location_gap || '未提供具体位置，可对照本轮原件。'}</p>}
-        {evidence.location_gap && (evidence.excerpt || check.evidence_verified) && <p className="text-xs text-muted-foreground">{evidence.location_gap}</p>}
+        {evidence.excerpt === clauseObservation(check) ? null : evidence.excerpt ? <p className="whitespace-pre-wrap text-sm">{evidence.excerpt}</p> : <p className="text-sm text-muted-foreground">{evidence.location_gap || '未提供具体位置，可对照本轮原件。'}</p>}
+        {evidence.location_gap && evidence.excerpt && <p className="text-xs text-muted-foreground">{evidence.location_gap}</p>}
         <Button variant="outline" size="sm" disabled={!target} aria-label={'核对 ' + (target?.file?.original_filename || '不在本轮的原件')} onClick={() => setSource({kind: 'machine', reference: evidence})}><Icon icon={iconEye}/>{target ? '打开原件' : '原件不在本次审核中'}</Button>
       </div>
     }) : <div className="space-y-3"><p className="text-sm text-muted-foreground">未提供来源证据，请核对原件。</p><Button variant="outline" size="sm" onClick={() => setSource(null)}>打开原件</Button></div>}</section>

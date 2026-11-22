@@ -13,7 +13,7 @@ test('the review suggestion names both conclusions and links the exact prior res
   assert.equal(url.searchParams.get('clause'), 'R1')
 })
 test('suggested review is an independent filter and retains the machine result', () => {
-  const check: components['schemas']['AuditClauseEvaluation'] = {rule_item: {id: 'R1', category: '条款', rule_to_check: '规则'}, execution: 'completed', coverage: 'executed', evidence_verified: true, evidence: [], scope: null, scope_notice: null, finding: {item_key: hint.item_key, status: 'NG', classification: '依据', item: '规则', suggestions: '', priority: null, locator: null, review: null, review_hint: hint}}
+  const check: components['schemas']['AuditClauseEvaluation'] = {rule_item: {id: 'R1', category: '条款', rule_to_check: '规则'}, execution: 'completed', coverage: 'executed', evidence: [], scope: null, scope_notice: null, finding: {item_key: hint.item_key, status: 'NG', classification: '依据', item: '规则', suggestions: '', priority: null, locator: null, review: null, review_hint: hint}}
   assert.deepEqual(filterChecks([check], '', 'suggested'), [check])
   assert.deepEqual(filterChecks([check], '', 'ng'), [check])
   assert.match(reviewHintText({...hint, reason: 'cross_format_differs'}), /明确关联的 PDF 与 Excel/)

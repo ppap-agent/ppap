@@ -814,7 +814,6 @@ class AuditClauseEvaluation(TypedDict):
     execution: Literal["queued", "running", "completed", "failed"]
     coverage: CoverageState
     finding: Finding | None
-    evidence_verified: bool
     scope: SemanticScope | None
     scope_notice: str | None
     evidence: list[AuditEvidenceReference]

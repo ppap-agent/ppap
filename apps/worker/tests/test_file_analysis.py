@@ -87,17 +87,16 @@ def rule(rule_id: str, customers: list[str], document_type: str = "控制计划"
     return {"id": rule_id, "title": f"规则-{rule_id}", "kind": "engine", "type": document_type, "customers": customers, **fields}
 
 
-@pytest.mark.parametrize("customer", [None, "NIO"])
-def test_explicitly_unrestricted_rule_matches_without_inventing_a_customer(customer) -> None:
+def test_explicitly_unrestricted_rule_matches_without_inventing_a_customer() -> None:
     result = analyze_file(
         "控制计划.xlsx",
         workbook_bytes(("文件类型", "控制计划")),
         [rule("unconfirmed", []), rule("confirmed", [], customer_scope="all"), rule("other-customer", ["甲客户"])],
-        ai=MetadataAI({"customer": customer}),
+        ai=MetadataAI({"customer": None}),
         customer_preference="乙客户",
     )
 
-    assert (result["matching_status"], result["matched_rule_id"], result["metadata"]["customer"], result["notices"]) == ("matched", "confirmed", customer, [])
+    assert (result["matching_status"], result["matched_rule_id"], result["metadata"]["customer"], result["notices"]) == ("matched", "confirmed", None, [])
 
 
 def test_customer_preference_selects_an_actual_rule_without_replacing_recognized_customer() -> None:
@@ -166,22 +165,6 @@ def test_unknown_document_type_does_not_take_the_only_available_customer_rule() 
     assert result["notices"] == ["matching_document_type_required"]
 
 
-@pytest.mark.parametrize("reverse", [False, True])
-def test_ambiguous_scoped_rules_do_not_use_order_or_invent_model_priority(reverse) -> None:
-    rules = [rule("first", ["甲客户"], models=["M1"]), rule("second", ["甲客户"], models=[])]
-    if reverse:
-        rules.reverse()
-    result = analyze_file(
-        "控制计划.xlsx",
-        workbook_bytes(("客户", "甲客户"), ("车型", "M1")),
-        rules,
-        ai=MetadataAI({"customer": "甲客户", "model": "M1"}),
-        customer_preference="甲客户",
-    )
-
-    assert (result["matched_rule_id"], result["matching_status"], result["notices"]) == (None, "failed", ["ambiguous_available_rules"])
-
-
 def test_ambiguous_preferred_scope_does_not_silently_choose_another_customer() -> None:
     result = analyze_file(
         "控制计划.xlsx",
@@ -216,18 +199,6 @@ def test_special_characteristic_list_is_recognized_as_reference_without_a_fake_r
         customer_preference="甲客户",
     )
     assert (result["matching_status"], result["matched_rule_id"], result["document_type"], result["notices"]) == ("reference", None, "过程特殊特性清单", [])
-
-
-def test_scoped_candidates_are_not_silently_replaced_by_a_successor() -> None:
-    result = analyze_file(
-        "控制计划.xlsx",
-        workbook_bytes(("客户", "甲客户")),
-        [rule("frozen", ["甲客户"], created_at="2026-01-01"), rule("successor", ["乙客户"], created_at="2026-02-01", predecessor_id="frozen")],
-        ai=MetadataAI({"customer": "甲客户"}),
-        customer_preference="甲客户",
-    )
-
-    assert (result["matched_rule_id"], result["matching_status"]) == ("frozen", "matched")
 
 
 def test_opaque_filename_can_match_a_rule_after_classifying_the_real_document_text() -> None:

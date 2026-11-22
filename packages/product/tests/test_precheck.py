@@ -81,7 +81,7 @@ def test_the_b02_evidence_says_whether_the_copies_agree():
 
     assert evidence(b"", b"", ("same", "same")) == "2 份同名文件「Cgk.xlsx」逐字节相同"
     assert evidence(book("1.6"), book("1.6")) == "2 份同名文件「Cgk.xlsx」为另存／重存副本：各工作表单元格取值逐格相同"
-    assert evidence(book("1.6"), book("3.2")) == "2 份同名文件「Cgk.xlsx」为同一对象的两个版本，第 1 份与第 2 份共 1 处不同：Cgk!B1：1.6 → 3.2"
+    assert evidence(book("1.6"), book("3.2")) == "2 份同名文件「Cgk.xlsx」为同一对象的两个版本，第 1 份与第 2 份共 1 处不同：工作表「Cgk」B1：1.6 → 3.2"
     assert "工作表「Cgk」只在第 1 份中" in evidence(book("1.6"), book("1.6", title="其他"))
     rows = [file(id_, "Cgk.xlsx", doc_type="MSA") for id_ in ("a", "b")]
     assert precheck_task({"customer_preference": "UAES", "files": rows})["blocks"][0]["evidence"] == "2 份同名文件「Cgk.xlsx」字节不同，内容未逐格比对"

@@ -104,7 +104,7 @@ def test_recognized_customer_and_type_route_to_one_entry():
 
 def test_l2_presence_items_use_the_code_the_routing_table_states():
     found = results(xlsx(["包装方案"], ["零件基础信息"], ["供应商基础信息", "ACME"]), "包装.xlsx", "U09")
-    assert found["U09:S1"]["result"] == "满足" and found["U09:S1"]["location"] == "Sheet1!A1"
+    assert found["U09:S1"]["result"] == "满足" and found["U09:S1"]["location"] == "工作表「Sheet1」A1"
     assert found["U09:S2"]["result"] == "满足"
     assert (found["U09:S4"]["result"], found["U09:S4"]["code"]) == ("不满足", "W01")
     untitled = results(xlsx(["零件基础信息"]), "包装.xlsx", "U09")
@@ -115,10 +115,10 @@ def test_field_placeholder_is_empty_and_missing_column_blocks():
     content = xlsx(["物料名称", "壳体", "物料编号", "/"], ["序号", "产品特性", "特性值", "特性类型"], [1, "外径", "10±0.1", "SC"], [2, "内径", "", "CC"])
     found = results(content, "特殊特性.xlsx", "U12")
     assert found["U12:S1"]["result"] == "满足" and found["U12:S1"]["evidence"] == "物料名称=壳体"
-    assert (found["U12:S2"]["result"], found["U12:S2"]["code"], found["U12:S2"]["location"]) == ("不满足", "W02", "Sheet1!D1")
+    assert (found["U12:S2"]["result"], found["U12:S2"]["code"], found["U12:S2"]["location"]) == ("不满足", "W02", "工作表「Sheet1」D1")
     assert found["U12:S3"]["result"] == "满足"
     assert (found["U12:S7"]["result"], found["U12:S7"]["code"]) == ("不满足", "W02")
-    assert "Sheet1 第 4 行" in found["U12:S7"]["evidence"]
+    assert "工作表「Sheet1」第 4 行" in found["U12:S7"]["evidence"]
     without = results(xlsx(["物料名称", "壳体"], ["序号", "产品特性"], [1, "外径"]), "特殊特性.xlsx", "U12")
     assert (without["U12:S5"]["result"], without["U12:S5"]["code"]) == ("不满足", "B05")
 
@@ -142,7 +142,7 @@ def test_l1_placeholders_are_reported_with_the_spec_code():
     assert (bom["PC-C3"]["result"], bom["PC-C3"]["code"]) == ("不满足", "B05") and "约12" in bom["PC-C3"]["evidence"]
     assert bom["PC-B1"]["result"] == "满足"
     msa = results(xlsx(["量具编号", "待填"], ["%GRR", "8.5%"]), "MSA.xlsx", "U05")
-    assert (msa["MSA-PRE-03"]["result"], msa["MSA-PRE-03"]["code"], msa["MSA-PRE-03"]["location"]) == ("不满足", "W02", "Sheet1!B1")
+    assert (msa["MSA-PRE-03"]["result"], msa["MSA-PRE-03"]["code"], msa["MSA-PRE-03"]["location"]) == ("不满足", "W02", "工作表「Sheet1」B1")
     assert msa["MSA-PRE-16"]["result"] == "满足"
 
 
@@ -180,7 +180,7 @@ def test_word_check_boxes_and_files_without_text():
 def test_capacity_formula_mismatch_is_b06():
     content = xlsx(["零件产能评估表"], ["线体/工序类别", "良率", "合格品数", "产出数量"], ["装配", "98%", 98, 100], ["测试", "90%", 95, 100])
     found = results(content, "产能.xlsx", "L14")
-    assert (found["L14:S6"]["result"], found["L14:S6"]["code"]) == ("不满足", "B06") and "Sheet1 第 4 行" in found["L14:S6"]["location"]
+    assert (found["L14:S6"]["result"], found["L14:S6"]["code"]) == ("不满足", "B06") and "工作表「Sheet1」第 4 行" in found["L14:S6"]["location"]
     assert (found["L14:S7"]["result"], found["L14:S7"]["code"]) == ("不满足", "B05")
 
 

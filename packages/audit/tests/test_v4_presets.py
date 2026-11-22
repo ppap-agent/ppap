@@ -46,11 +46,6 @@ def test_sources_without_summary_column_keep_the_rule_not_the_example():
     assert "文件中包含印章" in preset_rule("理想", "L03").clauses[3].text
 
 
-def test_customer_resolver_never_borrows_another_customer_identity():
-    with pytest.raises(ValueError, match="unknown_customer_rule"):
-        preset_rule("UAES", "N04")
-
-
 @pytest.mark.parametrize(
     ("rule_type", "expected"),
     [

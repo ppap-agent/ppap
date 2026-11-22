@@ -1,16 +1,12 @@
 """Archive ZIP recovery through the native adapter, with controlled HTTP receipts."""
 
 import io
-import os
 import zipfile
 from urllib.parse import parse_qs, urlsplit
 
-import pytest
+from playwright.sync_api import expect, sync_playwright
 
-pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import expect, sync_playwright  # noqa: E402
-
-WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
+from .conftest import WEB, route_api_address
 
 
 def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fixed_bytes():
@@ -37,7 +33,7 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1079, "height": 853})
         page.set_default_timeout(5000)
-        page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+        route_api_address(page)
 
         def api(route):
             path = urlsplit(route.request.url).path.removeprefix("/api")

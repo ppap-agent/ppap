@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from api import app, create_app
 from api.rule_routes import customer_catalog
 from fastapi.testclient import TestClient
+from product import customers as register
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
 
@@ -43,13 +44,12 @@ def test_customer_catalog_lists_registered_customers_and_unregistered_names_as_r
     first = customer_catalog(store("first"), "first")
     # Rules name a customer by its key; any other name (a former full name included) is kept as recorded, unregistered.
     assert first["unregistered"] == ["Customer A", "UAES（联电）", "customer a", "理想汽车"]
-    assert [(row["customer_id"], row["name"], row["key"]) for row in first["customers"]] == [("uaes", "联电科技/UAES", "UAES"), ("li", "理想/Li Auto", "理想"), ("nio", "蔚来/Nio", "蔚来")]
-    li = first["customers"][1]["coverage"]
+    assert [(row["customer_id"], row["name"], row["key"]) for row in first["customers"]] == [(customer.id, customer.name, customer.key) for customer in register.CUSTOMERS]
+    li = next(row["coverage"] for row in first["customers"] if row["customer_id"] == "li")
     # Only the key counts for 理想; one type with two rules counts once; no template files here.
-    assert (li["version"], len(li["types"]), li["rule_types"], li["template_types"]) == ("V3.33", 17, ["T09", "T11"], [])
-    assert {"code": "T11", "rule_type": "控制计划"} in li["types"]
-    # One name per type code, counterparts included.
-    assert (first["type_names"]["T11"], first["type_names"]["E11"], first["type_names"]["E12"]) == ("控制计划", "顾客工程批准", "采购件质量计划（PGQP1）")
+    assert (li["rule_types"], li["template_types"]) == (["T09", "T11"], [])
+    assert [row["code"] for row in li["types"]] == list(register.find("li").type_set.types)
+    assert first["type_names"] == register.type_names()
     assert customer_catalog(store("second"), "second")["unregistered"] == ["其他企业客户"]
 
 
@@ -70,13 +70,9 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
 
     try:
         empty = first.get("/audit-customers").json()
-        assert [row["customer_id"] for row in empty["customers"]] == ["uaes", "li", "nio"]
+        assert [row["customer_id"] for row in empty["customers"]] == [customer.id for customer in register.CUSTOMERS]
         # Installed presets give every registered customer its full rule coverage.
-        assert {row["customer_id"]: (len(row["coverage"]["rule_types"]), len(row["coverage"]["types"])) for row in empty["customers"]} == {"uaes": (19, 19), "li": (17, 17), "nio": (5, 5)}
-        # PRD §1.5: 蔚来's measurement report is T01a, 理想's inspection report T01; both rules read as 全功能检验报告.
-        coverage = {row["customer_id"]: row["coverage"] for row in empty["customers"]}
-        assert "T01a" in coverage["nio"]["rule_types"] and "T01" in coverage["li"]["rule_types"]
-        assert {"code": "T01a", "rule_type": "全功能检验报告"} in coverage["nio"]["types"]
+        assert all(row["coverage"]["rule_types"] == [entry["code"] for entry in row["coverage"]["types"]] for row in empty["customers"])
         assert custom_choices(empty) == []
 
         def publish(client, customers, kind, predecessor=None):

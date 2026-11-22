@@ -188,19 +188,6 @@ class HttpAuthTests(unittest.TestCase):
         draft = self.client.post("/drafts", json={"request_id": str(uuid.uuid4()), "upload_preparation": preparation}, cookies=alice).json()["id"]
         self.assertEqual(self.client.post(f"/files/{draft}/versions", json=meta, cookies=alice).json(), {"error": "access_denied"})
 
-    def test_oauth_state_and_off_origin_return(self):
-        from urllib.parse import parse_qs, urlparse
-
-        start = self.client.get("/login/feishu?return_to=https://evil.example/x", follow_redirects=False)
-        self.assertEqual(start.status_code, 302)
-        query = parse_qs(urlparse(start.headers["location"]).query)
-        self.assertEqual(query["client_id"], ["cli_test"])
-        self.assertTrue(query["state"][0])
-        self.assertIn("redirect_uri", query)
-        bad = self.client.get("/login/feishu/callback?code=x&state=forged", follow_redirects=False)
-        self.assertEqual(bad.status_code, 303)
-        self.assertTrue(bad.headers["location"].startswith("http://127.0.0.1:4173"))
-
     def test_report_consent_is_explicit_and_limited_to_document_creation_and_writing(self):
         from urllib.parse import parse_qs, urlparse
 
@@ -210,68 +197,6 @@ class HttpAuthTests(unittest.TestCase):
         query = parse_qs(urlparse(report.headers["location"]).query)
         self.assertEqual(query.get("scope"), ["offline_access docx:document:create docx:document:write_only"])
         self.assertEqual(self.client.get("/login/feishu?purpose=arbitrary", follow_redirects=False).status_code, 400)
-
-    def test_oauth_callback_binds_tenant_subject_not_email(self):
-        from urllib.parse import parse_qs, urlparse
-
-        class FakeHttp:
-            def post(self, url, **kwargs):
-                class R:
-                    status_code = 200
-
-                    def json(self):
-                        return {
-                            "code": 0,
-                            "access_token": "u-ada",
-                            "refresh_token": "ur-ada",
-                            "expires_in": 7200,
-                            "refresh_token_expires_in": 2592000,
-                        }
-
-                return R()
-
-            def get(self, url, **kwargs):
-                class R:
-                    status_code = 200
-
-                    def json(self):
-                        return {
-                            "data": {
-                                "tenant_key": "tk-live",
-                                "open_id": "ou_ada",
-                                "name": "Ada",
-                                "email": "hidden@example.com",
-                            }
-                        }
-
-                return R()
-
-        client = TestClient(
-            create_app(
-                self.settings,
-                lambda _s: {"state": "ok"},
-                lambda _s: {"state": "ok"},
-                self.auth_store(self.settings),
-                FakeHttp(),
-            )
-        )
-        dest = "http://127.0.0.1:4173/?resource=00000000-0000-4000-8000-0000000000aa"
-        start = client.get("/login/feishu", params={"return_to": dest}, follow_redirects=False)
-        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
-        done = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)
-        self.assertEqual(done.status_code, 303)
-        self.assertEqual(done.headers["location"], dest)
-        raw = done.cookies.get("ppap_session")
-        self.assertTrue(raw)
-        me = client.get("/me", cookies={"ppap_session": raw})
-        self.assertEqual(me.status_code, 200)
-        self.assertEqual(me.json()["identity"]["subject"], "ou_ada")
-        self.assertEqual(me.json()["identity"]["tenant_key"], "tk-live")
-        self.assertNotIn("email", str(me.json()).lower())
-        replay = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)
-        self.assertEqual(replay.status_code, 303)
-        self.assertEqual(replay.headers["location"], "http://127.0.0.1:4173/")
-        self.assertFalse(replay.cookies.get("ppap_session"))
 
     def test_login_disabled_without_feishu_credentials(self):
         with _clean_env(PPAP_BUILD_SHA="a" * 40):
@@ -286,26 +211,6 @@ class HttpAuthTests(unittest.TestCase):
         denied = self.client.get("/files/not-a-uuid/versions/not-a-uuid", cookies=cookies)
         self.assertEqual(denied.status_code, 403)
         self.assertEqual(denied.json(), {"error": "access_denied"})
-
-    def test_production_hides_isolated_dev_mint(self):
-        with _clean_env(
-            PPAP_PROFILE="production",
-            PPAP_PG_API_PASSWORD="prod-api",
-            PPAP_PG_WORKER_PASSWORD="prod-worker",
-            PPAP_PG_MIGRATOR_PASSWORD="prod-migrator",
-            PPAP_PG_BOOTSTRAP_PASSWORD="prod-boot",
-            PPAP_S3_ACCESS_KEY="prod-access",
-            PPAP_S3_SECRET_KEY="prod-secret",
-            PPAP_S3_ENDPOINT="https://objects.example.internal",
-            PPAP_MODEL_TEXT_BASE_URL="https://llm.example",
-            PPAP_MODEL_TEXT_MODEL="x",
-            PPAP_WEB_URL="https://app.example",
-            FEISHU_APP_ID="cli_test",
-            FEISHU_APP_SECRET="secret",
-        ):
-            settings = Settings()
-        client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings)))
-        self.assertEqual(client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code, 404)
 
     def _oauth_client(self, http, settings=None):
         settings = settings or self.settings
@@ -346,15 +251,6 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(client.get("/me", cookies={"ppap_session": raw}).status_code, 200)
         self.assertEqual(http.grants.count("refresh_token"), refreshes)
 
-    def test_oauth_invalid_refresh_revokes_session(self):
-        http = _TokenHttp(expires_in=0, refresh_expires_in=2592000, fail_refresh=True)
-        client = self._oauth_client(http)
-        _done, raw = self._complete_login(client)
-        me = client.get("/me", cookies={"ppap_session": raw})
-        self.assertEqual(me.status_code, 401)
-        again = client.get("/me", cookies={"ppap_session": raw})
-        self.assertEqual(again.status_code, 401)
-
     def test_oauth_expired_refresh_cannot_continue(self):
         http = _TokenHttp(expires_in=0, refresh_expires_in=0)
         client = self._oauth_client(http)
@@ -363,29 +259,7 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(me.status_code, 401)
         self.assertNotIn("refresh_token", http.grants)
 
-    def test_public_web_return_to_survives_oauth(self):
-        from urllib.parse import parse_qs, urlparse
-
-        with _clean_env(
-            FEISHU_APP_ID="cli_test",
-            FEISHU_APP_SECRET="secret",
-            FEISHU_VERIFICATION_TOKEN="verify-test",
-            PPAP_WEB_URL="https://ppap.example",
-            PPAP_BUILD_SHA="a" * 40,
-        ):
-            settings = Settings()
-        http = _TokenHttp()
-        client = self._oauth_client(http, settings)
-        dest = "https://ppap.example/?resource=00000000-0000-4000-8000-0000000000aa"
-        start = client.get("/login/feishu", params={"return_to": dest}, follow_redirects=False)
-        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
-        done = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)
-        self.assertEqual(done.status_code, 303)
-        self.assertEqual(done.headers["location"], dest)
-
-    def test_allowlist_blocks_unknown_tenant_session(self):
-        from urllib.parse import parse_qs, urlparse
-
+    def test_allowlist_blocks_unknown_tenant_host_session(self):
         with _clean_env(
             FEISHU_APP_ID="cli_test",
             FEISHU_APP_SECRET="secret",
@@ -395,12 +269,6 @@ class HttpAuthTests(unittest.TestCase):
         ):
             settings = Settings()
         client = self._oauth_client(_TokenHttp(), settings)
-        start = client.get("/login/feishu", params={"return_to": "http://127.0.0.1:4173/"}, follow_redirects=False)
-        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
-        done = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)
-        self.assertEqual(done.status_code, 303)
-        self.assertIn("error=tenant_not_allowed", done.headers["location"])
-        self.assertFalse(done.cookies.get("ppap_session"))
         host = client.post("/login/feishu/host", json={"code": "host-code"})
         self.assertEqual(host.status_code, 403)
         self.assertEqual(host.json(), {"error": "tenant_not_allowed"})

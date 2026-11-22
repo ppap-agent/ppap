@@ -1,17 +1,13 @@
 """Native re-audit input choices through controlled public HTTP responses."""
 
-import os
 from copy import deepcopy
 from urllib.parse import urlsplit
 
 import pytest
+from playwright.sync_api import expect, sync_playwright
 
-pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import expect, sync_playwright  # noqa: E402
+from .conftest import WEB, pick_audit_files, route_api_address
 
-from .conftest import pick_audit_files  # noqa: E402
-
-WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 ROUND = "00000000-0000-4000-8000-000000000001"
 
 
@@ -34,7 +30,7 @@ def reaudit_routes(page, *, accept=False):
     uploaded = {}
     task = None
     preparation = None
-    page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+    route_api_address(page)
 
     def api(route):
         nonlocal task, preparation

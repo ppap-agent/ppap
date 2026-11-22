@@ -2,15 +2,12 @@
 
 import copy
 import json
-import os
 from urllib.parse import parse_qs, urlsplit
 
-import pytest
+from playwright.sync_api import expect, sync_playwright
 
-pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import expect, sync_playwright  # noqa: E402
+from .conftest import WEB, route_api_address
 
-WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 TASK = "00000000-0000-4000-8000-000000000001"
 ROUND = "00000000-0000-4000-8000-000000000002"
 VERSION = "00000000-0000-4000-8000-000000000003"
@@ -58,9 +55,7 @@ def round_report_routes(page, *, report_state="ready", verification=None):
         "failure": None,
         "conclusion": "NG",
         "counts": {"pass_count": 0, "ng_count": 1, "unknown_count": 0, "not_covered_count": 0, "error_count": 0},
-        "checks": [
-            {"rule_item": rule["body"]["rules"][0], "execution": "completed", "coverage": "executed", "finding": finding, "evidence": [], "scope": None, "evidence_verified": False, "review": None}
-        ],
+        "checks": [{"rule_item": rule["body"]["rules"][0], "execution": "completed", "coverage": "executed", "finding": finding, "evidence": [], "scope": None, "review": None}],
         "unmapped_findings": [],
         "summary": {"conclusion": "NG", "text": "不符合 1 项。", "corrective_actions": [], "extended_suggestions": []},
         "report": report,
@@ -128,7 +123,7 @@ def round_report_routes(page, *, report_state="ready", verification=None):
         ],
     }
     calls = []
-    page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+    route_api_address(page)
 
     def api(route):
         request = route.request

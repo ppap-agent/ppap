@@ -1,16 +1,9 @@
 """Product upload UI with controlled HTTP; real Feishu delivery is checked separately."""
 
-import os
-
 import pytest
+from playwright.sync_api import expect, sync_playwright
 
-try:
-    from playwright.sync_api import expect, sync_playwright
-except ImportError:
-    expect = sync_playwright = None
-
-pytestmark = pytest.mark.skipif(sync_playwright is None, reason="requires e2e dependency group")
-WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
+from .conftest import WEB, route_api_address
 
 
 @pytest.mark.parametrize("recover_with_cloud", [False, True])
@@ -18,7 +11,7 @@ def test_choose_folder_cancel_and_resume_keep_original_upload_request(recover_wi
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1440, "height": 954})
-        page.route("**/runtime-config.json", lambda r: r.fulfill(json={"api_url": WEB + "/api"}))
+        route_api_address(page)
         page.route("**/api/**", lambda r: r.fulfill(status=404, json={"error": "unexpected_test_request"}))
         page.route("**/api/public-config", lambda r: r.fulfill(json={"profile": "production", "login": "feishu", "api_url": WEB + "/api", "personal_drive_upload": True}))
         page.route(

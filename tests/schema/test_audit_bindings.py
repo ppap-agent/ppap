@@ -1,6 +1,5 @@
 """Per-target rules and acceptance concurrency against actual PostgreSQL."""
 
-import os
 import threading
 import unittest
 import uuid
@@ -12,83 +11,30 @@ import pytest
 
 class AuditDatabaseCase(unittest.TestCase):
     @pytest.fixture(autouse=True)
-    def _schema_support(self, schema_tools, memory_objects_type, sample_rule_body_factory, audit_round):
+    def _schema_support(self, schema_tools, schema_database, memory_objects_type, sample_rule_body_factory, audit_round, generated_rules):
         self.schema = schema_tools
+        self.database = schema_database.pg_database
+        self.settings = schema_database
         self.memory_objects_type = memory_objects_type
         self.rule_body = sample_rule_body_factory
         self.audit_round = audit_round
 
     def setUp(self):
         from product import build_product_store
-        from product.settings import Settings
-
-        self.schema.require_postgres()
-        self.database = "ppap_bindings_" + uuid.uuid4().hex[:12]
-        # Cloning the migrated database is far cheaper than replaying every migration per test.
-        self.schema.require(
-            self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {self.schema.migrator_user()} TEMPLATE ppap"),
-            "create isolated audit DB",
-        )  # noqa: E501
-        self.addCleanup(
-            lambda: self.schema.require(
-                self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {self.database} WITH (FORCE)"), "drop isolated audit DB"
-            )
-        )  # noqa: E501
-        self.settings = Settings(
-            usage_charge_enabled=False,
-            git_sha="a" * 40,
-            pg_database=self.database,
-            pg_host=os.environ.get("PGHOST", "127.0.0.1"),
-            pg_port=int(os.environ.get("PGPORT", "5432")),
-            pg_migrator_user=self.schema.migrator_user(),
-            pg_migrator_password=self.schema.migrator_password(),
-        )  # noqa: E501
-        self.store = build_product_store(self.settings, objects=self.memory_objects_type())
-        # Other owners may have seeded the template DB with object references.
-        # This test has a fresh object store, so clone schema, not their data.
         from product.db import connect
         from psycopg import sql
 
+        self.settings.usage_charge_enabled = False
+        self.settings.git_sha = "a" * 40
+        self.store = build_product_store(self.settings, objects=self.memory_objects_type())
+        # Other owners may have seeded the template DB with object references.
+        # This test has a fresh object store, so clone schema, not their data.
         with connect(self.settings, "migrator") as conn:
             tables = conn.execute("SELECT schemaname,tablename FROM pg_tables WHERE schemaname IN ('product','engine')").fetchall()
             names = [sql.Identifier(schema, table) for schema, table in tables if table not in {"schema_migrations", "trial_cutover_baselines"}]
             conn.execute(sql.SQL("TRUNCATE TABLE {} CASCADE").format(sql.SQL(", ").join(names)))
         self.store.seed_isolated_dev()
         self.alice = self.store.principal_for_fixture("alice")
-        publish = self.store.publish_rule
-
-        def publish_with_program(principal, *args, **kwargs):
-            # Uploaded rules reach audits only with an adopted program; give each an unbound one.
-            rule = publish(principal, *args, **kwargs)
-            self.adopt_unbound_program(principal, rule)
-            return rule
-
-        self.store.publish_rule = publish_with_program
-
-    def adopt_unbound_program(self, principal, rule):
-        from product.db import connect
-        from product.store.suite_releases import SuiteReleaseStore
-        from product.store.suites import programless_suite_keys
-
-        body = rule.get("body") or rule
-        key = body.get("suite_key")
-        if not isinstance(key, str) or not key.startswith("custom:"):
-            return
-        with connect(self.settings, "api") as conn:
-            if not programless_suite_keys(conn, principal.tenant_id, [key]):
-                return
-            head = conn.execute("SELECT current_revision_id, revision FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key=%s", (principal.tenant_id, key)).fetchone()
-        releases = SuiteReleaseStore(self.settings, self.store.objects, role="api")
-        program = releases.suites.create_revision(
-            tenant_id=principal.tenant_id,
-            suite_key=key,
-            # Binds no clause and runs no code, like the starter; it is only not the starter.
-            files={"checker.py": b'"""Unbound test program."""\n'},
-            created_by=principal.user_id,
-            base_revision_id=str(head[0]),
-            related_suite_keys=(),
-        )
-        releases.publish(principal, key, program.id, head[1], str(uuid.uuid4()), True)
 
     def upload(self, name):
         # Each name its own content: one task never audits the same content twice.
@@ -1700,7 +1646,6 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(current.status_code, 200)
         audit = current.json()["files"][0]["audit"]
         self.assertEqual((audit["conclusion"], audit["counts"]["pass_count"]), ("PASS", 1))
-        self.assertFalse(audit["checks"][0]["evidence_verified"])
         self.assertEqual(audit["checks"][0]["evidence"][0]["excerpt"], "P-1")
         historical = self.display_client.get(f"/rounds/{task['round_id']}?read_view=true").json()
         self.assertEqual(historical["result_job_id"], job.id)
@@ -1823,14 +1768,12 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         audit = observed["files"][0]["audit"]
         self.assertEqual((observed["state"], audit["conclusion"], audit["report"]["state"]), ("reviewing", "PASS", "pending"))
         self.assertEqual(audit["counts"]["pass_count"], 1)
-        self.assertFalse(audit["checks"][0]["evidence_verified"])
         pdf_job = worker.claim_job("unverified-pdf")
         self.assertEqual(pdf_job.kind, "report_pdf")
         process_claimed(worker, pdf_job, "unverified-pdf")
         finished = self.display_client.get(path).json()
         final_audit = finished["files"][0]["audit"]
         self.assertEqual((finished["state"], final_audit["conclusion"], final_audit["report"]["state"]), ("completed", "PASS", "ready"))
-        self.assertFalse(final_audit["checks"][0]["evidence_verified"])
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
     def test_long_pdf_filename_preserves_the_pdf_suffix(self):

@@ -3,6 +3,7 @@
 import uuid
 
 from api import create_app
+from audit.presets import customer_presets
 from fastapi.testclient import TestClient
 from product import customers
 from product.identity import SESSION_COOKIE
@@ -29,11 +30,12 @@ def test_new_enterprise_receives_all_preset_rules_without_upload(auth_store_fact
     store.upsert_feishu_identity(tenant, "first")
     peer = store.upsert_feishu_identity(tenant, "second")
     assert {row["id"] for row in store.list_rules(peer.tenant_id) if row["rule_profile"] == "v4"} == first_ids
+    entries = {preset.entry_id for preset in customer_presets()}
     for rule in presets:
         actual = client.get("/rules/" + rule["id"])
         assert actual.status_code == 200
         body = actual.json()["body"]
-        assert body["preset_key"][0] in "ULN"
+        assert body["preset_key"] in entries
         assert body["rules"]
         assert actual.json()["created_by"] is None
         assert actual.json()["source_file_version_id"] is None

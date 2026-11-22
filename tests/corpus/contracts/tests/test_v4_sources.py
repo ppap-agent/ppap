@@ -1,7 +1,4 @@
-"""V4 shipped rule text is traceable to the original DOCX and 00-A matrix.
-
-This checks provenance, not customer Checker correctness or runtime coverage.
-"""
+"""Customer leaves run their source clauses over real templates with controlled changes."""
 
 from pathlib import Path
 

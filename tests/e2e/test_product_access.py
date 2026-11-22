@@ -1,19 +1,13 @@
 """Controlled login interleavings through the product UI and HTTP boundary."""
 
-import os
 import re
 from urllib.parse import parse_qs, quote, urlsplit
 
 import pytest
+from playwright.sync_api import expect, sync_playwright
 
-try:
-    from playwright.sync_api import expect, sync_playwright
-except ImportError:
-    expect = sync_playwright = None
+from .conftest import WEB, route_api_address
 
-pytestmark = pytest.mark.skipif(sync_playwright is None, reason="requires the e2e dependency group")
-
-WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 PRINCIPAL = {
     "user_id": "access-test-user",
     "tenant_id": "access-test-tenant",
@@ -42,7 +36,7 @@ def _page(user_agent):
         browser = playwright.chromium.launch()
         context = browser.new_context(user_agent=user_agent) if user_agent else browser.new_context()
         page = context.new_page()
-        page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+        route_api_address(page)
         page.route("**/api/**", lambda route: route.fulfill(status=404, json={"error": "unexpected_test_request"}))
         page.route("**/api/audit-customers/default", lambda route: route.fulfill(json={"customer_preference": None, "revision": 0}))
         yield page

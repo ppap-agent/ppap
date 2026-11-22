@@ -858,10 +858,6 @@ class ContainerBoundaryTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "MODEL_PROTOCOL_ERROR")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def test_progress_is_an_appended_stream_read_by_complete_lines():
     import pytest
     from agent.execution.isolation.progress import Progress, parse_progress

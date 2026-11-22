@@ -125,10 +125,6 @@ def rule_clauses(path: Path = RULE_CLAUSES) -> dict[str, str]:
     return mapping
 
 
-def clause_leaf(clause: str) -> str:
-    return "uaes/" + clause.split(":", 1)[0]
-
-
 # 比对结论
 MATCH, DIFFERENT, UNCOMPARABLE = "一致", "不一致", "无法比较"
 FREE_TEXT = "自由文字，不逐字判分"
@@ -153,11 +149,6 @@ class Comparison:
 
     def line(self) -> str:
         return f"{self.sheet} 第{self.excel_row}行 {self.key} [{self.column}] 预期={self.expected!r} 实际={self.actual!r} {self.outcome}" + (f"（{self.reason}）" if self.reason else "")
-
-
-def submitted_name(row: EvaluationRow) -> str:
-    """提交文件名就是资料包里的文件名（改名原件按资料包名提交）。"""
-    return PurePosixPath(row.keys["存储地址"]).name
 
 
 def _empty(value: Any) -> bool:
@@ -212,31 +203,6 @@ def compare_audit(row: EvaluationRow, actual: dict[str, Any] | None) -> list[Com
         out.append(Comparison(row.sheet, row.excel_row, key, "问题等级", answers["问题等级"], level, MATCH if expected == level else DIFFERENT, "致命=A、主要=B、次要=C；产品取条款默认严重程度"))
     out += [Comparison(row.sheet, row.excel_row, key, column, answers[column], None, UNCOMPARABLE, FREE_TEXT) for column in ("审核依据", "整改建议")]
     return out
-
-
-def defect_pairs() -> list[tuple[EvaluationRow, EvaluationRow]]:
-    """每份缺陷样本与同零件原件目录里的正常件：去掉文件名里「-test-…」后同名（MSA 缺陷样本本就同名）。"""
-    precheck, _ = load_evaluation()
-    pairs = []
-    for defect in (row for row in precheck if row.is_defect):
-        name = PurePosixPath(submitted_name(defect))
-        normal_name = re.sub(r"\s*-\s*test-.*$", "", name.stem) + name.suffix
-        part = defect.source.relative_to(SAMPLES).parts[0]
-        normal = [row for row in precheck if not row.is_defect and row.source.relative_to(SAMPLES).parts[0] == part and submitted_name(row) == normal_name]
-        if len(normal) != 1:
-            raise ValueError(f"缺陷样本找不到唯一的正常件：{name}")
-        pairs.append((defect, normal[0]))
-    return pairs
-
-
-def defect_findings(defect: EvaluationRow, normal: EvaluationRow, comparisons: list[Comparison]) -> tuple[list[Comparison], list[Comparison]]:
-    """(漏检, 误判)：只看预检结果与审核结果两列。缺陷件与标注不同为漏检，正常件与标注不同为误判。"""
-    precheck, audit = load_evaluation()
-    addresses = {(row.sheet, row.excel_row): row.keys["存储地址"] for row in (*precheck, *audit)}
-    differing = [item for item in comparisons if item.column in {"预检结果", "审核结果"} and item.outcome == DIFFERENT]
-    missed = [item for item in differing if addresses[(item.sheet, item.excel_row)] == defect.keys["存储地址"]]
-    false = [item for item in differing if addresses[(item.sheet, item.excel_row)] == normal.keys["存储地址"]]
-    return missed, false
 
 
 def sample_results(directory: Path) -> tuple[dict[tuple[Path, str], dict[str, Any]], dict[Path, dict[str, Any]]]:

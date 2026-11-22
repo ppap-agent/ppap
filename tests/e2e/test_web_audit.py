@@ -2,21 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 
-try:
-    from playwright.sync_api import expect, sync_playwright
-except ImportError:  # pragma: no cover - optional until the e2e job installs Playwright
-    sync_playwright = None
-else:
-    expect.set_options(timeout=20_000)
+from playwright.sync_api import expect, sync_playwright
+
+from .conftest import WEB
 
 
-WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
-
-
-@unittest.skipUnless(sync_playwright, "playwright not installed")
 class DocsAddonEntryTests(unittest.TestCase):
     def test_docs_addon_entry_reports_missing_host(self):
         with sync_playwright() as playwright:
@@ -31,7 +23,3 @@ class DocsAddonEntryTests(unittest.TestCase):
             self.assertTrue(href and href.rstrip("/").endswith("/files"))
             expect(page.get_by_test_id("addon-submit")).to_be_disabled()
             browser.close()
-
-
-if __name__ == "__main__":
-    unittest.main()

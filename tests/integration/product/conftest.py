@@ -13,7 +13,6 @@ import pytest
 from agent.execution.guest_model import ModelGrant
 from product import build_product_store
 from product.db import connect
-from product.files import ObjectExists, ObjectMissing, ObjectTooLarge
 from product.fixtures import create_test_database, test_database_name
 from product.settings import ISOLATED_DEV_SECRET, Settings
 from product.store import AuthStore
@@ -23,35 +22,11 @@ from psycopg.rows import dict_row
 # Personal models have no built-in endpoint; tests approve their controlled one.
 os.environ.setdefault("PPAP_TENANT_MODEL_ALLOWED_BASE_URLS", "https://models.example.test")
 
-_CI = bool(os.environ.get("CI"))
 # Tests reset the whole schema, so each test process owns a database it creates and migrates
 # itself; the isolated-dev `ppap` database is never connected to, cloned or truncated.
 os.environ["PPAP_PG_DATABASE"] = test_database_name()
 _CREATED: set[str] = set()
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
-
-
-class MemoryObjects:
-    """Small in-memory fake for the object-storage boundary only."""
-
-    def __init__(self) -> None:
-        self.data: dict[str, bytes] = {}
-
-    def put_exclusive(self, key: str, body: bytes, content_type: str) -> None:
-        if key in self.data:
-            raise ObjectExists()
-        self.data[key] = body
-
-    def get(self, key: str, *, max_bytes: int | None = None) -> bytes:
-        if key not in self.data:
-            raise ObjectMissing()
-        body = self.data[key]
-        if max_bytes is not None and len(body) > max_bytes:
-            raise ObjectTooLarge()
-        return body
-
-    def delete(self, key: str) -> None:
-        self.data.pop(key, None)
 
 
 def reset_product_database(settings: Settings) -> None:
@@ -72,115 +47,38 @@ def reset_product_database(settings: Settings) -> None:
         conn.execute("DELETE FROM product.trial_cutover_baselines WHERE tenant_key LIKE 'isolated-dev-%'")
 
 
-def make_auth_store(
-    settings: Settings | None = None,
-    objects=None,
-    *,
-    reset: bool = True,
-    role: str = "migrator",
-) -> AuthStore:
-    if (_CI or os.environ.get("CI")) and not os.environ.get("PGPORT"):
-        raise RuntimeError("CI database fixture requires an explicit PGPORT; refusing default database")
-    settings = settings or Settings()
-    settings.pg_host = "127.0.0.1"
-    settings.pg_port = int(os.environ.get("PGPORT", "5432"))
-    settings.pg_database = test_database_name()
-    if settings.pg_database not in _CREATED:
-        create_test_database(settings.pg_host, settings.pg_port, Path(__file__).resolve().parents[3] / "migrations")
-        _CREATED.add(settings.pg_database)
-    settings.pg_migrator_user = "ppap_migrator"
-    settings.pg_migrator_password = ISOLATED_DEV_SECRET
-    if reset:
-        reset_product_database(settings)
-    return build_product_store(settings, objects=objects or MemoryObjects(), role=role)
-
-
-def insert_usage_event(
-    store: AuthStore,
-    principal,
-    ai_item_id: str,
-    consumed_points: int,
-    is_free_trial: bool,
-    external_status: str,
-    *,
-    trace_id: str | None = None,
-    round_id: str | None = None,
-) -> dict:
-    event_id = str(uuid.uuid4())
+def insert_usage_event(store: AuthStore, principal, ai_item_id: str, consumed_points: int, is_free_trial: bool, external_status: str) -> dict:
     with store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
-        if trace_id:
-            cur.execute(
-                """SELECT * FROM product.usage_events
-                   WHERE tenant_id = %s AND trace_id = %s
-                   LIMIT 1""",
-                (principal.tenant_id, trace_id),
-            )
-            existing = cur.fetchone()
-            if existing is not None:
-                return store.usage_event_public(existing)
         cur.execute(
             """
-            INSERT INTO product.usage_events
-                (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                 external_status, trace_id, round_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO product.usage_events (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial, external_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
-            (
-                event_id,
-                principal.tenant_id,
-                principal.user_id,
-                ai_item_id,
-                int(consumed_points),
-                bool(is_free_trial),
-                external_status,
-                trace_id,
-                round_id,
-            ),
+            (str(uuid.uuid4()), principal.tenant_id, principal.user_id, ai_item_id, int(consumed_points), bool(is_free_trial), external_status),
         )
-        row = cur.fetchone()
-    return store.usage_event_public(row)
+        return store.usage_event_public(cur.fetchone())
 
 
 @pytest.fixture
-def auth_store_factory():
-    return make_auth_store
+def auth_store_factory(memory_objects_type):
+    def make(settings: Settings | None = None, objects=None, *, reset: bool = True, role: str = "migrator") -> AuthStore:
+        if os.environ.get("CI") and not os.environ.get("PGPORT"):
+            raise RuntimeError("CI database fixture requires an explicit PGPORT; refusing default database")
+        settings = settings or Settings()
+        settings.pg_host = "127.0.0.1"
+        settings.pg_port = int(os.environ.get("PGPORT", "5432"))
+        settings.pg_database = test_database_name()
+        if settings.pg_database not in _CREATED:
+            create_test_database(settings.pg_host, settings.pg_port, Path(__file__).resolve().parents[3] / "migrations")
+            _CREATED.add(settings.pg_database)
+        settings.pg_migrator_user = "ppap_migrator"
+        settings.pg_migrator_password = ISOLATED_DEV_SECRET
+        if reset:
+            reset_product_database(settings)
+        return build_product_store(settings, objects=objects or memory_objects_type(), role=role)
 
-
-@pytest.fixture
-def generated_rules(monkeypatch):
-    """Uploaded rules here stand for rules whose program was generated on the rule page.
-
-    The adopted program binds no clause and runs no code, like the starter; it is only not
-    the starter, so the rule is offered for audit and its clauses stay unsupported.
-    """
-    from product.store.suite_releases import SuiteReleaseStore
-    from product.store.suites import programless_suite_keys
-
-    publish = AuthStore.publish_rule
-
-    def publish_generated(self, principal, *args, **kwargs):
-        rule = publish(self, principal, *args, **kwargs)
-        key = (rule.get("body") or {}).get("suite_key")
-        if not isinstance(key, str) or not key.startswith("custom:"):
-            return rule
-        with connect(self.settings, "api") as conn:
-            if not programless_suite_keys(conn, principal.tenant_id, [key]):
-                return rule
-            head = conn.execute("SELECT current_revision_id, revision FROM product.tenant_suite_heads WHERE tenant_id=%s AND suite_key=%s", (principal.tenant_id, key)).fetchone()
-        releases = SuiteReleaseStore(self.settings, self.objects, role="api")
-        program = releases.suites.create_revision(
-            tenant_id=principal.tenant_id,
-            suite_key=key,
-            files={"checker.py": b'"""Unbound test program."""\n'},
-            created_by=principal.user_id,
-            base_revision_id=str(head[0]),
-            related_suite_keys=(),
-        )
-        releases.publish(principal, key, program.id, head[1], str(uuid.uuid4()), True)
-        return rule
-
-    monkeypatch.setattr(AuthStore, "publish_rule", publish_generated)
+    return make
 
 
 @pytest.fixture

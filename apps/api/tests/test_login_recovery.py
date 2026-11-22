@@ -97,7 +97,7 @@ def test_success_keeps_the_deep_link_and_untrusted_states_never_supply_a_return_
     def provider(request):
         if request.method == "POST":
             return httpx.Response(200, json={"code": 0, "access_token": "test-access", "expires_in": 3600})
-        return httpx.Response(200, json={"data": {"tenant_key": tenant, "open_id": "test-user", "name": "Test"}})
+        return httpx.Response(200, json={"data": {"tenant_key": tenant, "open_id": "test-user", "name": "Test", "email": "hidden@example.com"}})
 
     with httpx.Client(transport=httpx.MockTransport(provider)) as http, TestClient(create_app(settings, auth_store=store, http=http)) as client:
         dest = "http://127.0.0.1:4173/__audit-native?task=original-task&view=usage&report=1#original-clause"
@@ -106,7 +106,10 @@ def test_success_keeps_the_deep_link_and_untrusted_states_never_supply_a_return_
         response = client.get("/login/feishu/callback", params={"state": state, "code": "test-code"}, follow_redirects=False)
         assert response.headers["location"] == dest
         assert response.cookies.get(SESSION_COOKIE)
-        assert client.get("/me").json()["identity"] == {"provider": "feishu", "app_id": settings.feishu_app_id, "tenant_key": tenant, "subject": "test-user"}
+        me = client.get("/me").json()
+        # The identity is the tenant and subject; the provider's email is neither identity nor shown.
+        assert me["identity"] == {"provider": "feishu", "app_id": settings.feishu_app_id, "tenant_key": tenant, "subject": "test-user"}
+        assert "email" not in str(me).lower()
         for candidate in (state, "forged-state", ""):
             refused = client.get("/login/feishu/callback", params={"state": candidate, "code": "test-code", "return_to": dest}, follow_redirects=False)
             assert refused.headers["location"] == "http://127.0.0.1:4173/"

@@ -4,32 +4,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+import uuid
 from pathlib import Path
 
 import pytest
-from product.files import ObjectExists, ObjectMissing
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-class MemoryObjects:
-    """Schema-local object-storage boundary fake."""
-
-    def __init__(self) -> None:
-        self.data: dict[str, bytes] = {}
-
-    def put_exclusive(self, key: str, body: bytes, content_type: str) -> None:
-        if key in self.data:
-            raise ObjectExists()
-        self.data[key] = body
-
-    def get(self, key: str) -> bytes:
-        if key not in self.data:
-            raise ObjectMissing()
-        return self.data[key]
-
-    def delete(self, key: str) -> None:
-        self.data.pop(key, None)
 
 
 def sample_rule_body() -> dict:
@@ -212,9 +192,7 @@ class SchemaTools:
         message = "postgres container is not reachable with container-native psql"
         if detail:
             message = f"{message}: {detail}"
-        if os.environ.get("CI"):
-            pytest.fail(message)
-        pytest.skip(message)
+        pytest.fail(message)
 
     def applied(self, database: str) -> list[str]:
         proc = self.psql(
@@ -235,10 +213,26 @@ def schema_tools():
 
 
 @pytest.fixture
-def memory_objects_type():
-    return MemoryObjects
+def sample_rule_body_factory():
+    return sample_rule_body
 
 
 @pytest.fixture
-def sample_rule_body_factory():
-    return sample_rule_body
+def schema_database(schema_tools):
+    """Settings for a fresh database cloned from the migrated `ppap` template, dropped afterwards."""
+    from product.settings import Settings
+
+    schema_tools.require_postgres()
+    database = "ppap_schema_" + uuid.uuid4().hex[:12]
+    admin = (schema_tools.bootstrap_user(), schema_tools.bootstrap_password(), "postgres", "-c")
+    schema_tools.require(schema_tools.psql(*admin, f"CREATE DATABASE {database} OWNER {schema_tools.migrator_user()} TEMPLATE ppap"), "create test database")
+    try:
+        yield Settings(
+            pg_database=database,
+            pg_host=os.environ.get("PGHOST", "127.0.0.1"),
+            pg_port=int(os.environ.get("PGPORT", "5432")),
+            pg_migrator_user=schema_tools.migrator_user(),
+            pg_migrator_password=schema_tools.migrator_password(),
+        )
+    finally:
+        schema_tools.require(schema_tools.psql(*admin, f"DROP DATABASE {database} WITH (FORCE)"), "drop test database")

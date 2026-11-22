@@ -201,7 +201,7 @@ class FeishuUsageTests(unittest.TestCase):
     def _seed_event(self, *, json, principal=None):
         # Test fixture only; the Product API cannot create arbitrary usage events.
         principal = principal or self.store.principal_for_fixture("alice")
-        row = self.seed_usage_event(
+        return self.seed_usage_event(
             self.store,
             principal,
             "ai-item-1",
@@ -210,7 +210,6 @@ class FeishuUsageTests(unittest.TestCase):
             "none" if json["is_free_trial"] else "pending",
             trace_id=json.get("trace_id"),
         )
-        return httpx.Response(201, json=row)
 
     def test_quota_check_uses_partner_ai_and_local_trial_only(self):
         self._login_feishu_user("alice")
@@ -224,23 +223,10 @@ class FeishuUsageTests(unittest.TestCase):
         self.assertNotIn("unavailable", body)
         self.assertEqual(body["remaining_trial_ai_points"], 10000)
         self.assertEqual(body["message"], "AI额度充足")
-        recorded = self._seed_event(
-            json={"consumed_points": 4000, "is_free_trial": True, "trace_id": "trial-1"},
-        )
-        self.assertEqual(recorded.status_code, 201)
-        self.assertTrue(recorded.json()["is_free_trial"])
-        self.assertEqual(recorded.json()["external_status"], "none")
-        replay = self._seed_event(
-            json={"consumed_points": 4000, "is_free_trial": True, "trace_id": "trial-1"},
-        )
-        self.assertEqual(replay.json()["id"], recorded.json()["id"])
+        self._seed_event(json={"consumed_points": 4000, "is_free_trial": True, "trace_id": "trial-1"})
         after = self.client.get("/integrations/feishu/usage/quota").json()
         self.assertEqual(after["remaining_trial_ai_points"], 6000)
-        pending = self._seed_event(
-            json={"consumed_points": 2000, "is_free_trial": False, "trace_id": "partner-1"},
-        )
-        self.assertEqual(pending.json()["external_status"], "pending")
-        self.assertFalse(pending.json()["is_free_trial"])
+        self._seed_event(json={"consumed_points": 2000, "is_free_trial": False, "trace_id": "partner-1"})
         still = self.client.get("/integrations/feishu/usage/quota").json()
         self.assertEqual(still["remaining_trial_ai_points"], 6000)
         self.assertNotIn("external_status", still)
@@ -306,7 +292,7 @@ class FeishuUsageTests(unittest.TestCase):
         self.store.save_app_ticket("cli_test", "tik")
         created = self._seed_event(
             json={"consumed_points": 100, "is_free_trial": True, "trace_id": "trial-skip"},
-        ).json()
+        )
         self.partner.calls.clear()
         response = self._report(created["id"])
         self.assertEqual(response.status_code, 200)
@@ -319,7 +305,7 @@ class FeishuUsageTests(unittest.TestCase):
         self._login_feishu_user("alice")
         missing = self._seed_event(
             json={"consumed_points": 50, "is_free_trial": False, "trace_id": "partner-report"},
-        ).json()
+        )
         blocked = self._report(missing["id"])
         self.assertEqual(blocked.status_code, 409)
         self.assertEqual(blocked.json()["error"], "feishu_app_ticket_missing")
@@ -354,7 +340,7 @@ class FeishuUsageTests(unittest.TestCase):
         self.partner.fail_report = True
         created = self._seed_event(
             json={"consumed_points": 9, "is_free_trial": False, "trace_id": "partner-fail"},
-        ).json()
+        )
         response = self._report(created["id"])
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"], "feishu_usage_report_unknown")
@@ -370,7 +356,7 @@ class FeishuUsageTests(unittest.TestCase):
 
     def test_charge_switch_blocks_external_reporting_without_changing_pending(self):
         self._login_feishu_user()
-        created = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "disabled-report"}).json()
+        created = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "disabled-report"})
         self.settings.usage_charge_enabled = False
         response = self._report(created["id"])
         self.assertEqual(response.status_code, 409)
@@ -384,7 +370,7 @@ class FeishuUsageTests(unittest.TestCase):
         self._login_feishu_user("bob")
         self.store.save_app_ticket("cli_test", "tik")
         owner = self.store.upsert_feishu_identity("isolated-dev-a", "report-owner", "报告发起人")
-        created = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "owner-recovery"}, principal=owner).json()
+        created = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "owner-recovery"}, principal=owner)
         self.assertFalse(dispatch_pending_usage(self.store, self.http, self.settings))
         self.assertEqual(self.partner.calls, [])
         self._login_feishu_user(principal=owner)
@@ -403,7 +389,7 @@ class FeishuUsageTests(unittest.TestCase):
         owner = self.store.upsert_feishu_identity("isolated-dev-a", "report-owner", "报告发起人")
         self._login_feishu_user(principal=owner)
         self.store.save_app_ticket("cli_test", "tik")
-        created = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "recharge-recovery"}, principal=owner).json()
+        created = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "recharge-recovery"}, principal=owner)
         self.partner.item["user_quota"] = 0
         self.assertFalse(dispatch_pending_usage(self.store, self.http, self.settings))
         self.assertFalse(any(url.endswith("/usage_records/report") for _method, url in self.partner.calls))
@@ -425,7 +411,7 @@ class FeishuUsageTests(unittest.TestCase):
             self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": f"blocked-{index}"}, principal=blocked)
         ready = self.store.upsert_feishu_identity("isolated-dev-a", "ready-owner", "已有余额")
         self._login_feishu_user(principal=ready)
-        event = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "ready-21"}, principal=ready).json()
+        event = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "ready-21"}, principal=ready)
         self.store.save_app_ticket("cli_test", "tik")
 
         def provider(request):

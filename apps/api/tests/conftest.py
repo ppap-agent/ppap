@@ -19,7 +19,6 @@ from psycopg.rows import dict_row
 # Personal models have no built-in endpoint; tests approve their controlled one.
 os.environ.setdefault("PPAP_TENANT_MODEL_ALLOWED_BASE_URLS", "https://models.example.test")
 
-_CI = bool(os.environ.get("CI"))
 # Tests reset the whole schema, so each test process owns a database it creates and migrates
 # itself; the isolated-dev `ppap` database is never connected to, cloned or truncated.
 os.environ["PPAP_PG_DATABASE"] = test_database_name()
@@ -71,7 +70,7 @@ def make_auth_store(
     reset: bool = True,
     role: str = "migrator",
 ) -> AuthStore:
-    if (_CI or os.environ.get("CI")) and not os.environ.get("PGPORT"):
+    if os.environ.get("CI") and not os.environ.get("PGPORT"):
         raise RuntimeError("CI database fixture requires an explicit PGPORT; refusing default database")
     settings = settings or Settings()
     settings.pg_host = "127.0.0.1"
@@ -96,39 +95,16 @@ def insert_usage_event(
     external_status: str,
     *,
     trace_id: str | None = None,
-    round_id: str | None = None,
 ) -> dict:
-    event_id = str(uuid.uuid4())
     with store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
-        if trace_id:
-            cur.execute(
-                """SELECT * FROM product.usage_events
-                   WHERE tenant_id = %s AND trace_id = %s
-                   LIMIT 1""",
-                (principal.tenant_id, trace_id),
-            )
-            existing = cur.fetchone()
-            if existing is not None:
-                return store.usage_event_public(existing)
         cur.execute(
             """
             INSERT INTO product.usage_events
-                (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                 external_status, trace_id, round_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial, external_status, trace_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
-            (
-                event_id,
-                principal.tenant_id,
-                principal.user_id,
-                ai_item_id,
-                int(consumed_points),
-                bool(is_free_trial),
-                external_status,
-                trace_id,
-                round_id,
-            ),
+            (str(uuid.uuid4()), principal.tenant_id, principal.user_id, ai_item_id, int(consumed_points), bool(is_free_trial), external_status, trace_id),
         )
         row = cur.fetchone()
     return store.usage_event_public(row)

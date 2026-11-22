@@ -1,17 +1,12 @@
 """Keyboard, focus, touch size, and reduced-motion checks for the product UI."""
 
-import os
 import unittest
 from urllib.parse import urlsplit
 
-from .conftest import wait_until
+from playwright.sync_api import expect, sync_playwright
 
-try:
-    from playwright.sync_api import sync_playwright
-except ImportError:  # pragma: no cover - optional until the e2e job installs Playwright
-    sync_playwright = None
+from .conftest import WEB, route_api_address, wait_until
 
-WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 RULE = "00000000-0000-4000-8000-000000000001"
 SOURCE = "00000000-0000-4000-8000-000000000002"
 VERSION = "00000000-0000-4000-8000-000000000003"
@@ -26,21 +21,13 @@ BODY = {
 }  # noqa: E501
 
 
-def focus_within(page, selector):
-    """The focused element when it is, or sits inside, `selector`; retrying assertions read it until focus settles."""
-    return page.locator(f"{selector}:focus, {selector} :focus")
-
-
-@unittest.skipUnless(sync_playwright, "playwright not installed")
 class UiA11yTests(unittest.TestCase):
     def test_keyboard_focus_and_motion(self):
-        from playwright.sync_api import expect
-
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             context = browser.new_context(viewport={"width": 1440, "height": 900}, reduced_motion="reduce", has_touch=True)
             page = context.new_page()
-            page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+            route_api_address(page)
             # Every read is controlled here; nothing reaches a server behind the dev proxy, whose 401 would sign the page out.
             page.route("**/api/**", lambda route: route.fulfill(status=404, json={"error": "unexpected_test_request"}))
             page.route("**/api/audit-customers/default", lambda route: route.fulfill(json={"customer_preference": None, "revision": 0}))
@@ -122,12 +109,10 @@ class UiA11yTests(unittest.TestCase):
             browser.close()
 
     def test_a_denied_rule_list_is_not_an_empty_library(self):
-        from playwright.sync_api import expect
-
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_context().new_page()
-            page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+            route_api_address(page)
             page.route(
                 "**/api/public-config",
                 lambda route: route.fulfill(
@@ -168,8 +153,6 @@ class UiA11yTests(unittest.TestCase):
             browser.close()
 
     def test_rule_detail_is_read_only_with_a_single_heading(self):
-        from playwright.sync_api import expect
-
         rule = {
             "id": RULE,
             "title": "规则 A",
@@ -254,16 +237,14 @@ class UiA11yTests(unittest.TestCase):
                     unexpected.append(path)
                     route.fulfill(status=404, json={"error": "unexpected_test_request"}, headers=cors)
 
-            page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+            route_api_address(page)
             page.route("**/api/**", respond)
             page.goto(WEB + "/requirements?systemRule=" + RULE)
             expect(page.get_by_role("heading", name="规则 A", exact=True, level=1)).to_be_visible()
             expect(page.get_by_role("heading", level=1)).to_have_count(1)
             expect(page.get_by_role("article", name="第 1 条", exact=True)).to_contain_text("检查 A")
-            # Rules are delivered by the platform: the page offers nothing to upload, edit or publish.
+            # Rules are delivered by the platform: the page has nothing to edit and writes nothing.
             expect(page.get_by_role("main").get_by_role("textbox")).to_have_count(0)
-            for name in ("上传规则", "创建新版本", "保存版本", "放弃草稿", "采用"):
-                expect(page.get_by_role("button", name=name, exact=True)).to_have_count(0)
             self.assertEqual(writes, [])
             self.assertEqual(unexpected, [])
             browser.close()

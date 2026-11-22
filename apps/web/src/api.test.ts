@@ -158,7 +158,6 @@ test('local upload accepts the server canonical filename without changing its fi
       assert.equal(JSON.parse(String(init.body)).original_filename, ' report.xlsx')
       return jsonResponse(version)
     }
-    if (init?.method === 'GET') return jsonResponse({request_id: id, state: 'uploading', file: version, reason: null, retry_allowed: false, resume_allowed: true})
     assert.equal(url, `${apiUrl}/files/file/versions/${id}/blob`)
     assert.equal(init?.method, 'PUT')
     assert.equal(init?.body, file)

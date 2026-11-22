@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 from product import build_product_store
 from product.identity import SESSION_COOKIE
 from product.settings import ISOLATED_DEV_PLATFORM_OPERATORS, Settings
-from product.store.suite_releases import SuiteReleaseStore
 from product.store.suites import SuiteStore
 
 FILES = {"rules.json": b'{"title":"Control plan checks","rules":[{"id":"R1","rule_to_check":"Required"}]}', "checker.py": b"def check(context):\n    return []\n"}
@@ -16,8 +15,8 @@ PATH = "/suites/control-plan/active"
 REFUSED = (403, {"error": "platform_operator_required"})
 
 
-def adopt(revision_id, operation_id=None):
-    return {"revision_id": revision_id, "expected_revision": 0, "operation_id": operation_id or str(uuid.uuid4()), "force_unverified": True}
+def adopt(revision_id):
+    return {"revision_id": revision_id, "expected_revision": 0, "operation_id": str(uuid.uuid4()), "force_unverified": True}
 
 
 def fixture(auth_store_factory, operators: str):
@@ -80,24 +79,13 @@ def test_empty_list_refuses_everyone(auth_store_factory):
     assert publications(store) == 0
 
 
-def test_operator_adopts_idempotently_within_its_own_tenant_only(auth_store_factory):
+def test_listed_operator_passes_the_write_gate_and_members_read_the_adoption(auth_store_factory):
+    # Replay and another tenant's candidate are covered by test_suite_releases.py.
     store, official, people, clients = fixture(auth_store_factory, "ops-a:ou_operator,ops-b:ou_other")
-    request = adopt(official.id)
-    first = clients["operator"].put(PATH, json=request)
-    assert first.status_code == 200, first.text
-    assert first.json()["published_by"] == people["operator"].user_id
-    # Replaying the same operation returns the same receipt and adds no publication.
-    assert clients["operator"].put(PATH, json=request).json() == first.json()
+    adopted = clients["operator"].put(PATH, json=adopt(official.id))
+    assert adopted.status_code == 200, adopted.text
+    assert adopted.json()["published_by"] == people["operator"].user_id
     assert publications(store) == 1
     assert clients["member"].get(PATH).json()["current_revision_id"] == official.id
-    # Operator body validation still applies.
+    # Past the gate, the operator's request is still validated.
     assert clients["operator"].post("/rules", json=[]).json() == {"error": "invalid_rule_request"}
-    # Another tenant's operator cannot touch tenant A's candidate: object authorization is unchanged.
-    operator = people["operator"]
-    suites = SuiteReleaseStore(store.settings, store.objects).suites
-    candidate = suites.create_revision(
-        tenant_id=operator.tenant_id, suite_key=official.suite_key, files={"checker.py": b"def check(context):\n    return [1]\n"}, created_by=operator.user_id, base_revision_id=official.id
-    )
-    foreign = clients["other_operator"].put(PATH, json=adopt(candidate.id))
-    assert (foreign.status_code, foreign.json()["error"]) == (403, "access_denied")
-    assert clients["other_operator"].get(PATH).json()["current_revision_id"] is None

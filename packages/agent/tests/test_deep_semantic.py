@@ -202,7 +202,3 @@ class SemanticBoundaryTests(unittest.TestCase):
             path.write_text(json.dumps(payload))
             with self.assertRaisesRegex(ValueError, "clauses differ"):
                 snapshot(path)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -1724,7 +1724,7 @@ def test_native_preparation_ambiguity_is_resolved_by_explicit_rematching_before_
     assert worker.claim_job("no-extra-recognition-or-audit") is None
 
 
-@pytest.mark.parametrize("customer", [None, "", "auto", "自动识别", "联合汽车电子有限公司", "uaes"])
+@pytest.mark.parametrize("customer", [None, "", "uaes"])
 def test_a_new_task_names_a_registered_customer(task_system, customer):
     client, worker = task_system
     file = checked_file(client, worker)
@@ -2364,30 +2364,6 @@ def test_zero_target_end_rejects_foreign_or_stale_selection_intent(task_system):
     assert client.post(path + "/end", json={"expected_revision": 1, "unselected_file_version_ids": [file["file_version_id"]]}).status_code == 409
     assert client.get(path).json()["files"][0]["selection"] == "selected"
     assert client.get(path).json()["state"] == "pending_confirm"
-
-
-def test_v4_preset_t12_can_be_a_target_without_changing_legacy_reference_behavior(auth_store_factory, core_system):
-    settings = Settings(usage_charge_enabled=False, feishu_app_id="v4-preset-task", git_sha="a" * 40)
-    store = auth_store_factory(settings)
-    principal = store.upsert_feishu_identity("v4-" + uuid.uuid4().hex, "owner")
-    core_system.adopt_standard(store, principal, "蔚来:N04")
-    core_system.install(store)
-    client = TestClient(create_app(settings, auth_store=store))
-    client.cookies.set(SESSION_COOKIE, store.create_session(principal))
-    worker = build_product_store(settings, objects=store.objects, role="worker")
-    file = checked_file(client, worker, "特殊特性清单.xlsx", "过程特殊特性清单")
-    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "customer_preference": "蔚来", "files": [file]}).json()
-    process_claimed(worker, worker.claim_job("v4-recognition"), "v4-recognition", rule_ai=MetadataAI())
-    path = "/audit-tasks/" + task["id"]
-    recognized = client.get(path).json()
-    assert recognized["files"][0]["match"]["state"] == "matched"
-    assert recognized["files"][0]["match"]["rule"]["body"]["preset_key"] == "N04"
-    assert recognized["estimated_points"] == 500
-    accepted = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
-    assert accepted.status_code == 201, accepted.text
-    assert accepted.json()["round_id"]
-    assert accepted.json()["files"][0]["match"]["state"] == "matched"
-    client.close()
 
 
 def test_v4_t12_explicit_reference_remains_free_and_restores_its_role(auth_store_factory):

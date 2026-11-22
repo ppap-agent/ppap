@@ -81,10 +81,6 @@ def _evidence(round: dict, finding: dict | None, version_id: str, rule_id: str, 
     return evidence, deepcopy(scope), notice
 
 
-def _verified(round: dict, coverage: dict | None, finding: dict | None, rule_id: str, rule: dict, evidence: list[dict], scope: dict | None, notice: str | None) -> bool:
-    return False
-
-
 def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: bool = False) -> dict:
     finished = round["execution"] == "completed"
     coverage, original, notice = _clause_result(round, version_id, str(rule["id"])) if finished else (None, None, None)
@@ -92,7 +88,6 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: 
     if finding:
         finding["item_key"] = rule["id"]
     evidence, scope, evidence_notice = _evidence(round, finding, version_id, rule_id, str(rule["id"]))
-    verified = _verified(round, coverage, original, rule_id, rule, evidence, scope, notice or evidence_notice)
     semantic = ((finding or {}).get("locator") or {}).get("semantic") if isinstance(finding, dict) else None
     verification_scope = (coverage or {}).get("verification_scope") if isinstance(coverage, dict) else None
     if not isinstance(verification_scope, str) and isinstance(semantic, dict) and isinstance(semantic.get("verification_scope"), str):
@@ -119,7 +114,6 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: 
         else round["execution"],
         "coverage": "executed" if finding else (coverage or {}).get("coverage", "unsupported") if finished else "mapped",
         "finding": finding,
-        "evidence_verified": verified,
         "verification_scope": verification_scope if isinstance(verification_scope, str) else None,
         "scope": scope,
         "scope_notice": _join_notices(notice, evidence_notice, scope_gap, checker_notice) or ((coverage or {}).get("reason") if not finding else None),

@@ -1,4 +1,4 @@
-"""Frozen programs execute by exact digest without invoking historical routing."""
+"""Frozen programs execute by exact digest; another program with the same business key never stands in."""
 
 import hashlib
 

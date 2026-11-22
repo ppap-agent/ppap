@@ -217,7 +217,7 @@ def _summary(source: dict) -> list:
     scopes = [check["scope"] for check in audit["checks"] if check.get("scope")]
     if scopes:
         blocks.append(f"<p>检查范围：已查 {sum(scope['checked'] for scope in scopes)}/{sum(scope['total'] for scope in scopes)}，未知 {sum(scope['unknown'] for scope in scopes)}。</p>")
-    if any(check.get("finding") and not check.get("evidence_verified") for check in audit["checks"]):
+    if any(check.get("finding") for check in audit["checks"]):
         blocks.append("<p class='meta'>部分判定的证据未经验证，请核对原件中的证据和检查范围。</p>")
     return blocks
 

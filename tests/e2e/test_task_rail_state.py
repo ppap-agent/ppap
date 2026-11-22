@@ -1,15 +1,13 @@
 """The PPAP Audit task rail at the public read-only HTTP boundary."""
 
 import copy
-import os
 from urllib.parse import urlsplit
 
 import pytest
+from playwright.sync_api import expect, sync_playwright
 
-pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import expect, sync_playwright  # noqa: E402
+from .conftest import WEB, route_api_address
 
-WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 TASK = "00000000-0000-4000-8000-000000000001"
 ROUND = "00000000-0000-4000-8000-000000000002"
 
@@ -37,7 +35,7 @@ def task_routes(page, partial_error):
         "failure": None,
         "conclusion": "NG",
         "counts": {"pass_count": 0, "ng_count": 1, "unknown_count": 0, "not_covered_count": 0, "error_count": 0},
-        "checks": [{"rule_item": clause, "execution": "completed", "coverage": "executed", "finding": finding, "evidence": [], "scope": None, "evidence_verified": False, "review": None}],
+        "checks": [{"rule_item": clause, "execution": "completed", "coverage": "executed", "finding": finding, "evidence": [], "scope": None, "review": None}],
         "unmapped_findings": [],
         "summary": {"conclusion": "NG", "text": "不符合 1 项。", "corrective_actions": [], "extended_suggestions": []},
         "report": {"state": "not_eligible", "report_id": None, "reason": "本测试不读取报告。"},
@@ -91,7 +89,7 @@ def task_routes(page, partial_error):
         files=[{"file": row["file"], "selection": row["selection"]} for row in task["files"]],
     )
     calls = []
-    page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+    route_api_address(page)
 
     def respond(route):
         path = urlsplit(route.request.url).path.removeprefix("/api")

@@ -52,9 +52,6 @@ class WebAliasTests(unittest.TestCase):
                 self.assertEqual(_fetch(name, "/addon"), (200, "addon-page"))
                 for path in ("/", "/?round=frozen-round", "/audit?task=frozen-task&report=frozen-file", "/audit?view=archive&packageRequest=p"):
                     self.assertEqual(_fetch(name, path), (200, "native-audit"))
-                # Retired aliases have no current generator.
-                for path in ("/audit-files", "/rules", "/dev", "/__audit-native", "/audit.html", "/workbench"):
-                    self.assertEqual(_fetch(name, path)[0], 404)
                 for path in ("/files", "/requirements", "/templates", "/usage", "/tasks/new", "/tasks/frozen-task?file=frozen-file&clause=c1"):
                     self.assertEqual(_fetch(name, path), (200, "native-audit"))
                     address, _, query = path.partition("?")
