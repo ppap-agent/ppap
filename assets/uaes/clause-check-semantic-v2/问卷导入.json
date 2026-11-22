@@ -2,6 +2,8 @@
  "schema": "rule-questionnaire-v1",
  "customer_id": "uaes",
  "rule_version": "规范性条款 v1.0",
+ "rulebook_version": "v1.0",
+ "rulebook_revision": 0,
  "title": "UAES 审核规则库 规范性条款 v1.0",
  "questions": [
   {

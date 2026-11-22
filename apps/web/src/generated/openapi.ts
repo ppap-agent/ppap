@@ -4843,6 +4843,13 @@ export interface components {
             /** Questionnaires */
             questionnaires: components["schemas"]["RuleQuestionnaireSummary"][];
         };
+        /** RuleQuestionnaireRulebook */
+        RuleQuestionnaireRulebook: {
+            /** Revision */
+            revision: number;
+            /** Version */
+            version: string;
+        };
         /** RuleQuestionnaireSummary */
         RuleQuestionnaireSummary: {
             /** Answered */
@@ -4863,6 +4870,7 @@ export interface components {
             mine: number;
             /** Rule Version */
             rule_version: string;
+            rulebook: components["schemas"]["RuleQuestionnaireRulebook"] | null;
             /** Title */
             title: string;
             /** Total */
@@ -4890,6 +4898,7 @@ export interface components {
             questions: components["schemas"]["RuleQuestion"][];
             /** Rule Version */
             rule_version: string;
+            rulebook: components["schemas"]["RuleQuestionnaireRulebook"] | null;
             /** Title */
             title: string;
             /** Total */

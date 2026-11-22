@@ -8,9 +8,9 @@ export type QuestionAnswer = components['schemas']['RuleQuestionAnswer']
 export type AnswerReceipt = components['schemas']['RuleAnswerReceipt']
 export type AnswerRequest = {operation_id: string; question_key: string; expected_revision: number; choice: string | null; text: string | null; note: string | null}
 
-/** A questionnaire's version label always names its revision; one naming only the version («规范性条款 v1.0») is revision 0. Its stored key and ID stay unchanged. */
-export function questionnaireVersionLabel(row: Pick<QuestionnaireSummary, 'rule_version'>): string {
-  return / 修订 \d+$/.test(row.rule_version) ? row.rule_version : `${row.rule_version} 修订 0`
+/** «规范性条款 v1.0 修订 0»: the rulebook and version it names, and the revision it was asked on; a questionnaire without one shows its label as loaded. */
+export function questionnaireVersionLabel(row: Pick<QuestionnaireSummary, 'rule_version' | 'rulebook'>): string {
+  return row.rulebook ? `${row.rule_version} 修订 ${row.rulebook.revision}` : row.rule_version
 }
 
 /** Card groups in the order the customer answers them: one answer to a common question settles many clauses. */

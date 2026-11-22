@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from product.rulebooks import list_revisions, read_revision
+from product.rulebooks import list_revisions, problems, read_revision
 
 ROOT = Path(__file__).resolve().parents[3] / "assets"
 
@@ -58,3 +58,20 @@ def test_a_revision_is_in_audit_only_when_its_clauses_are_the_presets_audits_run
     write(tmp_path, "uaes", "v0.0", "m1", {preset.entry_id: [(clause.id, clause.text) for clause in preset.clauses] for preset in presets})
     write(tmp_path, "uaes", "v0.0", "m2", {preset.entry_id: [(clause.id, clause.text + "。") for clause in preset.clauses] for preset in presets})
     assert [(row["revision"], row["in_audit"]) for row in list_revisions(tmp_path, "uaes")] == [(1, True), (2, False)]
+
+
+def test_every_shipped_rulebook_names_its_clauses_by_document_type_and_number():
+    customers = [path.name for path in ROOT.iterdir() if (path / "rulebook").is_dir()]
+    assert "uaes" in customers
+    assert {customer: problems(ROOT, customer) for customer in customers} == {customer: [] for customer in customers}
+
+
+def test_a_name_off_its_file_repeated_or_changed_within_a_version_is_found(tmp_path):
+    write(tmp_path, "acme", "v1.0", "m0", {"A": [("A:1", "条款"), ("A:2", "条款")], "B": [("B:1", "条款")]})
+    write(tmp_path, "acme", "v1.0", "m1", {"A": [("A:1", "改"), ("A:1", "重复"), ("B:3", "放错文件")], "B": [("B:1", "条款")]})
+    write(tmp_path, "acme", "v2.0", "m0", {"A": [("A:9", "新版本可以改编号")]})
+    assert problems(tmp_path, "acme") == [
+        "v1.0 修订 1 A.json：B:3 不是「A:编号」",
+        "v1.0 修订 1：A:1 出现 2 次",
+        "v1.0 修订 1 的条款编号与修订 0 不同（多 B:3，少 A:2）；编号变了应升版本",
+    ]

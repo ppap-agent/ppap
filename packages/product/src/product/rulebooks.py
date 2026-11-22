@@ -3,7 +3,9 @@
 A customer's rulebook lives under ``<template_root>/<customer>/rulebook/<version>/m<revision>/`` (see
 assets/uaes/AGENTS.md): ``rules/*.json`` holds one document type's clauses each. A version directory may carry the
 comparison table that leads into one of its revisions (``<from> 到 <version>-m<revision> 对照.md``), whose rows say per
-clause whether its meaning changed. Nothing here is customer specific, writes anything or decides which revision audits
+clause whether its meaning changed. A clause is named by its document type and number as the customer's rulebook has
+them (``CP:5`` in ``rules/CP.json``); every revision of a version has the same clause names, so a changed name means a
+new version (``problems`` checks this). Nothing here is customer specific, writes anything or decides which revision audits
 use: a revision is "in audit" only when its clauses are exactly the product presets the audits run.
 """
 
@@ -18,6 +20,7 @@ from typing import Any
 _VERSION = re.compile(r"^v\d+\.\d+$")
 _REVISION = re.compile(r"^m(\d+)$")
 _KINDS = {"意思不变": "same", "意思变了": "changed", "新增": "new"}
+_CLAUSE = re.compile(r"^([A-Z][A-Z0-9]*):(\d+)$")
 
 
 def _customer_root(root: Path, customer_id: str) -> Path | None:
@@ -111,3 +114,28 @@ def read_revision(root: Path, customer_id: str, version: str, revision: int) -> 
         for clause in document["clauses"]:
             clause["change"] = changes.get(clause["id"])
     return {**_summary(customer_id, version, revision, documents, changes, base), "documents": documents}
+
+
+def problems(root: Path, customer_id: str) -> list[str]:
+    """Where a customer's rulebook breaks its naming: each clause is «<file's document type>:<number>», unique in its
+    revision, and every revision of a version names the same clauses (a name added, dropped or renamed is a new version)."""
+    rulebook = _customer_root(root, customer_id)
+    if rulebook is None:
+        return []
+    found: list[str] = []
+    names: dict[str, tuple[int, set[str]]] = {}
+    for version, revision, directory in _revision_dirs(rulebook):
+        ids = []
+        for path in sorted((directory / "rules").glob("*.json")):
+            for row in json.loads(path.read_text(encoding="utf-8")).get("rules") or []:
+                clause = str(row.get("id"))
+                match = _CLAUSE.fullmatch(clause)
+                if not match or match.group(1) != path.stem:
+                    found.append(f"{version} 修订 {revision} {path.name}：{clause} 不是「{path.stem}:编号」")
+                ids.append(clause)
+        found += [f"{version} 修订 {revision}：{clause} 出现 {count} 次" for clause, count in Counter(ids).items() if count > 1]
+        first = names.setdefault(version, (revision, set(ids)))
+        if set(ids) != first[1]:
+            added, dropped = sorted(set(ids) - first[1]), sorted(first[1] - set(ids))
+            found.append(f"{version} 修订 {revision} 的条款编号与修订 {first[0]} 不同（多 {'、'.join(added) or '无'}，少 {'、'.join(dropped) or '无'}）；编号变了应升版本")
+    return found

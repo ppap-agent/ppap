@@ -16,7 +16,7 @@ every other finding becomes a card of its own.
 
 `load`, `export` and `close` print SQL for the enterprise whose Feishu tenant key is given, run with `psql` as the
 database's migration role (the product itself never writes questionnaires): `load` adds the questionnaire and its
-cards in one transaction and refuses a second load of the same version; `export` prints every answerer's revisions
+cards in one transaction and refuses a second load of the same rulebook revision; `export` prints every answerer's revisions
 of every card as one JSON value (`psql -At`); `close` makes it read only.
 
 `answers` reads that export and lists, per clause file, every answer to every finding with its answerer and time,
@@ -214,7 +214,15 @@ def build(directory: Path, plan_path: Path, out: Path) -> None:
             card["relayed"] = {**relayed[rule["relayed"]], "applied": rule["result"]}
         cards.append(card)
 
-    questionnaire = {"schema": "rule-questionnaire-v1", "customer_id": plan["customer_id"], "rule_version": plan["rule_version"], "title": plan["title"], "questions": cards}
+    questionnaire = {
+        "schema": "rule-questionnaire-v1",
+        "customer_id": plan["customer_id"],
+        "rule_version": plan["rule_version"],
+        "rulebook_version": plan["rulebook_version"],
+        "rulebook_revision": plan["rulebook_revision"],
+        "title": plan["title"],
+        "questions": cards,
+    }
     out.write_text(json.dumps(questionnaire, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     counts = Counter(card["group"] for card in cards)
     print(
@@ -252,6 +260,11 @@ def validate(questionnaire: dict) -> None:
     for field in ("rule_version", "title"):
         if not isinstance(questionnaire.get(field), str) or not 1 <= len(questionnaire[field].strip()) <= 200:
             problems.append(f"{field} 缺失或太长")
+    version, revision = questionnaire.get("rulebook_version"), questionnaire.get("rulebook_revision")
+    if not (isinstance(version, str) and re.fullmatch(r"v\d+\.\d+", version) and str(questionnaire.get("rule_version", "")).endswith(" " + version)):
+        problems.append("rulebook_version 不是规则库版本（如 v1.0），或 rule_version 没以它结尾")
+    if type(revision) is not int or revision < 0:
+        problems.append("rulebook_revision 不是修订号（0、1、2……）")
     cards = questionnaire.get("questions") or []
     keys = [card.get("key") for card in cards]
     if not cards or len(set(keys)) != len(keys):
@@ -268,10 +281,11 @@ def validate(questionnaire: dict) -> None:
 
 
 def target(questionnaire: dict, tenant: str) -> str:
-    """The questionnaire's row: this enterprise, this customer, this rule version."""
+    """The questionnaire's row: this enterprise, this customer, this rulebook revision."""
     return (
         f"r.tenant_id = (SELECT id FROM product.tenants WHERE provider = 'feishu' AND external_key = {literal(tenant)}) "
-        f"AND r.customer_id = {literal(questionnaire['customer_id'])} AND r.rule_version = {literal(questionnaire['rule_version'])}"
+        f"AND r.customer_id = {literal(questionnaire['customer_id'])} AND r.rule_version = {literal(questionnaire['rule_version'])} "
+        f"AND r.rulebook_revision = {int(questionnaire['rulebook_revision'])}"
     )
 
 
@@ -288,8 +302,9 @@ BEGIN
     END IF;
 END $$;
 WITH questionnaire AS (
-    INSERT INTO product.rule_questionnaires (id, tenant_id, customer_id, rule_version, title)
-    SELECT gen_random_uuid(), id, {literal(questionnaire["customer_id"])}, {literal(questionnaire["rule_version"])}, {literal(questionnaire["title"])}
+    INSERT INTO product.rule_questionnaires (id, tenant_id, customer_id, rule_version, rulebook_version, rulebook_revision, title)
+    SELECT gen_random_uuid(), id, {literal(questionnaire["customer_id"])}, {literal(questionnaire["rule_version"])}, {literal(questionnaire["rulebook_version"])},
+           {int(questionnaire["rulebook_revision"])}, {literal(questionnaire["title"])}
     FROM product.tenants WHERE provider = 'feishu' AND external_key = {literal(tenant)}
     RETURNING id
 )
@@ -314,7 +329,7 @@ def export_sql(questionnaire: dict, tenant: str) -> str:
     return f"""\\set ON_ERROR_STOP on
 SELECT jsonb_build_object(
     'schema', 'rule-questionnaire-answers-v1',
-    'customer_id', r.customer_id, 'rule_version', r.rule_version, 'title', r.title,
+    'customer_id', r.customer_id, 'rule_version', r.rule_version, 'rulebook_version', r.rulebook_version, 'rulebook_revision', r.rulebook_revision, 'title', r.title,
     'closed_at', r.closed_at, 'exported_at', now(),
     'questions', coalesce((
         SELECT jsonb_agg(jsonb_build_object('key', q.question_key, 'card', q.card, 'answers', coalesce((

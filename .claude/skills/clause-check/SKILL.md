@@ -99,9 +99,9 @@ description: 离线检查审核条款的语义歧义、缺口和真实冲突。�
 
     python3 <技能目录>/scripts/questionnaire.py build <工作目录> <工作目录>/问卷整理.json <工作目录>/问卷导入.json
 
-问卷整理仍用 customer_id、rule_version、title、common、relayed、applied、conclusion、general、clause_order 等字段；items 引用发现 ID（如 CP:8#1）。已被排除的旧问题必须同时从整理配置中删除，不能恢复误报只为了凑齐旧列表。
+问卷整理仍用 customer_id、rule_version、title、common、relayed、applied、conclusion、general、clause_order 等字段，另加 rulebook_version、rulebook_revision 写明问卷针对规则库的哪个修订（如 v1.0、0；rule_version 须以该版本结尾），规则页按这两个字段把问卷挂到修订上；items 引用发现 ID（如 CP:8#1）。已被排除的旧问题必须同时从整理配置中删除，不能恢复误报只为了凑齐旧列表。
 
-现有 load/export/close SQL 命令保持不变，需用迁移身份运行；**不要在同一企业的同一规则版本上直接重新导入**。线上问卷与已保存答复的替换是独立的迁移任务，本技能不自动删除或覆盖。产品负责人确认后才可发布新的问题数据。
+现有 load/export/close SQL 命令保持不变，需用迁移身份运行；**不要在同一企业的同一规则库修订上直接重新导入**。线上问卷与已保存答复的替换是独立的迁移任务，本技能不自动删除或覆盖。产品负责人确认后才可发布新的问题数据。
 
 导出答复后运行：
 
