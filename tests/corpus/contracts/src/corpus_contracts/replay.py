@@ -2,28 +2,24 @@
 
 Each test scope has one JSON file listing what the model was shown and what it answered. A request no recording of
 its own scope answers takes the answer another scope recorded for the identical request, so a sample read by several
-tests is asked once.
+tests is asked once. The format belongs to ``documents.model_calls``, so a production call record (#360) replays here.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import os
-import re
-import struct
 import threading
 from pathlib import Path
 from typing import Any
 
 from documents.model_access import ModelAccess, ModelPurpose, ModelResolver, platform_model_access
+from documents.model_calls import ocr_request, recording, request_sha256, shown_to_model, text_request
 from pydantic import SecretStr
 
 REPLAY_DIR = Path(__file__).resolve().parents[5] / "assets/corpus/replay"
 REPLAY = "replay"
 LIVE = "live"
-_BINARY = re.compile(r"^[A-Za-z0-9+/=\s]{4096,}$")
 
 
 def mode() -> str:
@@ -61,40 +57,6 @@ def replay_model_access() -> ModelAccess:
 
 class OfflineReplayMiss(AssertionError):
     """A request without a recording cannot authorize an external model call."""
-
-
-def _image_summary(value: str) -> str:
-    """Readable dimensions only; they do not prove image content identity."""
-    _, _, encoded = value.partition(",")
-    head = base64.b64decode(encoded[:64] + "=" * (-len(encoded[:64]) % 4))
-    if head[:8] == b"\x89PNG\r\n\x1a\n":
-        width, height = struct.unpack(">II", head[16:24])
-        return f"<png {width}x{height}>"
-    return "<image>"
-
-
-def shown_to_model(value: Any) -> Any:
-    """What the model is shown, readable and without image or document bytes."""
-    if isinstance(value, dict):
-        return {key: shown_to_model(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [shown_to_model(item) for item in value]
-    if isinstance(value, str) and value.startswith("data:image/"):
-        return _image_summary(value)
-    if isinstance(value, str) and _BINARY.fullmatch(value):
-        return "<binary>"
-    return value
-
-
-def _request_sha256(request: Any) -> str:
-    """Readable summaries are lossy; match the complete request instead."""
-    return hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str).encode()).hexdigest()
-
-
-def recording(kind: str, request: Any, answer: Any, model: Any = None) -> dict[str, Any]:
-    """One recorded answer: what the model was shown (readable), the complete request identity and the answer."""
-    shown = json.loads(json.dumps(shown_to_model(request), ensure_ascii=False, default=str))
-    return {"kind": kind, "model": model, "request": shown, "request_sha256": _request_sha256(request), "answer": answer}
 
 
 _SHARED: dict[Path, dict[tuple[str, str], dict[str, Any]]] = {}
@@ -141,7 +103,7 @@ class Recorder:
             raise OfflineReplayMiss(f"No {kind} recording for {self.path.name}; external model calls are disabled")
 
     def lookup(self, kind: str, request: Any) -> dict[str, Any] | None:
-        digest = _request_sha256(request)
+        digest = request_sha256(request)
         with self.lock:
             # Only the complete request identity matches; a readable summary never does.
             own = next((entry for entry in (*self.entries, *self.pending) if entry["kind"] == kind and entry.get("request_sha256") == digest), None)
@@ -168,24 +130,6 @@ class Recorder:
         temporary.replace(self.output)
 
 
-def ocr_request(images: list[bytes], prompt: str, response_schema: dict, max_output_tokens: int) -> dict[str, Any]:
-    """The recorded identity of one vision call: what the model is shown, asked to return and sent with."""
-    from documents.model_access import current_model_access
-    from documents.ocr.observation import current_ocr_observation
-
-    shown = [{"type": "input_text", "text": prompt}, *({"type": "input_image", "image_url": "data:image/png;base64," + base64.b64encode(image).decode("ascii"), "detail": "high"} for image in images)]
-    request: dict[str, Any] = {"input": [{"role": "user", "content": shown}], "text": {"format": {"type": "json_schema", **response_schema}}, "max_output_tokens": max_output_tokens}
-    observation = current_ocr_observation()
-    if observation is not None:
-        request["observation"] = observation
-    # An answer recorded under another reasoning effort cannot answer this request. The key keeps
-    # the name existing recordings were made with.
-    effort = current_model_access("vision").reasoning_effort
-    if effort:
-        request["extra_body"] = {"reasoning": {"effort": effort}}
-    return request
-
-
 def install(monkeypatch: Any, recorder: Recorder) -> None:
     """Replace the model calls below every product decision."""
     import documents.ai
@@ -207,7 +151,7 @@ def install(monkeypatch: Any, recorder: Recorder) -> None:
     async def direct_request(task: str, **kwargs: Any) -> Any:
         if kwargs.get("purpose", "text") != "text":
             return await real_direct(task, **kwargs)
-        request = {"task": task, **{name: kwargs.get(name) for name in ("instructions", "prompt", "schema", "max_tokens")}}
+        request = text_request(task, **{name: kwargs.get(name) for name in ("instructions", "prompt", "schema", "max_tokens")})
         entry = recorder.lookup("text", request)
         if entry is None:
             recorder.require_live("text")

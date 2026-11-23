@@ -82,3 +82,8 @@ class S3Objects:
 
     def delete(self, key: str) -> None:
         s3_client(self.settings).delete_object(Bucket=self.settings.s3_bucket, Key=key)
+
+    def list(self, prefix: str) -> list[str]:
+        """Every key under ``prefix``, for operator tools that read a whole group of objects."""
+        pages = s3_client(self.settings).get_paginator("list_objects_v2").paginate(Bucket=self.settings.s3_bucket, Prefix=prefix)
+        return [item["Key"] for page in pages for item in page.get("Contents", [])]

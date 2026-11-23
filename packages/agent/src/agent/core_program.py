@@ -6,6 +6,7 @@ The controller resolves the immutable Suite and stages a bounded flat directory.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import tempfile
 import time
@@ -170,7 +171,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         task = index if stage == "check" else files + index
         _write_progress(work, Progress(phase="checking", completed_count=task, total_count=tasks, stage=stage, target=target))
 
-    with grant.access_scope() if grant is not None else model_access_scope(None):
+    with grant.access_scope() if grant is not None else model_access_scope(None), grant.record_calls() if grant is not None else contextlib.nullcontext():
         # The validated Suite programs always run first; deep review only reads their results.
         result = run_audit(
             snapshot,

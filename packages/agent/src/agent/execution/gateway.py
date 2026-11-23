@@ -4,36 +4,62 @@ It admits a short-lived grant, selects the frozen model for each request, forwar
 and stops it on revoke. Provider token counts are observed when reported; they are
 neither a budget nor a condition for a valid result. One coarse request limit per
 attempt stops a runaway loop.
+
+Where the host binds a call log, every model call of the execution is recorded (#360):
+a direct call (text, vision) hands its own record to ``/v1/ppap/model-calls`` after it
+ends; any other request (the deep review agent) is recorded here as sent and answered.
+Records never hold a key, a request header or the grant.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import http.client
 import json
+import re
 import secrets
 import socket
 import socketserver
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from audit.checker_core import MODEL_IDENTITY_KEYS
 from documents.model_access import ModelAccess, ModelPurpose, ModelUnavailable, streams_only
+from documents.model_calls import CALL_HEADER, FORMAT, image_sha256
 
 from agent.execution.budget import TASK_SECONDS
 from agent.execution.secure_files import reject_constant, unique_object
 
 MAX_BODY = 8 * 1024 * 1024
 MAX_RESPONSE = 64 * 1024 * 1024
+# A direct call's record carries its images, base64-encoded.
+MAX_RECORD = 24 * 1024 * 1024
+RECORD_PATH = "/v1/ppap/model-calls"
 PURPOSE_ORDER: tuple[ModelPurpose, ...] = ("coding", "text", "vision")
+_CALL_ID = re.compile(r"^[0-9a-f]{32}$")
+_DATA_IMAGE = re.compile(r"^data:(image/[A-Za-z0-9.+-]+);base64,(.*)$", re.DOTALL)
+
+
+class CallLog(Protocol):
+    """The host's store of one execution's model call records (product.model_calls.RoundCallLog)."""
+
+    def seen(self, call_id: str) -> None:
+        """A direct call reached the provider path; its own record should follow."""
+
+    def begin(self) -> None:
+        """A request the gateway records itself is under way."""
+
+    def write(self, record: dict[str, Any], images: Mapping[str, bytes], *, exchange: bool = False) -> None:
+        """Store one record; raises when it is not stored. ``exchange`` ends a request begun here."""
 
 
 class RequestLimitReached(ValueError):
@@ -58,6 +84,9 @@ class Lease:
     transport_failure: dict[str, int | str | bool | None] | None = None
     upstream: http.client.HTTPConnection | None = field(default=None, repr=False)
     upstream_socket: socket.socket | None = field(default=None, repr=False)
+    log: CallLog | None = field(default=None, repr=False)
+    # Who answered each model name, as last resolved (one name has one endpoint): what a record names, never the key.
+    answered_by: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 class Grants:
@@ -76,7 +105,7 @@ class Grants:
             raise ValueError("Invalid gateway limits")
         self.model = model
         self.require_binding = require_binding
-        self.bindings: dict[UUID, tuple[dict[str, str], Callable[[ModelPurpose], ModelAccess]]] = {}
+        self.bindings: dict[UUID, tuple[dict[str, str], Callable[[ModelPurpose], ModelAccess], CallLog | None]] = {}
         self.provider_key_factory = provider_key_factory
         self.ttl = ttl
         self.requests = requests
@@ -86,15 +115,15 @@ class Grants:
         self.lock = threading.Lock()
 
     @contextmanager
-    def bind(self, execution_id: UUID, identity: dict[str, str], resolver: Callable[[ModelPurpose], ModelAccess]):
-        """Only trusted host code registers an accepted execution, never guest RPC."""
+    def bind(self, execution_id: UUID, identity: dict[str, str], resolver: Callable[[ModelPurpose], ModelAccess], log: CallLog | None = None):
+        """Only trusted host code registers an accepted execution, never guest RPC. ``log`` keeps its model call records."""
         frozen = dict(identity)
         if set(frozen) != MODEL_IDENTITY_KEYS or not all(frozen[key] for key in ("model", "vision_model", "coding_model")):
             raise ModelUnavailable()
         with self.lock:
             if execution_id in self.bindings:
                 raise ValueError("Execution grant already bound")
-            self.bindings[execution_id] = frozen, resolver
+            self.bindings[execution_id] = frozen, resolver, log
         try:
             yield
         finally:
@@ -143,8 +172,17 @@ class Grants:
                 identity,
                 provider_key=self.provider_key_factory() if self.provider_key_factory is not None else None,
                 access_resolver=binding[1] if binding else None,
+                log=binding[2] if binding else None,
             )
             return token
+
+    def current(self, token: str) -> Lease:
+        """The live lease a direct call's record arrives under; it is not an inference request."""
+        with self.lock:
+            lease = self.leases.get(hashlib.sha256(token.encode()).hexdigest())
+            if lease is None or lease.expires <= time.monotonic():
+                raise ValueError("Invalid execution grant")
+            return lease
 
     def authorize(self, token: str, body: dict[str, Any], request_bytes: int) -> tuple[Lease, ModelPurpose]:
         with self.lock:
@@ -336,7 +374,103 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self) -> None:
-        self._forward_request()
+        if self.path == RECORD_PATH:
+            self._record_call()
+        else:
+            self._forward_request()
+
+    def _record_call(self) -> None:
+        """Store a direct call's own record under the execution its grant belongs to."""
+        try:
+            if self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length", [])) != 1:
+                raise ValueError("Unsupported request")
+            length = int(self.headers["Content-Length"])
+            if not 0 < length <= MAX_RECORD:
+                raise ValueError("Record limit")
+            raw = self.rfile.read(length)
+            if len(raw) != length:
+                raise ValueError("Incomplete request")
+            authorization = self.headers.get("Authorization", "")
+            if not authorization.startswith("Bearer "):
+                raise ValueError("Missing grant")
+            token = authorization[7:]
+        except (ValueError, TypeError, OSError):
+            self.send_error(400, "Invalid model call record")
+            return
+        try:
+            lease = self.server.grants.current(token)
+        except ValueError:
+            self.send_error(403, "Execution request rejected")
+            return
+        log = lease.log
+        if log is None:
+            # Nothing keeps records for this execution.
+            self._no_content()
+            return
+        try:
+            payload = json.loads(raw, object_pairs_hook=unique_object, parse_constant=reject_constant)
+            if not isinstance(payload, dict) or set(payload) != {"record", "images"}:
+                raise ValueError("Invalid model call record")
+            record, encoded = payload["record"], payload["images"]
+            if not isinstance(record, dict) or not isinstance(encoded, dict) or not _CALL_ID.fullmatch(str(record.get("call_id"))) or record.get("purpose") not in {"text", "vision"}:
+                raise ValueError("Invalid model call record")
+            images: dict[str, bytes] = {}
+            for digest, value in encoded.items():
+                image = base64.b64decode(value, validate=True)
+                if image_sha256(image) != digest:
+                    raise ValueError("Image digest mismatch")
+                images[digest] = image
+            # The guest knows only the local gateway: name the model's own host, owner and revision.
+            identity = record["identity"] if isinstance(record.get("identity"), dict) else {}
+            answered = {key: value for key, value in lease.answered_by.get(str(record.get("model")), {}).items() if key != "reasoning_effort"}
+            record["identity"] = {**identity, **answered}
+            record = _redacted(record, (token,))
+        except (ValueError, TypeError, KeyError):
+            self.send_error(400, "Invalid model call record")
+            return
+        try:
+            log.write(record, images)
+        except Exception:  # noqa: BLE001 - the log counts its own failures; the call keeps its result
+            self.send_error(503, "Model call record not stored")
+            return
+        self._no_content()
+
+    def _no_content(self) -> None:
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+    def _write_exchange(self, lease: Lease, purpose: ModelPurpose, body: Any, response: Any, usage: Any, code: str, status: int, seconds: float, hidden: tuple[str, ...]) -> None:
+        """Record one request as sent and answered. A record that cannot be built is still counted."""
+        log = lease.log
+        if log is None:
+            return
+        images: dict[str, bytes] = {}
+        try:
+            record = _redacted(
+                {
+                    "format": FORMAT,
+                    "kind": "responses",
+                    "purpose": purpose,
+                    "model": body.get("model") if isinstance(body, dict) else None,
+                    "identity": lease.answered_by.get(lease.models.get(purpose, "")) or {"model": lease.models.get(purpose, "")},
+                    "request": _without_images(body, images),
+                    "response": response,
+                    "usage": usage if isinstance(usage, dict) else None,
+                    "duration_ms": max(0, round(seconds * 1000)),
+                    "code": code,
+                    "provider_status": status,
+                },
+                hidden,
+            )
+        except (ValueError, TypeError):
+            images, record = {}, {"format": FORMAT, "kind": "responses", "purpose": purpose, "code": code, "record": "unavailable"}
+        try:
+            log.write(record, images, exchange=True)
+        except Exception:  # noqa: BLE001 - the log counts its own failures
+            pass
 
     def _forward_request(self) -> None:
         started_at = time.monotonic()
@@ -354,6 +488,13 @@ class Handler(BaseHTTPRequestHandler):
         acquired = False
         phase, error_type, last_event = "request", "IncompleteResponse", "none"
         total, provider_status = 0, 0
+        # A request the gateway records itself (#360): what was sent, and what came back.
+        exchange: tuple[ModelPurpose, dict[str, Any]] | None = None
+        answered: Any = None
+        provider_usage: Any = None
+        provider_key = ""
+        grant_token = ""
+        succeeded = False
         try:
             if self.path != "/v1/responses" or self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length", [])) != 1:
                 raise ValueError("Unsupported request")
@@ -376,7 +517,15 @@ class Handler(BaseHTTPRequestHandler):
             if not acquired:
                 self.send_error(408, "Model request queue timeout")
                 return
-            lease, purpose = self.server.grants.authorize(authorization[7:], body, len(raw))
+            grant_token = authorization[7:]
+            lease, purpose = self.server.grants.authorize(grant_token, body, len(raw))
+            if lease.log is not None:
+                call_id = self.headers.get(CALL_HEADER, "")
+                if _CALL_ID.fullmatch(call_id):
+                    lease.log.seen(call_id)
+                else:
+                    lease.log.begin()
+                    exchange = purpose, body
             if lease.access_resolver is not None:
                 # The host callback returns a key only while the tenant's selection
                 # still equals the identity frozen when the operation was accepted.
@@ -385,10 +534,18 @@ class Handler(BaseHTTPRequestHandler):
                 if access.model != lease.models[purpose] or url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
                     raise ModelUnavailable()
                 provider_key = access.api_key.get_secret_value()
+                lease.answered_by[access.model] = {
+                    "host": url.hostname or "",
+                    "model": access.model,
+                    "reasoning_effort": access.reasoning_effort,
+                    "revision": access.revision,
+                    "source": access.source,
+                }
             else:
                 url = self.server.upstream
                 selected_key = lease.provider_key or self.server.provider_key
                 provider_key = selected_key() if callable(selected_key) else selected_key
+                lease.answered_by[lease.models[purpose]] = {"host": url.hostname or "", "model": lease.models[purpose]}
             if not provider_key or not self.server.grants.active(lease):
                 raise ModelUnavailable()
             # A guest cannot know that its model answers only as a stream. Stream upstream and
@@ -428,7 +585,6 @@ class Handler(BaseHTTPRequestHandler):
             started = True
             client_connected = True
             pending = bytearray()
-            provider_usage: Any = None
             phase = "provider_read"
             while chunk := response.read1(65536):
                 chunk_at = time.monotonic()
@@ -475,9 +631,12 @@ class Handler(BaseHTTPRequestHandler):
                 phase = "provider_read"
             if not body.get("stream"):
                 try:
-                    provider_usage = json.loads(pending).get("usage")
+                    answered = json.loads(pending)
+                    provider_usage = answered.get("usage")
                 except (ValueError, AttributeError):
                     provider_usage = None
+            else:
+                answered = completed_response
             if collapse:
                 if not isinstance(completed_response, dict):
                     raise ValueError("Incomplete provider stream")
@@ -485,7 +644,7 @@ class Handler(BaseHTTPRequestHandler):
                 if client_connected:
                     self.wfile.write(f"{len(answer):x}\r\n".encode() + answer + b"\r\n")
             self.server.grants.record_usage(lease, provider_usage)
-            settled = True
+            settled = succeeded = True
             if client_connected:
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
@@ -537,6 +696,45 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.grants.release_upstream(lease)
                 if acquired:
                     self.server.inference_lock.release()
+                # Written after the next request may start: a record never holds up the agent.
+                if exchange is not None and lease is not None:
+                    self._write_exchange(
+                        lease,
+                        exchange[0],
+                        exchange[1],
+                        answered,
+                        provider_usage,
+                        "ok" if succeeded else error_type,
+                        provider_status,
+                        time.monotonic() - started_at,
+                        (grant_token, provider_key),
+                    )
+
+
+def _without_images(value: Any, images: dict[str, bytes]) -> Any:
+    """The request with each inline image replaced by its content digest; the bytes are kept apart, once."""
+    if isinstance(value, dict):
+        return {key: _without_images(item, images) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_without_images(item, images) for item in value]
+    if isinstance(value, str) and (match := _DATA_IMAGE.match(value)):
+        try:
+            image = base64.b64decode(match.group(2), validate=True)
+        except ValueError:
+            return value
+        digest = image_sha256(image)
+        images[digest] = image
+        return f"<image sha256:{digest}>"
+    return value
+
+
+def _redacted(record: dict[str, Any], hidden: tuple[str, ...]) -> dict[str, Any]:
+    """A record never carries the grant or a provider key, wherever a guest or a provider put it."""
+    text = json.dumps(record, ensure_ascii=False)
+    for secret in hidden:
+        if secret:
+            text = text.replace(json.dumps(secret, ensure_ascii=False)[1:-1], "[redacted]")
+    return cast(dict[str, Any], json.loads(text))
 
 
 class GrantServer(socketserver.UnixStreamServer):

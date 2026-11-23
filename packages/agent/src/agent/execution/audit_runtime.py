@@ -211,6 +211,7 @@ def run_audit(
         try:
             from audit.usage import get_token_tracker, track_model_usage
             from documents.model_access import ModelUnavailable, model_access_scope, model_access_scoped
+            from documents.model_calls import model_call_scope
 
             tracker = get_token_tracker()
             previous_request = tracker.get_current_request_id()
@@ -270,7 +271,8 @@ def run_audit(
                                 results.append(_evidence_references(_error(clause, "ERR", "checker_target_timeout_external_usage_unknown"), target.file_version_id))
                                 continue
                             try:
-                                with _clause_deadline(min(clause_timeout, remaining)):
+                                # A model call made here is recorded as serving this file's clause (#360).
+                                with _clause_deadline(min(clause_timeout, remaining)), model_call_scope(target=target.file_version_id, clause=clause):
                                     if selected_entrypoint == "checker:create_audit":
                                         from audit.standard_library import check_factory
 

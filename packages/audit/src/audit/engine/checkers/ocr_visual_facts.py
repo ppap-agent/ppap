@@ -75,9 +75,12 @@ def _diagnostic_facts(facts: dict[str, object]) -> dict[str, object]:
 async def read_visual_facts(images: list[bytes], prompt: str, *, response_schema: dict, max_output_tokens: int = 4096) -> dict:
     """The one vision model call. Tests replace this seam, never a provider transport."""
     from documents.ai import run_json_async
+    from documents.model_calls import ocr_request
 
     schema = {**response_schema["schema"], "title": response_schema.get("name", "answer")}
-    completed = await run_json_async("ocr_evidence", purpose="vision", prompt=prompt, images=images, schema=schema, max_tokens=max_output_tokens, timeout=20)
+    # Its record (#360) carries the identity offline replay matches this call by.
+    replay = lambda: ("ocr", ocr_request(images, prompt, response_schema, max_output_tokens))  # noqa: E731
+    completed = await run_json_async("ocr_evidence", purpose="vision", prompt=prompt, images=images, schema=schema, max_tokens=max_output_tokens, timeout=20, replay=replay)
     return completed.output
 
 

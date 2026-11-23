@@ -15,7 +15,17 @@ from agent.execution.isolation import ContainerRuntime, RuntimeConfig, local_gat
 
 
 @contextmanager
-def runtime_from_env(settings, objects, *, model_access_for_request=None, model_identity_for_request=None, snapshot_for_request=None, suite_for_revision=None):
+def runtime_from_env(
+    settings,
+    objects,
+    *,
+    model_access_for_request=None,
+    model_identity_for_request=None,
+    snapshot_for_request=None,
+    suite_for_revision=None,
+    model_call_log_for_request=None,
+):
+    """``model_call_log_for_request(spec)`` keeps the execution's model call records (#360); without it none are kept."""
     if os.environ.get("PPAP_DEEP_RUNTIME", "") != "container-only":
         raise ValueError("PPAP_DEEP_RUNTIME must explicitly select container-only")
     profile = os.environ.get("PPAP_DEEP_SANDBOX_PROFILE", "")
@@ -49,9 +59,28 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None, model_
                 return bootstrap.ready()
 
             def execute(self, spec, files, *, context):
-                return self._invoke(spec, lambda semantic, runtime: semantic.execute(spec, files, context=context))
+                log = None
+                if spec is not None and model_call_log_for_request is not None:
+                    try:
+                        log = model_call_log_for_request(spec)
+                    except Exception:  # noqa: BLE001 - records are kept beside the audit, never in its way
+                        log = None
+                if log is not None:
+                    # Requests the gateway records itself serve the task the guest last reported.
+                    forward = context.on_progress
 
-            def _invoke(self, spec, operation):
+                    def on_progress(state):
+                        log.progress(state)
+                        forward(state)
+
+                    context.on_progress = on_progress
+                try:
+                    return self._invoke(spec, lambda semantic, runtime: semantic.execute(spec, files, context=context), log)
+                finally:
+                    if log is not None:
+                        log.close()
+
+            def _invoke(self, spec, operation, log=None):
                 with slot:
                     if bootstrap.degraded:
                         raise DeepError("deep_runtime_unavailable")
@@ -80,7 +109,7 @@ def runtime_from_env(settings, objects, *, model_access_for_request=None, model_
                         selected = settings.deep_execution_policy(expected)
                         runtime = ContainerRuntime(
                             RuntimeConfig(state=state, gateway_socket=gateway.socket_path, gateway_host="127.0.0.1", **selected.model_dump()),
-                            model_grant_binding=lambda execution_id: gateway.http.grants.bind(execution_id, expected or {}, resolve_access),
+                            model_grant_binding=lambda execution_id: gateway.http.grants.bind(execution_id, expected or {}, resolve_access, log),
                         )
                         semantic = CoreRuntime(runtime, snapshot_for_request, suite_for_revision, objects=objects)
                         return operation(semantic, runtime)

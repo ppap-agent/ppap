@@ -39,6 +39,19 @@ def open_store(settings):
     return AuthStore(settings, role="worker")
 
 
+def model_call_log(settings, objects, spec):
+    """The execution's model call records, by round and attempt; their counts join the attempt's diagnostic."""
+    from product.model_calls import RoundCallLog, write_attempt_summary
+
+    return RoundCallLog(
+        objects,
+        tenant_id=spec.tenant_id,
+        round_id=spec.round_id,
+        attempt=spec.attempt,
+        on_close=lambda summary: write_attempt_summary(settings, spec.job_id, spec.attempt, summary),
+    )
+
+
 def main() -> int:
     settings = load_settings()
     socket_path = settings.deep_controller_socket.strip()
@@ -58,6 +71,7 @@ def main() -> int:
         model_access_for_request=lambda spec, purpose: model_access(store, spec, purpose),
         snapshot_for_request=lambda spec: suites.read_snapshot(spec.round_id, spec.tenant_id),
         suite_for_revision=suites.resolve_suite,
+        model_call_log_for_request=lambda spec: model_call_log(settings, objects, spec),
     ) as runtime:
         server = UnixControllerServer(
             socket_path,

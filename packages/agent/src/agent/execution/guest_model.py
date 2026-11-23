@@ -85,6 +85,45 @@ class ModelGrant(Artifact):
             )
         )
 
+    def record_calls(self):
+        """Every direct model call's record goes to the gateway, which stores it by round (#360); the guest stores nothing."""
+        from documents.model_calls import model_call_recorder
+
+        return model_call_recorder(GatewayCallLog(self.base_url, self.token))
+
+
+class GatewayCallLog:
+    """Hands each record, with images the gateway has not had yet, to the local gateway under the grant."""
+
+    PATH = "/ppap/model-calls"
+
+    def __init__(self, base_url: str, token: str) -> None:
+        # The guest checked the grant's loopback endpoint before any call.
+        url = urlsplit(base_url)
+        self.host, self.port, self.path = url.hostname or "127.0.0.1", url.port or 80, url.path.rstrip("/") + self.PATH
+        self.token = token
+        self.sent: set[str] = set()
+
+    def write(self, record: dict[str, Any], images: Mapping[str, bytes]) -> None:
+        import base64
+        import http.client
+
+        body = json.dumps({"record": record, "images": {digest: base64.b64encode(image).decode("ascii") for digest, image in images.items() if digest not in self.sent}}, ensure_ascii=False)
+        connection = http.client.HTTPConnection(str(self.host), self.port, timeout=30)
+        try:
+            connection.request("POST", self.path, body.encode(), {"Authorization": "Bearer " + self.token, "Content-Type": "application/json"})
+            response = connection.getresponse()
+            response.read()
+        finally:
+            connection.close()
+        if response.status != 204:
+            raise ModelProtocolError(f"Model call record refused ({response.status})")
+        self.sent.update(images)
+
+    def failed(self, record: dict[str, Any], code: str) -> None:
+        # The gateway saw the call and knows its record is missing; the guest keeps nothing.
+        return
+
 
 def sandbox_profile() -> str:
     isolation = os.environ.get("PPAP_GUEST_ISOLATION")

@@ -8,6 +8,7 @@ a correct one, and unknown or missing evidence never becomes PASS here.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import threading
 import time
@@ -16,6 +17,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
+from uuid import uuid4
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
@@ -27,9 +30,11 @@ from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider  # noqa: E402
 
 from documents.model_access import ModelAccess, ModelPurpose, ModelUnavailable, current_model_access, streams_only  # noqa: E402
+from documents.model_calls import CALL_HEADER, FORMAT, CallRecorder, current_recorder, current_scope, image_sha256, recording, text_request  # noqa: E402
 
 # One correction of an unparsable answer; an operation never loops on the model.
 OUTPUT_RETRIES = 1
+MAX_TOKENS = 1000
 _OBJECT = {"type": "object", "additionalProperties": True}
 
 
@@ -72,7 +77,7 @@ def _streams(access: ModelAccess) -> bool:
     return streams_only(access.base_url)
 
 
-def _model(access: ModelAccess, timeout: float) -> OpenAIResponsesModel:
+def _model(access: ModelAccess, timeout: float, call_id: str | None = None) -> OpenAIResponsesModel:
     client = AsyncOpenAI(
         api_key=access.api_key.get_secret_value(),
         base_url=access.base_url,
@@ -80,6 +85,7 @@ def _model(access: ModelAccess, timeout: float) -> OpenAIResponsesModel:
         timeout=timeout,
         # The SDK's own HTTP client type; never follow a redirect or an environment proxy.
         http_client=httpx2.AsyncClient(follow_redirects=False, trust_env=False, timeout=timeout),
+        default_headers={CALL_HEADER: call_id} if call_id else None,
     )
     return OpenAIResponsesModel(access.model, provider=OpenAIProvider(openai_client=client))
 
@@ -104,12 +110,13 @@ async def _run(
     max_tokens: int,
     timeout: float,
     reasoning_effort: str | None = None,
+    call_id: str | None = None,
 ) -> AIResult:
     output_type = StructuredDict(schema or _OBJECT, name=(schema or {}).get("title") or "answer")
     # Vision keeps the provider's native JSON Schema contract; text asks for JSON in the
     # prompt, which every Responses-compatible endpoint we use accepts.
     output = NativeOutput(output_type) if purpose == "vision" and schema else PromptedOutput(output_type)
-    model = _model(access, timeout)
+    model = _model(access, timeout, call_id)
     agent: Agent[None, dict[str, Any]] = Agent(model, output_type=output, instructions=instructions or None, retries=OUTPUT_RETRIES)
     content: list[Any] = [prompt, *(BinaryContent(image, media_type="image/png") for image in images)]
     settings = _settings(access, max_tokens, timeout, reasoning_effort)
@@ -147,30 +154,104 @@ async def run_json_async(
     task: str,
     *,
     prompt: str,
-    instructions: str = "",
+    instructions: str | None = None,
     purpose: ModelPurpose = "text",
     images: Sequence[bytes] = (),
     schema: dict[str, Any] | None = None,
-    max_tokens: int = 1000,
+    max_tokens: int | None = None,
     timeout: float = 900,
     reasoning_effort: str | None = None,
+    replay: Callable[[], tuple[str, Any]] | None = None,
 ) -> AIResult:
-    """Ask the model for one JSON object. The model and key come from the current scope."""
+    """Ask the model for one JSON object. The model and key come from the current scope.
+
+    Where a recorder is installed, the call leaves one record (#360). ``replay`` names the call as offline
+    replay matches it, as (kind, request); a direct text call is matched by its own parameters.
+    """
     access = current_model_access(purpose)
+    recorder = current_recorder()
+    call_id = uuid4().hex if recorder is not None else None
     started = time.monotonic()
     observer = _OBSERVER.get()
     try:
-        result = await _run(access, purpose=purpose, instructions=instructions, prompt=prompt, images=images, schema=schema, max_tokens=max_tokens, timeout=timeout, reasoning_effort=reasoning_effort)
+        result = await _run(
+            access,
+            purpose=purpose,
+            instructions=instructions or "",
+            prompt=prompt,
+            images=images,
+            schema=schema,
+            max_tokens=MAX_TOKENS if max_tokens is None else max_tokens,
+            timeout=timeout,
+            reasoning_effort=reasoning_effort,
+            call_id=call_id,
+        )
     except BaseException as exc:
+        seconds = time.monotonic() - started
         if observer is not None:
-            observer(task, None, time.monotonic() - started)
-        if isinstance(exc, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
-            raise
+            observer(task, None, seconds)
+        interrupted = isinstance(exc, (KeyboardInterrupt, SystemExit, asyncio.CancelledError))
         # Provider bodies may echo a credential or the document; keep only a code.
-        raise AIError(_error_code(exc)) from None
+        code = "cancelled" if interrupted else _error_code(exc)
+        if recorder is not None and call_id is not None:
+            _record(recorder, call_id, task, purpose, access, reasoning_effort, instructions, prompt, images, schema, max_tokens, timeout, replay, None, seconds, code)
+        if interrupted:
+            raise
+        raise AIError(code) from None
+    seconds = time.monotonic() - started
     if observer is not None:
-        observer(task, result, time.monotonic() - started)
+        observer(task, result, seconds)
+    if recorder is not None and call_id is not None:
+        _record(recorder, call_id, task, purpose, access, reasoning_effort, instructions, prompt, images, schema, max_tokens, timeout, replay, result, seconds, "ok")
     return result
+
+
+def _record(
+    recorder: CallRecorder,
+    call_id: str,
+    task: str,
+    purpose: ModelPurpose,
+    access: ModelAccess,
+    reasoning_effort: str | None,
+    instructions: str | None,
+    prompt: str,
+    images: Sequence[bytes],
+    schema: dict[str, Any] | None,
+    max_tokens: int | None,
+    timeout: float,
+    replay: Callable[[], tuple[str, Any]] | None,
+    result: AIResult | None,
+    seconds: float,
+    code: str,
+) -> None:
+    """Hand one call's record to the recorder. Nothing here changes the call's result."""
+    record: dict[str, Any] = {"format": FORMAT, "call_id": call_id, "task": task, "purpose": purpose, "code": code}
+    try:
+        kind, request = replay() if replay is not None else (purpose, text_request(task, instructions=instructions, prompt=prompt, schema=schema, max_tokens=max_tokens))
+        answer = json.dumps(result.output, ensure_ascii=False) if result is not None else None
+        stored = {image_sha256(image): bytes(image) for image in images}
+        record.update(
+            recording(kind, request, answer, access.model),
+            # Who answered: never the key or the full endpoint address.
+            identity={
+                "host": urlsplit(access.base_url).hostname or "",
+                "model": access.model,
+                "reasoning_effort": reasoning_effort or access.reasoning_effort,
+                "revision": access.revision,
+                "source": access.source,
+            },
+            images=[image_sha256(image) for image in images],
+            timeout=timeout,
+            usage=result.usage() if result is not None else None,
+            duration_ms=max(0, round(seconds * 1000)),
+            scope=current_scope(),
+        )
+        recorder.write(record, stored)
+    except Exception as exc:  # noqa: BLE001 - a lost record never changes the call
+        try:
+            recorder.failed(record, "model_call_record_failed:" + type(exc).__name__)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def run_json(task: str, **kwargs: Any) -> AIResult:
