@@ -525,6 +525,10 @@ def test_a_report_on_a_round_with_review_hints_is_published(mcp_app, core_system
         result = call(client, token, "publish_report", **arguments)
         assert result["next"]["kind"] == "done" and result["result"]["delivery"]["report"]["status"] == "ready", result
         assert len(drive.written) == 2
+        # Saving a review answers with that same projection, so the Web's comparison after saving holds.
+        key = client.get(f"/rounds/{round_id}").json()["findings"][0]["item_key"]
+        saved = client.put(f"/rounds/{round_id}/reviews", json={"item_key": key, "judgment": "confirm", "rationale": "核对", "next_step": "", "version": 0})
+        assert saved.status_code == 200 and "review_hint" in saved.json()["findings"][0]
 
 
 def test_the_confirm_click_takes_effect_and_a_refusal_carries_its_reason(mcp_app, core_system):

@@ -3255,7 +3255,8 @@ class AuthStore:
                     )
                 except UniqueViolation as exc:
                     raise ValueError("review_conflict") from exc
-                result = cast(dict, self._round_public(conn, parsed))
+                # The same projection as GET /rounds/{id}: the Web compares the two after saving.
+                result = cast(dict, self._round_public(conn, parsed, principal=principal))
                 if mcp_operation_id is not None:
                     conn.execute(
                         """UPDATE product.mcp_operations SET state='succeeded',updated_at=now(),result=%s
