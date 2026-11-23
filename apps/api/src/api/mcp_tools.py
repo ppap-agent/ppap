@@ -112,6 +112,14 @@ def failure(exc: Exception, *, task_id: str | None = None, request_id: str | Non
     return Outcome(task_id=task_id, request_id=request_id, next={"kind": "user_action", "action_id": "tell_user", "reason": code, "prompt": prompt, **({"then": then} if then else {})})
 
 
+def with_receipt(outcome: Outcome, reply: Reply | None) -> Outcome:
+    """A signing action the person completed carries their receipt (#361): its number and where they can download it."""
+    found = (reply.provenance or {}) if reply is not None and reply.status == "ok" else {}
+    if found.get("receipt"):
+        outcome.result = {**(outcome.result or {}), "receipt": {"number": found["receipt"], "url": found["receipt_url"]}}
+    return outcome
+
+
 def receipt(reply: Reply, tool: str, arguments: dict, *, task_id: str | None) -> Outcome | None:
     """A write that has not taken effect yet, as the next thing to do. None: it took effect."""
     rid = reply.request_id
@@ -393,7 +401,7 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
                 if reply is not None and reply.data:
                     # The person confirmed part of the plan: the steps left out come back as the next plan (#351).
                     done.result = {**done.result, "left_for_later": reply.data}
-                return done
+                return with_receipt(done, reply)
             actor.require("audits:write")
             reply = await runtime.resolve(actor, tid, issue_id, action_id, expected_revision, rid, value)
             if reply is not None:
@@ -401,7 +409,7 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
                 if pending is not None:
                     return pending
             await runtime.settle(actor, tid)
-            return await task_outcome(actor, tid, request_id=rid)
+            return with_receipt(await task_outcome(actor, tid, request_id=rid), reply)
         except Exception as exc:
             # Unfit input to an action: fix it and submit the same action again, under a new request_id.
             retry = {"tool": "resolve_issue", "arguments": {"task_id": tid, "issue_id": issue_id, "action_id": action_id, "expected_revision": expected_revision}, "new_request_id": True}
@@ -423,7 +431,7 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
             actor.require("audits:execute")
             reply = await runtime.confirm(actor, tid, quote_id, rid, notify_when_done)
             arguments = {"task_id": tid, "quote_id": quote_id, "request_id": rid, "notify_when_done": notify_when_done}
-            return receipt(reply, "confirm_audit", arguments, task_id=tid) or await task_outcome(actor, tid, request_id=rid)
+            return receipt(reply, "confirm_audit", arguments, task_id=tid) or with_receipt(await task_outcome(actor, tid, request_id=rid), reply)
         except Exception as exc:
             return failure(exc, task_id=tid, request_id=rid)
 
@@ -551,7 +559,7 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
             _audit, round_id = await audit_round(actor, tid)
             # The document as it reads now; none when the report changed after it was delivered.
             current = await gateway.get(actor, "audits:read", f"/integrations/feishu/rounds/{round_id}/report")
-            return Outcome(task_id=tid, request_id=rid, result={"delivered": True, "delivery": current["report"]}, next=DONE)
+            return with_receipt(Outcome(task_id=tid, request_id=rid, result={"delivered": True, "delivery": current["report"]}, next=DONE), reply)
         except Exception as exc:
             return failure(exc, task_id=tid, request_id=rid)
 

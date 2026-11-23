@@ -59,3 +59,15 @@ def test_authorization_pages_take_every_colour_from_the_design_tokens_and_run_no
     assert declared and set(re.findall(r"#[0-9a-fA-F]{3,8}\b", style)) <= declared
     assert "--color-primary:#1456f0" in style and "prefers-color-scheme:dark" in style
     assert "<script" not in html and "http" not in style
+
+
+def test_every_signing_moment_has_a_receipt_and_no_receipt_table_exists():
+    """A receipt is the signing action as recorded (#361): a label for each marked route, and nothing stored apart."""
+    from pathlib import Path
+
+    from product.store import actions
+
+    found = {(method, route.path) for route in marked() for method in route.methods}
+    assert found <= set(actions.LABELS), found - set(actions.LABELS)
+    migrations = (Path(__file__).resolve().parents[3] / "migrations").glob("*.sql")
+    assert not [path.name for path in migrations if re.search(r"CREATE TABLE (IF NOT EXISTS )?\w+\.\w*receipt", path.read_text(encoding="utf-8"), re.I)]

@@ -84,6 +84,7 @@ from api.meego_routes import register_meego_routes
 from api.notifications import run_task_notifications
 from api.office_routes import register_office_routes
 from api.precheck_routes import register_precheck_routes
+from api.receipts import register_receipt_routes
 from api.report_routes import register_report_routes
 from api.rule_routes import register_rule_routes
 from api.sharing_routes import register_sharing_routes
@@ -198,7 +199,7 @@ def create_app(
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Accept", "Content-Type", "Authorization", "X-PPAP-Intent"],
-        expose_headers=["Content-Disposition", "X-Content-SHA256", "X-Request-ID"],
+        expose_headers=["Content-Disposition", "X-Content-SHA256", "X-Request-ID", "X-PPAP-Action"],
     )
     configure_logs(settings)
 
@@ -311,6 +312,8 @@ def create_app(
             if getattr(request.state, "action_id", None):
                 response, error = await _error_code(response)
                 await asyncio.to_thread(actions.finish, store, request.state.action_id, response.status_code, error)
+                # The person's action as recorded: a signing one is their receipt (#361).
+                response.headers["x-ppap-action"] = request.state.action_id
             principal = getattr(request.state, "authenticated_principal", None)
             if principal:
                 tokens.extend(bind(tenant_id=principal.tenant_id))
@@ -1001,6 +1004,7 @@ def create_app(
     register_sharing_routes(app, store, session_of, http, settings)
     register_feishu_jsapi_routes(app, store, session_of, http, settings)
     register_intent_routes(app, session_of)
+    register_receipt_routes(app, store, session_of)
     wc.add_ui_contract(app)
     if settings.mcp_enabled:
         from api.mcp_server import install_mcp

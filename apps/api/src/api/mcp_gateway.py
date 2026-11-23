@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import httpx
 from product.logs import REQUEST_ID, emit
 from product.mcp import MAX_RESULT_BYTES, Delegation, McpError
+from product.store import actions
 from product.store.mcp import McpStore
 from pydantic import BaseModel, Field
 
@@ -179,7 +180,12 @@ class BusinessGateway:
                 return Reply(status="denied", error=outcome["reason"], request_id=rid)
             if outcome["state"] == "succeeded":
                 left = {"unselected": outcome["unselected"], "reason": outcome.get("reason")} if outcome.get("unselected") else None
-                return Reply(status="ok", data=left, request_id=rid, provenance={"client_id": delegation.client_id, "completed_at": outcome["at"]})
+                provenance = {"client_id": delegation.client_id, "completed_at": outcome["at"]}
+                # The person's receipt for it (#361), to point them to.
+                found = await asyncio.to_thread(actions.receipts, self.store.product, delegation.session.principal, intent=operation["id"], limit=1)
+                if found:
+                    provenance.update(receipt=found[0]["number"], receipt_url=self.store.settings.canonical_web_url().rstrip("/") + "/receipts?receipt=" + found[0]["id"])
+                return Reply(status="ok", data=left, request_id=rid, provenance=provenance)
             if outcome["state"] == "failed":
                 # Not done; the person may still complete it from the same link.
                 return Reply(status="confirmation_required", error=outcome["error"], request_id=rid, confirmation_url=self.intent_url(operation))
