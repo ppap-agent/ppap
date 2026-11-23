@@ -276,3 +276,27 @@ def test_a_recheck_suggestion_names_the_check_not_its_whole_clause():
 )
 def test_reports_still_being_made_are_never_counted_as_none(states, said):
     assert w._reports_text(states) == said
+
+
+@pytest.mark.parametrize(
+    ("item", "kind"),
+    [
+        ({"token": "fld1", "name": "资料", "type": "folder"}, "folder"),
+        ({"token": "fil1", "name": "控制计划.xlsx", "type": "file"}, "file"),
+        ({"token": "dox1", "name": "说明", "type": "docx", "url": "https://acme.feishu.cn/docx/dox1"}, "file"),
+        ({"token": "sht1", "name": "表", "type": "sheet", "url": "https://acme.feishu.cn/sheets/OTHER"}, "file"),
+        ({"token": "bas1", "name": "台账", "type": "bitable"}, "file"),
+    ],
+)
+def test_every_listed_item_source_is_read_back_as_that_item(item, kind):
+    parsed = w.parse_source(w.source_of(item))
+    assert parsed["kind"] == kind and parsed["token"] == item["token"]
+
+
+def test_items_that_cannot_be_audited_have_no_source():
+    assert w.source_of({"token": "m1", "name": "脑图", "type": "mindnote"}) is None
+
+
+def test_an_unreadable_folder_suggests_a_file_link():
+    assert "如果这是一个文件，请用文件链接" in w.unreadable_source("folder", False)
+    assert w.unreadable_source("file", False).startswith("读不到这个飞书文件。")

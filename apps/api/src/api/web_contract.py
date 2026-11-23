@@ -670,6 +670,7 @@ class DriveFile(TypedDict):
     token: str
     name: str
     type: str
+    url: NotRequired[str]
 
 
 class DriveFilesList(TypedDict):

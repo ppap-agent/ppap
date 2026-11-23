@@ -34,6 +34,25 @@ _LINK = re.compile(r"/(drive/folder|file|docx|docs|doc|sheets|base|wiki)/([A-Za-
 _LINK_TYPES = {"file": "file", "docx": "docx", "docs": "doc", "doc": "doc", "sheets": "sheet", "base": "bitable"}
 
 
+_LINK_PATHS = {"file": "file", "docx": "docx", "doc": "docs", "sheet": "sheets", "bitable": "base"}
+
+
+def source_of(item: dict) -> str | None:
+    """What prepare_audit takes for one item of a drive listing: a folder's token, a file's link; None when it cannot be audited."""
+    if item.get("type") == "folder":
+        return item["token"]
+    if item.get("type") not in _LINK_PATHS:
+        return None
+    url = item.get("url")
+    if isinstance(url, str) and url.startswith("https://"):
+        try:
+            if parse_source(url) == {"kind": "file", "token": item["token"], "doc_type": item["type"]}:
+                return url
+        except Rejected:
+            pass
+    return f"https://feishu.cn/{_LINK_PATHS[item['type']]}/{item['token']}"
+
+
 def parse_source(text: str) -> dict:
     """A Feishu folder link (or its token), or the link of one Feishu file. Nothing else is a source."""
     text = text.strip()
@@ -48,6 +67,14 @@ def parse_source(text: str) -> dict:
     if kind == "drive/folder":
         return {"kind": "folder", "token": token}
     return {"kind": "file", "token": token, "doc_type": _LINK_TYPES[kind]}
+
+
+def unreadable_source(kind: str, access: bool) -> str:
+    if access:
+        return f"读不到这个飞书{'文件夹' if kind == 'folder' else '文件'}。请重新登录飞书并授权后再试。"
+    if kind == "folder":
+        return "读不到这个飞书文件夹。请确认链接正确、你有权限查看它；如果这是一个文件，请用文件链接。"
+    return "读不到这个飞书文件。请确认链接正确，并且你有权限查看它。"
 
 
 def new_state(source: dict, options: dict) -> dict:
@@ -331,9 +358,7 @@ def issues(task_id: str, state: dict, facts: dict) -> list[dict]:
                 "access",
                 "blocking",
                 "discover",
-                "文件夹里的文件超过 200 份，请分成几个文件夹分别审核。"
-                if state["discover_error"] == "too_many_files"
-                else "读不到这个飞书文件夹。" + ("请重新登录飞书并授权后再试。" if access else "请确认链接正确，并且你有权限查看它。"),
+                "文件夹里的文件超过 200 份，请分成几个文件夹分别审核。" if state["discover_error"] == "too_many_files" else unreadable_source(state["source"]["kind"], access),
                 "资料还没有开始导入。",
                 [_act("retry", "再读一次")],
             )

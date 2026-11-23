@@ -217,15 +217,25 @@ def register_tools(mcp, gateway, authority, runtime):
                 token = source["token"]
             listed = await gateway.get(actor, "files:read", "/integrations/feishu/files", params={"folder_token": token, "page_token": page_token})
             audits = await asyncio.to_thread(runtime.store.by_source, actor.session.principal, token) if token else []
-            result = {"folder_token": token, "items": listed.get("files", []), "next_page_token": listed.get("next_page_token"), "audits_from_this_folder": audits}
-            return Outcome(result=result, next=DONE, available_actions=[{"tool": "prepare_audit", "summary": "把一个文件夹的 token 或链接作为 source，开始准备审核。"}])
+            items = [item | {"source": workflow.source_of(item)} for item in listed.get("files", [])]
+            result = {"folder_token": token, "items": items, "next_page_token": listed.get("next_page_token"), "audits_from_this_folder": audits}
+            return Outcome(
+                result=result, next=DONE, available_actions=[{"tool": "prepare_audit", "summary": "把条目的 source 原样作为 prepare_audit 的 source（文件夹或单个文件）；source 为空的条目不能审核。"}]
+            )
         except Exception as exc:
             return failure(exc)
 
     @mcp.tool(annotations=EXTERNAL)
     async def prepare_audit(
         request_id: UUID,
-        source: Annotated[str, Field(min_length=1, max_length=2000, description="The Feishu folder link the user gave (or its token); a single Feishu file link also works.")],
+        source: Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=2000,
+                description="The Feishu folder link the user gave, a single Feishu file link, or an item's `source` from find_submissions. A bare token is read as a folder.",
+            ),
+        ],
         customer: Annotated[
             str,
             Field(

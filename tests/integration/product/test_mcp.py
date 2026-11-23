@@ -391,7 +391,10 @@ def test_a_feishu_folder_is_prepared_confirmed_and_audited_and_an_interruption_c
         assert results["result"]["execution"] == "completed" and results["result"]["files"][0]["file_version_id"] == version
         assert results["next"]["kind"] == "done"
         assert call(client, token, "find_audits")["result"]["audits"][0]["task_id"] == task
-        assert call(client, token, "find_submissions", folder=FOLDER)["result"]["audits_from_this_folder"][0]["task_id"] == task
+        listed = call(client, token, "find_submissions", folder=FOLDER)["result"]
+        assert listed["audits_from_this_folder"][0]["task_id"] == task
+        # Every item says what prepare_audit takes for it (#350).
+        assert listed["items"] and all(item["source"] for item in listed["items"])
 
 
 def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_app, core_system, monkeypatch):

@@ -243,7 +243,7 @@ def list_drive_folder(http, access_token: str, folder_token: str = "", page_toke
             raise FeishuMetaError("feishu_folder_failed")
         return {
             "files": [
-                {"token": item["token"], "name": item["name"], "type": item["type"]}
+                {"token": item["token"], "name": item["name"], "type": item["type"]} | ({"url": item["url"]} if isinstance(item.get("url"), str) else {})
                 for item in files
                 if isinstance(item, dict) and all(isinstance(item.get(k), str) for k in ("token", "name", "type"))
             ],

@@ -3514,6 +3514,8 @@ export interface components {
             token: string;
             /** Type */
             type: string;
+            /** Url */
+            url?: string;
         };
         /** DriveFilesList */
         DriveFilesList: {
