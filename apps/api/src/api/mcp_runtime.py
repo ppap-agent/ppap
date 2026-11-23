@@ -101,6 +101,7 @@ class TaskRuntime:
                 for row in found.get("findings", [])
                 if row.get("review_hint")
             ]
+            facts["signoff"] = found.get("signoff")
         return facts
 
     async def view(self, actor: Delegation, task_id: str) -> tuple[dict, dict, dict]:

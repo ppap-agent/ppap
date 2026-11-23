@@ -92,6 +92,7 @@ def receipts(store, principal, *, ident: str | None = None, intent: str | None =
         ).fetchall()
         tasks = [row[8].split("/")[2] for row in rows if row[8].startswith("/audit-tasks/")]
         rounds = [row[8].split("/")[4] for row in rows if row[8].startswith("/integrations/feishu/rounds/")]
+        rounds += [row[8].split("/")[2] for row in rows if row[8].startswith("/rounds/")]
         numbers = {
             str(task): f"PPAP-{day:%Y%m%d}-{sequence:03d}"
             for task, day, sequence in conn.execute(
@@ -131,7 +132,15 @@ def _receipt(row, numbers: dict, by_round: dict, clients: dict, charged: dict) -
     ident, _user, at, channel, _grant, intent, method, route, path, params, outcome, error, day, seq = row
     params = params or {}
     parts = path.strip("/").split("/")
-    task = parts[1] if route.startswith("/audit-tasks/") else by_round.get(parts[3]) if route.startswith("/integrations/feishu/rounds/") else None
+    task = (
+        parts[1]
+        if route.startswith("/audit-tasks/")
+        else by_round.get(parts[3])
+        if route.startswith("/integrations/feishu/rounds/")
+        else by_round.get(parts[1])
+        if route.startswith("/rounds/")
+        else None
+    )
     if task:
         subject = numbers.get(task, "审核任务")
     elif route.startswith("/rulebooks/"):
@@ -149,6 +158,8 @@ def _receipt(row, numbers: dict, by_round: dict, clients: dict, charged: dict) -
         details.append("执行：" + "、".join(STEPS.get(step.get("step"), str(step.get("step"))) for step in params.get("steps") or []))
         if params.get("unselected"):
             details.append("没有勾选：" + "、".join(STEPS.get(step, step) for step in params["unselected"]) + (f"（原因：{params['reason']}）" if params.get("reason") else ""))
+    if route == "/rounds/{round_id}/signoff/withdraw" and params.get("reason"):
+        details.append(f"原因：{params['reason']}")
     points = None
     if route == "/audit-tasks/{task_id}/confirm" and outcome == "succeeded":
         points = charged.get(task or "", {"points": 0, "state": "none"})

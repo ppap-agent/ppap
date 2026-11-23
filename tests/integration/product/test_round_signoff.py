@@ -133,5 +133,8 @@ def test_the_person_who_ran_the_round_signs_withdraws_with_a_reason_and_signs_ag
         assert [(row[4], row[5]) for row in succeeded] == [(ident, "web"), (None, "web"), (None, "web")]
         assert succeeded[1][3] == {"reason": "第 2 页  漏看了零件号"}
         # The receipt names the signing moments by their labels.
-        actions = {row["action"] for row in client.get("/receipts").json()["receipts"]}
-        assert {"签发审核结论", "撤回签发"} <= actions
+        receipts = client.get("/receipts").json()["receipts"]
+        assert {"签发审核结论", "撤回签发"} <= {row["action"] for row in receipts}
+        # Its subject is the task the round belongs to, and a withdrawal says why.
+        withdrawal = next(row for row in receipts if row["action"] == "撤回签发" and row["outcome"]["state"] == "succeeded")
+        assert withdrawal["task_id"] == task and withdrawal["subject"] == detail["number"] and withdrawal["details"] == ["原因：第 2 页  漏看了零件号"]

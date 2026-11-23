@@ -411,6 +411,8 @@ def test_signing_off_is_proposed_for_the_person_who_ran_the_round_and_done_by_th
     world.product.round["signoff"] = {"state": "unsigned", "signed_at": None, "signer": None}
     seen = world.call("get_results", task_id=task)
     assert seen["result"]["signoff"]["state"] == "unsigned" and "sign_round" in {action["tool"] for action in seen["available_actions"]}
+    # The task itself offers it too, beside the next step.
+    assert "sign_round" in {action["tool"] for action in world.call("get_task", task_id=task)["available_actions"]}
 
     # Someone else's round is refused before anything is put to the user.
     world.product.signoff.update(can_sign=False, unavailable={"code": "not_creator", "message": "只有发起这一轮审核的人可以签发。"})

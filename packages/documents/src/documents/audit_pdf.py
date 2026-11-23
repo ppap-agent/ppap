@@ -393,6 +393,8 @@ def _remediation(source: dict) -> list:
 
 def _limits(source: dict) -> list:
     lines = [
+        # The first sentence of this chapter (#357); the running header stays as the PRD has it (#333).
+        "机器初审结果，以人工确认和签发为准。",
         "本报告记录所选文件版本和冻结要求的机器审核结果，不表示正式量产批准。",
         "「待审核」与「不适用」项均未计为 PASS，不计入 A / B / C 与问题总数；其原因与位置见第六章，须对照原件核对。",
         "C 类问题含本文件在预检中的警告项；预检不判定内容是否合规。",

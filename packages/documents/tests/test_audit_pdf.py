@@ -104,6 +104,8 @@ def test_long_reports_keep_every_clause_and_treat_embedded_markup_as_source_text
             assert f"第{number:02d}条要求" in text
         assert "<b>原件文字，不是HTML</b>" in text
         assert "不表示正式量产批准" in text
+        # Chapter eight opens with what a machine result is (#357).
+        assert _chapter(text, "八、结论作用域与局限性声明").removeprefix("八、结论作用域与局限性声明").startswith("·机器初审结果，以人工确认和签发为准。")
 
 
 CHAPTERS = (
