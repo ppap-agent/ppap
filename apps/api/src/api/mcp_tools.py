@@ -456,7 +456,7 @@ def register_tools(mcp, gateway, authority, runtime):
         severity: Annotated[Literal["A", "B", "C"] | None, Field(description="Change the item's severity, with the reason in rationale; omit to keep the one in effect.")] = None,
     ) -> Outcome:
         """Record a person's judgment on one finding, in that person's words. It is kept beside the machine's conclusion, which stays as
-        it was, and is saved only after the person approves the exact text in the browser."""
+        it was. It is saved at once under the scope the person granted; call it only when the person asked for it."""
         tid, rid = str(task_id), str(request_id)
         try:
             actor = await authority()
@@ -485,12 +485,8 @@ def register_tools(mcp, gateway, authority, runtime):
                 body["citations"] = citations
             if severity is not None:
                 body["severity"] = severity
-            source = await gateway.get(actor, "audits:read", path)
-            # The clause, the machine's finding and its evidence: what the Web shows beside its review form.
-            row: dict[str, Any] = next((f for f in source.get("findings", []) if f["item_key"] == item_key), {})
-            summary, details = views.review(row, body)
-            snapshot = {"operation": "record_review", "summary": summary, "details": details, "request": body, "sources": [source]}
-            reply = await gateway.write(actor, "reviews:write", "record_review", rid, "PUT", path + "/reviews", body, probes=[path], confirmation=snapshot)
+            # A review is the submitter's judgment, written under the scope the person granted; not a signing moment (#355).
+            reply = await gateway.write(actor, "reviews:write", "record_review", rid, "PUT", path + "/reviews", body, probes=[path])
             arguments = {"task_id": tid, "request_id": rid, "item_key": item_key, "judgment": judgment, "rationale": rationale, "next_step": next_step, "citations": citations}
             return receipt(reply, "record_review", arguments, task_id=tid) or Outcome(task_id=tid, request_id=rid, result={"item_key": item_key, "saved": True}, next=DONE)
         except Exception as exc:

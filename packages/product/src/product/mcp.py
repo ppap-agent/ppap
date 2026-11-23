@@ -18,7 +18,7 @@ SCOPES = {
     "audits:read": "读取审核任务、结果与历史",
     "audits:write": "准备审核、处理准备中的问题",
     "audits:execute": "开始审核或重审；须逐次确认",
-    "reviews:write": "提交人工复核、确认原件事实；须本人逐次确认",
+    "reviews:write": "提交人工复核、确认原件事实",
     "reports:read": "读取已授权报告",
     "reports:write": "重新生成报告",
     "reports:send": "向飞书写回或发送报告；须逐次确认",

@@ -399,6 +399,7 @@ def test_a_feishu_folder_is_prepared_confirmed_and_audited_and_an_interruption_c
 
 
 def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_app, core_system, monkeypatch):
+    """A review is written at once under the granted scope (#355); a lost reply is read back, never written twice."""
     _, store = mcp_app
     with folder_client(store, Drive()) as (app, client, token, cid):
         task, done = audited_folder(client, store, token, core_system)
@@ -408,8 +409,6 @@ def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_
         assert full["item_key"] == listed["item_key"] and full["status"] == listed["status"]
         # The tool reads the finding's current review version itself.
         args = {"task_id": task, "request_id": str(uuid4()), "item_key": listed["item_key"], "judgment": "confirm", "rationale": "已核对原件", "next_step": ""}
-        pending = call(client, token, "record_review", **args)
-        assert client.get(f"/rounds/{round_id}").json()["findings"][0]["review"] is None
         original = app.state.mcp_gateway.request
 
         async def lost_reply(*a, **kw):
@@ -419,33 +418,23 @@ def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_
             return response
 
         monkeypatch.setattr(app.state.mcp_gateway, "request", lost_reply)
-        # The click takes effect at once (#348); the reply is lost there, and the page says so instead of claiming success.
-        page = client.get(pending["next"]["url"])
-        csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
-        clicked = client.post(pending["next"]["url"], data={"csrf": csrf, "decision": "approve"})
-        assert clicked.status_code == 200 and "结果还不确定" in clicked.text and "已完成" not in clicked.text
+        assert call(client, token, "record_review", **args)["next"]["kind"] == "recover"
+        monkeypatch.setattr(app.state.mcp_gateway, "request", original)
         receipt = call(client, token, "get_operation", request_id=args["request_id"])
         assert receipt["next"]["kind"] == "done" and receipt["result"]["state"] == "succeeded", receipt
         assert receipt["result"]["provenance"]["client_id"] == cid
-        assert receipt["result"]["provenance"]["confirmed_by"] == store.principal_for_fixture("alice").user_id
         assert receipt["result"]["data"]["findings"][0]["review"]["version"] == 1
         assert call(client, token, "record_review", **args)["result"] == {"item_key": listed["item_key"], "saved": True}
         current = client.get(f"/rounds/{round_id}").json()["findings"][0]
-        # The machine's conclusion is as it was; the person's judgment is beside it.
+        # The machine's conclusion is as it was; the person's judgment is beside it, written once.
         assert current["status"] == listed["status"] and current["review"]["version"] == 1
-        monkeypatch.setattr(app.state.mcp_gateway, "request", original)
-        next_args = {**args, "request_id": str(uuid4()), "rationale": "第二次核对"}
-        asked = call(client, token, "record_review", **next_args)
-        # A Web edit between preparing and the click wins. The approval cannot override that newer human judgment:
-        # the review it approved was written against version 1, so the click does nothing and says why.
-        web = {"item_key": listed["item_key"], "judgment": "需修改", "rationale": "网页复核已修订", "next_step": "", "version": 1}
+        # The tool reads the current version itself: a later review is added on top of a Web edit, and history keeps both.
+        web = {"item_key": listed["item_key"], "judgment": "disagree", "rationale": "网页复核已修订", "next_step": "", "version": 1}
         assert client.put(f"/rounds/{round_id}/reviews", json=web).status_code == 200
-        page = client.get(asked["next"]["url"])
-        csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
-        clicked = client.post(asked["next"]["url"], data={"csrf": csrf, "decision": "approve"})
-        assert "没有完成" in clicked.text and "已被修改" in clicked.text and "review_conflict" not in clicked.text
-        assert call(client, token, "record_review", **next_args)["next"]["error_code"] == "review_conflict"
-        assert client.get(f"/rounds/{round_id}").json()["findings"][0]["review"]["version"] == 2
+        later = {**args, "request_id": str(uuid4()), "rationale": "第二次核对"}
+        assert call(client, token, "record_review", **later)["result"] == {"item_key": listed["item_key"], "saved": True}
+        history = client.get(f"/rounds/{round_id}/reviews/history", params={"item_key": listed["item_key"]}).json()["versions"]
+        assert [row["rationale"] for row in history] == ["第二次核对", "网页复核已修订", "已核对原件"]
 
 
 @pytest.mark.parametrize("edit_at", ["before_capture", "after_capture"])

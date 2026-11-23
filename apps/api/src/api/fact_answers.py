@@ -9,7 +9,6 @@ from fastapi.responses import JSONResponse, Response
 from product.mcp import Delegation, McpError
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 
-from api.mcp_confirmation import require_approved_source
 from api.web_contract import SemanticLocator
 
 
@@ -113,7 +112,6 @@ def register_fact_answer_routes(app: FastAPI, store, principal_of) -> None:
             if isinstance(delegated, Delegation):
                 delegated.require("audits:read")
                 delegated.require("reviews:write")
-                require_approved_source(request, f"/audit-rounds/{round_id}/fact-answers", FactAnswersView.model_validate(store.read_fact_answers(principal, round_id)).model_dump(mode="json"))
             return store.apply_fact_answer(principal, round_id, body.model_dump())
 
         return call(request, apply)

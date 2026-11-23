@@ -384,16 +384,13 @@ def test_finding_audits_lists_what_a_person_scans_for_not_whole_tasks():
     }
 
 
-def test_an_approved_review_is_saved_as_approved_though_the_round_moved_on_meanwhile():
+def test_a_review_is_written_at_once_under_the_granted_scope():
+    """Reviews are not a signing moment (#355): no browser step, and a replay with the same request writes nothing twice."""
     world = World("a.xlsx")
     ask = str(uuid4())
     task = task_id_for("u", ask)
     world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")
     world.product.audit.update(state="completed", round_id="round-1", conclusion="NG")
     review = {"task_id": task, "request_id": str(uuid4()), "item_key": "k1", "judgment": "confirm", "rationale": "已核对原件", "next_step": ""}
-    asked = world.call("record_review", **review)
-    assert asked["next"]["action_id"] == "approve_in_browser"
-    world.product.approved = True
-    world.product.operations[review["request_id"]]["state"] = "ready"
-    world.product.round["findings"].append({"item_key": "k2", "status": "PASS"})  # another review or a report landed
+    assert world.call("record_review", **review)["result"] == {"item_key": "k1", "saved": True}
     assert world.call("record_review", **review)["result"] == {"item_key": "k1", "saved": True}

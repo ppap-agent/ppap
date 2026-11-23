@@ -365,8 +365,6 @@ class TaskRuntime:
         return None
 
     async def _answer(self, actor, round_id, issue, facts, request_id, value) -> Reply:
-        from api.fact_answers import FactAnswersView
-
         subject = issue["subject"]
         question = next(q for q in facts["questions"]["questions"] if q["file_version_id"] == subject["file_version_id"] and q["field"] == subject["key"])
         answer = value.get("value") if isinstance(value, dict) else value
@@ -386,9 +384,5 @@ class TaskRuntime:
             "field": subject["key"],
             "value": answer,
         }
-        # The owner checks the approval against its own canonical form of what the person saw.
-        source = FactAnswersView.model_validate(current).model_dump(mode="json")
-        names = {row["file"]["id"]: row["file"]["original_filename"] for row in (facts.get("audit") or {}).get("files", [])}
-        summary, details = views.answer(question, names.get(subject["file_version_id"]), answer)
-        snapshot = {"operation": "resolve_issue", "summary": summary, "details": details, "request": body, "sources": [source]}
-        return await self.gateway.write(actor, "reviews:write", "resolve_issue", request_id, "POST", path, body, probes=[path], confirmation=snapshot)
+        # The person's answer, written under the scope they granted; not a signing moment (#355).
+        return await self.gateway.write(actor, "reviews:write", "resolve_issue", request_id, "POST", path, body, probes=[path])

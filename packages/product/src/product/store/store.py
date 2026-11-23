@@ -3206,7 +3206,7 @@ class AuthStore:
                         command["citations"] = citations
                     if severity is not None:
                         command["severity"] = severity
-                    if not operation or str(operation[3]) != principal.user_id or operation[0].get("path") != f"/rounds/{round_id}/reviews" or operation[0].get("body") != command:
+                    if not operation or operation[0].get("path") != f"/rounds/{round_id}/reviews" or operation[0].get("body") != command:
                         raise ValueError("invalid_review_confirmation")
                     if operation[1] == "succeeded":
                         return operation[2]["data"]

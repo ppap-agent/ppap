@@ -9,9 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from audit.audits import JUDGMENTS
-from audit.models import public_locator
-from documents.location import location_label
 from product.customers import customer_name, type_names
 
 FINDING = {"PASS": "符合", "NG": "不符合", "UNABLE": "待审核", "NA": "不适用", "ERR": "没有检查完"}
@@ -109,59 +106,6 @@ def audit_start(task: dict, precheck: dict | None, folders: dict[str, str]) -> t
     return summary, details
 
 
-def _places(finding: dict) -> list[list[Any]]:
-    """Where the evidence is, as the Web lists it: file, place, excerpt."""
-    locator = finding.get("locator") or {}
-    rows = []
-    for source in ((locator.get("semantic") or {}).get("sources")) or []:
-        place = public_locator(source.get("locator"))
-        rows.append([source.get("filename") or locator.get("filename"), location_label(place) if place else "未提供具体位置", source.get("excerpt") or "—"])
-    return rows
-
-
-def review(finding: dict, body: dict) -> tuple[list[str], list[dict]]:
-    """Before saving a human review: the clause detail the Web shows around its review form."""
-    name = (finding.get("locator") or {}).get("filename") or "这份文件"
-    machine = FINDING.get(str(finding.get("status")), str(finding.get("status") or "—"))
-    summary = [f"对「{name}」的一条检查项记录人工复核：{JUDGMENTS.get(body['judgment'], body['judgment'])}。"]
-    details: list[dict] = [
-        {"kind": "facts", "rows": [("文件", name), ("分类", finding.get("classification")), ("优先级", finding.get("priority")), ("机器结论", machine)]},
-        {"kind": "text", "title": "审核规则原文", "text": finding.get("item")},
-        {"kind": "text", "title": "判定理由", "text": finding.get("suggestions")},
-        {"kind": "table", "title": "证据", "head": ["文件", "位置", "摘录"], **_rows(_places(finding))},
-    ]
-    prior = finding.get("review")
-    if prior:
-        details.append(
-            {
-                "kind": "facts",
-                "title": f"现有人工复核（第 {prior.get('version')} 次，更正后保留在历史里）",
-                "rows": [
-                    ("人工判断", JUDGMENTS.get(prior.get("judgment") or "", prior.get("judgment"))),
-                    *([("严重程度", prior["severity"])] if prior.get("severity") else []),
-                    ("判断理由", prior.get("rationale")),
-                    ("后续建议", prior.get("next_step")),
-                ],
-            }
-        )
-    cites = [[c.get("file_version_id"), c.get("location"), c.get("excerpt")] for c in body.get("citations") or []]
-    details.append(
-        {
-            "kind": "facts",
-            "title": "这次的人工复核",
-            "rows": [
-                ("人工判断", JUDGMENTS.get(body["judgment"], body["judgment"])),
-                *([("改为严重程度", body["severity"])] if body.get("severity") else []),
-                ("判断理由", body["rationale"]),
-                ("后续建议", body.get("next_step") or None),
-            ],
-        }
-    )
-    details.append({"kind": "table", "title": "原件引用", "head": ["文件", "位置", "摘录"], **_rows(cites)})
-    details.append({"kind": "note", "text": "记录人工判断，不改变机器结果或正式报告资格。复核与机器结论并列保存。"})
-    return summary, details
-
-
 def report(task: dict, round_: dict) -> tuple[list[str], list[dict]]:
     """Before creating the Feishu report document: what the document will say."""
     counts: dict[str, int] = {}
@@ -193,18 +137,6 @@ def report(task: dict, round_: dict) -> tuple[list[str], list[dict]]:
     ]
     return summary, details
 
-
-def answer(question: dict, filename: str | None, value: Any) -> tuple[list[str], list[dict]]:
-    shown = "是" if value is True else "否" if value is False else value
-    summary = [f"确认原件事实：{question.get('prompt')}", f"回答：{shown}"]
-    details: list[dict] = [
-        {"kind": "facts", "rows": [("文件", filename), ("问题", question.get("prompt")), ("你的回答", shown)]},
-        {"kind": "note", "text": "回答只用于本轮所选文件版本：依赖它的检查项按规则重新计算，机器结果与你的确认分别保存，不修改规则。"},
-    ]
-    return summary, details
-
-
-# ---- rulebook clarification: what the platform operator approves ----------------------------------------------
 
 CHANGE = {"same": "意思不变", "changed": "意思变了", "new": "新增"}
 
