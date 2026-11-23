@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+from datetime import UTC, datetime
 from html import escape
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -24,7 +25,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from api.mcp_auth import OAuthProvider, register_oauth
 from api.mcp_gateway import BusinessGateway
-from api.mcp_pages import details, lines, page
+from api.mcp_pages import connection_state, details, lines, page
 from api.mcp_runtime import TaskRuntime
 
 
@@ -173,25 +174,33 @@ def install_mcp(app, product, http, session_of):
             return sign_in("/mcp/connections")
         entries = await asyncio.to_thread(store.connections, session.principal)
         browser = request.cookies.get(SESSION_COOKIE, "")
-        rows = []
+        now = datetime.now(UTC)
+        active: list[str] = []
+        inactive: list[str] = []
         for entry in entries:
             ident = entry["id"]
-            status = "已撤销" if entry["revoked_at"] else "有效期至 " + entry["expires_at"]
+            state, said = connection_state(entry, now)
             form = (
-                ""
-                if entry["revoked_at"]
-                else (
-                    f'<form method="post" action="{escape(provider.base)}/mcp/connections/{ident}/revoke">'
-                    f'<input type="hidden" name="csrf" value="{revocation_csrf(browser, ident)}">'
-                    '<button type="submit">撤销连接</button></form>'
-                )
+                f'<form method="post" action="{escape(provider.base)}/mcp/connections/{ident}/revoke">'
+                f'<input type="hidden" name="csrf" value="{revocation_csrf(browser, ident)}">'
+                '<button type="submit">撤销连接</button></form>'
+                if state == "active"
+                else ""
             )
             scopes = "；".join(SCOPES[s] for s in entry["scopes"] if s in SCOPES)
-            rows.append(f'<section><h2>{escape(entry["client_name"] or "MCP 客户端")}</h2><p class="muted">{escape(status)}</p><p class="muted">{escape(scopes)}</p>{form}</section>')
-        return page(
-            "已连接的客户端",
-            ("".join(rows) or '<p class="muted">还没有连接过客户端。</p>') + '<p class="notice">撤销后，这个客户端不能再读取或发起新操作；已经开始的审核照常完成。</p>',
-        )
+            row = f'<section><h2>{escape(entry["client_name"] or "MCP 客户端")}</h2><p class="muted">{escape(said)}</p><p class="muted">{escape(scopes)}</p>{form}</section>'
+            (active if state == "active" else inactive).append(row)
+        shown = request.query_params.get("show") == "inactive"
+        body = "".join(active) or '<p class="muted">没有有效的连接。</p>'
+        if inactive:
+            # Shown on request, with its count; a plain GET keeps the page free of scripts.
+            toggle = (
+                f'<form method="get" action="{escape(provider.base)}/mcp/connections">'
+                + ("" if shown else '<input type="hidden" name="show" value="inactive">')
+                + f'<button type="submit" aria-describedby="inactive-count">{"收起已失效的连接" if shown else "显示已失效的连接"}</button></form>'
+            )
+            body += f'<h3>已失效的连接 <span id="inactive-count" class="muted">{len(inactive)} 个</span></h3>{toggle}' + ("".join(inactive) if shown else "")
+        return page("已连接的客户端", body + '<p class="notice">撤销后，这个客户端不能再读取或发起新操作；已经开始的审核照常完成。</p>')
 
     @app.post("/mcp/connections/{grant_id}/revoke", include_in_schema=False)
     async def connections_revoke(grant_id: UUID, request: Request):

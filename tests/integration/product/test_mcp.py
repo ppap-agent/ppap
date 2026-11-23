@@ -543,6 +543,11 @@ def test_registry_annotations_and_browser_revoke(mcp_app):
         assert rpc(client, token, "tools/list").status_code == 200
         assert client.post(target, data={"csrf": csrf}, follow_redirects=False).status_code == 303
         assert rpc(client, token, "tools/list").status_code == 401
+        # A revoked connection leaves the list of usable ones and waits behind its counted button, without a revoke button.
+        folded = client.get("/mcp/connections").text
+        assert "已失效的连接" in folded and "1 个" in folded and "已撤销" not in folded and 'method="post"' not in folded
+        shown = client.get("/mcp/connections", params={"show": "inactive"}).text
+        assert "已撤销（" in shown and 'method="post"' not in shown and "收起已失效的连接" in shown
 
 
 def test_pkce_failure_does_not_consume_code_and_unregistered_redirect_is_rejected(mcp_app):

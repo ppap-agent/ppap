@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from functools import cache
 from html import escape
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi.responses import HTMLResponse
 
@@ -214,3 +216,22 @@ def details(blocks: list[dict], closing: str = "") -> str:
     if notes:
         out.append(f'<p class="notice">{"".join(escape(note) for note in notes)}</p>')
     return "".join(out)
+
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def local_time(value: str, now: datetime, *, clock: bool = True) -> str:
+    """A stored timestamp as people read it here: 11 月 29 日 06:11, with the year only when it is not this one."""
+    at = datetime.fromisoformat(value).astimezone(SHANGHAI)
+    year = "" if at.year == now.astimezone(SHANGHAI).year else f"{at.year} 年 "
+    return f"{year}{at.month} 月 {at.day} 日" + (f" {at:%H:%M}" if clock else "")
+
+
+def connection_state(entry: dict, now: datetime) -> tuple[str, str]:
+    """(state, what to say) of one connection, from its own dates: active, expired or revoked."""
+    if entry["revoked_at"]:
+        return "revoked", f"已撤销（{local_time(entry['revoked_at'], now, clock=False)}）"
+    if datetime.fromisoformat(entry["expires_at"]) <= now:
+        return "expired", f"已过期（{local_time(entry['expires_at'], now, clock=False)}）"
+    return "active", f"{local_time(entry['expires_at'], now)} 到期 · {local_time(entry['created_at'], now, clock=False)}连接"
