@@ -178,7 +178,8 @@ class BusinessGateway:
             if outcome["state"] == "declined":
                 return Reply(status="denied", error=outcome["reason"], request_id=rid)
             if outcome["state"] == "succeeded":
-                return Reply(status="ok", request_id=rid, provenance={"client_id": delegation.client_id, "completed_at": outcome["at"]})
+                left = {"unselected": outcome["unselected"], "reason": outcome.get("reason")} if outcome.get("unselected") else None
+                return Reply(status="ok", data=left, request_id=rid, provenance={"client_id": delegation.client_id, "completed_at": outcome["at"]})
             if outcome["state"] == "failed":
                 # Not done; the person may still complete it from the same link.
                 return Reply(status="confirmation_required", error=outcome["error"], request_id=rid, confirmation_url=self.intent_url(operation))

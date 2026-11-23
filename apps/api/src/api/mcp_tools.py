@@ -281,8 +281,10 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
         """Open the clarification of one version of a customer's rulebook: review each clause, put the open questions before the
         customer, turn their answers into the next revision, and repeat until nothing is open; then write a reading beside each clause.
         The enterprise has one such task per customer and version; calling this again returns it. Then follow `next`. Review a clause
-        with the clause-check method and submit it through resolve_issue; sending cards and confirming a revision are the platform
-        operator's own acts, proposed here and completed on the rules page in the PPAP Web."""
+        with the clause-check method and submit it through resolve_issue; reviews and readings are prepared on the wording before it
+        is frozen. Then one plan per round (freeze, send cards or mark clarified, publish readings) is proposed with confirm_plan;
+        the platform operator checks its steps and confirms them on the rules page in the PPAP Web. Steps left unchecked come back
+        as the next plan, with the operator's reason in result.left_for_later."""
         tid = None
         try:
             actor = await authority()
@@ -350,7 +352,13 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
             if shared is not None:
                 reply = await clarifications.resolve(actor, shared, issue_id, action_id, expected_revision, rid, value)
                 pending = receipt(reply, "resolve_issue", arguments, task_id=tid) if reply is not None else None
-                return pending or await clarification_outcome(actor, await clarification_of(actor, tid) or shared, request_id=rid)
+                if pending is not None:
+                    return pending
+                done = await clarification_outcome(actor, await clarification_of(actor, tid) or shared, request_id=rid)
+                if reply is not None and reply.data:
+                    # The person confirmed part of the plan: the steps left out come back as the next plan (#351).
+                    done.result = {**done.result, "left_for_later": reply.data}
+                return done
             actor.require("audits:write")
             reply = await runtime.resolve(actor, tid, issue_id, action_id, expected_revision, rid, value)
             if reply is not None:

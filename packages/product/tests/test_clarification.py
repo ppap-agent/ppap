@@ -51,59 +51,136 @@ def answered(key, rev, *answers):
     }
 
 
-def test_a_round_from_review_to_the_next_revision():
-    state, r0 = c.new_state("uaes", "v9.0"), revision(0, {"A:1": "须已签名", "A:2": "须盖章"})
-    view = c.project(TASK, state, facts(r0))
-    assert view["phase"] == "reviewing" and view["next"]["tool"] == "get_issue"
+DRAFT = [{"key": "A", "title": "A 文件", "clauses": [{"id": "A:1", "category": "", "text": "须已签名"}, {"id": "A:2", "category": "", "text": "须盖章"}]}]
+SIGNED = {"checks": ["签名栏"], "passes": ["有签名"], "fails": ["没有签名"], "manual": []}
+STAMPED = {"checks": ["盖章处"], "passes": ["有章"], "fails": ["无章"], "manual": []}
 
-    # A review that misquotes the clause is refused whole, with everything wrong with it; the other clause is untouched.
-    with pytest.raises(c.Invalid) as refused:
-        act(state, facts(r0), "CLAUSE_REVIEW", "submit_review", review([{**AMBIGUITY, "quotes": ["已盖章"], "challenge": "短"}]), "A:1")
-    assert len(refused.value.problems) == 2
-    state = act(state, facts(r0), "CLAUSE_REVIEW", "submit_review", review([AMBIGUITY]), "A:1")
-    assert c.project(TASK, state, facts(r0))["phase"] == "reviewing"
-    state = act(state, facts(r0), "CLAUSE_REVIEW", "submit_review", {**review(), "requirements": [{"quote": "须盖章", "role": "necessary", "scope": "盖章", "meaning": "要盖章。"}]}, "A:2")
 
-    # The clause without findings raises no card; the one question waits for the operator to send it.
-    view = c.project(TASK, state, facts(r0))
-    assert view["phase"] == "ready_to_send" and view["result"]["progress"]["reviewed_without_findings"] == 1
-    (card,) = c._standing(state, facts(r0), r0)["unsent"]
+def take(found, steps, chosen=None):
+    """What the rulebook store does with the chosen steps, as the facts the task reads next."""
+    chosen = [step["id"] for step in steps] if chosen is None else chosen
+    rev, cards = found.get("revision"), list(found.get("cards", []))
+    for step in steps:
+        if step["id"] not in chosen:
+            continue
+        body = step["body"]
+        if step["id"] == "revision":
+            rev = revision(body["revision"], {clause["id"]: clause["text"] for document in body["documents"] for clause in document["clauses"]})
+            cards = [{**row, "closed": True} if row["revision"] == body["revision"] - 1 else row for row in cards]
+        elif step["id"] == "cards":
+            cards += [{"card": card, "revision": body["rulebook"]["revision"], "closed": False, "answers": []} for card in body["cards"]]
+        elif step["id"] == "clarified":
+            rev = {**rev, "clarified": True}
+        else:
+            rev = {**rev, "documents": [{**d, "clauses": [{**c, "reading": body["readings"].get(c["id"], c["reading"])} for c in d["clauses"]]} for d in rev["documents"]]}
+    return {**found, "revision": rev, "cards": cards}
+
+
+def answer(found, key, *answers):
+    rows = [{**row, "answers": [{"answerer": name, "choice": choice, "text": None} for name, choice in answers]} if row["card"]["key"] == key else row for row in found["cards"]]
+    return {**found, "cards": rows}
+
+
+def drafted():
+    nothing = {"roles": OPERATOR, "cards": []}
+    return act(c.new_state("uaes", "v9.0"), nothing, "CLAUSES_REQUIRED", "submit_clauses", {"documents": DRAFT}), nothing
+
+
+def plan_of(state, found):
+    view = c.project(TASK, state, found)
+    assert view["phase"] == "ready_to_confirm" and view["next"]["kind"] == "user_action", view["phase"]
+    return c.plan(state, found)
+
+
+def test_a_version_with_nothing_to_ask_is_done_in_one_confirmation():
+    state, found = drafted()
+    # Reviews are prepared on the draft itself: the wording that becomes revision 0.
+    view = c.project(TASK, state, found)
+    assert view["phase"] == "reviewing" and view["result"]["next_revision"] == {"version": "v9.0", "revision": 0}
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", review(), "A:1")
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", {**review(), "requirements": [{"quote": "须盖章", "role": "necessary", "scope": "盖章", "meaning": "要盖章。"}]}, "A:2")
+    # Nothing to ask, so the revision will be clarified at once: its readings are prepared before anyone is asked.
+    assert c.project(TASK, state, found)["phase"] == "reading"
+    state = act(state, found, "CLAUSE_READING", "submit_reading", SIGNED, "A:1")
+    state = act(state, found, "CLAUSE_READING", "submit_reading", STAMPED, "A:2")
+    steps = plan_of(state, found)
+    assert [(s["id"], s["external"], s["depends_on"]) for s in steps] == [("revision", False, []), ("clarified", False, ["revision"]), ("readings", False, ["clarified"])]
+    done = take(found, steps)
+    assert c.project(TASK, state, done)["phase"] == "completed"
+
+
+def test_one_round_of_questions_takes_two_confirmations():
+    state, found = drafted()
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", review([AMBIGUITY]), "A:1")
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", {**review(), "requirements": [{"quote": "须盖章", "role": "necessary", "scope": "盖章", "meaning": "要盖章。"}]}, "A:2")
+    # First confirmation: revision 0 and the question to the customer, which is marked as reaching the customer.
+    first = plan_of(state, found)
+    assert [(s["id"], s["external"], s["depends_on"]) for s in first] == [("revision", False, []), ("cards", True, ["revision"])]
+    (card,) = first[1]["body"]["cards"]
     assert card["key"] == "A:1#1" and [o["label"] for o in card["options"]] == ["理解一：电子签名也算", "理解二：仅手写算"]
     # One generator: the card is exactly the one the offline questionnaire build makes for the same finding.
     questionnaire = c._script("questionnaire")
     (finding,) = state["reviews"]["A:1"]["findings"]
     assert card == questionnaire.clause_card(finding, questionnaire.clause_name("A 文件", "A:1"), "须已签名", 0)
-    assert questionnaire.card_key("A:1#1", 2) == "A:1#r2.1"
-    assert not next(i for i in c.issues(TASK, state, facts(r0, roles={"prepare": True, "confirm": False})) if i["code"] == "CARDS_READY")["allowed_actions"]
-
-    sent = facts(r0, [answered("A:1#1", 0)])
-    view = c.project(TASK, state, sent)
-    assert view["phase"] == "awaiting_answers" and view["next"]["kind"] == "wait"
+    found = take(found, first)
+    assert c.project(TASK, state, found)["phase"] == "awaiting_answers"
 
     # Two people answer differently: the task says so and leaves the choice to a person.
-    split = facts(r0, [answered("A:1#1", 0, ("张三", "A"), ("李四", "B"))])
-    issue = next(i for i in c.issues(TASK, state, split) if i["code"] == "CLAUSE_ANSWERED")
-    assert "答复不一致" in issue["message"]
-    both = facts(r0, [answered("A:1#1", 0, ("张三", "A"), ("李四", "A"))])
+    split = answer(found, "A:1#1", ("张三", "A"), ("李四", "B"))
+    assert "答复不一致" in next(i for i in c.issues(TASK, state, split) if i["code"] == "CLAUSE_ANSWERED")["message"]
+    found = answer(found, "A:1#1", ("张三", "A"), ("李四", "A"))
     with pytest.raises(c.Invalid):
-        act(state, both, "CLAUSE_ANSWERED", "propose_text", {"text": "须已签名", "kind": "changed", "note": "x", "cards": ["A:1#1"]}, "A:1")
-    state = act(state, both, "CLAUSE_ANSWERED", "propose_text", {"text": "须已签名，手写或电子均可", "kind": "changed", "note": "电子签名也算", "cards": ["A:1#1"]}, "A:1")
-    view = c.project(TASK, state, both)
-    assert view["phase"] == "ready_to_revise" and view["next"]["kind"] == "user_action"
+        act(state, found, "CLAUSE_ANSWERED", "propose_text", {"text": "须已签名", "kind": "changed", "note": "x", "cards": ["A:1#1"]}, "A:1")
+    state = act(state, found, "CLAUSE_ANSWERED", "propose_text", {"text": "须已签名，手写或电子均可", "kind": "changed", "note": "电子签名也算", "cards": ["A:1#1"]}, "A:1")
 
-    # The request that writes the next revision is one the revision store accepts: named grounds, same clause names.
-    body = c.next_revision(state, r0)
+    # Only the reworded clause is reviewed again, on the wording revision 1 will have; then every reading is prepared.
+    view = c.project(TASK, state, found)
+    assert view["phase"] == "reviewing" and [i["subject"]["key"] for i in view["issues"]] == ["A:1"]
+    assert view["result"]["next_revision"] == {"version": "v9.0", "revision": 1}
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", review(), "A:1")
+    state = act(state, found, "CLAUSE_READING", "submit_reading", {**SIGNED, "passes": ["有签名，手写或电子均可"]}, "A:1")
+    state = act(state, found, "CLAUSE_READING", "submit_reading", STAMPED, "A:2")
+    second = plan_of(state, found)
+    assert [s["id"] for s in second] == ["revision", "clarified", "readings"]
+    body = second[0]["body"]
     assert body["changes"]["A:1"]["sources"] == [{"question_key": "A:1#1", "answerers": ["张三", "李四"]}]
-    assert rulebooks.revision_problems(body["documents"], body["changes"], r0["documents"]) == []
+    assert rulebooks.revision_problems(body["documents"], body["changes"], found["revision"]["documents"]) == []
+    assert c.project(TASK, state, take(found, second))["phase"] == "completed"
 
-    # On the next revision only the reworded clause is reviewed again, and the settled question is not asked again.
-    r1 = revision(1, {"A:1": "须已签名，手写或电子均可", "A:2": "须盖章"})
-    closed = [{**answered("A:1#1", 0, ("张三", "A")), "closed": True}]
-    view = c.project(TASK, state, facts(r1, closed))
-    assert [i["subject"]["key"] for i in view["issues"]] == ["A:1"] and view["phase"] == "reviewing"
-    state = act(state, facts(r1, closed), "CLAUSE_REVIEW", "submit_review", review(), "A:1")
-    view = c.project(TASK, state, facts(r1, closed))
-    assert view["phase"] == "ready_to_clarify" and view["result"]["progress"]["cards"] == {"unsent": 0, "waiting": 0, "answered": 0, "settled": 0}
+
+def test_a_new_question_on_the_rewording_makes_the_second_confirmation_a_revision_and_new_cards():
+    state, found = drafted()
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", review([AMBIGUITY]), "A:1")
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", {**review(), "requirements": [{"quote": "须盖章", "role": "necessary", "scope": "盖章", "meaning": "要盖章。"}]}, "A:2")
+    found = answer(take(found, c.plan(state, found)), "A:1#1", ("张三", "A"))
+    state = act(state, found, "CLAUSE_ANSWERED", "propose_text", {"text": "须已签名，手写或电子均可", "kind": "changed", "note": "电子签名也算", "cards": ["A:1#1"]}, "A:1")
+    again = {**AMBIGUITY, "quotes": ["手写或电子均可"], "question": "盖章算不算？"}
+    state = act(
+        state,
+        found,
+        "CLAUSE_REVIEW",
+        "submit_review",
+        {**review([again]), "requirements": [{"quote": "须已签名，手写或电子均可", "role": "necessary", "scope": "签名", "meaning": "要有签名。"}]},
+        "A:1",
+    )
+    second = plan_of(state, found)
+    assert [(s["id"], s["external"]) for s in second] == [("revision", False), ("cards", True)]
+    assert [card["key"] for card in second[1]["body"]["cards"]] == ["A:1#r1.1"]
+
+
+def test_an_unchecked_step_comes_back_as_the_next_plan_with_what_was_prepared():
+    state, found = drafted()
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", review(), "A:1")
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", {**review(), "requirements": [{"quote": "须盖章", "role": "necessary", "scope": "盖章", "meaning": "要盖章。"}]}, "A:2")
+    state = act(state, found, "CLAUSE_READING", "submit_reading", SIGNED, "A:1")
+    state = act(state, found, "CLAUSE_READING", "submit_reading", STAMPED, "A:2")
+    # Only the first step checked: exactly what confirming one step at a time did.
+    found = take(found, c.plan(state, found), ["revision"])
+    rest = plan_of(state, found)
+    assert [(s["id"], s["depends_on"]) for s in rest] == [("clarified", []), ("readings", ["clarified"])]
+    assert rest[1]["body"]["readings"] == {"A:1": SIGNED, "A:2": STAMPED}
+    # Readings on their own once the revision is clarified.
+    assert [s["id"] for s in plan_of(state, take(found, rest, ["clarified"]))] == ["readings"]
 
 
 def test_an_unanswered_card_is_asked_again_and_an_open_answer_is_followed_up():
@@ -127,7 +204,8 @@ def test_readings_follow_a_clarified_revision_and_keep_the_clause_terms():
     reading = {"checks": ["签名栏"], "passes": ["3 人均“已签名”"], "fails": ["任一人未签"], "manual": []}
     state = act(state, facts(r1), "CLAUSE_READING", "submit_reading", reading, "A:1")
     view = c.project(TASK, state, facts(r1))
-    assert view["phase"] == "ready_to_publish" and c.pending_readings(state, r1)["A:1"]["reading"] == reading
+    assert view["phase"] == "ready_to_confirm" and [step["id"] for step in c.plan(state, facts(r1))] == ["readings"]
+    assert c.pending_readings(state, r1)["A:1"]["reading"] == reading
     done = c.project(TASK, state, facts(revision(1, {"A:1": text}, clarified=True, readings={"A:1": reading})))
     assert done["phase"] == "completed" and done["next"]["kind"] == "done"
 
@@ -138,6 +216,13 @@ def test_a_new_version_starts_from_submitted_clauses_and_only_an_operator_confir
     with pytest.raises(c.Invalid):
         act(state, nothing, "CLAUSES_REQUIRED", "submit_clauses", {"documents": [{**documents[0], "clauses": [{"id": "B:1", "category": "", "text": "x"}]}]})
     state = act(state, nothing, "CLAUSES_REQUIRED", "submit_clauses", {"documents": documents})
+    # The draft is reviewed before it is frozen, and can still be submitted again.
+    (issue,) = c.issues(TASK, state, nothing)
+    assert issue["code"] == "CLAUSE_REVIEW" and {a["id"] for a in issue["allowed_actions"]} == {"submit_review", "submit_clauses"}
+    state = act(state, nothing, "CLAUSE_REVIEW", "submit_review", review(), "A:1")
+    state = act(state, nothing, "CLAUSE_READING", "submit_reading", SIGNED, "A:1")
+    # Only an operator confirms; a reviewer sees what is ready and that it is not theirs to confirm.
     view = c.project(TASK, state, nothing)
-    assert view["phase"] == "importing" and view["next"]["kind"] == "blocked"
-    assert "confirm_clauses" in {a["id"] for a in c.issues(TASK, state, {**nothing, "roles": OPERATOR})[0]["allowed_actions"]}
+    assert view["phase"] == "ready_to_confirm" and view["next"]["kind"] == "blocked"
+    plan_issue = next(i for i in c.issues(TASK, state, {**nothing, "roles": OPERATOR}) if i["code"] == "PLAN_READY")
+    assert "confirm_plan" in {a["id"] for a in plan_issue["allowed_actions"]}

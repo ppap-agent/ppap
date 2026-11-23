@@ -116,3 +116,34 @@ def test_the_new_questions_card_opens_the_questionnaire():
     assert card["header"]["subtitle"]["content"] == "联电科技/UAES 规则库 v1.0 修订 1" and "新增 **3 个**问题" in card["body"]["elements"][0]["content"]
     link = card["body"]["elements"][1]["behaviors"][0]["default_url"]
     assert parse_qs(urlsplit(link).query)["return_to"] == ["https://ppap.example/requirements?template=uaes&ruleQuestions=q-1"]
+
+
+def test_a_plan_takes_effect_whole_or_not_at_all(auth_store_factory, tmp_path):
+    """The steps checked in one confirmation are one transaction, and each needs the steps before it (#351)."""
+    store = auth_store_factory(Settings(feishu_app_id="rulebooks-p", usage_charge_enabled=False, template_root=str(tmp_path), platform_operators="acme-t:ou_owner"))
+    api = build_product_store(store.settings, objects=store.objects, role="api")
+    owner = TestClient(create_app(store.settings, auth_store=api))
+    owner.cookies.set(SESSION_COOKIE, store.create_session(store.upsert_feishu_identity("acme-t", "ou_owner", "负责人")))
+    documents = [{"key": "A", "title": "A 文件", "clauses": [{"id": "A:1", "category": "", "text": "须“已签名”"}]}]
+    revision = {"step": "revision", "body": {"version": "v7.0", "revision": 0, "base": None, "documents": documents, "changes": {}, "origin": "clarification"}}
+    clarified = {"step": "clarified", "body": {"version": "v7.0", "revision": 0}}
+    reading = {"checks": ["签名栏"], "passes": ["有“已签名”"], "fails": ["没有签名"], "manual": []}
+
+    def readings(value):
+        return {"step": "readings", "body": {"version": "v7.0", "revision": 0, "readings": {"A:1": value}}}
+
+    # A later step that does not hold: the revision before it is not written either.
+    refused = owner.post("/rulebooks/uaes/plan", json={"steps": [revision, clarified, readings({**reading, "passes": ["有签名"]})]})
+    assert refused.status_code == 400 and refused.json()["error"] == "invalid_clause_reading", refused.json()
+    assert owner.get("/rulebooks/uaes").json()["revisions"] == []
+    # A step checked without the step it needs is refused, and nothing is written.
+    alone = owner.post("/rulebooks/uaes/plan", json={"steps": [clarified]})
+    assert alone.status_code == 409 and alone.json()["error"] == "plan_step_requires_revision"
+    assert owner.post("/rulebooks/uaes/plan", json={"steps": [clarified, revision]}).json()["error"] == "invalid_rulebook_plan"
+    # Only the first step checked: it alone takes effect, and the rest is recorded as left for later.
+    first = owner.post("/rulebooks/uaes/plan", json={"steps": [revision], "unselected": ["clarified", "readings"], "reason": "解读还要再看"})
+    assert first.status_code == 200 and first.json()["done"] == ["revision"] and first.json()["revision"]["clarified"] is False
+    assert owner.post("/rulebooks/uaes/plan", json={"steps": [readings(reading)]}).json()["error"] == "plan_step_requires_clarified"
+    # The rest in one confirmation.
+    rest = owner.post("/rulebooks/uaes/plan", json={"steps": [clarified, readings(reading)]})
+    assert rest.status_code == 200 and rest.json()["revision"]["clarified"] and rest.json()["revision"]["documents"][0]["clauses"][0]["reading"] == reading

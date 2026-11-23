@@ -18,8 +18,8 @@ from product.mcp import Delegation, McpError
 from api.mcp_gateway import Reply
 
 READ, WRITE = "rulebooks:read", "rulebooks:write"
-# The steps that take effect, each one signing call (#348); everything else a task takes is prepared work.
-STEPS = frozenset({"confirm_clauses", "send_cards", "confirm_revision", "confirm_clarified", "confirm_readings"})
+# What takes effect: one plan, confirmed in one signing call (#348, #351); everything else a task takes is prepared work.
+STEPS = frozenset(clarification.CONFIRM)
 
 
 class ClarificationRuntime:
@@ -94,14 +94,16 @@ class ClarificationRuntime:
             if not await asyncio.to_thread(self.store.save_shared, principal, task_id, row["revision"], clarification.apply(state, event)):
                 raise workflow.Rejected("stale_revision")
             return None
-        step = self.step(task_id, state, facts, action_id)
+        if action_id not in STEPS:
+            raise McpError("unknown_action", 500)
         request = {"task_id": task_id, "issue_id": issue_id, "action_id": action_id}
+        listing = f"/rulebooks/{state['customer']}"
         page = f"/requirements?template={state['customer']}"
-        return await self.gateway.propose(actor, WRITE, "resolve_issue", request_id, step["method"], step["path"], page=page, request=request, probes=[f"/rulebooks/{state['customer']}"])
+        return await self.gateway.propose(actor, WRITE, "resolve_issue", request_id, "POST", listing + "/plan", page=page, request=request, probes=[listing])
 
     async def describe(self, actor: Delegation, request: dict) -> dict:
-        """A proposed step as it stands now: what the page shows and the exact call its confirmation makes. A step the task
-        has moved past is gone (`proposal_outdated`); the client proposes the next one."""
+        """A proposed plan as it stands now: each step, what it does in the person's words, and the call that confirming the
+        checked steps makes. A plan the task has moved past is gone (`proposal_outdated`); the client proposes the next."""
         actor.require(READ)
         row = await asyncio.to_thread(self.store.load, actor.session.principal, request["task_id"])
         if row is None or row["state"].get("kind") != "clarification":
@@ -111,37 +113,28 @@ class ClarificationRuntime:
             workflow.find_issue(clarification.issues(row["id"], row["state"], facts), request["issue_id"], request["action_id"])
         except workflow.Rejected:
             raise McpError("proposal_outdated", 409) from None
-        return self.step(row["id"], row["state"], facts, request["action_id"])
+        return self.plan(row["id"], row["state"], facts)
 
-    def step(self, task_id: str, state: dict, facts: dict, action_id: str) -> dict:
-        """One signing step from the task's current state: the call, and what it does in the person's words."""
+    def plan(self, task_id: str, state: dict, facts: dict) -> dict:
+        """The plan's steps from the task's current state, each described from the same reads (#351)."""
         customer, version = state["customer"], state["version"]
-        listing = f"/rulebooks/{customer}"
-        if action_id == "confirm_clauses":
-            body = {"version": version, "revision": 0, "base": None, "documents": state["draft"]["documents"], "changes": {}, "origin": "clarification"}
-            summary, details = rulebook_clauses(customer, version, state["draft"])
-            return {"method": "POST", "path": listing + "/revisions", "body": body, "summary": summary, "details": details}
-        revision = facts["revision"]
-        number = revision["revision"]
-        path = f"/rulebooks/{customer}/{version}/{number}"
-        if action_id == "send_cards":
-            cards = clarification._standing(state, facts, revision)["unsent"]
-            body = {"customer_id": customer, "rulebook": {"version": version, "revision": number}, "cards": cards}
-            answerers = sorted({answer["answerer"] for row in facts["cards"] for answer in row["answers"]})
-            summary, details = rule_cards(revision, cards, answerers)
-            return {"method": "POST", "path": "/rule-questionnaires/cards", "body": body, "summary": summary, "details": details}
-        if action_id == "confirm_revision":
-            summary, details = rulebook_revision(revision, clarification.proposals(state, revision))
-            return {"method": "POST", "path": listing + "/revisions", "body": clarification.next_revision(state, revision), "summary": summary, "details": details}
-        if action_id == "confirm_clarified":
-            asked = [row for row in facts["cards"] if row["revision"] <= number]
-            summary, details = rulebook_clarified(revision, clarification.project(task_id, state, facts)["result"]["progress"], asked)
-            return {"method": "POST", "path": path + "/clarified", "body": None, "summary": summary, "details": details}
-        if action_id == "confirm_readings":
-            readings = {clause: entry["reading"] for clause, entry in clarification.pending_readings(state, revision).items()}
-            summary, details = rule_readings(revision, readings)
-            return {"method": "PUT", "path": path + "/readings", "body": {"readings": readings}, "summary": summary, "details": details}
-        raise McpError("unknown_action", 500)
+        revision, goal = clarification.current(state, facts), clarification.target(state, facts)
+        assert goal is not None
+        steps = []
+        for step in clarification.plan(state, facts):
+            body = step["body"]
+            if step["id"] == "revision":
+                summary, details = rulebook_clauses(customer, version, state["draft"]) if revision is None else rulebook_revision(revision, clarification.proposals(state, revision))
+            elif step["id"] == "cards":
+                answerers = sorted({answer["answerer"] for row in facts["cards"] for answer in row["answers"]})
+                summary, details = rule_cards(goal, body["cards"], answerers)
+            elif step["id"] == "clarified":
+                asked = [row for row in facts["cards"] if row["revision"] <= goal["revision"]]
+                summary, details = rulebook_clarified(goal, clarification.project(task_id, state, facts)["result"]["progress"], asked)
+            else:
+                summary, details = rule_readings(goal, body["readings"])
+            steps.append({**step, "title": clarification.STEP_NAMES[step["id"]], "summary": summary, "details": details})
+        return {"method": "POST", "path": f"/rulebooks/{customer}/plan", "steps": steps}
 
 
 # ---- what a step does, in the person's words ----------------------------------------------------------------------

@@ -765,6 +765,8 @@ class IntentOutcome(TypedDict):
     # proposed: not acted on yet; declined: the person said no; otherwise the result of the person's latest attempt.
     state: Literal["proposed", "declined", "pending", "succeeded", "failed", "unknown"]
     reason: NotRequired[str | None]
+    # Plan steps the person left unchecked when completing it, with `reason` (#351).
+    unselected: NotRequired[list[str]]
     error: NotRequired[str | None]
     at: NotRequired[str]
 
@@ -778,13 +780,27 @@ class IntentDetail(TypedDict):
     text: NotRequired[str]
 
 
-class IntentStep(TypedDict):
-    # A step with no page of its own (rule clarification), as it stands now; confirming makes exactly this call.
-    method: Literal["POST", "PUT"]
-    path: str
-    body: Any
+PlanStepId = Literal["revision", "cards", "clarified", "readings"]
+
+
+class IntentPlanStep(TypedDict):
+    id: PlanStepId
+    title: str
+    # Reaches the customer (cards): shown apart and checked only by the person's own choice.
+    external: bool
+    # Steps this one needs first; unchecking one of them unchecks this one.
+    depends_on: list[PlanStepId]
     summary: list[str]
     details: list[IntentDetail]
+    body: Any
+
+
+class IntentPlan(TypedDict):
+    """A rule-clarification plan as it stands now (#351): confirming sends the checked steps, in order, in one call."""
+
+    method: Literal["POST"]
+    path: str
+    steps: list[IntentPlanStep]
 
 
 class Intent(TypedDict):
@@ -798,7 +814,7 @@ class Intent(TypedDict):
     path: str
     page: str
     outcome: IntentOutcome
-    step: NotRequired[IntentStep | None]
+    plan: NotRequired[IntentPlan | None]
     # Why a step can no longer be shown as proposed (the task moved on, the connection was revoked).
     unavailable: NotRequired[str]
 

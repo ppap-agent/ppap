@@ -1728,6 +1728,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rulebooks/{customer_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Rulebook Plan
+         * @description Every step a platform operator checked in one confirmation, in one transaction (#351).
+         */
+        post: operations["apply_rulebook_plan_rulebooks__customer_id__plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rulebooks/{customer_id}/revisions": {
         parameters: {
             query?: never;
@@ -3891,7 +3911,7 @@ export interface components {
             page: string;
             /** Path */
             path: string;
-            step?: components["schemas"]["IntentStep"] | null;
+            plan?: components["schemas"]["IntentPlan"] | null;
             /** Tool */
             tool: string;
             /** Unavailable */
@@ -3928,22 +3948,43 @@ export interface components {
              * @enum {string}
              */
             state: "proposed" | "declined" | "pending" | "succeeded" | "failed" | "unknown";
+            /** Unselected */
+            unselected?: string[];
         };
-        /** IntentStep */
-        IntentStep: {
-            /** Body */
-            body: unknown;
-            /** Details */
-            details: components["schemas"]["IntentDetail"][];
+        /**
+         * IntentPlan
+         * @description A rule-clarification plan as it stands now (#351): confirming sends the checked steps, in order, in one call.
+         */
+        IntentPlan: {
             /**
              * Method
-             * @enum {string}
+             * @constant
              */
-            method: "POST" | "PUT";
+            method: "POST";
             /** Path */
             path: string;
+            /** Steps */
+            steps: components["schemas"]["IntentPlanStep"][];
+        };
+        /** IntentPlanStep */
+        IntentPlanStep: {
+            /** Body */
+            body: unknown;
+            /** Depends On */
+            depends_on: ("revision" | "cards" | "clarified" | "readings")[];
+            /** Details */
+            details: components["schemas"]["IntentDetail"][];
+            /** External */
+            external: boolean;
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "revision" | "cards" | "clarified" | "readings";
             /** Summary */
             summary: string[];
+            /** Title */
+            title: string;
         };
         /** JobError */
         JobError: {
@@ -4681,6 +4722,14 @@ export interface components {
             key: string;
             /** Title */
             title: string;
+        };
+        /** RulebookPlanReceipt */
+        RulebookPlanReceipt: {
+            /** Done */
+            done: ("revision" | "cards" | "clarified" | "readings")[];
+            revision: components["schemas"]["RulebookRevisionView"];
+            /** Unselected */
+            unselected: ("revision" | "cards" | "clarified" | "readings")[];
         };
         /** RulebookRevisionList */
         RulebookRevisionList: {
@@ -9524,6 +9573,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RulebookRevisionView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_rulebook_plan_rulebooks__customer_id__plan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                customer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Reason */
+                    reason?: string | null;
+                    /** Steps */
+                    steps: {
+                        /** Body */
+                        body: {
+                            [key: string]: unknown;
+                        };
+                        /**
+                         * Step
+                         * @enum {string}
+                         */
+                        step: "revision" | "cards" | "clarified" | "readings";
+                    }[];
+                    /**
+                     * Unselected
+                     * @default []
+                     */
+                    unselected?: ("revision" | "cards" | "clarified" | "readings")[];
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RulebookPlanReceipt"];
                 };
             };
             /** @description Validation Error */

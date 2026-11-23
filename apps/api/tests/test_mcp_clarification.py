@@ -42,7 +42,7 @@ class Gateway:
 
     async def operation_reply(self, actor, operation):
         if operation["outcome"] == "succeeded":
-            return Reply(status="ok", request_id=operation["request_id"])
+            return Reply(status="ok", data=operation.get("left"), request_id=operation["request_id"])
         return Reply(status="confirmation_required", request_id=operation["request_id"], confirmation_url="https://ppap.example" + operation["arguments"]["page"])
 
     @property
@@ -84,18 +84,23 @@ class Person:
     def resolve(self, task, issue, action, value=None, rid=None):
         return self.call("resolve_issue", task_id=task["task_id"], issue_id=issue["id"], action_id=action, expected_revision=task["task_revision"], request_id=rid or str(uuid4()), value=value)
 
-    def approve(self, task, issue, action):
-        """Propose, complete the step on the rules page as it reads now, and call again with the same request."""
+    def approve(self, task, issue, chosen=None, reason=None):
+        """Propose the plan, check its steps on the rules page as they read now, confirm, and call again with the same request."""
         rid = str(uuid4())
-        asked = self.resolve(task, issue, action, rid=rid)
+        asked = self.resolve(task, issue, "confirm_plan", rid=rid)
         assert asked["next"]["action_id"] == "complete_in_web" and asked["next"]["url"].startswith("https://ppap.example/requirements?template=")
         proposal = self.gateway.operations[rid]
-        step = asyncio.run(self.clarifications.describe(self.actor(), proposal["arguments"]["request"]))
-        assert (step["method"], step["path"]) == (proposal["arguments"]["method"], proposal["arguments"]["path"]) and step["summary"]
-        done = self.web.request(step["method"], step["path"], json=step["body"])
+        plan = asyncio.run(self.clarifications.describe(self.actor(), proposal["arguments"]["request"]))
+        assert (plan["method"], plan["path"]) == (proposal["arguments"]["method"], proposal["arguments"]["path"])
+        assert all(step["summary"] and step["title"] for step in plan["steps"])
+        picked = [step for step in plan["steps"] if chosen is None or step["id"] in chosen]
+        left = [step["id"] for step in plan["steps"] if step not in picked]
+        body = {"steps": [{"step": step["id"], "body": step["body"]} for step in picked], "unselected": left, **({"reason": reason} if reason else {})}
+        done = self.web.post(plan["path"], json=body)
         assert done.is_success, done.text
         proposal["outcome"] = "succeeded"
-        return self.resolve(task, issue, action, rid=rid)
+        proposal["left"] = {"unselected": left, "reason": reason} if left else None
+        return self.resolve(task, issue, "confirm_plan", rid=rid), plan
 
 
 def issue_of(task, code):
@@ -152,12 +157,14 @@ def test_a_round_reaches_the_customer_only_through_the_operators_approval(auth_s
     task = reviewer.resolve(task, first, "submit_review", review("须已签名", [FINDING]))
     second = next(issue for issue in task["issues"] if issue["code"] == "CLAUSE_REVIEW")
     task = reviewer.resolve(task, second, "submit_review", review("须盖章"))
-    assert task["result"]["phase"] == "ready_to_send" and task["next"]["kind"] == "blocked"
 
-    # The reviewer cannot send; until the operator approves, the customer sees no card.
+    # The reviewer cannot confirm; until the operator does, the customer sees no card.
+    assert task["result"]["phase"] == "ready_to_confirm" and task["next"]["kind"] == "blocked"
     assert member.web.get("/rule-questionnaires").json()["questionnaires"] == []
     task = owner.call("get_task", task_id=task["task_id"])
-    task = owner.approve(task, issue_of(task, "CARDS_READY"), "send_cards")
+    # First confirmation: the question to the customer, marked as reaching the customer.
+    task, plan = owner.approve(task, issue_of(task, "PLAN_READY"))
+    assert [(step["id"], step["external"]) for step in plan["steps"]] == [("cards", True)]
     assert task["result"]["phase"] == "awaiting_answers" and task["next"]["kind"] == "wait"
     (questionnaire,) = member.web.get("/rule-questionnaires").json()["questionnaires"]
     assert questionnaire["total"] == 1
@@ -171,32 +178,32 @@ def test_a_round_reaches_the_customer_only_through_the_operators_approval(auth_s
     shown = reviewer.call("get_issue", task_id=task["task_id"], issue_id=answered["id"])["result"]["detail"]["cards"]
     assert [(card["key"], card["answers"][0]["answerer"], card["answers"][0]["choice_label"]) for card in shown] == [("A:1#1", "客户工程师", "理解一：电子签名也算")]
     task = reviewer.resolve(task, answered, "propose_text", {"text": "须已签名，手写或电子均可", "kind": "changed", "note": "电子签名也算已签名", "cards": ["A:1#1"]})
-    assert task["result"]["phase"] == "ready_to_revise"
-    task = owner.call("get_task", task_id=task["task_id"])
-    task = owner.approve(task, issue_of(task, "REVISION_READY"), "confirm_revision")
 
-    # Revision 1 exists with its grounds, revision 0 reads as before, and its questionnaire is closed with the answer kept.
-    assert task["result"]["revision"] == {"version": "v9.0", "revision": 1, "clarified": False}
-    changed = member.web.get("/rulebooks/uaes/v9.0/1").json()["documents"][0]["clauses"][0]
-    assert changed["text"] == "须已签名，手写或电子均可" and changed["change"]["sources"] == [{"question_key": "A:1#1", "answerers": ["客户工程师"]}]
-    assert member.web.get("/rulebooks/uaes/v9.0/0").json()["documents"][0]["clauses"][0]["text"] == "须已签名"
-    closed = member.web.get(f"/rule-questionnaires/{questionnaire['id']}").json()
-    assert closed["closed"] and closed["questions"][0]["answers"][0]["choice"] == "A"
-
-    # Only the reworded clause is reviewed again; with nothing open, the operator confirms the revision clarified.
-    assert [issue["subject"]["key"] for issue in task["issues"]] == ["A:1"]
-    task = reviewer.resolve(reviewer.call("get_task", task_id=task["task_id"]), task["issues"][0], "submit_review", review("须已签名"))
-    task = owner.call("get_task", task_id=task["task_id"])
-    task = owner.approve(task, issue_of(task, "CLARIFIED_READY"), "confirm_clarified")
-    assert task["result"]["revision"]["clarified"] and task["result"]["phase"] == "reading"
-
+    # Only the reworded clause is reviewed again, on the wording revision 1 will have, before it is frozen; then readings.
+    assert task["result"]["phase"] == "reviewing" and [issue["subject"]["key"] for issue in task["issues"]] == ["A:1"]
+    task = reviewer.resolve(task, task["issues"][0], "submit_review", review("须已签名"))
     for issue, reading in zip(
         [i for i in task["issues"] if i["code"] == "CLAUSE_READING"],
         [{"checks": ["签名栏"], "passes": ["有签名，手写或电子均可"], "fails": ["没有签名"], "manual": ["签名看不清"]}, {"checks": ["盖章处"], "passes": ["有章"], "fails": ["无章"], "manual": []}],
     ):
         task = reviewer.resolve(reviewer.call("get_task", task_id=task["task_id"]), issue, "submit_reading", reading)
-    assert member.web.get("/rulebooks/uaes/v9.0/1").json()["documents"][0]["clauses"][0]["reading"] is None
+    assert task["result"]["phase"] == "ready_to_confirm"
+
+    # Second confirmation, with the readings left out and why: revision 1 and "clarified" take effect, the readings come back.
     task = owner.call("get_task", task_id=task["task_id"])
-    task = owner.approve(task, issue_of(task, "READINGS_READY"), "confirm_readings")
+    task, plan = owner.approve(task, issue_of(task, "PLAN_READY"), chosen={"revision", "clarified"}, reason="解读再看一遍")
+    assert [step["id"] for step in plan["steps"]] == ["revision", "clarified", "readings"]
+    assert task["result"]["left_for_later"] == {"unselected": ["readings"], "reason": "解读再看一遍"}
+    assert task["result"]["revision"] == {"version": "v9.0", "revision": 1, "clarified": True} and task["result"]["phase"] == "ready_to_confirm"
+    changed = member.web.get("/rulebooks/uaes/v9.0/1").json()["documents"][0]["clauses"][0]
+    assert changed["text"] == "须已签名，手写或电子均可" and changed["change"]["sources"] == [{"question_key": "A:1#1", "answerers": ["客户工程师"]}]
+    assert changed["reading"] is None
+    assert member.web.get("/rulebooks/uaes/v9.0/0").json()["documents"][0]["clauses"][0]["text"] == "须已签名"
+    closed = member.web.get(f"/rule-questionnaires/{questionnaire['id']}").json()
+    assert closed["closed"] and closed["questions"][0]["answers"][0]["choice"] == "A"
+
+    # The readings, as prepared, are the next plan.
+    task, plan = owner.approve(task, issue_of(task, "PLAN_READY"))
+    assert [step["id"] for step in plan["steps"]] == ["readings"]
     assert task["result"]["phase"] == "completed" and task["next"]["kind"] == "done"
     assert member.web.get("/rulebooks/uaes/v9.0/1").json()["documents"][0]["clauses"][0]["reading"]["passes"] == ["有签名，手写或电子均可"]

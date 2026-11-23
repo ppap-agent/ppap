@@ -238,6 +238,14 @@ def send_cards(store, principal, payload) -> dict:
     """Put cards before the enterprise on one rulebook revision: its questionnaire is created with the first cards and
     later cards are added to it. A card is written once; the same card again changes nothing, and a card that asks
     something else under a key already used is refused. A closed questionnaire takes no more cards."""
+    with store._conn() as conn, conn.transaction():
+        _member(conn, principal, write=True)
+        return put_cards(conn, principal, payload)
+
+
+def put_cards(conn, principal, payload) -> dict:
+    """`send_cards` inside the caller's transaction (the caller has checked membership): a rulebook plan (#351) sends
+    cards together with the revision they are asked on, or not at all."""
     required = {"customer_id", "rulebook", "cards"}
     if not isinstance(payload, dict) or set(payload) != required:
         raise ValueError("invalid_questionnaire_request")
@@ -252,58 +260,56 @@ def send_cards(store, principal, payload) -> dict:
         if card.get("group") not in {"common", "conclusion", "general", "clause"} or not str(card.get("question", "")).strip() or len(set(options)) != len(options) or RELAYED in options:
             raise ValueError("invalid_questionnaire_request")
     version, revision = rulebook["version"], rulebook["revision"]
-    with store._conn() as conn, conn.transaction():
-        _member(conn, principal, write=True)
-        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"rule-questionnaire:{principal.tenant_id}:{customer.id}:{version}:{revision}",))
-        if not conn.execute(
-            "SELECT 1 FROM product.rulebook_revisions WHERE tenant_id=%s AND customer_id=%s AND version=%s AND revision=%s", (principal.tenant_id, customer.id, version, revision)
-        ).fetchone():
-            raise ValueError("rulebook_revision_not_found")
-        row = conn.execute(
-            "SELECT id, closed_at FROM product.rule_questionnaires WHERE tenant_id=%s AND customer_id=%s AND rulebook_version=%s AND rulebook_revision=%s FOR UPDATE",
-            (principal.tenant_id, customer.id, version, revision),
-        ).fetchone()
-        if row is None:
-            ident = str(uuid4())
-            label = f"{customer.name} 规则库 {version}" + (f" 修订 {revision}" if revision else "")
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"rule-questionnaire:{principal.tenant_id}:{customer.id}:{version}:{revision}",))
+    if not conn.execute(
+        "SELECT 1 FROM product.rulebook_revisions WHERE tenant_id=%s AND customer_id=%s AND version=%s AND revision=%s", (principal.tenant_id, customer.id, version, revision)
+    ).fetchone():
+        raise ValueError("rulebook_revision_not_found")
+    row = conn.execute(
+        "SELECT id, closed_at FROM product.rule_questionnaires WHERE tenant_id=%s AND customer_id=%s AND rulebook_version=%s AND rulebook_revision=%s FOR UPDATE",
+        (principal.tenant_id, customer.id, version, revision),
+    ).fetchone()
+    if row is None:
+        ident = str(uuid4())
+        label = f"{customer.name} 规则库 {version}" + (f" 修订 {revision}" if revision else "")
+        conn.execute(
+            "INSERT INTO product.rule_questionnaires(id, tenant_id, customer_id, rule_version, rulebook_version, rulebook_revision, title) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (ident, principal.tenant_id, customer.id, f"规则库 {version}", version, revision, label + " 待确认问题"),
+        )
+    elif row[1] is not None:
+        raise ValueError("questionnaire_closed")
+    else:
+        ident = str(row[0])
+    existing = dict(conn.execute("SELECT question_key, card FROM product.rule_questions WHERE questionnaire_id=%s", (ident,)).fetchall())
+    position = conn.execute("SELECT coalesce(max(position), -1) FROM product.rule_questions WHERE questionnaire_id=%s", (ident,)).fetchone()[0]
+    added = 0
+    for card in cards:
+        if card["key"] in existing:
+            if existing[card["key"]] != card:
+                raise ValueError("question_exists")
+            continue
+        position += 1
+        added += 1
+        conn.execute("INSERT INTO product.rule_questions(questionnaire_id, question_key, position, card) VALUES (%s,%s,%s,%s)", (ident, card["key"], position, Jsonb(card)))
+    # Everyone who has answered this version's questionnaires hears about the new cards, once per send.
+    recipients = [
+        str(row[0])
+        for row in conn.execute(
+            """SELECT DISTINCT a.answered_by FROM product.rule_question_answers a JOIN product.rule_questionnaires q ON q.id = a.questionnaire_id
+               WHERE q.tenant_id=%s AND q.customer_id=%s AND q.rulebook_version=%s""",
+            (principal.tenant_id, customer.id, version),
+        ).fetchall()
+    ]
+    if added:
+        total = position + 1
+        for user in recipients:
+            payload = {"questionnaire_id": ident, "user_id": user, "added": added, "customer_id": customer.id, "rulebook": {"version": version, "revision": revision}}
             conn.execute(
-                "INSERT INTO product.rule_questionnaires(id, tenant_id, customer_id, rule_version, rulebook_version, rulebook_revision, title) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                (ident, principal.tenant_id, customer.id, f"规则库 {version}", version, revision, label + " 待确认问题"),
+                """INSERT INTO engine.jobs (id, tenant_id, kind, payload, status, result)
+                   VALUES (%s, %s, 'rule_cards_notification', %s, 'queued', '{"state":"queued","reason":null}'::jsonb) ON CONFLICT DO NOTHING""",
+                (str(uuid5(UUID(ident), f"cards:{total}:{user}")), principal.tenant_id, Jsonb(payload)),
             )
-        elif row[1] is not None:
-            raise ValueError("questionnaire_closed")
-        else:
-            ident = str(row[0])
-        existing = dict(conn.execute("SELECT question_key, card FROM product.rule_questions WHERE questionnaire_id=%s", (ident,)).fetchall())
-        position = conn.execute("SELECT coalesce(max(position), -1) FROM product.rule_questions WHERE questionnaire_id=%s", (ident,)).fetchone()[0]
-        added = 0
-        for card in cards:
-            if card["key"] in existing:
-                if existing[card["key"]] != card:
-                    raise ValueError("question_exists")
-                continue
-            position += 1
-            added += 1
-            conn.execute("INSERT INTO product.rule_questions(questionnaire_id, question_key, position, card) VALUES (%s,%s,%s,%s)", (ident, card["key"], position, Jsonb(card)))
-        # Everyone who has answered this version's questionnaires hears about the new cards, once per send.
-        recipients = [
-            str(row[0])
-            for row in conn.execute(
-                """SELECT DISTINCT a.answered_by FROM product.rule_question_answers a JOIN product.rule_questionnaires q ON q.id = a.questionnaire_id
-                   WHERE q.tenant_id=%s AND q.customer_id=%s AND q.rulebook_version=%s""",
-                (principal.tenant_id, customer.id, version),
-            ).fetchall()
-        ]
-        if added:
-            total = position + 1
-            for user in recipients:
-                payload = {"questionnaire_id": ident, "user_id": user, "added": added, "customer_id": customer.id, "rulebook": {"version": version, "revision": revision}}
-                conn.execute(
-                    """INSERT INTO engine.jobs (id, tenant_id, kind, payload, status, result)
-                       VALUES (%s, %s, 'rule_cards_notification', %s, 'queued', '{"state":"queued","reason":null}'::jsonb) ON CONFLICT DO NOTHING""",
-                    (str(uuid5(UUID(ident), f"cards:{total}:{user}")), principal.tenant_id, Jsonb(payload)),
-                )
-        return {**_summary(conn, principal, _questionnaire(conn, principal, ident)), "added": added, "notified": len(recipients) if added else 0}
+    return {**_summary(conn, principal, _questionnaire(conn, principal, ident)), "added": added, "notified": len(recipients) if added else 0}
 
 
 def claim_card_notification(store, worker_ident: str) -> dict | None:

@@ -130,6 +130,16 @@ def read_revision(store, principal, customer_id: str, version: str, revision: in
 def create_revision(store, principal, customer_id: str, payload: Any, root: Path) -> dict:
     """Write one revision, once. The same content again is the revision already written; other content under the same
     name is refused. The revision after another in the same version closes that one's questionnaire."""
+    with store._conn() as conn, conn.transaction():
+        _member(conn, principal)
+        version, revision = write_revision(conn, principal, customer_id, payload)
+    found = read_revision(store, principal, customer_id, version, revision, root)
+    assert found is not None
+    return found
+
+
+def write_revision(conn, principal, customer_id: str, payload: Any) -> tuple[str, int]:
+    """`create_revision` inside the caller's transaction; the caller has checked membership."""
     required = {"version", "revision", "base", "documents", "changes", "origin"}
     if not isinstance(payload, dict) or set(payload) != required or customers.find(customer_id) is None:
         raise ValueError("invalid_rulebook_revision")
@@ -147,41 +157,34 @@ def create_revision(store, principal, customer_id: str, payload: Any, root: Path
     if revision > 0 and base != {"version": version, "revision": revision - 1}:
         raise ValueError("rulebook_revision_base_required")
     documents, changes = payload["documents"], payload["changes"]
-    with store._conn() as conn, conn.transaction():
-        _member(conn, principal)
-        previous = None
-        if base is not None:
-            previous = _head(conn, principal.tenant_id, customer_id, base["version"], base["revision"])
-            if previous is None:
-                raise ValueError("rulebook_revision_base_missing")
-        problems = rulebooks.revision_problems(documents, changes, _documents(conn, previous[0]) if previous and revision > 0 else None)
-        if problems:
-            raise ValueError("invalid_rulebook_revision:" + "；".join(problems)[:1000])
-        existing = _head(conn, principal.tenant_id, customer_id, version, revision)
-        if existing is not None:
-            if existing[5] != rulebooks.digest(documents) or (existing[3] or {}) != changes:
-                raise ValueError("rulebook_revision_exists")
-        else:
-            _insert(conn, principal.tenant_id, principal.user_id, customer_id, version, revision, base, documents, changes, origin)
-            if revision > 0:
-                conn.execute(
-                    """UPDATE product.rule_questionnaires SET closed_at=now()
-                       WHERE tenant_id=%s AND customer_id=%s AND rulebook_version=%s AND rulebook_revision=%s AND closed_at IS NULL""",
-                    (principal.tenant_id, customer_id, version, revision - 1),
-                )
-    found = read_revision(store, principal, customer_id, version, revision, root)
-    assert found is not None
-    return found
+    previous = None
+    if base is not None:
+        previous = _head(conn, principal.tenant_id, customer_id, base["version"], base["revision"])
+        if previous is None:
+            raise ValueError("rulebook_revision_base_missing")
+    problems = rulebooks.revision_problems(documents, changes, _documents(conn, previous[0]) if previous and revision > 0 else None)
+    if problems:
+        raise ValueError("invalid_rulebook_revision:" + "；".join(problems)[:1000])
+    existing = _head(conn, principal.tenant_id, customer_id, version, revision)
+    if existing is not None:
+        if existing[5] != rulebooks.digest(documents) or (existing[3] or {}) != changes:
+            raise ValueError("rulebook_revision_exists")
+    else:
+        _insert(conn, principal.tenant_id, principal.user_id, customer_id, version, revision, base, documents, changes, origin)
+        if revision > 0:
+            conn.execute(
+                """UPDATE product.rule_questionnaires SET closed_at=now()
+                   WHERE tenant_id=%s AND customer_id=%s AND rulebook_version=%s AND rulebook_revision=%s AND closed_at IS NULL""",
+                (principal.tenant_id, customer_id, version, revision - 1),
+            )
+    return version, revision
 
 
 def clarify(store, principal, customer_id: str, version: str, revision: int, root: Path) -> dict:
     """Record that this revision has no open question left. Deciding that is the caller's; here it is only written, once."""
     with store._conn() as conn, conn.transaction():
         _member(conn, principal)
-        head = _head(conn, principal.tenant_id, customer_id, version, revision)
-        if head is None:
-            raise KeyError("missing")
-        conn.execute("UPDATE product.rulebook_revisions SET clarified_at=now() WHERE id=%s AND clarified_at IS NULL", (head[0],))
+        mark_clarified(conn, principal, customer_id, version, revision)
     found = read_revision(store, principal, customer_id, version, revision, root)
     assert found is not None
     return found
@@ -189,29 +192,99 @@ def clarify(store, principal, customer_id: str, version: str, revision: int, roo
 
 def save_readings(store, principal, customer_id: str, version: str, revision: int, payload: Any, root: Path) -> dict:
     """Put a reading beside clauses of a clarified revision. A clause's reading is written once."""
-    readings = payload.get("readings") if isinstance(payload, dict) and set(payload) == {"readings"} else None
-    if not isinstance(readings, dict) or not readings:
-        raise ValueError("invalid_clause_readings")
     with store._conn() as conn, conn.transaction():
         _member(conn, principal)
-        head = _head(conn, principal.tenant_id, customer_id, version, revision)
-        if head is None:
-            raise KeyError("missing")
-        if head[7] is None:
-            raise ValueError("rulebook_revision_not_clarified")
-        clauses = rulebooks.clauses_of(_documents(conn, head[0]))
-        existing = dict(conn.execute("SELECT clause_id, reading FROM product.rule_clause_readings WHERE revision_id=%s", (head[0],)).fetchall())
-        for clause, reading in readings.items():
-            if clause not in clauses:
-                raise ValueError("invalid_clause_readings")
-            problems = rulebooks.reading_problems(clauses[clause]["text"], reading)
-            if problems:
-                raise ValueError(f"invalid_clause_reading:{clause}：" + "；".join(problems)[:800])
-            if clause in existing:
-                if existing[clause] != reading:
-                    raise ValueError("clause_reading_exists")
-                continue
-            conn.execute("INSERT INTO product.rule_clause_readings(revision_id, clause_id, reading) VALUES (%s,%s,%s)", (head[0], clause, Jsonb(reading)))
+        write_readings(conn, principal, customer_id, version, revision, payload)
     found = read_revision(store, principal, customer_id, version, revision, root)
     assert found is not None
     return found
+
+
+def mark_clarified(conn, principal, customer_id: str, version: str, revision: int) -> None:
+    head = _head(conn, principal.tenant_id, customer_id, version, revision)
+    if head is None:
+        raise KeyError("missing")
+    conn.execute("UPDATE product.rulebook_revisions SET clarified_at=now() WHERE id=%s AND clarified_at IS NULL", (head[0],))
+
+
+def write_readings(conn, principal, customer_id: str, version: str, revision: int, payload: Any) -> None:
+    """`save_readings` inside the caller's transaction; the caller has checked membership."""
+    readings = payload.get("readings") if isinstance(payload, dict) and set(payload) == {"readings"} else None
+    if not isinstance(readings, dict) or not readings:
+        raise ValueError("invalid_clause_readings")
+    head = _head(conn, principal.tenant_id, customer_id, version, revision)
+    if head is None:
+        raise KeyError("missing")
+    if head[7] is None:
+        raise ValueError("rulebook_revision_not_clarified")
+    clauses = rulebooks.clauses_of(_documents(conn, head[0]))
+    existing = dict(conn.execute("SELECT clause_id, reading FROM product.rule_clause_readings WHERE revision_id=%s", (head[0],)).fetchall())
+    for clause, reading in readings.items():
+        if clause not in clauses:
+            raise ValueError("invalid_clause_readings")
+        problems = rulebooks.reading_problems(clauses[clause]["text"], reading)
+        if problems:
+            raise ValueError(f"invalid_clause_reading:{clause}：" + "；".join(problems)[:800])
+        if clause in existing:
+            if existing[clause] != reading:
+                raise ValueError("clause_reading_exists")
+            continue
+        conn.execute("INSERT INTO product.rule_clause_readings(revision_id, clause_id, reading) VALUES (%s,%s,%s)", (head[0], clause, Jsonb(reading)))
+
+
+PLAN_STEPS = ("revision", "cards", "clarified", "readings")
+
+
+def apply_plan(store, principal, customer_id: str, payload: Any, root: Path) -> dict:
+    """The steps a platform operator checked in one confirmation (#351), in one transaction: all take effect or none.
+    Each step needs what comes before it, already written or written earlier in this plan: cards and "clarified" a
+    revision that exists, readings a revision that is clarified. Steps left unchecked, and why, are only recorded with
+    the request; they come back as the next plan."""
+    from product.store import rule_questionnaires
+
+    if not isinstance(payload, dict) or not set(payload) <= {"steps", "unselected", "reason"} or not isinstance(payload.get("steps"), list) or not payload["steps"]:
+        raise ValueError("invalid_rulebook_plan")
+    steps = payload["steps"]
+    kinds = [step.get("step") if isinstance(step, dict) else None for step in steps]
+    if any(kind not in PLAN_STEPS for kind in kinds) or len(set(kinds)) != len(kinds) or kinds != sorted(kinds, key=PLAN_STEPS.index):
+        raise ValueError("invalid_rulebook_plan")
+    if any(not isinstance(step.get("body"), dict) for step in steps):
+        raise ValueError("invalid_rulebook_plan")
+    unselected = payload.get("unselected") or []
+    if not isinstance(unselected, list) or not set(unselected) <= set(PLAN_STEPS) - set(kinds) or not isinstance(payload.get("reason") or "", str):
+        raise ValueError("invalid_rulebook_plan")
+    target: tuple[str, int] | None = None
+    with store._conn() as conn, conn.transaction():
+        _member(conn, principal)
+        for step in steps:
+            body, kind = step["body"], step["step"]
+            try:
+                if kind == "revision":
+                    target = write_revision(conn, principal, customer_id, body)
+                    continue
+                at = (body.get("version"), body.get("revision")) if kind != "cards" else ((body.get("rulebook") or {}).get("version"), (body.get("rulebook") or {}).get("revision"))
+                if not isinstance(at[0], str) or type(at[1]) is not int or (target is not None and at != target):
+                    raise ValueError("invalid_rulebook_plan")
+                target = (at[0], at[1])
+                if _head(conn, principal.tenant_id, customer_id, *target) is None:
+                    raise ValueError(f"plan_step_requires_revision:{kind}")
+                if kind == "cards":
+                    if body.get("customer_id") != customer_id:
+                        raise ValueError("invalid_rulebook_plan")
+                    rule_questionnaires.put_cards(conn, principal, body)
+                elif kind == "clarified":
+                    if set(body) != {"version", "revision"}:
+                        raise ValueError("invalid_rulebook_plan")
+                    mark_clarified(conn, principal, customer_id, *target)
+                else:
+                    if set(body) != {"version", "revision", "readings"}:
+                        raise ValueError("invalid_rulebook_plan")
+                    if _head(conn, principal.tenant_id, customer_id, *target)[7] is None:
+                        raise ValueError("plan_step_requires_clarified:readings")
+                    write_readings(conn, principal, customer_id, *target, {"readings": body["readings"]})
+            except ValueError as exc:
+                code, _, detail = str(exc).partition(":")
+                raise ValueError(f"{code}:{kind}" + (f"：{detail}" if detail and not code.startswith("plan_step") else "")) from None
+    assert target is not None
+    found = read_revision(store, principal, customer_id, target[0], target[1], root)
+    return {"done": kinds, "unselected": unselected, "revision": found}

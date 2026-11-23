@@ -97,6 +97,29 @@ class RulebookReadingsRequest(BaseModel):
     readings: dict[str, RulebookClauseReading]
 
 
+PlanStep = Literal["revision", "cards", "clarified", "readings"]
+
+
+class RulebookPlanStep(BaseModel):
+    step: PlanStep
+    # The step's own request: a revision, cards on one, or the revision to mark clarified or put readings beside.
+    body: dict[str, Any]
+
+
+class RulebookPlanRequest(BaseModel):
+    """The steps checked in one confirmation, in the order they take effect (#351); the rest, and why, for the record."""
+
+    steps: list[RulebookPlanStep]
+    unselected: list[PlanStep] = []
+    reason: str | None = None
+
+
+class RulebookPlanReceipt(BaseModel):
+    done: list[PlanStep]
+    unselected: list[PlanStep]
+    revision: RulebookRevisionView
+
+
 def register_rulebook_routes(app: FastAPI, store, principal_of, settings) -> None:
     def call(request: Request, operation, *, write: bool = False):
         principal = principal_of(request)
@@ -113,7 +136,8 @@ def register_rulebook_routes(app: FastAPI, store, principal_of, settings) -> Non
             return JSONResponse({"error": "rulebook_revision_not_found"}, status_code=404, headers=HEADERS)
         except ValueError as exc:
             code, _, detail = str(exc).partition(":")
-            return JSONResponse({"error": code, **({"detail": detail} if detail else {})}, status_code=409 if code in {"rulebook_revision_exists", "clause_reading_exists"} else 400, headers=HEADERS)
+            conflict = code in {"rulebook_revision_exists", "clause_reading_exists"} or code.startswith("plan_step_requires")
+            return JSONResponse({"error": code, **({"detail": detail} if detail else {})}, status_code=409 if conflict else 400, headers=HEADERS)
         if found is None:
             return JSONResponse({"error": "rulebook_revision_not_found"}, status_code=404, headers=HEADERS)
         return JSONResponse(found, headers=HEADERS)
@@ -139,3 +163,8 @@ def register_rulebook_routes(app: FastAPI, store, principal_of, settings) -> Non
     @app.put("/rulebooks/{customer_id}/{version}/{revision}/readings", dependencies=[Depends(signing)], response_model=RulebookRevisionView, openapi_extra=wc.openapi_body(RulebookReadingsRequest))
     def save_rulebook_readings(customer_id: str, version: str, revision: int, request: Request, body: Any = Body(...)):
         return call(request, lambda principal: revisions.save_readings(store, principal, customer_id, version, revision, body, root), write=True)
+
+    @app.post("/rulebooks/{customer_id}/plan", dependencies=[Depends(signing)], response_model=RulebookPlanReceipt, openapi_extra=wc.openapi_body(RulebookPlanRequest))
+    def apply_rulebook_plan(customer_id: str, request: Request, body: Any = Body(...)):
+        """Every step a platform operator checked in one confirmation, in one transaction (#351)."""
+        return call(request, lambda principal: revisions.apply_plan(store, principal, customer_id, body, root), write=True)

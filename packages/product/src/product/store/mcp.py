@@ -343,9 +343,14 @@ class McpStore:
             ).fetchone()
         if row is None:
             return {"state": "proposed"}
+        params = row["params"] or {}
         if row["route"] == DECLINE_ROUTE and row["outcome"] == "succeeded":
-            return {"state": "declined", "reason": (row["params"] or {}).get("reason") or None, "at": row["at"].isoformat()}
-        return {"state": row["outcome"], "error": row["error"], "at": row["at"].isoformat()}
+            return {"state": "declined", "reason": params.get("reason") or None, "at": row["at"].isoformat()}
+        outcome = {"state": row["outcome"], "error": row["error"], "at": row["at"].isoformat()}
+        if params.get("unselected"):
+            # Completed with some steps left unchecked (#351): which, and why, for the client to act on.
+            outcome.update(unselected=params["unselected"], reason=params.get("reason") or None)
+        return outcome
 
     @staticmethod
     def operation_public(row: dict) -> dict:

@@ -1,7 +1,11 @@
 // A signing action an external client (an AI assistant through MCP) proposed (#348). The client never signs: the
 // person completes it on the page the link opened, with that page's own control and current content, or declines it.
-// A rule-clarification step has no page control of its own, so the step is shown here as the server describes it now.
+// A rule-clarification plan has no page control of its own, so its steps are shown here as the server describes them now,
+// each with a check: internal steps start checked, a step the customer sees is checked only by the person (#351).
 import {useEffect, useState} from 'react'
+import {initialSelection, planRequest, toggle} from './plan-selection'
+import {Checkbox} from '../components/ui/checkbox'
+import {Badge} from '../components/ui/badge'
 import type {components} from '../generated/openapi'
 import {apiUrl, request, setActiveIntent} from '../api'
 import {Button} from '../components/ui/button'
@@ -16,9 +20,10 @@ type Detail = components['schemas']['IntentDetail']
 const settled = (intent: Intent) => intent.outcome.state === 'succeeded' || intent.outcome.state === 'declined'
 const readId = () => new URL(location.href).searchParams.get('intent')
 
-/** What the proposal does, and where on the page it is completed (a step is completed in this panel). */
+/** What the proposal does, and where on the page it is completed (a plan is completed in this panel). */
 function describe(intent: Intent): [string, string] {
   const path = intent.path
+  if (path.endsWith('/plan')) return ['确认规则澄清的这一轮', '']
   if (path.endsWith('/confirm')) return ['开始审核', '核对本页的文件、规则和预计点数后，点「开始审核」完成。']
   if (path.endsWith('/report')) return ['在飞书里生成报告文档', '核对本页的审核结果后，在「报告」里点「在飞书里生成报告文档」完成。']
   if (path.endsWith('/regenerations')) return ['重新生成报告', '在「报告」里打开这份报告，点「重生成同一结果」完成。']
@@ -50,11 +55,14 @@ export function IntentBanner() {
   const [problem, setProblem] = useState(''), [reauth, setReauth] = useState(false)
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false)
   const [declining, setDeclining] = useState(false), [reason, setReason] = useState('')
+  const [chosen, setChosen] = useState<Set<string>>(new Set()), [left, setLeft] = useState('')
 
   async function read(ident: string) {
     try {
       const found = await request<Intent>(`/intents/${encodeURIComponent(ident)}`)
       setIntent(found); setProblem('')
+      // The checks start over whenever the plan is read again: a changed plan is decided on as it is now.
+      setChosen(initialSelection(found.plan?.steps ?? []))
       setActiveIntent(settled(found) ? null : {id: found.id, method: found.method, path: found.path})
     } catch (cause) {
       setIntent(null); setActiveIntent(null)
@@ -90,7 +98,7 @@ export function IntentBanner() {
   }
   if (!id) return null
   const [label, where] = intent ? describe(intent) : ['', '']
-  const step = intent?.step
+  const plan = intent?.plan
   const outcome = intent?.outcome
   const done = intent && settled(intent)
   const signIn = <Button asChild size="sm"><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>重新登录</a></Button>
@@ -106,20 +114,35 @@ export function IntentBanner() {
           {done ? <><p className="text-muted-foreground">{outcome?.state === 'succeeded' ? '已完成。回到客户端即可看到结果。' : '你已拒绝这个请求，原因会交给客户端。'}</p><div className="flex justify-end"><Button size="sm" variant="ghost" onClick={close}>关闭</Button></div></>
             : intent.unavailable ? <><p className="text-muted-foreground">这一步已经变化，不能再按原样完成。请回到客户端，按最新状态重新发起。</p><div className="flex justify-end gap-2">{decline}<Button size="sm" variant="ghost" onClick={close}>关闭</Button></div></>
             : <>
-              {step ? step.summary.map((line, index) => <p key={index} className={line.startsWith('· ') ? 'pl-3 text-muted-foreground' : ''}>{line}</p>) : <p className="text-muted-foreground">{where}</p>}
+              {plan ? <ul className="list-disc pl-5 text-muted-foreground">{plan.steps.map(step => <li key={step.id}>{step.summary[0] ?? step.title}</li>)}</ul> : <p className="text-muted-foreground">{where}</p>}
               {outcome?.state === 'failed' && outcome.error && <p className="text-destructive">上次没有完成，可以再试一次。</p>}
               {reauth && <p className="text-destructive">为确认是你本人在操作，请重新登录后再完成。</p>}
               {problem && <p className="text-destructive">{problem}</p>}
-              <div className="flex flex-wrap items-center justify-end gap-2">{decline}{!declining && (reauth ? signIn : step && <Button size="sm" onClick={() => setOpen(true)}>查看并确认</Button>)}</div>
+              <div className="flex flex-wrap items-center justify-end gap-2">{decline}{!declining && (reauth ? signIn : plan && <Button size="sm" onClick={() => setOpen(true)}>查看并确认</Button>)}</div>
             </>}
         </>}
       </div>
     </aside>
-    {intent && step && <Sheet open={open} onOpenChange={setOpen}>
+    {intent && plan && <Sheet open={open} onOpenChange={setOpen}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
-        <SheetHeader><SheetTitle>{label}</SheetTitle><SheetDescription>来自「{intent.client_name}」的请求。下面是这一步现在的内容，确认后立即生效。</SheetDescription></SheetHeader>
-        <div className="space-y-4 px-4">{step.summary.map((line, index) => <p key={index} className="text-sm">{line}</p>)}{step.details.map((block, index) => <Block key={index} block={block}/>)}</div>
-        <SheetFooter className="flex-row justify-end">{reauth ? signIn : <><Button variant="outline" onClick={() => {setOpen(false); setDeclining(true)}}>拒绝</Button><Button disabled={busy} onClick={() => void act(() => request(step.path, step.method, step.body))}>确认</Button></>}</SheetFooter>
+        <SheetHeader><SheetTitle>{label}</SheetTitle><SheetDescription>来自「{intent.client_name}」的请求。下面是每一步现在的内容；勾选的步骤确认后一起生效，没勾的留到下一次。</SheetDescription></SheetHeader>
+        <ol className="space-y-6 px-4">{plan.steps.map(step => {
+          const id = `plan-step-${step.id}`
+          const needs = step.depends_on.map(need => plan.steps.find(other => other.id === need)?.title).filter(Boolean)
+          return <li key={step.id} className="space-y-3">
+            <div className="flex items-start gap-3">
+              <Checkbox id={id} checked={chosen.has(step.id)} onCheckedChange={value => setChosen(toggle(plan.steps, chosen, step.id, value === true))}/>
+              <div className="space-y-1"><label htmlFor={id} className="flex flex-wrap items-center gap-2 font-medium">{step.title}{step.external && <Badge variant="outline">会发给客户</Badge>}</label>
+                {needs.length > 0 && <p className="text-xs text-muted-foreground">依赖上面的「{needs.join('」「')}」：取消它，这一步也会取消。</p>}</div>
+            </div>
+            <div className="space-y-3 pl-7">{step.summary.map((line, index) => <p key={index} className="text-sm">{line}</p>)}{step.details.map((block, index) => <Block key={index} block={block}/>)}</div>
+          </li>
+        })}</ol>
+        <SheetFooter>
+          {plan.steps.some(step => !chosen.has(step.id)) && <Textarea aria-label="没勾选的原因（选填）" placeholder="没勾的步骤会留给客户端作为下一步；可以写一句为什么（选填）" maxLength={500} value={left} onChange={event => setLeft(event.target.value)}/>}
+          <div className="flex justify-end gap-2">{reauth ? signIn : <><Button variant="outline" onClick={() => {setOpen(false); setDeclining(true)}}>拒绝</Button>
+            <Button disabled={busy || chosen.size === 0} onClick={() => void act(() => request(plan.path, plan.method, planRequest(plan.steps, chosen, left)))}>确认勾选的 {chosen.size} 步</Button></>}</div>
+        </SheetFooter>
       </SheetContent>
     </Sheet>}
   </>

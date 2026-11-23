@@ -21,6 +21,7 @@ SIGNING = {
     ("POST", "/rulebooks/{customer_id}/{version}/{revision}/clarified"),
     ("PUT", "/rulebooks/{customer_id}/{version}/{revision}/readings"),
     ("POST", "/rule-questionnaires/cards"),
+    ("POST", "/rulebooks/{customer_id}/plan"),
 }
 
 

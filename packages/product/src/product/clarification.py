@@ -115,7 +115,7 @@ class Invalid(Rejected):
         self.problems = problems
 
 
-CONFIRM = {"confirm_clauses", "send_cards", "confirm_revision", "confirm_clarified", "confirm_readings"}
+CONFIRM = {"confirm_plan"}
 PREPARE = {"submit_clauses", "submit_review", "propose_text", "keep_text", "ask_further", "submit_reading"}
 
 
@@ -139,20 +139,24 @@ def decide(state: dict, facts: dict, issue: dict, action_id: str, value: Any, by
             "documents": [{"key": d["key"], "title": d["title"].strip(), "clauses": [{"id": c["id"], "category": c["category"], "text": c["text"]} for c in d["clauses"]]} for d in documents],
             "by": by,
         }
-    assert revision is not None
-    clause = next(row for row in clauses(revision) if row["id"] == issue["subject"]["key"])
-    if action_id == "submit_review":
-        review = {**value, "schema": value.get("schema", REVIEW_SCHEMA)}
-        errors, findings = _check_review()(Path("."), review, {"id": clause["id"], "text": clause["text"]})
-        if errors:
-            raise Invalid("review_rejected", errors)
-        return {"type": "reviewed", "clause": clause["id"], "digest": clause["digest"], "revision": revision["revision"], "review": review, "findings": findings, "by": by}
-    if action_id == "submit_reading":
+    if action_id in {"submit_review", "submit_reading"}:
+        # Reviews and readings are prepared on the wording the next confirmation freezes, before it is frozen (#351).
+        goal = target(state, facts)
+        assert goal is not None
+        clause = next(row for row in clauses(goal) if row["id"] == issue["subject"]["key"])
+        if action_id == "submit_review":
+            review = {**value, "schema": value.get("schema", REVIEW_SCHEMA)}
+            errors, findings = _check_review()(Path("."), review, {"id": clause["id"], "text": clause["text"]})
+            if errors:
+                raise Invalid("review_rejected", errors)
+            return {"type": "reviewed", "clause": clause["id"], "digest": clause["digest"], "revision": goal["revision"], "review": review, "findings": findings, "by": by}
         reading = {part: value.get(part) for part in rulebooks.READING_PARTS}
         problems = rulebooks.reading_problems(clause["text"], reading)
         if problems:
             raise Invalid("reading_rejected", problems)
         return {"type": "read", "clause": clause["id"], "digest": clause["digest"], "reading": reading, "by": by}
+    assert revision is not None
+    clause = next(row for row in clauses(revision) if row["id"] == issue["subject"]["key"])
     answered = {card["key"]: card for card in _standing(state, facts, revision)["answered"] if card["items"][0].split("#", 1)[0] == clause["id"]}
     if action_id == "keep_text":
         return {"type": "kept", "clause": clause["id"], "cards": sorted(answered), "reason": _words(value.get("reason"), 2000), "by": by}
@@ -298,6 +302,71 @@ def next_revision(state: dict, revision: dict) -> dict:
     }
 
 
+def _as_revision(version: str, number: int, documents: list[dict], changes: dict | None = None) -> dict:
+    """Clauses not frozen yet, shaped as the revision they will become."""
+    rows = [
+        {
+            "key": document["key"],
+            "title": document["title"],
+            "clauses": [{**clause, "digest": rulebooks.clause_digest(clause["text"]), "change": (changes or {}).get(clause["id"]), "reading": None} for clause in document["clauses"]],
+        }
+        for document in documents
+    ]
+    return {"version": version, "revision": number, "clarified": False, "frozen": False, "documents": rows}
+
+
+def _open_answers(state: dict, facts: dict, revision: dict) -> dict[str, list[dict]]:
+    """Answered cards still to deal with, by clause: they decide the next wording, so they come before anything else."""
+    by_clause: dict[str, list[dict]] = {}
+    for card in _standing(state, facts, revision)["answered"]:
+        by_clause.setdefault(card["items"][0].split("#", 1)[0], []).append(card)
+    return by_clause
+
+
+def target(state: dict, facts: dict) -> dict | None:
+    """What the next confirmation freezes or acts on: the submitted draft as revision 0, the current revision with its
+    proposed wording as the next one, or the current revision itself. Reviews and readings are prepared on it."""
+    revision = current(state, facts)
+    if revision is None:
+        return None if state["draft"] is None else _as_revision(state["version"], 0, state["draft"]["documents"])
+    if proposals(state, revision) and not _open_answers(state, facts, revision):
+        body = next_revision(state, revision)
+        return _as_revision(body["version"], body["revision"], body["documents"], body["changes"])
+    return {**revision, "frozen": True}
+
+
+def plan(state: dict, facts: dict) -> list[dict]:
+    """The signing steps from what is confirmed now up to the next point only the customer can move (#351), in the
+    order they take effect. Each says what it writes, whether the customer sees it, and which steps it needs first."""
+    goal = target(state, facts)
+    if goal is None or any(reviewed(state, clause) is None for clause in clauses(goal)) and not goal["clarified"]:
+        return []
+    steps: list[dict] = []
+    version, number = goal["version"], goal["revision"]
+    if not goal["frozen"]:
+        revision = current(state, facts)
+        body = (
+            {"version": version, "revision": 0, "base": None, "documents": state["draft"]["documents"], "changes": {}, "origin": "clarification"}
+            if revision is None
+            else next_revision(state, revision)
+        )
+        steps.append({"id": "revision", "external": False, "depends_on": [], "body": body})
+    first = ["revision"] if steps else []
+    standing = _standing(state, facts, goal)
+    if standing["unsent"]:
+        cards = {"customer_id": state["customer"], "rulebook": {"version": version, "revision": number}, "cards": standing["unsent"]}
+        steps.append({"id": "cards", "external": True, "depends_on": first, "body": cards})
+    elif not goal["clarified"] and not standing["waiting"]:
+        steps.append({"id": "clarified", "external": False, "depends_on": first, "body": {"version": version, "revision": number}})
+    readings = {clause: entry["reading"] for clause, entry in pending_readings(state, goal).items()}
+    if readings and (goal["clarified"] or steps and steps[-1]["id"] == "clarified"):
+        steps.append({"id": "readings", "external": False, "depends_on": [] if goal["clarified"] else ["clarified"], "body": {"version": version, "revision": number, "readings": readings}})
+    return steps
+
+
+STEP_NAMES = {"revision": "冻结修订", "cards": "发问题卡片给客户", "clarified": "标记已澄清", "readings": "发布解读"}
+
+
 # ---- issues ------------------------------------------------------------------------------------------
 
 REVIEW_INPUT = {
@@ -365,6 +434,8 @@ def _differ(answers: list[dict]) -> bool:
 
 
 def issues(task_id: str, state: dict, facts: dict) -> list[dict]:
+    """What is open, prepared work first. Everything that needs no person is prepared on the target before one
+    confirmation covers it all (#351): reviews, and when nothing is left to ask, readings."""
     roles = facts.get("roles") or {}
     prepare, confirm = bool(roles.get("prepare")), bool(roles.get("confirm"))
     found: list[dict] = []
@@ -374,130 +445,107 @@ def issues(task_id: str, state: dict, facts: dict) -> list[dict]:
         found.append(_issue(task_id, code, category, severity, stage, message, impact, actions, subject=subject, key=key or (clause["id"] if clause else "")))
 
     revision = current(state, facts)
-    if revision is None:
-        draft = state["draft"]
-        if draft is None:
-            add(
-                "CLAUSES_REQUIRED",
-                "missing_evidence",
-                "blocking",
-                "import",
-                f"{state['version']} 还没有条款。",
-                "按客户原件逐条拆好提交后，才能开始审查。",
-                [_act("submit_clauses", "提交拆好的条款", input_schema=DRAFT_INPUT)] if prepare else [],
-            )
-        else:
-            total = sum(len(document["clauses"]) for document in draft["documents"])
-            actions = ([_act("confirm_clauses", f"确认作为 {state['version']} 修订 0")] if confirm else []) + ([_act("submit_clauses", "重新提交条款", input_schema=DRAFT_INPUT)] if prepare else [])
-            add("CLAUSES_READY", "review", "blocking", "import", f"{draft['by']} 提交了 {len(draft['documents'])} 类文件、{total} 条条款，等平台负责人确认。", "确认后成为修订 0 并冻结。", actions)
+    if revision is None and state["draft"] is None:
+        add(
+            "CLAUSES_REQUIRED",
+            "missing_evidence",
+            "blocking",
+            "import",
+            f"{state['version']} 还没有条款。",
+            "按客户原件逐条拆好提交后，才能开始审查。",
+            [_act("submit_clauses", "提交拆好的条款", input_schema=DRAFT_INPUT)] if prepare else [],
+        )
         return found
+    # Before revision 0 the draft can still be submitted again; what was prepared on unchanged clauses stays.
+    redraft = [_act("submit_clauses", "重新提交条款", input_schema=DRAFT_INPUT)] if revision is None and prepare else []
 
-    rows = clauses(revision)
-    if revision["clarified"]:
-        waiting = pending_readings(state, revision)
-        missing = [clause for clause in rows if not clause.get("reading") and clause["id"] not in waiting]
-        for clause in missing:
+    if revision is not None:
+        for clause in clauses(revision):
+            cards = _open_answers(state, facts, revision).get(clause["id"])
+            if not cards:
+                continue
+            split = sum(1 for card in cards if _differ(card["answers"]))
+            actions = [
+                _act("propose_text", "按答复改写这条", input_schema=PROPOSAL_INPUT),
+                _act("keep_text", "答复不需要改这条", input_schema=KEEP_INPUT),
+                _act("ask_further", "答复没说清，追问", input_schema=FOLLOW_UP_INPUT),
+            ]
             add(
-                "CLAUSE_READING",
+                "CLAUSE_ANSWERED",
                 "review",
                 "blocking",
-                "reading",
-                f"{clause['document']} {clause['id']} 还没有解读。",
-                "解读写明查什么、何时通过、何时不通过、何时转人工。",
-                [_act("submit_reading", "提交这条的解读", input_schema=READING_INPUT)] if prepare else [],
+                "revise",
+                f"{clause['document']} {clause['id']} 有 {len(cards)} 张卡片已答复" + (f"，其中 {split} 张的答复不一致" if split else "") + "。",
+                "按答复改写条款、说明不需要改，或追问。答复不一致时由平台负责人取舍。",
+                actions if prepare else [],
                 clause=clause,
             )
-        if waiting and not missing:
-            add(
-                "READINGS_READY",
-                "review",
-                "blocking",
-                "reading",
-                f"{len(waiting)} 条解读等平台负责人确认。",
-                "确认后显示在规则页原文旁。",
-                [_act("confirm_readings", "确认并发布解读")] if confirm else [],
-            )
-        return found
+        if found:
+            return found
 
-    for clause in rows:
-        if reviewed(state, clause) is None:
-            add(
-                "CLAUSE_REVIEW",
-                "review",
-                "blocking",
-                "review",
-                f"{clause['document']} {clause['id']} 还没有审查。",
-                "按 clause-check 审查这条原文：没有问题也要提交，记为已审。",
-                [_act("submit_review", "提交这条的审查记录", input_schema=REVIEW_INPUT)] if prepare else [],
-                clause=clause,
-            )
-    standing = _standing(state, facts, revision)
-    unreviewed = any(issue["code"] == "CLAUSE_REVIEW" for issue in found)
-    if standing["unsent"] and not unreviewed:
+    goal = target(state, facts)
+    assert goal is not None
+    rows = clauses(goal)
+    name = f"{goal['version']} 修订 {goal['revision']}"
+    if not goal["clarified"]:
+        for clause in rows:
+            if reviewed(state, clause) is None:
+                add(
+                    "CLAUSE_REVIEW",
+                    "review",
+                    "blocking",
+                    "review",
+                    f"{clause['document']} {clause['id']} 还没有审查。",
+                    "按 clause-check 审查这条原文：没有问题也要提交，记为已审。" + ("" if goal["frozen"] else f"审查的是将成为 {name} 的写法。"),
+                    ([_act("submit_review", "提交这条的审查记录", input_schema=REVIEW_INPUT)] if prepare else []) + redraft,
+                    clause=clause,
+                )
+        if found:
+            return found
+    standing = _standing(state, facts, goal)
+    if goal["clarified"] or not standing["unsent"] and not standing["waiting"]:
+        # Nothing left to ask: this revision is clarified in the same confirmation, so its readings are written first.
+        waiting = pending_readings(state, goal)
+        for clause in rows:
+            if not clause.get("reading") and clause["id"] not in waiting:
+                add(
+                    "CLAUSE_READING",
+                    "review",
+                    "blocking",
+                    "reading",
+                    f"{clause['document']} {clause['id']} 还没有解读。",
+                    "解读写明查什么、何时通过、何时不通过、何时转人工。",
+                    ([_act("submit_reading", "提交这条的解读", input_schema=READING_INPUT)] if prepare else []) + redraft,
+                    clause=clause,
+                )
+        if found:
+            return found
+    steps = plan(state, facts)
+    if steps:
         add(
-            "CARDS_READY",
+            "PLAN_READY",
             "review",
             "blocking",
-            "ask",
-            f"有 {len(standing['unsent'])} 张问题卡片待发给客户确认。",
-            "发送后客户成员在规则页作答。",
-            [_act("send_cards", f"发送这 {len(standing['unsent'])} 张卡片")] if confirm else [],
-        )
-    by_clause: dict[str, list[dict]] = {}
-    for card in standing["answered"]:
-        by_clause.setdefault(card["items"][0].split("#", 1)[0], []).append(card)
-    for clause in rows:
-        cards = by_clause.get(clause["id"])
-        if not cards:
-            continue
-        split = sum(1 for card in cards if _differ(card["answers"]))
-        actions = [
-            _act("propose_text", "按答复改写这条", input_schema=PROPOSAL_INPUT),
-            _act("keep_text", "答复不需要改这条", input_schema=KEEP_INPUT),
-            _act("ask_further", "答复没说清，追问", input_schema=FOLLOW_UP_INPUT),
-        ]
-        add(
-            "CLAUSE_ANSWERED",
-            "review",
-            "blocking",
-            "revise",
-            f"{clause['document']} {clause['id']} 有 {len(cards)} 张卡片已答复" + (f"，其中 {split} 张的答复不一致" if split else "") + "。",
-            "按答复改写条款、说明不需要改，或追问。答复不一致时由平台负责人取舍。",
-            actions if prepare else [],
-            clause=clause,
-        )
-    changed = proposals(state, revision)
-    if changed and not by_clause:
-        add(
-            "REVISION_READY",
-            "review",
-            "blocking",
-            "revise",
-            f"{len(changed)} 条条款的新写法等平台负责人确认。",
-            f"确认后成为 {revision['version']} 修订 {revision['revision'] + 1} 并冻结，本修订的问卷关闭。",
-            [_act("confirm_revision", f"确认为修订 {revision['revision'] + 1}")] if confirm else [],
-        )
-    if not found and not standing["waiting"]:
-        add(
-            "CLARIFIED_READY",
-            "review",
-            "blocking",
-            "clarify",
-            f"{revision['version']} 修订 {revision['revision']} 每条都已审查，没有未决问题。",
-            "确认后这一修订标为已澄清，可以为每条配解读。",
-            [_act("confirm_clarified", "确认已澄清")] if confirm else [],
+            "confirm",
+            "可以一次确认：" + "、".join(STEP_NAMES[step["id"]] for step in steps) + f"（{name}）。",
+            "平台负责人在规则页按步骤勾选后确认；发给客户的步骤要单独勾选，没勾的步骤留到下一次。",
+            ([_act("confirm_plan", "在规则页按步骤确认")] if confirm else []) + redraft,
         )
     return found
 
 
 def issue_detail(issue: dict, state: dict, facts: dict) -> dict:
     """Everything needed to act on one issue: the clause as it reads, what was asked about it and what was answered."""
-    revision = current(state, facts)
+    revision, goal = current(state, facts), target(state, facts)
+    if goal is None:
+        return {**issue, "detail": {}}
+    detail: dict[str, Any] = {"revision": {"version": goal["version"], "revision": goal["revision"], "frozen": goal["frozen"]}}
     if revision is None:
-        return {**issue, "detail": {"draft": state["draft"]} if state["draft"] else {}}
-    detail: dict[str, Any] = {"revision": {"version": revision["version"], "revision": revision["revision"]}}
+        detail["draft"] = state["draft"]
     if issue["subject"]["kind"] == "clause":
-        clause = next(row for row in clauses(revision) if row["id"] == issue["subject"]["key"])
+        # Answers are on the frozen revision; reviews and readings on the wording the next confirmation freezes.
+        source = revision if issue["code"] == "CLAUSE_ANSWERED" and revision is not None else goal
+        clause = next(row for row in clauses(source) if row["id"] == issue["subject"]["key"])
         cards = [row for row in facts.get("cards", []) if row["card"]["items"][0].split("#", 1)[0] == clause["id"]]
         detail["clause"] = {key: clause.get(key) for key in ("id", "document", "category", "text", "digest", "change", "reading")}
         detail["cards"] = [
@@ -512,14 +560,9 @@ def issue_detail(issue: dict, state: dict, facts: dict) -> dict:
             }
             for row in cards
         ]
-        detail["proposal"] = proposals(state, revision).get(clause["id"])
-    elif issue["code"] == "CARDS_READY":
-        detail["cards"] = _standing(state, facts, revision)["unsent"]
-    elif issue["code"] == "REVISION_READY":
-        before = {clause["id"]: clause for clause in clauses(revision)}
-        detail["changes"] = [{"clause": clause, "before": before[clause]["text"], **{k: row[k] for k in ("text", "kind", "note", "sources")}} for clause, row in proposals(state, revision).items()]
-    elif issue["code"] == "READINGS_READY":
-        detail["readings"] = {clause: row["reading"] for clause, row in pending_readings(state, revision).items()}
+        detail["proposal"] = proposals(state, revision).get(clause["id"]) if revision is not None else None
+    elif issue["code"] == "PLAN_READY":
+        detail["plan"] = plan(state, facts)
     return {**issue, "detail": detail}
 
 
@@ -527,32 +570,32 @@ def issue_detail(issue: dict, state: dict, facts: dict) -> dict:
 
 _PHASE = {
     "CLAUSES_REQUIRED": "importing",
-    "CLAUSES_READY": "importing",
-    "CLAUSE_REVIEW": "reviewing",
-    "CARDS_READY": "ready_to_send",
     "CLAUSE_ANSWERED": "revising",
-    "REVISION_READY": "ready_to_revise",
-    "CLARIFIED_READY": "ready_to_clarify",
+    "CLAUSE_REVIEW": "reviewing",
     "CLAUSE_READING": "reading",
-    "READINGS_READY": "ready_to_publish",
+    "PLAN_READY": "ready_to_confirm",
 }
-_ORDER = ["CLAUSES_REQUIRED", "CLAUSES_READY", "CLAUSE_ANSWERED", "REVISION_READY", "CLAUSE_REVIEW", "CARDS_READY", "CLARIFIED_READY", "CLAUSE_READING", "READINGS_READY"]
-_ASK = {"CLAUSES_READY", "CARDS_READY", "REVISION_READY", "CLARIFIED_READY", "READINGS_READY"}
+_ORDER = ["CLAUSES_REQUIRED", "CLAUSE_ANSWERED", "CLAUSE_REVIEW", "CLAUSE_READING", "PLAN_READY"]
+_ASK = {"PLAN_READY"}
 
 
 def project(task_id: str, state: dict, facts: dict) -> dict:
     found = issues(task_id, state, facts)
-    revision = current(state, facts)
+    revision, goal = current(state, facts), target(state, facts)
     result: dict[str, Any] = {"kind": "rule_clarification", "customer": state["customer"], "version": state["version"]}
     lines: list[dict] = []
     waiting = 0
     if revision is not None:
-        rows = clauses(revision)
-        standing = _standing(state, facts, revision)
-        waiting = len(standing["waiting"])
-        changed, drafts = proposals(state, revision), pending_readings(state, revision)
-        valid = [reviewed(state, clause) for clause in rows]
         result["revision"] = {"version": revision["version"], "revision": revision["revision"], "clarified": revision["clarified"]}
+    if goal is not None:
+        rows = clauses(goal)
+        standing = _standing(state, facts, goal)
+        waiting = len(standing["waiting"])
+        changed, drafts = (proposals(state, revision) if revision is not None else {}), pending_readings(state, goal)
+        valid = [reviewed(state, clause) for clause in rows]
+        if not goal["frozen"]:
+            # What is prepared ahead of the next confirmation, not frozen yet.
+            result["next_revision"] = {"version": goal["version"], "revision": goal["revision"]}
         result["progress"] = {
             "clauses": len(rows),
             "reviewed": sum(1 for review in valid if review),
@@ -587,7 +630,8 @@ def project(task_id: str, state: dict, facts: dict) -> dict:
 
 
 def summary(phase: str, result: dict, first: dict | None) -> str:
-    name = f"{result['version']}" + (f" 修订 {result['revision']['revision']}" if result.get("revision") else "")
+    shown = result.get("next_revision") or result.get("revision")
+    name = f"{result['version']}" + (f" 修订 {shown['revision']}" if shown else "")
     progress = result.get("progress") or {}
     if phase == "awaiting_answers":
         return f"{name}：{progress['cards']['waiting']} 张卡片等客户答复。"

@@ -2,7 +2,8 @@
 
 An MCP client proposes a signing action; the person opens the page the proposal names and completes it there, with the
 request naming the proposal in `X-PPAP-Intent`, or declines it here. What became of it is read from what the person
-did (#362). A rule-clarification step has no page of its own, so it is described from the task's current state.
+did (#362). A rule-clarification plan has no page of its own, so it is described from the task's current state, step by
+step, for the person to check (#351).
 """
 
 from __future__ import annotations
@@ -43,8 +44,7 @@ def register_intent_routes(app, session_of) -> None:
         if request_input.get("action_id") in STEPS and found["outcome"]["state"] not in SETTLED:
             try:
                 delegation = await asyncio.to_thread(store.delegation, found["grant_id"])
-                step = await request.app.state.mcp_clarifications.describe(delegation, request_input)
-                shown["step"] = {key: step[key] for key in ("method", "path", "body", "summary", "details")}
+                shown["plan"] = await request.app.state.mcp_clarifications.describe(delegation, request_input)
             except McpError as exc:
                 shown["unavailable"] = exc.code
         return shown
