@@ -45,6 +45,7 @@ li{padding:8px 0;border-top:1px solid var(--color-border);overflow-wrap:anywhere
 li:first-child{border-top:0}
 .notice{margin:16px 0 0;padding:8px 12px;background:var(--color-secondary);border-radius:calc(var(--radius-control) - 2px);color:var(--color-muted-foreground);
 font-size:var(--text-xs);line-height:var(--leading-xs)}
+.notice:not(:last-child){margin-bottom:12px}
 form{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin:20px 0 0}
 form>:not(button){flex-basis:100%}
 form>p{margin:4px 0}

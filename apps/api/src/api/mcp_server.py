@@ -192,7 +192,8 @@ def install_mcp(app, product, http, session_of):
                 else ""
             )
             scopes = "；".join(SCOPES[s] for s in entry["scopes"] if s in SCOPES)
-            row = f'<section><h2>{escape(entry["client_name"] or "MCP 客户端")}</h2><p class="muted">{escape(said)}</p><p class="muted">{escape(scopes)}</p>{form}</section>'
+            # The same identity label as on the consent page (#356).
+            row = f'<section><h2>{escape(entry["client_identity"]["label"])}</h2><p class="muted">{escape(said)}</p><p class="muted">{escape(scopes)}</p>{form}</section>'
             (active if state == "active" else inactive).append(row)
         shown = request.query_params.get("show") == "inactive"
         body = "".join(active) or '<p class="muted">没有有效的连接。</p>'

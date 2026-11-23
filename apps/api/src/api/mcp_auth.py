@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from html import escape
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
@@ -16,7 +17,7 @@ from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOption
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from product.feishu import refresh_user_token
 from product.identity import SESSION_COOKIE, new_token
-from product.mcp import READ_SCOPES, SCOPES, McpError, pkce_challenge
+from product.mcp import READ_SCOPES, SCOPES, McpError, document_client_id, document_fresh, pkce_challenge, read_client_document
 from product.store.mcp import McpStore
 from pydantic import AnyHttpUrl, AnyUrl
 from starlette.applications import Starlette
@@ -25,6 +26,12 @@ from starlette.routing import Mount, Route
 from starlette.types import ASGIApp
 
 from api.mcp_pages import page
+
+# What the person is told when PPAP cannot say who the client is (#356); the name shown is the client's own claim.
+UNVERIFIED = {
+    "unverified": "PPAP 无法核实这个客户端的身份，上面的名称是它自己报的。只有你认得它、并且是你自己刚刚发起的连接，才允许。",
+    "local": "这个客户端运行在你的电脑上，PPAP 无法核实它是哪个应用，上面的名称是它自己报的。只有是你自己刚刚在本机发起的连接，才允许。",
+}
 
 
 class OAuthProvider(TokenVerifier):
@@ -37,6 +44,8 @@ class OAuthProvider(TokenVerifier):
         self.base = self.settings.public_api_url.rstrip("/")
         self.resource = self.base + "/mcp"
         self.issuer = self.base + "/oauth"
+        # Reads a client's own metadata document; tests put a fake network here.
+        self.read_document = read_client_document
         super().__init__(base_url=self.base)
 
     @property
@@ -44,8 +53,22 @@ class OAuthProvider(TokenVerifier):
         return list(SCOPES)
 
     async def get_client(self, client_id):
-        data = await asyncio.to_thread(self.store.client, client_id)
+        data = await asyncio.to_thread(self.document_client if document_client_id(client_id) else self.store.client, client_id)
         return OAuthClientInformationFull.model_validate(data) if data else None
+
+    def document_client(self, client_id: str) -> dict | None:
+        """A client named by its own HTTPS metadata document (#356): PPAP's copy while it holds, else read again.
+        A document that cannot be read or does not check out leaves the client unknown; there is no older copy to fall
+        back to."""
+        data = self.store.client(client_id)
+        if data and document_fresh(data, time.time()):
+            return data
+        try:
+            data = self.read_document(client_id)
+        except McpError:
+            return None
+        self.store.save_document_client(client_id, data)
+        return data
 
     async def register_client(self, client_info):
         try:
@@ -243,6 +266,8 @@ def register_oauth(app, provider: OAuthProvider, session_of):
     metadata = build_metadata(issuer, None, registration, revocation).model_dump(mode="json", exclude_none=True)
     metadata["token_endpoint_auth_methods_supported"] = ["none", "client_secret_post", "client_secret_basic"]
     metadata["revocation_endpoint_auth_methods_supported"] = ["none", "client_secret_post", "client_secret_basic"]
+    # A client may name itself by the HTTPS address of its own metadata document instead of registering (#356).
+    metadata["client_id_metadata_document_supported"] = True
 
     async def auth_metadata(request: Request):
         return JSONResponse(metadata, headers={"Access-Control-Allow-Origin": "*"})
@@ -278,10 +303,13 @@ def register_oauth(app, provider: OAuthProvider, session_of):
             return f'<label><input type="checkbox" name="scope" value="{escape(s)}" checked>{escape(SCOPES[s])}</label>'
 
         boxes = "".join(map(box, view["scopes"])) + "<p><small>开始审核、发送报告、确认规则仍由你本人在 PPAP 网页里完成，客户端只能提议。</small></p>"
+        identity = view["identity"]
+        caution = UNVERIFIED.get(identity["level"])
         return page(
             "连接外部客户端",
-            f"<p><strong>{escape(view['client'].get('client_name') or 'MCP client')}</strong> 请求访问你的 PPAP 数据。</p>"
-            f"<p>当前用户：{escape(session.principal.display_name)}。权限仅限你当前可访问的对象，可随时撤销。</p>"
+            f"<p><strong>{escape(identity['label'])}</strong> 请求访问你的 PPAP 数据。</p>"
+            + (f'<p class="notice">{escape(caution)}</p>' if caution else "")
+            + f"<p>当前用户：{escape(session.principal.display_name)}。权限仅限你当前可访问的对象，可随时撤销。</p>"
             f'<p><small>客户端回调：{escape(view["redirect_uri"])}</small></p><form method="post">'
             f'<input type="hidden" name="csrf" value="{escape(view["csrf"])}">{boxes}'
             '<button name="decision" value="approve">允许所选权限</button><button name="decision" value="deny">拒绝</button></form>',

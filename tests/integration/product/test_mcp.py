@@ -1,6 +1,7 @@
 """Actual PostgreSQL + public OAuth/MCP wire contract. Feishu sign-in is separate live evidence."""
 
 import concurrent.futures
+import functools
 import io
 import json
 import re
@@ -24,7 +25,7 @@ from product import build_product_store
 from product.feishu import UserTokens
 from product.fixtures import APP_ID
 from product.identity import ProviderAuthError
-from product.mcp import SCOPES, pkce_challenge
+from product.mcp import SCOPES, pkce_challenge, read_client_document
 from worker import process_claimed
 
 # Uploaded rules in this module stand for rules with a generated program.
@@ -119,7 +120,9 @@ def test_oauth_discovery_pkce_rotation_and_revocation(mcp_app):
         meta = client.get("/.well-known/oauth-protected-resource/mcp").json()
         assert meta["resource"] == "http://127.0.0.1:8080/mcp"
         assert meta["authorization_servers"] == ["http://127.0.0.1:8080/oauth"]
-        assert "none" in client.get("/.well-known/oauth-authorization-server/oauth").json()["token_endpoint_auth_methods_supported"]
+        authorization_server = client.get("/.well-known/oauth-authorization-server/oauth").json()
+        assert "none" in authorization_server["token_endpoint_auth_methods_supported"]
+        assert authorization_server["client_id_metadata_document_supported"] is True
         assert rpc(client, "invalid", "tools/list").status_code == 401
         cid, tokens, exchange = connection(client, store)
         assert client.post("/oauth/token", data=exchange).status_code == 400  # single use code
@@ -178,6 +181,83 @@ def test_client_registered_without_scope_can_ask_for_every_scope(mcp_app):
         }
         started = client.get("/oauth/authorize", params=args, follow_redirects=False)
         assert started.status_code == 302 and "/oauth/consent/" in started.headers["location"], started.headers.get("location")
+
+
+def test_consent_and_connections_say_who_the_client_is(mcp_app):
+    # #356: a web client the platform registered is verified, a client named by its own HTTPS document shows that
+    # document's domain, any other client only what it says of itself.
+    app, store = mcp_app
+    document_url = "https://client.example/ppap/client.json"
+    documents = {
+        document_url: {"client_id": document_url, "client_name": "Doc Client", "redirect_uris": ["http://127.0.0.1:4567/callback"]},
+        "https://client.example/ppap/borrowed.json": {"client_id": document_url, "client_name": "Doc Client", "redirect_uris": ["http://127.0.0.1:4567/callback"]},
+    }
+    fetched = []
+
+    def respond(request):
+        url = "https://" + request.headers["host"] + request.url.path
+        fetched.append(url)
+        return httpx.Response(200, json=documents[url], headers={"Cache-Control": "max-age=300"}) if url in documents else httpx.Response(404)
+
+    # Never the real network: the name resolves to a public address and a fake server answers.
+    app.state.mcp_provider.read_document = functools.partial(read_client_document, resolve=lambda host, port: ["93.184.216.34"], transport=httpx.MockTransport(respond))
+    with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+        client.cookies.set("ppap_session", store.create_session(store.principal_for_fixture("alice")))
+
+        def ask(cid, redirect):
+            args = {
+                "response_type": "code",
+                "client_id": cid,
+                "redirect_uri": redirect,
+                "scope": "identity:read",
+                "state": "s",
+                "code_challenge": pkce_challenge(secrets.token_urlsafe(48)),
+                "code_challenge_method": "S256",
+                "resource": "http://127.0.0.1:8080/mcp",
+            }
+            return client.get("/oauth/authorize", params=args, follow_redirects=False)
+
+        def consent(cid, redirect):
+            started = ask(cid, redirect)
+            assert started.status_code == 302, started.text
+            path = urlsplit(started.headers["location"]).path
+            shown = client.get(path)
+            csrf = re.search(r'name="csrf" value="([^"]+)"', shown.text)[1]
+            assert client.post(path, data={"csrf": csrf, "decision": "approve", "scope": ["identity:read"]}).status_code == 200
+            return unescape(shown.text)
+
+        def register(name, redirect):
+            registered = client.post("/oauth/register", json={"client_name": name, "redirect_uris": [redirect], "token_endpoint_auth_method": "none"})
+            assert registered.status_code == 201, registered.text
+            return registered.json()["client_id"]
+
+        # A document client may use only the callbacks its document declares, and only a document naming its own address.
+        undeclared = ask(document_url, "http://127.0.0.1:4567/elsewhere")
+        assert undeclared.status_code == 400 and "location" not in undeclared.headers
+        assert ask("https://client.example/ppap/borrowed.json", "http://127.0.0.1:4567/callback").status_code == 400
+        chatgpt = "https://chatgpt.com/connector/oauth/yjAMZ-kP_fvM"
+        labels = {
+            "Doc Client · 来自 client.example": (document_url, "http://127.0.0.1:4567/callback"),
+            "ChatGPT · 已验证（chatgpt.com）": (register("PPAP 官方助手", chatgpt), chatgpt),
+            "未验证（自称：PPAP 官方助手）": (register("PPAP 官方助手", "https://app.example/callback"), "https://app.example/callback"),
+            "本机应用 · 无法验证来源（自称：Pi MCP test）": (register("Pi MCP test", "http://127.0.0.1:54121/callback"), "http://127.0.0.1:54121/callback"),
+        }
+        for label, (cid, redirect) in labels.items():
+            shown = consent(cid, redirect)
+            assert f"<strong>{label}</strong> 请求访问你的 PPAP 数据" in shown, shown
+            assert ("PPAP 无法核实" in shown) == label.startswith(("未验证", "本机应用"))
+        # Read once while it holds; the connections page says the same as the consent page.
+        assert fetched.count(document_url) == 1
+        connections = unescape(client.get("/mcp/connections").text)
+        assert all(f"<h2>{label}</h2>" in connections for label in labels), connections
+        # A proposal carries its client's identity, for the Web to mark one from a client PPAP cannot verify.
+        mcp, alice = app.state.mcp_store, store.principal_for_fixture("alice")
+        local = next(entry for entry in mcp.connections(alice) if entry["client_identity"]["level"] == "local")
+        proposal = {"method": "POST", "path": "/rounds/x/report", "page": "/tasks/x", "request": {}}
+        proposed = mcp.propose(mcp.delegation(local["id"]), str(uuid4()), "publish_report", proposal, "identity:read")
+        intent = client.get("/intents/" + proposed["id"]).json()
+        assert intent["client_name"] == "Pi MCP test", intent
+        assert mcp.intent(alice, proposed["id"])["client_identity"]["label"] == "本机应用 · 无法验证来源（自称：Pi MCP test）"
 
 
 def test_browser_cookie_alone_cannot_call_mcp(mcp_app):

@@ -4,12 +4,22 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import re
+import socket
+import time
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from datetime import timezone
+from email.utils import parsedate_to_datetime
+from urllib.parse import urlsplit, urlunsplit
+
+import httpx
 
 from product.identity import Session
+from product.model_endpoint import ModelEndpointError, normalize_base_url
+from product.settings import VerifiedClient
 
 SCOPES = {
     "identity:read": "读取当前身份与服务能力",
@@ -84,6 +94,186 @@ def valid_redirect(uri: str) -> bool:
         )
     except ValueError:
         return False
+
+
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+GRANT_TYPES = ("authorization_code", "refresh_token")
+
+
+def valid_client_metadata(metadata: Mapping) -> bool:
+    """What PPAP accepts of any client, registered or named by its own document."""
+    redirects = metadata.get("redirect_uris")
+    name = metadata.get("client_name", "MCP client")
+    grants = metadata.get("grant_types", list(GRANT_TYPES))
+    return bool(
+        isinstance(redirects, list)
+        and 1 <= len(redirects) <= 10
+        and all(isinstance(u, str) and valid_redirect(u) for u in redirects)
+        and isinstance(name, str)
+        and 1 <= len(name) <= 100
+        and metadata.get("token_endpoint_auth_method", "none") in {"none", "client_secret_post", "client_secret_basic"}
+        and isinstance(grants, list)
+        and all(isinstance(g, str) for g in grants)
+        and not set(grants) - set(GRANT_TYPES)
+        and metadata.get("response_types", ["code"]) == ["code"]
+    )
+
+
+# Client ID Metadata Documents (CIMD, MCP authorization 2025-11-25): a client_id that is an HTTPS address names a JSON
+# document the client publishes there. PPAP reads it itself and keeps a copy in the client's record, under this key,
+# with the time it was read and until when it holds by the document's HTTP cache headers.
+DOCUMENT = "ppap_document"
+DOCUMENT_MAX_BYTES = 5 * 1024
+DOCUMENT_TIMEOUT = 5.0
+DOCUMENT_DEFAULT_TTL = 3600
+DOCUMENT_MAX_TTL = 86400
+NAT64 = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/48"))
+
+
+def document_client_id(value: str) -> bool:
+    """A client_id that names its own metadata document: a canonical HTTPS address with a path, held to the same rules
+    as a tenant's model address (no credentials, query, fragment, dot segments, localhost or numeric aliases)."""
+    if not isinstance(value, str) or not value.startswith("https://"):
+        return False
+    try:
+        return normalize_base_url(value) == value and urlsplit(value).path not in {"", "/"}
+    except ModelEndpointError:
+        return False
+
+
+def public_address(value: str) -> bool:
+    """Only a globally routable unicast address may be fetched: never loopback, private, link-local or reserved, nor an
+    IPv6 form that carries one of those (mapped, 6to4, Teredo, NAT64)."""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped:
+            return public_address(str(address.ipv4_mapped))
+        if address.sixtofour or address.teredo or any(address in network for network in NAT64):
+            return False
+    return address.is_global and not address.is_multicast
+
+
+def resolve_host(host: str, port: int) -> list[str]:
+    try:
+        return sorted({str(info[4][0]) for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)})
+    except (OSError, UnicodeError):
+        return []
+
+
+def fresh_until(headers: Mapping[str, str], now: float) -> int:
+    """Until when a read document holds, by its HTTP cache headers (RFC 9111), at most a day."""
+    directives = {}
+    for part in headers.get("cache-control", "").lower().split(","):
+        key, _, value = part.strip().partition("=")
+        directives[key] = value.strip().strip('"')
+    if "no-store" in directives or "no-cache" in directives:
+        return int(now)
+    ttl = DOCUMENT_DEFAULT_TTL
+    if "max-age" in directives:
+        ttl = int(directives["max-age"]) if directives["max-age"].isdigit() else 0
+    elif headers.get("expires"):
+        try:
+            expires = parsedate_to_datetime(headers["expires"])
+            ttl = int((expires if expires.tzinfo else expires.replace(tzinfo=timezone.utc)).timestamp() - now)
+        except (TypeError, ValueError):
+            ttl = 0  # An Expires that cannot be read means already stale.
+    return int(now + min(max(ttl, 0), DOCUMENT_MAX_TTL))
+
+
+def read_client_document(url: str, *, resolve: Callable[[str, int], list[str]] = resolve_host, transport: httpx.BaseTransport | None = None) -> dict:
+    """Read and check the metadata document a client_id names, and return it as the client's record.
+
+    HTTPS only; every address the name resolves to must be public, and the connection goes to the address that was
+    checked; at most 5 KB in 5 seconds; no redirects. The document must name exactly this address as its client_id,
+    declare its callbacks, and hold no secret: such a client authenticates with PKCE alone."""
+    if not document_client_id(url):
+        raise McpError("invalid_client_id")
+    parts = urlsplit(url)
+    host, port = parts.hostname or "", parts.port or 443
+    addresses = resolve(host, port)
+    if not addresses or not all(public_address(a) for a in addresses):
+        raise McpError("client_document_address")
+    pinned = f"[{addresses[0]}]" if ":" in addresses[0] else addresses[0]
+    deadline = time.monotonic() + DOCUMENT_TIMEOUT
+    body = bytearray()
+    try:
+        with (
+            httpx.Client(transport=transport, timeout=DOCUMENT_TIMEOUT, follow_redirects=False, trust_env=False) as client,
+            client.stream(
+                "GET", urlunsplit(("https", f"{pinned}:{port}", parts.path, "", "")), headers={"Host": parts.netloc, "Accept": "application/json"}, extensions={"sni_hostname": host}
+            ) as response,
+        ):
+            if response.status_code != 200:
+                raise McpError("client_document_unavailable")
+            declared = response.headers.get("content-length", "0")
+            if not declared.isdigit() or int(declared) > DOCUMENT_MAX_BYTES:
+                raise McpError("client_document_too_large")
+            for chunk in response.iter_bytes():
+                body.extend(chunk)
+                if len(body) > DOCUMENT_MAX_BYTES:
+                    raise McpError("client_document_too_large")
+                if time.monotonic() > deadline:
+                    raise McpError("client_document_timeout")
+            headers = dict(response.headers)
+    except httpx.TimeoutException:
+        raise McpError("client_document_timeout") from None
+    except httpx.HTTPError:
+        raise McpError("client_document_unavailable") from None
+    try:
+        document = json.loads(bytes(body))
+    except (ValueError, UnicodeError):
+        raise McpError("invalid_client_metadata") from None
+    if not isinstance(document, dict) or document.get("client_id") != url:
+        raise McpError("client_document_mismatch")
+    record = {
+        "client_id": url,
+        "client_name": document.get("client_name", host),
+        "redirect_uris": document.get("redirect_uris"),
+        "token_endpoint_auth_method": "none",
+        "grant_types": document.get("grant_types", list(GRANT_TYPES)),
+        "response_types": document.get("response_types", ["code"]),
+        # Like a client registered without a scope, it may ask for any; the person picks what is granted.
+        "scope": " ".join(SCOPES),
+    }
+    if not valid_client_metadata(record) or {"client_secret", "client_secret_expires_at"} & document.keys() or document.get("token_endpoint_auth_method", "none") != "none":
+        raise McpError("invalid_client_metadata")
+    now = time.time()
+    return {**record, DOCUMENT: {"read_at": int(now), "fresh_until": fresh_until(headers, now)}}
+
+
+def document_fresh(metadata: Mapping, now: float) -> bool:
+    document = metadata.get(DOCUMENT)
+    return isinstance(document, dict) and document.get("fresh_until", 0) > now
+
+
+def verified_callback(pattern: str, uri: str) -> bool:
+    if pattern.endswith("/*"):
+        prefix = pattern[:-1]
+        return uri.startswith(prefix) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", uri[len(prefix) :]) is not None
+    return uri == pattern
+
+
+def client_identity(client_id: str, metadata: Mapping, verified: Iterable[VerifiedClient]) -> dict:
+    """Who a client is, as far as PPAP can tell (#356), in this order: a web client the platform registered (every
+    callback is one of its own); a client whose own HTTPS document names it (its domain); otherwise only what it says
+    of itself, and for a client calling back to this machine not even where it comes from.
+
+    `label` is what the consent page, the connections page and the Web show; `level` is what signing reads."""
+    raw = metadata.get("client_name")
+    name = " ".join(raw.split()) if isinstance(raw, str) and raw.strip() else "MCP 客户端"
+    redirects = [u for u in metadata.get("redirect_uris") or [] if isinstance(u, str)]
+    for entry in verified if redirects else ():
+        if all(any(verified_callback(p, u) for p in entry.redirect_uris) for u in redirects):
+            return {"level": "verified", "name": entry.name, "domain": entry.domain, "label": f"{entry.name} · 已验证（{entry.domain}）"}
+    if isinstance(metadata.get(DOCUMENT), dict) and metadata.get("client_id") == client_id and document_client_id(client_id):
+        domain = urlsplit(client_id).hostname
+        return {"level": "metadata", "name": name, "domain": domain, "label": f"{name} · 来自 {domain}"}
+    if redirects and all(urlsplit(u).hostname in LOOPBACK_HOSTS for u in redirects):
+        return {"level": "local", "name": name, "domain": None, "label": f"本机应用 · 无法验证来源（自称：{name}）"}
+    return {"level": "unverified", "name": name, "domain": None, "label": f"未验证（自称：{name}）"}
 
 
 def fingerprint(value: object) -> str:
