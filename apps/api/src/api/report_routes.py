@@ -32,14 +32,15 @@ def register_report_routes(app, store, session_of, http, settings):
             # The id names a draft or file of the enterprise, not a round.
             return None, None, None, JSONResponse({"error": "access_denied"}, status_code=403)
         try:
-            if request.method == "POST":
-                require_approved_source(request, f"/rounds/{round_id}", body)
             blocks = report_blocks(body, round_return_url(settings.canonical_web_url(), body))
+            fingerprint = hashlib.sha256(json.dumps(blocks, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+            if request.method == "POST":
+                # What was approved is the document itself: its content, not every field of the round (#348).
+                require_approved_source(request, f"/integrations/feishu/rounds/{round_id}/report", {"content_fingerprint": fingerprint})
         except McpError as exc:
             return None, None, None, JSONResponse({"error": exc.code}, status_code=exc.status)
         except FeishuWritebackError as exc:
             return None, None, None, JSONResponse({"error": str(exc)}, status_code=409)
-        fingerprint = hashlib.sha256(json.dumps(blocks, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         return session, blocks, fingerprint, None
 
     @app.get("/integrations/feishu/rounds/{round_id}/report", response_model=wc.ReportEnvelope)
@@ -47,7 +48,7 @@ def register_report_routes(app, store, session_of, http, settings):
         session, blocks, fingerprint, denied = prepare(round_id, request)
         if denied is not None:
             return denied
-        return {"report": store.get_report(session.principal, round_id, fingerprint)}
+        return {"report": store.get_report(session.principal, round_id, fingerprint), "content_fingerprint": fingerprint}
 
     @app.post("/integrations/feishu/rounds/{round_id}/report", response_model=wc.ReportEnvelope)
     def create_report(round_id: str, request: Request):

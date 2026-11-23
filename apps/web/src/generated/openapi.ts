@@ -4223,6 +4223,8 @@ export interface components {
         };
         /** ReportEnvelope */
         ReportEnvelope: {
+            /** Content Fingerprint */
+            content_fingerprint?: string;
             report: components["schemas"]["ReportExport"] | null;
         };
         /** ReportExport */

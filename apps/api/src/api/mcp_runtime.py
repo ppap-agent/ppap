@@ -44,6 +44,8 @@ class TaskRuntime:
     def __init__(self, gateway, workflows):
         self.gateway, self.store = gateway, workflows
         self.drivers: dict[str, asyncio.Task] = {}
+        # Tools whose request pins no version: what they would do now, for showing again on the page when it changed (#348).
+        self.replanners: dict[str, Any] = {}
 
     # ---- reading ---------------------------------------------------------------------------------
 

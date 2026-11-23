@@ -403,6 +403,19 @@ class McpStore:
             ).fetchone()
         return {"grant_id": str(updated["grant_id"]), **self.operation_public(updated)}
 
+    def replan_operation(self, principal: Principal, operation_id: str, confirmation: dict) -> bool:
+        """An approved request that did nothing because its content changed meanwhile goes back to the person, same request,
+        with what it would do now. Only one the business refused before any effect is reopened."""
+        with self.connection() as conn:
+            row = conn.execute(
+                """UPDATE product.mcp_operations o SET state='confirmation_required', confirmation=%s, result=NULL, confirmed_by=NULL,
+                       confirmed_at=NULL, csrf_hash=NULL, browser_hash=NULL, updated_at=now()
+                   FROM product.mcp_grants g WHERE o.id=%s AND o.grant_id=g.id AND g.user_id=%s AND g.tenant_id=%s
+                   AND o.state='failed' AND o.result->'data'->>'error'='confirmation_content_changed' RETURNING o.id""",
+                (Jsonb(confirmation), operation_id, principal.user_id, principal.tenant_id),
+            ).fetchone()
+        return row is not None
+
     def record_denial_reason(self, principal: Principal, operation_id: str, reason: str) -> None:
         """Why the person said no, given after the fact; kept once, for the client to act on."""
         with self.connection() as conn:

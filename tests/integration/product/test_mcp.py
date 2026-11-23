@@ -479,16 +479,14 @@ def test_a_published_report_carries_what_the_user_approved(mcp_app, core_system,
 
             monkeypatch.setattr(app.state.mcp_gateway, "request", edit_after_gateway_check)
         else:
-            from api import report_routes
+            # Once the document is fixed and checked during execution, a later edit changes nothing that is sent.
+            original_claim = store.claim_report
 
-            original_blocks = report_routes.report_blocks
-
-            def edit_after_materialization(body, return_url):
-                blocks = original_blocks(body, return_url)
+            def edit_after_materialization(*args, **kwargs):
                 edit()
-                return blocks
+                return original_claim(*args, **kwargs)
 
-            monkeypatch.setattr(report_routes, "report_blocks", edit_after_materialization)
+            monkeypatch.setattr(store, "claim_report", edit_after_materialization)
 
         approve(client, asked)
         result = call(client, token, "publish_report", **arguments)
@@ -496,8 +494,15 @@ def test_a_published_report_carries_what_the_user_approved(mcp_app, core_system,
         current = client.get(f"/rounds/{round_id}").json()["findings"][0]["review"]
         assert current["version"] == 2 and current["rationale"] == "并发网页修改"
         if edit_at == "before_capture":
-            assert result["next"] == {"kind": "blocked", "error_code": "confirmation_content_changed"}, result
+            # Nothing was sent. The same request comes back to the person with what it would send now (#348).
             assert drive.written == []
+            assert result["next"]["kind"] == "user_action" and result["next"]["url"] == asked["next"]["url"], result
+            assert "要交付的内容有变化" in client.get(asked["next"]["url"], params={"changed": "1"}).text
+            approve(client, result)
+            result = call(client, token, "publish_report", **arguments)
+            assert result["next"]["kind"] == "done", result
+            sent = json.dumps(drive.written, ensure_ascii=False)
+            assert "并发网页修改" in sent and "原批准复核" not in sent
         else:
             assert result["next"]["kind"] == "done" and result["result"]["delivery"]["report"]["status"] == "ready", result
             sent = json.dumps(drive.written, ensure_ascii=False)
@@ -505,7 +510,7 @@ def test_a_published_report_carries_what_the_user_approved(mcp_app, core_system,
         # A settled receipt is read and replayed despite later edits, and nothing is sent again.
         count = len(drive.written)
         state = call(client, token, "get_operation", request_id=arguments["request_id"])["result"]["state"]
-        assert state == ("failed" if edit_at == "before_capture" else "succeeded")
+        assert state == "succeeded"
         assert call(client, token, "publish_report", **arguments)["next"] == result["next"]
         assert len(drive.written) == count
 

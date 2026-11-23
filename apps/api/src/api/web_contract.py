@@ -752,6 +752,8 @@ class ReportExport(TypedDict):
 
 class ReportEnvelope(TypedDict):
     report: ReportExport | None
+    # The document's content, as it would be written now; an approval to send it binds to this.
+    content_fingerprint: NotRequired[str]
 
 
 class WritebackResponse(TypedDict, total=False):

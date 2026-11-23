@@ -496,6 +496,21 @@ def register_tools(mcp, gateway, authority, runtime):
         except Exception as exc:
             return failure(exc, task_id=tid, request_id=rid)
 
+    async def report_plan(actor, audit: dict, round_id: str) -> tuple[dict, str]:
+        """What publishing would write, shown in the user's words and bound to the document's own content (#348)."""
+        probe = f"/integrations/feishu/rounds/{round_id}/report"
+        current = await gateway.get(actor, "audits:read", probe)
+        summary, details = views.report(audit, await gateway.get(actor, "audits:read", f"/rounds/{round_id}"))
+        return {"operation": "publish_report", "summary": summary, "details": details, "request": None, "sources": [{"content_fingerprint": current["content_fingerprint"]}]}, probe
+
+    async def replan_report(actor, operation: dict) -> dict:
+        round_id = operation["arguments"]["path"].split("/")[4]
+        source = await gateway.get(actor, "audits:read", f"/rounds/{round_id}")
+        audit, _ = await audit_round(actor, source["source_draft_id"])
+        return (await report_plan(actor, audit, round_id))[0]
+
+    runtime.replanners["publish_report"] = replan_report
+
     @mcp.tool(annotations=EXTERNAL)
     async def publish_report(task_id: UUID, request_id: UUID) -> Outcome:
         """Deliver a finished audit to Feishu as a report document the user can share. The user approves it in the browser. A delivery
@@ -512,10 +527,7 @@ def register_tools(mcp, gateway, authority, runtime):
             if audit.get("conclusion") == "ERROR" and await runtime.recorded(actor, rid) is None:
                 # Say so before asking the user to approve something that cannot happen.
                 raise workflow.Rejected("round_has_errors")
-            probe = f"/rounds/{round_id}"
-            source = await gateway.get(actor, "audits:read", probe)
-            summary, details = views.report(audit, source)
-            snapshot = {"operation": "publish_report", "summary": summary, "details": details, "request": None, "sources": [source]}
+            snapshot, probe = await report_plan(actor, audit, round_id)
             reply = await gateway.write(actor, "reports:send", "publish_report", rid, "POST", f"/integrations/feishu/rounds/{round_id}/report", None, probes=[probe], confirmation=snapshot)
             return receipt(reply, "publish_report", {"task_id": tid, "request_id": rid}, task_id=tid) or Outcome(task_id=tid, request_id=rid, result={"delivery": reply.data}, next=DONE)
         except Exception as exc:

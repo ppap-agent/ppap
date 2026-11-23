@@ -244,9 +244,11 @@ def install_mcp(app, product, http, session_of):
             return page("操作不可确认", "<p>此请求已处理、已过期，或当前账号没有权限。</p>", exc.status)
         # What will happen, in the user's words; the exact request stays bound to the approval, not on the page.
         shown = value["confirmation"].get("details") or []
+        changed = '<p class="notice">你上次确认之后，要交付的内容有变化（例如人工复核有更新），所以没有发出。下面是现在的内容，请再确认一次。</p>' if request.query_params.get("changed") else ""
         return page(
             "确认这次操作",
-            lines(value["confirmation"].get("summary", []))
+            changed
+            + lines(value["confirmation"].get("summary", []))
             + details(shown, "只确认上面这一次；内容有变化时需要重新确认。点确认就会执行，结果显示在这个页面上。")
             + f'<form method="post"><input type="hidden" name="csrf" value="{escape(value["csrf"])}">'
             '<button name="decision" value="deny">拒绝</button><button name="decision" value="approve">确认</button></form>',
@@ -302,6 +304,15 @@ def install_mcp(app, product, http, session_of):
             return page("结果还不确定", "<p>这次操作可能已经执行，系统不会重复执行。回到客户端，它会读取实际结果。</p>")
         if reply.status == "ok":
             return page("已完成", lines(summary) + '<p class="notice">回到客户端即可看到结果。</p>')
+        replan = runtime.replanners.get(operation["tool"])
+        if reply.status == "error" and reply.error == "confirmation_content_changed" and replan is not None:
+            # Same request, new content: show what it would do now and ask again, here (#348).
+            try:
+                fresh = await replan(delegation, operation)
+                if await asyncio.to_thread(store.replan_operation, session.principal, str(operation_id), fresh):
+                    return RedirectResponse(f"{provider.base}/mcp/confirm/{operation_id}?changed=1", 303)
+            except Exception:
+                logging.getLogger(__name__).exception("changed confirmation could not be shown again")
         if reply.status == "error":
             return page("没有完成", f"<p>{escape(OUTCOME.get(reply.error or '', OUTCOME_FAILED))}</p>")
         return page("结果还不确定", "<p>这次操作可能已经执行，系统不会重复执行。回到客户端，它会读取实际结果。</p>")
