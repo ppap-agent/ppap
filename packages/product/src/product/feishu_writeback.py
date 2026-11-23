@@ -439,8 +439,8 @@ def writeback_state(round_body: dict) -> str:
         sources = semantic.get("sources")
         if not isinstance(sources, list) or any(not isinstance(source, dict) or not _semantic_source_valid(source, by_version) for source in sources):
             return "round_incomplete"
-        if checker_execution and row["status"] == PASS and not sources and not semantic.get("empty_scope_basis", "").strip():
-            return "round_incomplete"
+        # A PASS whose checks ran but that names no place in the original is still delivered: the document says so and
+        # asks for the original to be checked, as the PDF report does. Only a PASS nothing was checked for stays out (above).
     groups = _group_findings(round_body)
     if not groups or any(not rows for _, rows in groups):
         return "round_incomplete"
@@ -673,7 +673,7 @@ def report_blocks(round_body: dict, return_url: str = "", customer: str = "", or
                 if sources:
                     blocks.extend(_text(_semantic_source_text(item)) for item in sources)
                 else:
-                    blocks.append(_text("依据：未提供可定位的资料来源。"))
+                    blocks.append(_text("依据：未提供可定位的资料来源，请对照原件核对。"))
             else:
                 blocks.append(_text("依据：结果缺少可核对的证据记录，需核对原始审核记录。"))
             review = row.get("review") or {}

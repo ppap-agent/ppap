@@ -111,16 +111,14 @@ def test_core_explicit_empty_scope_is_distinct_from_unproven_zero_assertions():
     assert writeback_state(body) == "round_incomplete"
 
 
-@pytest.mark.parametrize("fault", ["missing_sources", "foreign_file", "wrong_filename", "wrong_role", "bad_locator", "rule_version", "clause", "rule_text", "missing_rules", "invalid_scope"])
+@pytest.mark.parametrize("fault", ["foreign_file", "wrong_filename", "wrong_role", "bad_locator", "rule_version", "clause", "rule_text", "missing_rules", "invalid_scope"])
 def test_core_writeback_retains_source_and_rule_authority(fault):
     from product.feishu_writeback import writeback_state
 
     body = _core_round()
     semantic = body["findings"][0]["locator"]["semantic"]
     source = semantic["sources"][0]
-    if fault == "missing_sources":
-        semantic["sources"] = []
-    elif fault == "foreign_file":
+    if fault == "foreign_file":
         source["file_version_id"] = "foreign-version"
     elif fault == "wrong_filename":
         source["filename"] = "other.xlsx"
@@ -139,6 +137,18 @@ def test_core_writeback_retains_source_and_rule_authority(fault):
     else:
         semantic["scope"] = {"total": 1, "checked": 2, "unknown": 0}
     assert writeback_state(body) == "round_incomplete"
+
+
+def test_a_checked_pass_that_names_no_place_is_delivered_and_asks_for_the_original():
+    """Checks ran (`checks_performed` > 0) but no place in the original was cited: the round is delivered, the item says so."""
+    from product.feishu_writeback import report_blocks, writeback_state
+
+    body = _core_round()
+    semantic = body["findings"][0]["locator"]["semantic"]
+    semantic.update(sources=[], checks_performed=3, empty_scope_basis="")
+    assert writeback_state(body) == "ready"
+    text = json.dumps(report_blocks(body), ensure_ascii=False)
+    assert "依据：未提供可定位的资料来源，请对照原件核对。" in text
 
 
 @pytest.mark.parametrize("status", ["NG", "UNABLE", "NA"])

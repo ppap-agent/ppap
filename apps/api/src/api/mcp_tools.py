@@ -46,6 +46,7 @@ _SAY = {
     "rulebook_version_not_found": "这个客户没有这个版本的规则库。已有的版本见 get_account 的 rulebooks；新建版本要由平台负责人或受委托的审查方发起。",
     "platform_operator_required": "这一步只有平台负责人能确认。",
     "round_has_errors": "这次审核有检查项没有检查完，不能生成飞书报告。可以对同一份资料复审，结论确定后再交付。",
+    "round_incomplete": "这一轮的结果还不完整（审核或报告还没完成），暂时不能生成飞书报告文档。稍后用 get_task 查看，完成后再交付。",
     "report_pdf_not_ready": "这次审核的报告 PDF 还没有全部生成；飞书报告文档要附上它们，全部生成后才能交付。",
     "access_denied": "当前账号没有权限做这件事；只有任务的创建人能修改它。",
     "insufficient_scope": "这个连接没有所需的权限。请用户在 PPAP 的连接管理页撤销此连接后重新连接，并在授权页勾选该权限。",

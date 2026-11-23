@@ -71,6 +71,7 @@ const messages: Record<string,string> = {
   report_retry_unavailable: '这份报告文档正在处理，或这一步已经完成，已显示最新状态。',
   proposal_outdated: '这一步已经变化，请按最新状态重新发起。',
   round_signed: '这一轮已经签发，撤回签发后才能更正复核。',
+  round_incomplete: '这一轮的结果还不完整，暂时不能生成飞书报告文档。请等审核和报告都完成后再试。',
   round_already_signed: '这一轮已经签发，已显示最新状态。',
   round_not_signed: '这一轮已经不是签发状态，已显示最新状态。',
   round_not_finished: '审核结束、报告生成完后才能签发。',
