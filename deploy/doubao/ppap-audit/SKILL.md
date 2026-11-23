@@ -18,7 +18,7 @@ PPAP 通过 MCP 连接器 `ppap` 提供工具。你代表当前对话的发起�
 - `next`：现在该做的一件事。
   - `wait`：过 `check_after_ms` 再调用 `get_task`，不要重复发起。
   - `user_action` 带 `issue_id`：把问题和选项原样给用户，按他的选择调用 `resolve_issue`，带上 `task_revision` 作为 `expected_revision`。只能用问题列出的选项，不要替用户选。
-  - `user_action` 带 `url`：把链接交给用户，请他在浏览器核对并确认；确认后按 `then` 用同一个 `request_id` 再调用一次。不要在确认前说已经开始。
+  - `user_action` 带 `url`：把链接交给用户，请他在浏览器核对并确认。用户点确认就会执行，结果显示在页面上；之后按 `then` 用同一个 `request_id` 再调用一次，读取结果。不要在确认前说已经开始。用户拒绝时会带回原因，按原因调整后用新的 `request_id` 重新发起。
   - `call_tool`：在用户的意图允许时调用它指的工具。
   - `recover`：用同一个 `request_id` 重复原调用，绝不换新的。
   - `blocked`：把 `message` 原样告诉用户。

@@ -91,7 +91,7 @@ def receipt(reply: Reply, tool: str, arguments: dict, *, task_id: str | None) ->
             "kind": "user_action",
             "action_id": "approve_in_browser",
             "url": reply.confirmation_url,
-            "prompt": "请用户打开这个链接，核对后点确认。确认后用同一个 request_id 再调用一次本工具。",
+            "prompt": "请用户打开这个链接，核对后点确认。点确认就会执行，结果显示在页面上；之后用同一个 request_id 再调用一次本工具读取结果。",
             "then": {"tool": tool, "arguments": arguments},
         }
         return Outcome(task_id=task_id, request_id=rid, next=step)
@@ -99,7 +99,12 @@ def receipt(reply: Reply, tool: str, arguments: dict, *, task_id: str | None) ->
         return Outcome(task_id=task_id, request_id=rid, next={"kind": "wait", "observe_with": "get_operation", "arguments": {"request_id": rid}, "check_after_ms": 5000})
     if reply.status == "unknown":
         return Outcome(task_id=task_id, request_id=rid, next={"kind": "recover", "strategy": "read_operation", "tool": "get_operation", "arguments": {"request_id": rid}})
-    return blocked("denied_by_user" if reply.status == "denied" else reply.error or "business_request_failed", task_id=task_id, request_id=rid)
+    if reply.status == "denied":
+        # The person said no on the page, maybe with a reason: act on it, never send the same request again.
+        reason = f"（原因：{reply.error}）" if reply.error else ""
+        prompt = f"用户在确认页拒绝了这次操作{reason}。请按用户的意思调整，再用新的 request_id 重新发起；不要重复同一个请求。"
+        return Outcome(task_id=task_id, request_id=rid, next={"kind": "user_action", "action_id": "denied_by_user", "prompt": prompt, "reason": reply.error})
+    return blocked(reply.error or "business_request_failed", task_id=task_id, request_id=rid)
 
 
 def _short(text, limit: int = 300):

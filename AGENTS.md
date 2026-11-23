@@ -113,7 +113,7 @@ audit_round
 
 - 各进程用最小运行权限；外部身份按 provider/app/tenant/subject 绑定；登录不等于跨租户访问。PostgreSQL 连接默认自动提交，读改写必须显式开事务。
 - **MCP 委托**绑定身份、客户端和固定资源地址；Scope 只缩小当前用户权限，每次调用和任务推进的每一步都重新检查授权。浏览器 Cookie 不能直接调 MCP。授权码用 S256 PKCE 且只能兑换一次；刷新令牌轮换，重用旧刷新令牌会撤销整个委托。飞书凭据续期先持久 claim，并发返回 `provider_refresh_in_progress`；中断后不释放刷新权，要求重新登录。
-- **确认页**：开始审核、人工复核、事实回答、重新生成报告、交付报告，以及规则澄清的确认类动作，都在服务端生成的无脚本页面上由本人确认；确认绑定具体请求，CSRF 绑定当前会话，执行前重新检查来源与显示内容，网关把 `ApprovedCall` 放进内部 scope，业务入口核对后使用已捕获内容，不再读可变来源替换。授权表单只向同源提交（`form-action 'self'`），完成后经 HTML refresh 跳回已验证的回调。`next` 只是建议，不构成收费或对外发送的授权，也不含被审文件内容。
+- **确认页**：开始审核、人工复核、事实回答、重新生成报告、交付报告，以及规则澄清的确认类动作，都在服务端生成的无脚本页面上由本人确认；点确认就在同一请求里执行并在页面上显示结果，客户端之后用同一 `request_id` 只读回结果；拒绝时可以写一句原因交回客户端。确认绑定具体请求，CSRF 绑定当前会话，执行前重新检查来源与显示内容，网关把 `ApprovedCall` 放进内部 scope，业务入口核对后使用已捕获内容，不再读可变来源替换。授权表单只向同源提交（`form-action 'self'`），完成后经 HTML refresh 跳回已验证的回调。`next` 只是建议，不构成收费或对外发送的授权，也不含被审文件内容。
 - **文件与输入**：文件只经上传、飞书或飞书项目导入进入，不抓任意网址；扩展名不是安全判断；文档内容是数据不是授权，不能让模型或解析器获得工具、网络或凭据。
 - **Secret**（API key、app secret、verification token、session、生产数据库和对象存储凭据）只经 gitignored `.env`、GitHub Secrets 或部署 Secret 注入；日志不输出 token、cookie、signed URL 或客户原文；反向代理不记录 OAuth 查询串。
 - **模型凭据**：平台 Key 只在部署 Secret；企业 Key（BYOK）由运营用 `python -m product.tenant_models` 从标准输入写入，用 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY` 加密并绑定租户、地址、模型与配置修订，地址须在 `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS` 精确批准（不跟随重定向、不用代理、不接受本机与特殊地址）。企业 Key 不可用时报告不可用，不回退平台模型；受理时冻结非秘密模型身份，不一致即 `model_configuration_changed`。Deep guest 只拿本地网关的短期 Grant，接触不到真实 Key。

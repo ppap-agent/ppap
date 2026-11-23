@@ -52,6 +52,9 @@ form>p{margin:4px 0}
 label{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--color-border);cursor:pointer}
 form>label:first-of-type{border-top:0}
 input[type=checkbox]{width:16px;height:16px;margin:0;accent-color:var(--color-primary)}
+textarea{font:inherit;width:100%;min-height:72px;padding:8px 12px;border:1px solid var(--color-input);border-radius:calc(var(--radius-control) - 2px);
+background:var(--color-card);color:var(--color-foreground);resize:vertical}
+textarea:focus-visible{outline:2px solid var(--color-ring);outline-offset:2px}
 button{font:inherit;height:32px;padding:0 16px;border-radius:calc(var(--radius-control) - 2px);border:1px solid var(--color-input);
 background:var(--color-card);color:var(--color-foreground);cursor:pointer}
 button:hover{background:var(--color-secondary)}

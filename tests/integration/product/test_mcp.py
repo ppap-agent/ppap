@@ -409,7 +409,6 @@ def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_
         args = {"task_id": task, "request_id": str(uuid4()), "item_key": listed["item_key"], "judgment": "同意", "rationale": "已核对原件", "next_step": ""}
         pending = call(client, token, "record_review", **args)
         assert client.get(f"/rounds/{round_id}").json()["findings"][0]["review"] is None
-        approve(client, pending)
         original = app.state.mcp_gateway.request
 
         async def lost_reply(*a, **kw):
@@ -419,7 +418,11 @@ def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_
             return response
 
         monkeypatch.setattr(app.state.mcp_gateway, "request", lost_reply)
-        assert call(client, token, "record_review", **args)["next"]["kind"] == "recover"
+        # The click takes effect at once (#348); the reply is lost there, and the page says so instead of claiming success.
+        page = client.get(pending["next"]["url"])
+        csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
+        clicked = client.post(pending["next"]["url"], data={"csrf": csrf, "decision": "approve"})
+        assert clicked.status_code == 200 and "结果还不确定" in clicked.text and "已完成" not in clicked.text
         receipt = call(client, token, "get_operation", request_id=args["request_id"])
         assert receipt["next"]["kind"] == "done" and receipt["result"]["state"] == "succeeded", receipt
         assert receipt["result"]["provenance"]["client_id"] == cid
@@ -431,12 +434,15 @@ def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_
         assert current["status"] == listed["status"] and current["review"]["version"] == 1
         monkeypatch.setattr(app.state.mcp_gateway, "request", original)
         next_args = {**args, "request_id": str(uuid4()), "rationale": "第二次核对"}
-        approve(client, call(client, token, "record_review", **next_args))
-        # A concurrent Web edit wins before the delegated write. The old
-        # confirmation cannot authorize overriding that newer human judgment:
-        # the review it approved was written against version 1, and the round refuses it.
+        asked = call(client, token, "record_review", **next_args)
+        # A Web edit between preparing and the click wins. The approval cannot override that newer human judgment:
+        # the review it approved was written against version 1, so the click does nothing and says why.
         web = {"item_key": listed["item_key"], "judgment": "需修改", "rationale": "网页复核已修订", "next_step": "", "version": 1}
         assert client.put(f"/rounds/{round_id}/reviews", json=web).status_code == 200
+        page = client.get(asked["next"]["url"])
+        csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
+        clicked = client.post(asked["next"]["url"], data={"csrf": csrf, "decision": "approve"})
+        assert "没有完成" in clicked.text and "已被修改" in clicked.text and "review_conflict" not in clicked.text
         assert call(client, token, "record_review", **next_args)["next"]["error_code"] == "review_conflict"
         assert client.get(f"/rounds/{round_id}").json()["findings"][0]["review"]["version"] == 2
 
@@ -453,7 +459,7 @@ def test_a_published_report_carries_what_the_user_approved(mcp_app, core_system,
         review = {"item_key": finding["item_key"], "judgment": "同意", "rationale": "原批准复核", "next_step": "", "version": 0}
         assert client.put(f"/rounds/{round_id}/reviews", json=review).status_code == 200
         arguments = {"task_id": task, "request_id": str(uuid4())}
-        approve(client, call(client, token, "publish_report", **arguments))
+        asked = call(client, token, "publish_report", **arguments)
         edits = []
 
         def edit():
@@ -483,6 +489,7 @@ def test_a_published_report_carries_what_the_user_approved(mcp_app, core_system,
 
             monkeypatch.setattr(report_routes, "report_blocks", edit_after_materialization)
 
+        approve(client, asked)
         result = call(client, token, "publish_report", **arguments)
         assert len(edits) == 1
         current = client.get(f"/rounds/{round_id}").json()["findings"][0]["review"]
@@ -517,6 +524,38 @@ def test_a_report_on_a_round_with_review_hints_is_published(mcp_app, core_system
         approve(client, call(client, token, "publish_report", **arguments))
         result = call(client, token, "publish_report", **arguments)
         assert result["next"]["kind"] == "done" and result["result"]["delivery"]["report"]["status"] == "ready", result
+        assert len(drive.written) == 2
+
+
+def test_the_confirm_click_takes_effect_and_a_refusal_carries_its_reason(mcp_app, core_system):
+    """Confirming is the decision: the write happens on the click, the page says what happened, the client only reads it (#348)."""
+    _, store = mcp_app
+    drive = Drive()
+    with folder_client(store, drive) as (app, client, token, _):
+        task, _ = audited_folder(client, store, token, core_system)
+        arguments = {"task_id": task, "request_id": str(uuid4())}
+        asked = call(client, token, "publish_report", **arguments)
+        page = client.get(asked["next"]["url"])
+        assert "点确认就会执行" in page.text
+        csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
+        done = client.post(asked["next"]["url"], data={"csrf": csrf, "decision": "approve"})
+        assert done.status_code == 200 and "已完成" in done.text
+        # Effect before the client calls again; calling again reads it and sends nothing twice.
+        assert len(drive.written) == 2
+        assert call(client, token, "get_operation", request_id=arguments["request_id"])["result"]["state"] == "succeeded"
+        assert call(client, token, "publish_report", **arguments)["next"]["kind"] == "done" and len(drive.written) == 2
+
+        refused = {"task_id": task, "request_id": str(uuid4())}
+        asked = call(client, token, "publish_report", **refused)
+        page = client.get(asked["next"]["url"])
+        csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
+        said = client.post(asked["next"]["url"], data={"csrf": csrf, "decision": "deny"})
+        target = re.search(r'<form method="post" action="([^"]+)"', said.text)[1]
+        reason_csrf = re.search(r'name="csrf" value="([^"]+)"', said.text)[1]
+        assert client.post(target, data={"csrf": "forged", "reason": "x"}).status_code == 403
+        assert "原因已交给客户端" in client.post(target, data={"csrf": reason_csrf, "reason": "先等供应商补件"}).text
+        answer = call(client, token, "publish_report", **refused)
+        assert answer["next"]["kind"] == "user_action" and answer["next"]["reason"] == "先等供应商补件", answer
         assert len(drive.written) == 2
 
 

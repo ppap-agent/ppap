@@ -380,7 +380,8 @@ class McpStore:
             self._delegation(conn, row["grant_id"]).require(row["required_scope"])
         return {"tool": row["tool"], "grant_id": str(row["grant_id"]), "arguments": row["arguments"], "confirmation": row["confirmation"], "csrf": csrf}
 
-    def confirm_operation(self, principal: Principal, operation_id: str, browser: str, csrf: str, approve: bool):
+    def confirm_operation(self, principal: Principal, operation_id: str, browser: str, csrf: str, approve: bool) -> dict:
+        """Record the person's decision on the page; the approved operation is returned so it can take effect at once."""
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM product.mcp_operations WHERE id=%s FOR UPDATE", (operation_id,)).fetchone()
             if not row:
@@ -396,6 +397,18 @@ class McpStore:
                 or not hmac.compare_digest(row["browser_hash"] or "", token_hash(browser))
             ):
                 raise McpError("invalid_confirmation", 403)
+            updated = conn.execute(
+                "UPDATE product.mcp_operations SET state=%s,confirmed_by=%s,confirmed_at=now(),updated_at=now() WHERE id=%s RETURNING *",
+                ("ready" if approve else "denied", principal.user_id, operation_id),
+            ).fetchone()
+        return {"grant_id": str(updated["grant_id"]), **self.operation_public(updated)}
+
+    def record_denial_reason(self, principal: Principal, operation_id: str, reason: str) -> None:
+        """Why the person said no, given after the fact; kept once, for the client to act on."""
+        with self.connection() as conn:
             conn.execute(
-                "UPDATE product.mcp_operations SET state=%s,confirmed_by=%s,confirmed_at=now(),updated_at=now() WHERE id=%s", ("ready" if approve else "denied", principal.user_id, operation_id)
+                """UPDATE product.mcp_operations o SET result=jsonb_build_object('denied_reason', %s::text), updated_at=now()
+                   FROM product.mcp_grants g WHERE o.id=%s AND o.grant_id=g.id AND g.user_id=%s AND g.tenant_id=%s
+                   AND o.state='denied' AND o.result IS NULL""",
+                (reason[:500], operation_id, principal.user_id, principal.tenant_id),
             )

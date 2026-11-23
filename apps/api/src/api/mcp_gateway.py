@@ -182,6 +182,8 @@ class BusinessGateway:
         if state == "failed":
             value = result["data"]
             return Reply(status="error", error=value.get("error", "business_request_failed"), request_id=operation["request_id"])
+        if state == "denied":
+            return Reply(status="denied", error=result.get("denied_reason") or None, request_id=operation["request_id"])
         return Reply(
             status=state if state in {"confirmation_required", "running", "unknown", "denied"} else "running",
             request_id=operation["request_id"],

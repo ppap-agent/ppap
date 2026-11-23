@@ -28,6 +28,19 @@ from api.mcp_gateway import BusinessGateway
 from api.mcp_pages import connection_state, details, lines, page
 from api.mcp_runtime import TaskRuntime
 
+# What a person reads when a confirmed operation did not complete: the reason in their words, never a code.
+OUTCOME_FAILED = "没有完成。客户端会收到原因，可以在那里继续。"
+OUTCOME = {
+    "task_revision_conflict": "确认之后，报价或资料又有变化。回到客户端，按新的报价重新确认。",
+    "confirmation_content_changed": "确认之后，这次要交付的内容又有变化。回到客户端重新发起，再确认一次。",
+    "confirmation_expired": "这个确认已经过期。回到客户端重新发起。",
+    "review_conflict": "这条复核在确认之后已被修改。回到客户端，按最新的复核重新发起。",
+    "stale_revision": "规则澄清任务在确认之后又有进展。回到客户端，按最新状态重新发起。",
+    "rulebook_revision_exists": "这一修订已经存在，不会重复写入。",
+    "insufficient_scope": "这个连接没有执行这项操作的权限。",
+    "access_denied": "当前账号没有权限执行这项操作。",
+}
+
 
 def browser_origins(provider):
     url = urlsplit(provider.base)
@@ -234,11 +247,14 @@ def install_mcp(app, product, http, session_of):
         return page(
             "确认这次操作",
             lines(value["confirmation"].get("summary", []))
-            + details(shown, "只确认上面这一次；内容有变化时需要重新确认。确认后回到客户端继续。")
+            + details(shown, "只确认上面这一次；内容有变化时需要重新确认。点确认就会执行，结果显示在这个页面上。")
             + f'<form method="post"><input type="hidden" name="csrf" value="{escape(value["csrf"])}">'
             '<button name="decision" value="deny">拒绝</button><button name="decision" value="approve">确认</button></form>',
             wide=bool(shown),
         )
+
+    def denial_csrf(browser: str, operation_id: str) -> str:
+        return hmac.new(browser.encode(), ("mcp-deny-reason:" + operation_id).encode(), hashlib.sha256).hexdigest()
 
     @app.post("/mcp/confirm/{operation_id}", include_in_schema=False)
     async def confirmation_post(operation_id: UUID, request: Request):
@@ -248,15 +264,62 @@ def install_mcp(app, product, http, session_of):
         if len(await request.body()) > 8192:
             return page("请求过大", "<p>未确认此操作。</p>", 413)
         form = await request.form()
+        browser = request.cookies.get(SESSION_COOKIE, "")
+        approve = form.get("decision") == "approve"
         try:
-            await asyncio.to_thread(
-                store.confirm_operation, session.principal, str(operation_id), request.cookies.get(SESSION_COOKIE, ""), str(form.get("csrf", "")), form.get("decision") == "approve"
-            )
+            operation = await asyncio.to_thread(store.confirm_operation, session.principal, str(operation_id), browser, str(form.get("csrf", "")), approve)
         except McpError as exc:
             return page("确认未保存", "<p>请求已失效或校验未通过。请回到客户端核对原请求。</p>", exc.status)
-        if form.get("decision") == "approve":
-            return page("已确认", '<p>请回到客户端，让它继续刚才的操作。</p><p class="notice">这个页面不会自己开始审核或发送报告。</p>')
-        return page("已拒绝", "<p>这次操作不会执行。可以回到客户端关闭这个页面。</p>")
+        if not approve:
+            ask = (
+                f'<form method="post" action="{escape(provider.base)}/mcp/confirm/{operation_id}/reason">'
+                f'<input type="hidden" name="csrf" value="{denial_csrf(browser, str(operation_id))}">'
+                '<p class="muted">可以告诉客户端为什么拒绝，它会照着调整（选填）。</p>'
+                '<textarea name="reason" maxlength="500" aria-label="拒绝原因"></textarea>'
+                '<button type="submit">告诉客户端</button></form>'
+            )
+            return page("已拒绝", "<p>这次操作不会执行。</p>" + ask)
+        # The click is the decision: the approved operation takes effect now, not when the client calls again (#348).
+        summary = (operation.get("confirmation") or {}).get("summary") or []
+        try:
+            delegation = await asyncio.to_thread(store.delegation, operation["grant_id"])
+            args = operation["arguments"]
+            reply = await gateway.write(
+                delegation,
+                operation["required_scope"],
+                operation["tool"],
+                operation["request_id"],
+                args["method"],
+                args["path"],
+                args["body"],
+                probes=args["probes"],
+                confirmation=operation["confirmation"],
+            )
+        except McpError as exc:
+            return page("没有执行", f"<p>{escape(OUTCOME.get(exc.code, OUTCOME_FAILED))}</p>")
+        except Exception:
+            logging.getLogger(__name__).exception("confirmed operation did not report back")
+            return page("结果还不确定", "<p>这次操作可能已经执行，系统不会重复执行。回到客户端，它会读取实际结果。</p>")
+        if reply.status == "ok":
+            return page("已完成", lines(summary) + '<p class="notice">回到客户端即可看到结果。</p>')
+        if reply.status == "error":
+            return page("没有完成", f"<p>{escape(OUTCOME.get(reply.error or '', OUTCOME_FAILED))}</p>")
+        return page("结果还不确定", "<p>这次操作可能已经执行，系统不会重复执行。回到客户端，它会读取实际结果。</p>")
+
+    @app.post("/mcp/confirm/{operation_id}/reason", include_in_schema=False)
+    async def confirmation_reason(operation_id: UUID, request: Request):
+        session = await asyncio.to_thread(session_of, request)
+        if not session:
+            return page("请重新登录", "<p>原因没有保存。</p>", 401)
+        if len(await request.body()) > 8192:
+            return page("请求过大", "<p>原因没有保存。</p>", 413)
+        form = await request.form()
+        if not hmac.compare_digest(str(form.get("csrf", "")), denial_csrf(request.cookies.get(SESSION_COOKIE, ""), str(operation_id))):
+            return page("原因没有保存", "<p>页面已失效，请刷新后重试。</p>", 403)
+        reason = " ".join(str(form.get("reason", "")).split())
+        if reason:
+            await asyncio.to_thread(store.record_denial_reason, session.principal, str(operation_id), reason)
+        return page("已拒绝", "<p>这次操作不会执行。" + ("原因已交给客户端。" if reason else "") + "</p>")
 
     app.state.mcp_provider = provider
     app.state.mcp_store = store
