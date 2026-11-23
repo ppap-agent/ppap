@@ -443,7 +443,13 @@ def register_tools(mcp, gateway, authority, runtime):
         task_id: UUID,
         request_id: UUID,
         item_key: Annotated[str, Field(max_length=500)],
-        judgment: str,
+        judgment: Annotated[
+            Literal["confirm", "disagree", "unknown", "manual-satisfied", "manual-unsatisfied"],
+            Field(
+                description="confirm: the machine is right; disagree: it is wrong; unknown: still to be checked; "
+                "manual-satisfied / manual-unsatisfied: the person checked the original (needs a rationale and citations)."
+            ),
+        ],
         rationale: str,
         next_step: str,
         citations: list[wc.ReviewCitation] | None = None,

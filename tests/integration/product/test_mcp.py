@@ -11,6 +11,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from html import unescape
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -406,7 +407,7 @@ def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_
         full = call(client, token, "get_finding", task_id=task, item_key=listed["item_key"])["result"]["value"]
         assert full["item_key"] == listed["item_key"] and full["status"] == listed["status"]
         # The tool reads the finding's current review version itself.
-        args = {"task_id": task, "request_id": str(uuid4()), "item_key": listed["item_key"], "judgment": "同意", "rationale": "已核对原件", "next_step": ""}
+        args = {"task_id": task, "request_id": str(uuid4()), "item_key": listed["item_key"], "judgment": "confirm", "rationale": "已核对原件", "next_step": ""}
         pending = call(client, token, "record_review", **args)
         assert client.get(f"/rounds/{round_id}").json()["findings"][0]["review"] is None
         original = app.state.mcp_gateway.request
@@ -576,6 +577,12 @@ def test_registry_annotations_and_browser_revoke(mcp_app):
         assert set(tools["prepare_audit"]["inputSchema"]["required"]) == {"request_id", "source", "customer"}
         assert set(tools["confirm_audit"]["inputSchema"]["required"]) == {"task_id", "quote_id", "request_id"}
         assert set(tools["resolve_issue"]["inputSchema"]["required"]) == {"task_id", "issue_id", "action_id", "expected_revision", "request_id"}
+        # One set of human judgments: a review recorded through MCP counts as reviewed on the Web and in the Meego plugin.
+        from audit.audits import JUDGMENTS
+
+        assert tools["record_review"]["inputSchema"]["properties"]["judgment"]["enum"] == list(JUDGMENTS)
+        web = (Path(__file__).resolve().parents[3] / "apps/web/src/journey/judgment-state.ts").read_text(encoding="utf-8")
+        assert all(f"{value}: " in web or f"'{value}': " in web for value in JUDGMENTS)
         for name in ("find_submissions", "get_task", "get_issue", "get_results", "get_finding", "find_audits", "get_operation", "get_account"):
             assert tools[name]["annotations"]["readOnlyHint"] is True
         # Effects that reach Feishu or start a charged audit cross the provider boundary.

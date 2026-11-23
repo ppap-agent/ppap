@@ -390,7 +390,7 @@ def test_an_approved_review_is_saved_as_approved_though_the_round_moved_on_meanw
     task = task_id_for("u", ask)
     world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")
     world.product.audit.update(state="completed", round_id="round-1", conclusion="NG")
-    review = {"task_id": task, "request_id": str(uuid4()), "item_key": "k1", "judgment": "确认机器结果", "rationale": "已核对原件", "next_step": ""}
+    review = {"task_id": task, "request_id": str(uuid4()), "item_key": "k1", "judgment": "confirm", "rationale": "已核对原件", "next_step": ""}
     asked = world.call("record_review", **review)
     assert asked["next"]["action_id"] == "approve_in_browser"
     world.product.approved = True

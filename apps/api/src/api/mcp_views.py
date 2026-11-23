@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from audit.audits import JUDGMENTS
 from audit.models import public_locator
 from documents.location import location_label
 from product.customers import customer_name, type_names
@@ -122,7 +123,7 @@ def review(finding: dict, body: dict) -> tuple[list[str], list[dict]]:
     """Before saving a human review: the clause detail the Web shows around its review form."""
     name = (finding.get("locator") or {}).get("filename") or "这份文件"
     machine = FINDING.get(str(finding.get("status")), str(finding.get("status") or "—"))
-    summary = [f"对「{name}」的一条检查项记录人工复核：{body['judgment']}。"]
+    summary = [f"对「{name}」的一条检查项记录人工复核：{JUDGMENTS.get(body['judgment'], body['judgment'])}。"]
     details: list[dict] = [
         {"kind": "facts", "rows": [("文件", name), ("分类", finding.get("classification")), ("优先级", finding.get("priority")), ("机器结论", machine)]},
         {"kind": "text", "title": "审核规则原文", "text": finding.get("item")},
@@ -136,7 +137,7 @@ def review(finding: dict, body: dict) -> tuple[list[str], list[dict]]:
                 "kind": "facts",
                 "title": f"现有人工复核（第 {prior.get('version')} 次，更正后保留在历史里）",
                 "rows": [
-                    ("人工判断", prior.get("judgment")),
+                    ("人工判断", JUDGMENTS.get(prior.get("judgment") or "", prior.get("judgment"))),
                     *([("严重程度", prior["severity"])] if prior.get("severity") else []),
                     ("判断理由", prior.get("rationale")),
                     ("后续建议", prior.get("next_step")),
@@ -149,7 +150,7 @@ def review(finding: dict, body: dict) -> tuple[list[str], list[dict]]:
             "kind": "facts",
             "title": "这次的人工复核",
             "rows": [
-                ("人工判断", body["judgment"]),
+                ("人工判断", JUDGMENTS.get(body["judgment"], body["judgment"])),
                 *([("改为严重程度", body["severity"])] if body.get("severity") else []),
                 ("判断理由", body["rationale"]),
                 ("后续建议", body.get("next_step") or None),

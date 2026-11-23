@@ -95,6 +95,16 @@ class ClaimedJob:
     tenant_id: str | None = None
 
 
+# The judgments a person records, as the Web, the Meego plugin and MCP offer them; the label is what people read.
+JUDGMENTS = {
+    "confirm": "确认机器结果",
+    "disagree": "不同意机器结果",
+    "unknown": "仍待审核",
+    "manual-satisfied": "人工确认满足要求",
+    "manual-unsatisfied": "人工确认不满足要求",
+}
+
+
 def normalize_review(judgment: Any, rationale: Any, next_step: Any, version: Any) -> tuple[str, str, str, int]:
     text = str(judgment or "").strip()
     if not text or len(text) > 200:
