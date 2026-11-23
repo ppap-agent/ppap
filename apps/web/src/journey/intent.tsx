@@ -1,22 +1,18 @@
 // A signing action proposed through MCP (#348). Nothing signs for the person: they complete it on the page the link
 // opened, with that page's own control and current content, or decline it. The banner says what the person does, never
 // which tool asked (#356): the tool is the person's, the authority is their own act.
-// A rule-clarification plan has no page control of its own, so its steps are shown here as the server describes them now,
-// each with a check: internal steps start checked, a step the customer sees is checked only by the person (#351).
-import {useEffect, useState} from 'react'
-import {initialSelection, planRequest, toggle} from './plan-selection'
-import {Checkbox} from '../components/ui/checkbox'
-import {Badge} from '../components/ui/badge'
+// A rule-clarification plan has no page control of its own: it opens its own confirmation page (rule-plan.tsx), where
+// internal steps start checked and a step the customer sees is checked only by the person (#351).
+import {useEffect, useRef, useState} from 'react'
+import {initialSelection, planRequest} from './plan-selection'
+import {RulePlanPage} from './rule-plan'
 import type {components} from '../generated/openapi'
 import {apiUrl, request, setActiveIntent} from '../api'
 import {Button} from '../components/ui/button'
 import {Textarea} from '../components/ui/textarea'
-import {Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle} from '../components/ui/sheet'
-import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {auditAddressChanged, openInPlace, receiptsAddress} from '../audit/routes'
 
 type Intent = components['schemas']['Intent']
-type Detail = components['schemas']['IntentDetail']
 
 const settled = (intent: Intent) => intent.outcome.state === 'succeeded' || intent.outcome.state === 'declined'
 const readId = () => new URL(location.href).searchParams.get('intent')
@@ -36,27 +32,12 @@ function describe(intent: Intent): [string, string] {
   return ['确认规则修订', '']
 }
 
-function Block({block}: {block: Detail}) {
-  const title = block.title ? <h3 className="text-sm font-medium">{block.title}</h3> : null
-  if (block.kind === 'facts') return <div className="space-y-1">{title}<dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">{(block.rows ?? []).map(([label, value], index) => <div key={index} className="contents"><dt className="text-muted-foreground">{String(label)}</dt><dd className="break-words">{value == null ? '—' : String(value)}</dd></div>)}</dl></div>
-  if (block.kind === 'table') {
-    const rows = block.rows ?? [], head = block.head ?? []
-    // A column with nothing in any row says nothing; leave it out.
-    const keep = head.map((_, i) => i).filter(i => rows.some(row => row[i] != null && row[i] !== '' && row[i] !== '—'))
-    if (!rows.length) return null
-    return <div className="space-y-1">{title}<Table><TableHeader><TableRow interactive={false}>{keep.map(i => <TableHead key={i}>{head[i]}</TableHead>)}</TableRow></TableHeader>
-      <TableBody>{rows.map((row, r) => <TableRow key={r} interactive={false}>{keep.map(i => <TableCell key={i} className="whitespace-normal align-top">{row[i] == null ? '—' : String(row[i])}</TableCell>)}</TableRow>)}</TableBody></Table>
-      {block.more ? <p className="text-xs text-muted-foreground">另有 {block.more} 项未列出。</p> : null}</div>
-  }
-  if (block.kind === 'text') return <div className="space-y-1">{title}<p className="whitespace-pre-wrap rounded-md bg-muted px-3 py-2 text-sm">{block.text}</p></div>
-  return <p className="text-xs text-muted-foreground">{block.text}</p>
-}
-
 export function IntentBanner() {
   const [id, setId] = useState(readId)
   const [intent, setIntent] = useState<Intent | null>(null)
   const [problem, setProblem] = useState(''), [reauth, setReauth] = useState(false)
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false)
+  const shownFor = useRef<string | null>(null)
   const [declining, setDeclining] = useState(false), [reason, setReason] = useState('')
   const [chosen, setChosen] = useState<Set<string>>(new Set()), [left, setLeft] = useState('')
 
@@ -66,6 +47,8 @@ export function IntentBanner() {
       setIntent(found); setProblem('')
       // The checks start over whenever the plan is read again: a changed plan is decided on as it is now.
       setChosen(initialSelection(found.plan?.steps ?? []))
+      // A plan opens its own page once on arrival; closing it leaves the banner, which opens it again.
+      if (found.plan && !settled(found) && shownFor.current !== found.id) {shownFor.current = found.id; setOpen(true)}
       setActiveIntent(settled(found) ? null : {id: found.id, method: found.method, path: found.path})
     } catch (cause) {
       setIntent(null); setActiveIntent(null)
@@ -126,27 +109,9 @@ export function IntentBanner() {
         </>}
       </div>
     </aside>
-    {intent && plan && <Sheet open={open} onOpenChange={setOpen}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
-        <SheetHeader><SheetTitle>{label}</SheetTitle><SheetDescription>下面是每一步现在的内容；勾选的步骤确认后一起生效，没勾的留到下一次。</SheetDescription></SheetHeader>
-        <ol className="space-y-6 px-4">{plan.steps.map(step => {
-          const id = `plan-step-${step.id}`
-          const needs = step.depends_on.map(need => plan.steps.find(other => other.id === need)?.title).filter(Boolean)
-          return <li key={step.id} className="space-y-3">
-            <div className="flex items-start gap-3">
-              <Checkbox id={id} checked={chosen.has(step.id)} onCheckedChange={value => setChosen(toggle(plan.steps, chosen, step.id, value === true))}/>
-              <div className="space-y-1"><label htmlFor={id} className="flex flex-wrap items-center gap-2 font-medium">{step.title}{step.external && <Badge variant="outline">会发给客户</Badge>}</label>
-                {needs.length > 0 && <p className="text-xs text-muted-foreground">依赖上面的「{needs.join('」「')}」：取消它，这一步也会取消。</p>}</div>
-            </div>
-            <div className="space-y-3 pl-7">{step.summary.map((line, index) => <p key={index} className="text-sm">{line}</p>)}{step.details.map((block, index) => <Block key={index} block={block}/>)}</div>
-          </li>
-        })}</ol>
-        <SheetFooter>
-          {plan.steps.some(step => !chosen.has(step.id)) && <Textarea aria-label="没勾选的原因（选填）" placeholder="没勾的步骤留到下一次；可以写一句为什么（选填）" maxLength={500} value={left} onChange={event => setLeft(event.target.value)}/>}
-          <div className="flex justify-end gap-2">{reauth ? signIn : <><Button variant="outline" onClick={() => {setOpen(false); setDeclining(true)}}>拒绝</Button>
-            <Button disabled={busy || chosen.size === 0} onClick={() => void act(() => request(plan.path, plan.method, planRequest(plan.steps, chosen, left)))}>确认勾选的 {chosen.size} 步</Button></>}</div>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>}
+    {intent && plan && open && !done && <RulePlanPage plan={plan} title={`请你${label}`} chosen={chosen} setChosen={setChosen} busy={busy} reauth={reauth} signIn={signIn} problem={problem}
+      onConfirm={left => void act(() => request(plan.path, plan.method, planRequest(plan.steps, chosen, left)))}
+      onDecline={reason => void act(() => request(`/intents/${encodeURIComponent(intent.id)}/decline`, 'POST', reason.trim() ? {reason: reason.trim()} : {}))}
+      onClose={() => setOpen(false)}/>}
   </>
 }
