@@ -8,7 +8,7 @@
     "source": "rules/PFMEA.json#PFMEA:2",
     "source_sha256": "0cfccce9c5233cf5f78ee1dfb2171c61d6fce5aeb2beda6487ac7c41a19a2180"
   },
-  "review_sha256": "ef5fa38254f70fd89408f955294f7f1dced3aeb719b55d82346b1de71f11dd88",
+  "review_sha256": "31d10a0009c480000425c983ed128c35b36af71b608ff5a26193eae46c312fb8",
   "findings": [
     {
       "id": "PFMEA:2#8.1",
@@ -60,7 +60,5 @@
       "reason": "豁免仅覆盖列明的改进栏，不免除初始三列；两项作用域不同。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

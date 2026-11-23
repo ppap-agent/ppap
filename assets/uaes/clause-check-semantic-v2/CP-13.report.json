@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:13",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "1d9dad5bb23cfb6c0c8917e896ab1f3b204ca657bef06c707b16e8a94b0591e2",
+  "review_sha256": "c2d3a9eb49e04863281023acb278ce95049f31be996c87cdccb3fc691c404427",
   "findings": [
     {
       "id": "CP:13#5",
@@ -48,7 +48,5 @@
       "reason": "两项不是同一个判断。全检强度当然足够，不必为它换算抽样数；但基准规定了容量且独立容量格确实空白时，下一段明定按容量缺失判不通过。“判满足”没有说可以不设容量栏或让容量格空白。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

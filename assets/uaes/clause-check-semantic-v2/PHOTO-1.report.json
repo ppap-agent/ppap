@@ -8,7 +8,7 @@
     "source": "rules/PHOTO.json#PHOTO:1",
     "source_sha256": "05d24f17e5a31dac962f508dc6763552edb721a8504411d5de58348b33d6da93"
   },
-  "review_sha256": "38ea015db7c9a8ff7cec154fbdbe115105b4a7787316d407e91b6f0950604685",
+  "review_sha256": "9c848ff391fec5684f27205608d5041f31974a2ae183faaaa4bdcf90aca65171",
   "findings": [
     {
       "id": "PHOTO:1#1",
@@ -53,7 +53,5 @@
       "reason": "不能。此处已给出缺件性质及不通过结论，不能用扩展名或通用不可辨流程改判。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

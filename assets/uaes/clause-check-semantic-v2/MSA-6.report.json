@@ -8,7 +8,7 @@
     "source": "rules/MSA.json#MSA:6",
     "source_sha256": "6ed0d5240c65b51c1cf40e64e6dfbd8a1c810697aba3824627d12d3959855eee"
   },
-  "review_sha256": "00475187d986ef0db327ac28dd5a67a1288a712e979cee46b550cb268b036548",
+  "review_sha256": "177745fa7554b185232e5a2679b7659245d061ab63245bd431edc4aba3dfbfd3",
   "findings": [],
   "excluded": [
     {
@@ -27,7 +27,5 @@
       "reason": "两者都不成立。本条可以回退特殊特性清单；PFMEA规则4所需比对对象不同，不随本条改变。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

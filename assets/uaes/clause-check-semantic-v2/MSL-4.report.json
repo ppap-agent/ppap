@@ -8,7 +8,7 @@
     "source": "rules/MSL.json#MSL:4",
     "source_sha256": "4dce7692496cc3b44b4863377a844870f5b475daca330f699ffa9b2043e3cf1f"
   },
-  "review_sha256": "2f22e90bd69fc7a8631406ac457158af9cbb58a70ec9245dde1f825537c3093e",
+  "review_sha256": "b35b6ad1ab120dbee13583b6ab8080ee0ea078acdf01e1c3dced343ea05a595b",
   "findings": [
     {
       "id": "MSL:4#4",
@@ -52,7 +52,5 @@
       "reason": "不能用字串差异代替工程语义核对。工程语义能对应时，仅写法不同不构成溯源缺失。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

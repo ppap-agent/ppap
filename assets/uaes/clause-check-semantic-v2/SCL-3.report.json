@@ -8,7 +8,7 @@
     "source": "rules/SCL.json#SCL:3",
     "source_sha256": "f0eeea0dd5294277e9e82fc2eab37834237f8ac2ec305cd4aa27ebe4c9e16952"
   },
-  "review_sha256": "d24be98d8d385cc24a93cb04236011db8205ce971a59fb2e1d5d6bb0487fb36d",
+  "review_sha256": "5fd78528d275c8a0c9b392f8896009aad79c48e9c218cdf0da8c5af80a0c0139",
   "findings": [
     {
       "id": "SCL:3#2",
@@ -54,7 +54,5 @@
       "reason": "上游到清单明写“或”，任一来源已标即须覆盖；也不能只检查反向。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

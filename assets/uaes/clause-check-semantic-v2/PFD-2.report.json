@@ -8,7 +8,7 @@
     "source": "rules/PFD.json#PFD:2",
     "source_sha256": "81aa83efd4b4178e9cd2104210d940b4fe925215c64fffed3444aff7e5b03094"
   },
-  "review_sha256": "72e05febf64d135bb06b0e587772f3858a086120ac2826fbb50b0b48dffd1e6a",
+  "review_sha256": "a2943b356939b5750b852a40414156b21e912525dee11b69e994f35324cc4c93",
   "findings": [
     {
       "id": "PFD:2#1",
@@ -59,7 +59,5 @@
       "reason": "原文已明示修订优先且通用说明同源。完成视觉取证仍不可辨时记未审并提示复核；可辨且确定缺符号则是另一事实。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

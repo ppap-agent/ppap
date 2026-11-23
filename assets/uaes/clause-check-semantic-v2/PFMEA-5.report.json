@@ -8,7 +8,7 @@
     "source": "rules/PFMEA.json#PFMEA:5",
     "source_sha256": "0cfccce9c5233cf5f78ee1dfb2171c61d6fce5aeb2beda6487ac7c41a19a2180"
   },
-  "review_sha256": "a4729994bbcdcd11dd547dac8d3151bae1726d6399d1c4121fddad9d0aaa7c3a",
+  "review_sha256": "fd47e023aa4a93621f4bff38732a4b73d60fd0ae7fa2449e5b7e6aac6e685b56",
   "findings": [
     {
       "id": "PFMEA:5#2",
@@ -53,7 +53,5 @@
       "reason": "能逐一对应三道工序的失效模式即可，不得仅比较行数。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

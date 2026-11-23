@@ -8,7 +8,7 @@
     "source": "rules/MSA.json#MSA:2",
     "source_sha256": "6ed0d5240c65b51c1cf40e64e6dfbd8a1c810697aba3824627d12d3959855eee"
   },
-  "review_sha256": "fe5d0ff89f7aa6220295702dbdd059f7d6522143b566fa3d1de7f129da817962",
+  "review_sha256": "7b05e1532c61fdfe539204243fe2afe3eaea48259b8297431da248cbf409d970",
   "findings": [
     {
       "id": "MSA:2#1",
@@ -87,7 +87,5 @@
       "reason": "两者均不能直接硬判；前者移交工程，后者该项未审，原文已分别给出处理。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

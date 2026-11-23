@@ -75,16 +75,7 @@
       "meaning": "没有整表豁免，实际列出的要求行继续按性质逐行查实测值与 OK 结论。"
     }
   ],
-  "policies": [
-    {
-      "source": "通用判定说明.md",
-      "quote": "判定结论性表述时按工程语义认定，不按字面字符串精确相等。合格类结论除“可接受”“合格”“通过”“OK”外，还包含 Acceptable、Gauge is OK、Gage is OK、Measurement system is acceptable、Good、PASS、满足要求、符合要求、能接受 等等价写法，忽略大小写与首尾空格。"
-    },
-    {
-      "source": "通用判定说明.md",
-      "quote": "以下定义适用于全部规则；各条款有更具体表述时，以该条款为准。"
-    }
-  ],
+  "policies": [],
   "findings": [],
   "excluded": [
     {

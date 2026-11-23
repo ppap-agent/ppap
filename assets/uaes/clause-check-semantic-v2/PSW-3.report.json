@@ -8,7 +8,7 @@
     "source": "rules/PSW.json#PSW:3",
     "source_sha256": "701acff9b912b1ea3fe5ff70638f10c55b5a5673511bb890a9049eeccef8dfdc"
   },
-  "review_sha256": "09f938e4c2938c9598a843632407f1b2a2efccb610ec5a0fe655567fbec566ac",
+  "review_sha256": "f375b6ae5db96a8e3252fe32b63935ede5d2cdebadad29e1bb33d62e55c57a90",
   "findings": [
     {
       "id": "PSW:3#2",
@@ -48,7 +48,5 @@
       "reason": "“才”列的是必要条件，不是充分条件。联系信息要求仍独立适用；明确缺电话就不能通过。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

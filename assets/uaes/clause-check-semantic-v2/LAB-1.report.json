@@ -8,7 +8,7 @@
     "source": "rules/LAB.json#LAB:1",
     "source_sha256": "e62b4dfb051ee0cbb31ccb95e3e80f4719c0c933d25605c6f32646526d3a6f7f"
   },
-  "review_sha256": "179d2726e5139504d79113a894394d099cc14d68b5f949837e1348568249a79f",
+  "review_sha256": "9b4b0b62561516a0a608d4141ab3d0b934b9e308bcabbc6fe9aa729a78867209",
   "findings": [],
   "excluded": [
     {
@@ -32,7 +32,5 @@
       "reason": "设计验证报告附加提醒本身不是新条件；若特定证书被用来覆盖某试验报告，其实验室名称匹配要求仍有效。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

@@ -8,7 +8,7 @@
     "source": "rules/SSH.json#SSH:1",
     "source_sha256": "d70d520694345ebdaa2cbe52327dfcdbed7caf8a9e75a8f0cad157cca05a967c"
   },
-  "review_sha256": "459c911e6b74a6502227e6a041c59f604de352e7d2be062a38925a699f9e6216",
+  "review_sha256": "50087c0122f5d12666afc79623d81b059fbe123d39fa9fa546ac255a881bdddf",
   "findings": [],
   "excluded": [
     {
@@ -17,7 +17,5 @@
       "reason": "该名称已能对应，正文要求直接认定；反之，真正不能确认等价也不能确认缺失的，按明确的人工处理路径执行。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

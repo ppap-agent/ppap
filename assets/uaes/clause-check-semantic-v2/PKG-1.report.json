@@ -8,7 +8,7 @@
     "source": "rules/PKG.json#PKG:1",
     "source_sha256": "1ceb79e52c12907f02b602423acc2bba0cf488459f267e606068db31e2222628"
   },
-  "review_sha256": "7288497b80d0ab98cebb850726c85a0cecdcf67c3a0fe92e1829eb7793e724e0",
+  "review_sha256": "38b2cbc9a480690c76a4668a53e4e1d665a603510b5e23e0c698b2853a2d231a",
   "findings": [
     {
       "id": "PKG:1#2",
@@ -53,7 +53,5 @@
       "reason": "例外只指提交阶段的客户栏，不改变供应商签章要求。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

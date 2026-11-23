@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:6",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "3e53675edc3ccd879af0e669e918bb301ba8910ee675722412fbf2006823f89e",
+  "review_sha256": "14c0e69cf9427b43ed4b2dd384ba802a813f7dee7abda161baa7bbf712c03858",
   "findings": [
     {
       "id": "CP:6#1",
@@ -47,7 +47,5 @@
       "reason": "不是。表头八格要存在；七项非空不含日期格。但本条仍独立要求比较履历末条日期和图纸日期，表头日期格不替代该比较。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

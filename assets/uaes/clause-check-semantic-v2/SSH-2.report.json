@@ -8,7 +8,7 @@
     "source": "rules/SSH.json#SSH:2",
     "source_sha256": "d70d520694345ebdaa2cbe52327dfcdbed7caf8a9e75a8f0cad157cca05a967c"
   },
-  "review_sha256": "ed6e85cc94f997e6ed30cc57a94fd000450ddb2971c4d9044300c7b564a1ccac",
+  "review_sha256": "99f2f00fb978d3cd6a18303d337b7557c9515fdfb89147d59df97c987b333bfd",
   "findings": [
     {
       "id": "SSH:2#1",
@@ -47,7 +47,5 @@
       "reason": "不能。若该表承载送样履历，必须依五维度映射并逐行检查；整个批次确未提交该对象才适用缺表分支。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

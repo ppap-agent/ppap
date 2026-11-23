@@ -8,7 +8,7 @@
     "source": "rules/TA.json#TA:1",
     "source_sha256": "e302a50d037647ca4a68629ba1f6e7364f8f557ebf649c2f8b3c16d955ffd983"
   },
-  "review_sha256": "3a53dfd451ccbcf54eb673ab28647b8b1803bafa7ed124202cb76dad1f237e78",
+  "review_sha256": "530aa23f1b3cd5f3f7df550570aa3debc3577c45835c03331d02bdb09246a9c6",
   "findings": [],
   "excluded": [
     {
@@ -27,7 +27,5 @@
       "reason": "具体条件优先：三栏都有就必须三方签；不能用通常的“至少两方”抵消缺的一方。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

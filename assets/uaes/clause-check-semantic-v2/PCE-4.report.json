@@ -8,7 +8,7 @@
     "source": "rules/PCE.json#PCE:4",
     "source_sha256": "6a15f61c213494c15e9c25bc7ba48ff47361aa9fc5dfbf8ff79399b5f13a8a58"
   },
-  "review_sha256": "1292de926120c2bb3a07defa5fde77ae22770413846af56c365e93311329a74c",
+  "review_sha256": "73cc831a2e503ef8889c578c66b6fe9b7581f5bedf4a8cc3e46663a5d80bfa70",
   "findings": [],
   "excluded": [
     {
@@ -22,7 +22,5 @@
       "reason": "本条及通用说明的逐条专表已同时点明这一情况为不通过；别的条款的回退规则不适用。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

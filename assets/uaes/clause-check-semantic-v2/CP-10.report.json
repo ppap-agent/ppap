@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:10",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "10f40165f8ebdd0ad45e2537c604920e78376248af766b14b66552979b8ffefb",
+  "review_sha256": "29d528f037e0e915c5788a47a662049f65b59dc6f8687bfd344b4c78e9e5093f",
   "findings": [
     {
       "id": "CP:10#1.1",
@@ -31,7 +31,5 @@
       "reason": "不能。未交表是明确的不通过情形；无适用项目必须基于已提交的表核实，不能用缺表代替。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

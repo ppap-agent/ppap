@@ -8,7 +8,7 @@
     "source": "rules/MSL.json#MSL:2",
     "source_sha256": "4dce7692496cc3b44b4863377a844870f5b475daca330f699ffa9b2043e3cf1f"
   },
-  "review_sha256": "9cb835fb5eeea5a4634cad302de737e9686cd3346a94991347d6eec506fee40e",
+  "review_sha256": "641da14ef1f9de886fe922e2880171e1eff1374ba713045e80154ac64bf0e42b",
   "findings": [
     {
       "id": "MSL:2#3",
@@ -53,7 +53,5 @@
       "reason": "加盖印章限定在供应商侧；不能把随后“只有签字而无印章”的表述扩大到UAES侧。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

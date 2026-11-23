@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:5",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "73ffe619f35006324be764b74627de52ae7201395f7a2b31a324a86a167b9ea5",
+  "review_sha256": "ffb78166d79396d44bbc4d2262085a47d3ed6272a6e0b859f6714c4e9b4db597",
   "findings": [],
   "excluded": [
     {
@@ -17,7 +17,5 @@
       "reason": "该句位于“对每个跑道尺寸行”之后，只解决当前行的管控方式。其他适用行仍须逐行判断。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

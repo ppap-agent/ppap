@@ -8,7 +8,7 @@
     "source": "rules/PSW.json#PSW:1",
     "source_sha256": "701acff9b912b1ea3fe5ff70638f10c55b5a5673511bb890a9049eeccef8dfdc"
   },
-  "review_sha256": "6daca17432188e4051f431d26bafba16c4ff548a672d3e7ceaf021531180f85b",
+  "review_sha256": "76ad21e57b3a020811b7fbcc37f37459169cd38a26790aef34e2772068421c88",
   "findings": [
     {
       "id": "PSW:1#1",
@@ -52,7 +52,5 @@
       "reason": "只能确认备注有实质内容，不能代替净重、字段和勾选等检查。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

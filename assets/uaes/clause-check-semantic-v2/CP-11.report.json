@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:11",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "bcd9216f199279945a7d2a5b8f5f81cbd96f44ff67a29f1d1b5f7a491ab1368e",
+  "review_sha256": "0e307446154a65229340fd77ac49050eebdd64f85d023815a28942ce3a72be67",
   "findings": [],
   "excluded": [
     {
@@ -17,7 +17,5 @@
       "reason": "不能。此处以图纸特殊且有 CPK 要求的尺寸为范围，并明确指定对应行的频率/频次；规则 5 的列选项不能移用。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

@@ -8,7 +8,7 @@
     "source": "rules/SCL.json#SCL:1",
     "source_sha256": "f0eeea0dd5294277e9e82fc2eab37834237f8ac2ec305cd4aa27ebe4c9e16952"
   },
-  "review_sha256": "450c0c59374b96c07ce14312a6e9135019d0fa690fe1fb61ca0670036371ee91",
+  "review_sha256": "08b717f169851fdb7afe3bb7488a57a25cb3b1df99585e906f02efcd3cbddcfa",
   "findings": [
     {
       "id": "SCL:1#5",
@@ -53,7 +53,5 @@
       "reason": "电子手写签名与电子签章在原文分别明确认可，但不能相互代替。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

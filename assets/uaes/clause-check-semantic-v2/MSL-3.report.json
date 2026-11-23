@@ -8,7 +8,7 @@
     "source": "rules/MSL.json#MSL:3",
     "source_sha256": "4dce7692496cc3b44b4863377a844870f5b475daca330f699ffa9b2043e3cf1f"
   },
-  "review_sha256": "362b2ef19ca4d63ebcd6b6c697cae621d34f428735fa728c0016d29773a952c6",
+  "review_sha256": "c4be79bfd52aa35800a12bcde48c72c06daebc782513c5caf75bfb8816adb2d4",
   "findings": [
     {
       "id": "MSL:3#1",
@@ -48,7 +48,5 @@
       "reason": "不能。先核同号；已确定错件号属于源错配，不再逐格找名称差异。名称相同也不能自行认定编号等价。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

@@ -8,7 +8,7 @@
     "source": "rules/PCE.json#PCE:3",
     "source_sha256": "6a15f61c213494c15e9c25bc7ba48ff47361aa9fc5dfbf8ff79399b5f13a8a58"
   },
-  "review_sha256": "7ff119f03be733da326377316b85da7cae95ebe88a2d2e4e241fff98bb8b0000",
+  "review_sha256": "9e1632ff91079f4e90dc998504056476f62820ad57437ffc590f3e03cec88e4b",
   "findings": [
     {
       "id": "PCE:3#1",
@@ -57,7 +57,5 @@
       "reason": "有一项空白就不能满足两项均达标；在该案反应计划也为空，任何读法都不能得到通过。缺值与真实低于目标不是同一事实，但不把补什么字段的实施问题当成判定歧义。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

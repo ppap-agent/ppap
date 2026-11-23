@@ -8,10 +8,8 @@
     "source": "rules/CP.json#CP:9",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "348b065165d4e3ba3426f15754c53007e7c760966235e74138eaf212ab7834c6",
+  "review_sha256": "a80d51bc55732101c7f624846ef66d1e5c1d1f0a6d19b49db4b31574d2f176a7",
   "findings": [],
   "excluded": [],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

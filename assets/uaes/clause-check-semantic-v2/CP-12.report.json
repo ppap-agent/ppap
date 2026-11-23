@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:12",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "73115bc025078ab640a146f812b3d399751d2c4134862492303aaca36372d3e7",
+  "review_sha256": "858ea7aad003e252e5ee1e5a70cec5fecb1f7669152b6fe30e55ed3befac69ab",
   "findings": [],
   "excluded": [
     {
@@ -17,7 +17,5 @@
       "reason": "规则 12 写明特殊尺寸与要求都须出现并分析；未把数值配对键写为本条的普遍合格条件。通用的数值键针对跨文件特性标识一致性；这里仅核已可唯一确认的文字要求是否原义出现并分析，不得把规则 8 明写的配对要求移入本条。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

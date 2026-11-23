@@ -8,7 +8,7 @@
     "source": "rules/CEA.json#CEA:1",
     "source_sha256": "e8ada583bd3204ff2d2fc05512209b50c4363f978240d8683031d6c872a0cea0"
   },
-  "review_sha256": "e61b96730c31dd944d9924028c644c542f7aab9d5fc0a01ba9b09bdd9437665a",
+  "review_sha256": "02dbbf4af4fa285eda9802bcdde50e0ed41aa316fc27b79a9825ea342072e7b2",
   "findings": [
     {
       "id": "CEA:1#1",
@@ -54,7 +54,5 @@
       "reason": "条文专门将此种备注导向偏差分支；不可分流的冲突才走无法辨识。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

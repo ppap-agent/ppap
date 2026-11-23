@@ -8,7 +8,7 @@
     "source": "rules/MSA.json#MSA:5",
     "source_sha256": "6ed0d5240c65b51c1cf40e64e6dfbd8a1c810697aba3824627d12d3959855eee"
   },
-  "review_sha256": "30c0644db462938f17a2760a8bcb34e4c6aec1ad7599c5f76b51ebd753aaa7e0",
+  "review_sha256": "310a2d0468674d6cfc4407d44f061b524add8c1894ffd25419074bbcb2efd356",
   "findings": [
     {
       "id": "MSA:5#1",
@@ -58,7 +58,5 @@
       "reason": "一般阈值用的是≥而非>；没有不同的文件阈值时，两个指数均为1.33即满足这一数值要求。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

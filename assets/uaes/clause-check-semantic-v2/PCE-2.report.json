@@ -8,7 +8,7 @@
     "source": "rules/PCE.json#PCE:2",
     "source_sha256": "6a15f61c213494c15e9c25bc7ba48ff47361aa9fc5dfbf8ff79399b5f13a8a58"
   },
-  "review_sha256": "2f7136ecd13d1ed066aee2f4f054fd1f85b9f4caafe6fd3ceb622b3957493ea5",
+  "review_sha256": "3a91228997b2bc1634c9ed61b86994844db9a0437774bb2064af8e8fd211100a",
   "findings": [
     {
       "id": "PCE:2#3",
@@ -52,7 +52,5 @@
       "reason": "本条复用规则1的有读数单元格计数，不另列计数单位；这不回答单值移动极差法的规定数指哪一个数。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

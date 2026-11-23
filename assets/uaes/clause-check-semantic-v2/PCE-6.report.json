@@ -8,7 +8,7 @@
     "source": "rules/PCE.json#PCE:6",
     "source_sha256": "6a15f61c213494c15e9c25bc7ba48ff47361aa9fc5dfbf8ff79399b5f13a8a58"
   },
-  "review_sha256": "69d692b6ab697149cf6fdce114c4382e0ca5fff091b1f2ad9b048f18eed639b1",
+  "review_sha256": "51ceb3c27ef2e21532c6b5e435a579094b963096d3b7a02f76cb079a2f88bfc4",
   "findings": [
     {
       "id": "PCE:6#1",
@@ -58,7 +58,5 @@
       "reason": "数值相同不作为不一致，例如±0.1与+0.1／-0.1；依据须说明归一。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

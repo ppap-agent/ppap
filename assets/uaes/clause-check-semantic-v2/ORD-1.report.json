@@ -8,7 +8,7 @@
     "source": "rules/ORD.json#ORD:1",
     "source_sha256": "77a73463795f25265b7ab54a23ece68cd734e928f097ba44eaba8bfd36ae92c2"
   },
-  "review_sha256": "b983472c7925badee0945d74192eae6a752c22e0bdb64db74741ba8775037683",
+  "review_sha256": "e81cee734e7da762a20f60f2fe6469572f30f566d37085aaba6deca9bdff48f9",
   "findings": [],
   "excluded": [
     {
@@ -17,7 +17,5 @@
       "reason": "不能。等同只对章有效，供需双方的负责人签名仍是单独的必要条件。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

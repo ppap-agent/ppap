@@ -8,7 +8,7 @@
     "source": "rules/MSA.json#MSA:4",
     "source_sha256": "6ed0d5240c65b51c1cf40e64e6dfbd8a1c810697aba3824627d12d3959855eee"
   },
-  "review_sha256": "fd01a63c589bc35a84ee50acf4f90fc69656eefda70897d182f1f1aabf162832",
+  "review_sha256": "ad29cb912ba1c79197fb027e44ea141e355a82123dad8efe6443e50aebac1519",
   "findings": [],
   "excluded": [
     {
@@ -22,7 +22,5 @@
       "reason": "不按标题逐字匹配。需能对应到同件号对应工序的检验人员；能对应只提示，不能对应才按缺少。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

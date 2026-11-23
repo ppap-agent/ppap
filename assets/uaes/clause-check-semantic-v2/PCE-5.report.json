@@ -8,7 +8,7 @@
     "source": "rules/PCE.json#PCE:5",
     "source_sha256": "6a15f61c213494c15e9c25bc7ba48ff47361aa9fc5dfbf8ff79399b5f13a8a58"
   },
-  "review_sha256": "5cea705baac85e2bc3b54748a291828343e5e331d67099f08d35680ef42e940f",
+  "review_sha256": "13ab4dd9736c4eac181187aa451308a782eb1725023f14ba8aeddb30686b31f3",
   "findings": [],
   "excluded": [
     {
@@ -27,7 +27,5 @@
       "reason": "合法留空有特定行、列和范围；目录能力列可留空不等于已经提供本条要求的定量过程特性研究页和实测值。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

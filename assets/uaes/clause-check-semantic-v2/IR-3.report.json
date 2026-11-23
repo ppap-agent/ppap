@@ -8,7 +8,7 @@
     "source": "rules/IR.json#IR:3",
     "source_sha256": "185cdaf9c3b9f6c96a981afdc8da3e8fb1ba166fd6a3fce839cb1a3e66acb418"
   },
-  "review_sha256": "892df7949a7f92ee385e17a6234c6ddd15000c184b66177a24c5d394acad2919",
+  "review_sha256": "2fdd9f50f144803a872b08ac4fc7a73807707b8442542854641dc56978f24d79",
   "findings": [
     {
       "id": "IR:3#1",
@@ -83,7 +83,5 @@
       "reason": "缺章和没有读到章并非同一事实；应先核对签署区域的图像，仍不可辨按通用证据规则处理。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

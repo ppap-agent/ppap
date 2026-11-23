@@ -8,7 +8,7 @@
     "source": "rules/PFD.json#PFD:4",
     "source_sha256": "81aa83efd4b4178e9cd2104210d940b4fe925215c64fffed3444aff7e5b03094"
   },
-  "review_sha256": "1e82b21d7a8366dbced634edad8dd3ef85e6db336dd0c4c7927f7d911deedfcf",
+  "review_sha256": "516ac16874b13c52ce439fa6c60941d2d00fded569ad7a02846db9fa68c8a5ee",
   "findings": [],
   "excluded": [
     {
@@ -27,7 +27,5 @@
       "reason": "枚举数量的写法不准，但括内明确列五项并明说命中任一项。只有“偏差处理”也已被明文接纳，不存在相反的可用判定。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

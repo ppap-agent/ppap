@@ -8,7 +8,7 @@
     "source": "rules/PFMEA.json#PFMEA:3",
     "source_sha256": "0cfccce9c5233cf5f78ee1dfb2171c61d6fce5aeb2beda6487ac7c41a19a2180"
   },
-  "review_sha256": "c12abb7483731633b10a688ebdbee373d74bf664743e4c122b7ead5e00b02d25",
+  "review_sha256": "26f5affb962daf3d058a6a2f9d8e3e6223b9e92054b453ea207c3112c4934163",
   "findings": [
     {
       "id": "PFMEA:3#1.1",
@@ -37,7 +37,5 @@
       "reason": "须先比归一公差和剥离代码后的名称；多解再核区域或工序位置。不同编号本身不证明缺项。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }

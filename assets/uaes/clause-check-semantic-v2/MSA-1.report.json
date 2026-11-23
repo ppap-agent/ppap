@@ -8,7 +8,7 @@
     "source": "rules/MSA.json#MSA:1",
     "source_sha256": "6ed0d5240c65b51c1cf40e64e6dfbd8a1c810697aba3824627d12d3959855eee"
   },
-  "review_sha256": "7c745e5a2b4f9e5d896cb290eb5912f1fa264541e7c2f24007e65aa094d5e471",
+  "review_sha256": "8ade3f7fa490fe9b6cf91b8e119447abd133193c1f35bf25ff59c3eff1ea24af",
   "findings": [],
   "excluded": [
     {
@@ -27,7 +27,5 @@
       "reason": "条款只查有效行，通用判定说明排除表尾的预留空行。"
     }
   ],
-  "policy_sha256": {
-    "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
-  }
+  "policy_sha256": {}
 }
