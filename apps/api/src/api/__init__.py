@@ -88,7 +88,7 @@ from api.receipts import register_receipt_routes
 from api.report_routes import register_report_routes
 from api.rule_routes import register_rule_routes
 from api.sharing_routes import register_sharing_routes
-from api.signing import SigningRefused, signing
+from api.signing import SigningRefused, is_signing, signing
 from api.signing import refused as signing_refused
 from api.suite_routes import register_suite_routes
 from api.support_routes import register_support_routes
@@ -312,8 +312,9 @@ def create_app(
             if getattr(request.state, "action_id", None):
                 response, error = await _error_code(response)
                 await asyncio.to_thread(actions.finish, store, request.state.action_id, response.status_code, error)
-                # The person's action as recorded: a signing one is their receipt (#361).
-                response.headers["x-ppap-action"] = request.state.action_id
+                if is_signing(request.scope.get("route")):
+                    # A signing action as recorded is the person's receipt (#361); the page shows it.
+                    response.headers["x-ppap-action"] = request.state.action_id
             principal = getattr(request.state, "authenticated_principal", None)
             if principal:
                 tokens.extend(bind(tenant_id=principal.tenant_id))

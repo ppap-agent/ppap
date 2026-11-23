@@ -4649,9 +4649,11 @@ class AuthStore:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """SELECT u.*, a.source_draft_id::text AS task_id, a.result_attempt, a.created_at AS accepted_at,
-                        f.original_filename AS filename, COALESCE(NULLIF(identity.display_name, ''), '发起人信息不可用') AS initiator
+                        f.original_filename AS filename, COALESCE(NULLIF(identity.display_name, ''), '发起人信息不可用') AS initiator,
+                        d.task_day, d.task_sequence
                     FROM product.usage_events u
                     LEFT JOIN product.audit_rounds a ON a.id = u.round_id AND a.tenant_id = u.tenant_id
+                    LEFT JOIN product.audit_drafts d ON d.id = a.source_draft_id AND d.tenant_id = a.tenant_id
                     LEFT JOIN product.file_versions f ON f.id = u.file_version_id AND f.tenant_id = u.tenant_id
                     LEFT JOIN LATERAL (SELECT i.display_name FROM product.identities i
                         WHERE i.user_id = u.user_id AND i.provider = %s AND i.app_id = %s AND i.tenant_key = %s

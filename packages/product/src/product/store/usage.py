@@ -34,6 +34,8 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
             groups.setdefault((row["round_id"], row["file_version_id"]), []).append(row)
 
     entries = []
+    # A round's usage is found by its task number too, so a result page and a receipt can link to it (#361).
+    numbers: dict[str, str] = {}
     for (round_id, version_id), slices in groups.items():
         row = min(slices, key=lambda item: item["created_at"])
         accepted_at = _time(row["accepted_at"])
@@ -67,9 +69,12 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
             settlement = {"state": "processing", "reason": "正在等待飞书用量回执。"}
         else:
             settlement = {"state": "unknown", "reason": "飞书已接收用量上报，实际扣费仍待对账。" if statuses == {"confirmed"} else "飞书用量上报结果待核对。"}
+        usage_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-usage:{organization['id']}:{round_id}:{version_id}"))
+        if row.get("task_day"):
+            numbers[usage_id] = f"PPAP-{row['task_day']:%Y%m%d}-{row['task_sequence']:03d}"
         entries.append(
             {
-                "usage_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-usage:{organization['id']}:{round_id}:{version_id}")),
+                "usage_id": usage_id,
                 "occurred_at": accepted_at.isoformat(),
                 "debited_at": debited_at,
                 "filename": row["filename"],
@@ -98,7 +103,7 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
             row
             for row in entries
             if in_range(row)
-            and query["search"].casefold() in (row["filename"] + " " + row["initiator"]).casefold()
+            and query["search"].casefold() in (row["filename"] + " " + row["initiator"] + " " + numbers.get(row["usage_id"], "")).casefold()
             and (not query.get("settlement") or row["settlement"]["state"] == query["settlement"])
         ),
         key=lambda row: (row["occurred_at"], row["usage_id"]),

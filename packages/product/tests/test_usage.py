@@ -187,3 +187,12 @@ def test_previous_month_count_is_read_from_the_same_ledger():
     assert page["summary"]["previous_consumption_count"] == {"value": 1, "reason": None}
     unattributed = {**fee("round-unknown", created_at="2026-10-05T00:00:00+00:00"), "round_id": None}
     assert usage_page(rows + [unattributed], QUERY, ORG, FREE, {}, AS_OF)["summary"]["previous_consumption_count"]["value"] is None
+
+
+def test_a_rounds_usage_is_found_by_its_task_number():
+    """A result page and a receipt link to the usage of their round by its task number (#361)."""
+    from datetime import date
+
+    rows = [fee(task_day=date(2026, 10, 31), task_sequence=7), fee(round_id="round-b", task_id="task-b", file_version_id="version-b", task_day=date(2026, 10, 31), task_sequence=8)]
+    page = usage_page(rows, {**QUERY, "range": "all", "search": "ppap-20261031-007"}, ORG, FREE, {}, AS_OF)
+    assert [entry["reference"]["round_id"] for entry in page["entries"]] == ["round-a"]
