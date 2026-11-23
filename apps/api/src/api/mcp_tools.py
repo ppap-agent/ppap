@@ -8,6 +8,7 @@ by `product.workflow`. A tool never asks the client to sequence the work; it onl
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -386,7 +387,8 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
         limit: Annotated[int, Field(ge=1, le=200)] = 100,
     ) -> Outcome:
         """The clauses of one revision of a customer's rulebook, word for word, grouped by document type: each clause's id, text and
-        digest, what changed against the revision before it, and whether a checker covers it. Read only; nothing is changed."""
+        digest, what changed against the revision before it, and whether a checker covers it. Read only; nothing is changed. A reply
+        holds as many clauses as fit; while `next_offset` is set, call again with it as `offset` to read the rest."""
         try:
             actor = await authority()
             actor.require("rulebooks:read")
@@ -405,13 +407,20 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
                 for document in found["documents"]
                 for c in document["clauses"]
             ]
+            head = {k: found[k] for k in ("version", "revision", "clause_count", "base", "changes", "origin", "created_at", "clarified", "checker_count")}
+            # Clauses differ greatly in length: a page holds as many as fit in one result, at most `limit`, and says where to go on.
+            room = MAX_RESULT_BYTES - 8 * 1024
             documents: list[dict] = []
+            end = offset
             for document, clause in lines[offset : offset + limit]:
+                room -= len(json.dumps(clause, ensure_ascii=False).encode())
+                if room < 0 and end > offset:
+                    break
                 if not documents or documents[-1]["key"] != document["key"]:
                     documents.append({"key": document["key"], "title": document["title"], "clauses": []})
                 documents[-1]["clauses"].append(clause)
-            head = {k: found[k] for k in ("version", "revision", "clause_count", "base", "changes", "origin", "created_at", "clarified", "checker_count")}
-            result = head | {"customer": customer, "clauses_total": len(lines), "offset": offset, "documents": documents, "next_offset": offset + limit if offset + limit < len(lines) else None}
+                end += 1
+            result = head | {"customer": customer, "clauses_total": len(lines), "offset": offset, "documents": documents, "next_offset": end if end < len(lines) else None}
             outcome = Outcome(result=result, next=DONE)
             if len(outcome.model_dump_json().encode()) > MAX_RESULT_BYTES:
                 raise McpError("result_too_large_use_smaller_limit", 413)
