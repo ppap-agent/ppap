@@ -91,7 +91,10 @@ def render(receipt: dict, person: str) -> bytes:
             more, _ = story.place(pymupdf.paper_rect("a4") + (56, 56, -56, -56))
             story.draw(device)
             writer.end_page()
-    return output.getvalue()
+    with pymupdf.open(stream=output.getvalue(), filetype="pdf") as document:
+        # Only the characters the receipt uses: a one-page receipt, not the whole Chinese face.
+        document.subset_fonts()
+        return document.tobytes(garbage=4, deflate=True)
 
 
 def register_receipt_routes(app, store, session_of) -> None:

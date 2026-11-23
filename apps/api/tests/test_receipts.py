@@ -35,6 +35,8 @@ def test_a_signing_action_is_the_persons_receipt(auth_store_factory, tmp_path):
     assert owner.get(f"/receipts/{ident}").json() == receipt
     pdf = owner.get(f"/receipts/{ident}/pdf")
     assert pdf.status_code == 200 and pdf.headers["content-type"] == "application/pdf" and pdf.content.startswith(b"%PDF")
+    # One page with only the characters it uses, not a whole embedded face.
+    assert len(pdf.content) < 300_000, len(pdf.content)
     assert f"R-{today}-0001.pdf" in pdf.headers["content-disposition"]
     assert other.get("/receipts").json()["receipts"] == [] and other.get(f"/receipts/{ident}").status_code == 404
     # A refused signing call is a receipt too: it says it did not complete, and why.

@@ -2,7 +2,7 @@
 // shows where the signoff stands beside what the round stands on; signing and withdrawing are the person's own signing
 // moments, confirmed on one screen with the content as the server has it now.
 import {useCallback, useEffect, useId, useRef, useState, type ReactNode} from 'react'
-import {request} from '../api'
+import {apiUrl, request} from '../api'
 import {iconChevronRight} from '../components/icons'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
@@ -20,6 +20,9 @@ const address = (roundId: string) => `/rounds/${encodeURIComponent(roundId)}/sig
 const codeOf = (cause: unknown) => (cause as {code?: string} | null)?.code
 const messageOf = (cause: unknown) => cause instanceof Error ? cause.message : '没有完成，请稍后重试。'
 const tone = (value: string) => resultTone(value === 'ERROR' ? 'UNKNOWN' : value as 'PASS' | 'NG' | 'UNKNOWN')
+// Completing a client's proposal after a while asks the person to sign in again; the way back is in the dialog itself.
+const reauthenticate = (cause: unknown) => codeOf(cause) === 'reauthentication_required'
+const SignInAgain = () => <Button asChild size="sm" variant="outline"><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>重新登录</a></Button>
 
 export type SignoffRead = {value: RoundSignoff | null; error: string; reload: () => Promise<RoundSignoff | null>; apply: (value: RoundSignoff) => void}
 
@@ -105,31 +108,37 @@ function SignContent({content}: {content: SignoffContent}) {
 }
 
 function SignDialog({open, roundId, signoff, onClose}: {open: boolean; roundId: string; signoff: SignoffRead; onClose: () => void}) {
-  const [phase, setPhase] = useState<'reading' | 'ready' | 'sending'>('reading')
-  const [notice, setNotice] = useState(''), [problem, setProblem] = useState('')
+  const [phase, setPhase] = useState<'reading' | 'ready' | 'sending' | 'signed'>('reading')
+  const [notice, setNotice] = useState(''), [problem, setProblem] = useState(''), [signIn, setSignIn] = useState(false)
+  // What was signed stays on screen while the dialog closes; the page beside it already says it is signed.
+  const [signed, setSigned] = useState<SignoffContent | null>(null)
   const {value, reload, apply} = signoff
   // The confirmation shows the round as the server has it now; signing binds to exactly what was shown.
   useEffect(() => {
     if (!open) return
-    setPhase('reading'); setNotice(''); setProblem('')
+    setPhase('reading'); setNotice(''); setProblem(''); setSignIn(false); setSigned(null)
     void reload().then(found => {setPhase('ready'); if (!found) setProblem('暂时无法读取这一轮的内容，请稍后再试。')})
   }, [open, reload])
-  const content = value?.current
+  const content = phase === 'signed' ? signed : value?.current
+  const busy = phase === 'sending' || phase === 'signed'
   async function sign() {
     if (!content) return
-    setPhase('sending'); setNotice(''); setProblem('')
+    setPhase('sending'); setNotice(''); setProblem(''); setSignIn(false)
     try {
-      apply(await request<RoundSignoff>(address(roundId), 'POST', {if_match: content.fingerprint}))
+      const done = await request<RoundSignoff>(address(roundId), 'POST', {if_match: content.fingerprint})
+      setSigned(content); setPhase('signed')
+      apply(done)
       onClose()
     } catch (cause) {
       const changed = codeOf(cause) === 'content_changed'
       if (changed) setNotice('内容刚有变化，请再核对一次。'); else setProblem(messageOf(cause))
+      setSignIn(reauthenticate(cause))
       await reload()
       setPhase('ready')
     }
   }
-  const ready = phase !== 'reading' && value?.can_sign && content
-  return <Dialog open={open} onOpenChange={next => {if (!next && phase !== 'sending') onClose()}}>
+  const ready = content && (phase === 'signed' || phase !== 'reading' && value?.can_sign)
+  return <Dialog open={open} onOpenChange={next => {if (!next && !busy) onClose()}}>
     <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
       <DialogHeader><DialogTitle>签发这一轮</DialogTitle><DialogDescription>签发表示你认可这一轮的结论，并为它负责。签发后要更正复核，须先撤回签发并写明原因。</DialogDescription></DialogHeader>
       {phase === 'reading' ? <p role="status" className="text-muted-foreground">正在读取这一轮的内容…</p>
@@ -139,26 +148,28 @@ function SignDialog({open, roundId, signoff, onClose}: {open: boolean; roundId: 
       {notice && <p role="alert" className="font-medium text-warning">{notice}</p>}
       {problem && <p role="alert" className="text-destructive">{problem}</p>}
       <DialogFooter>
-        <Button variant="outline" disabled={phase === 'sending'} onClick={onClose}>{ready ? '取消' : '关闭'}</Button>
-        {ready && <Button disabled={phase === 'sending'} onClick={() => void sign()}>{phase === 'sending' ? '正在签发…' : '确认签发'}</Button>}
+        {signIn && <SignInAgain/>}
+        <Button variant="outline" disabled={busy} onClick={onClose}>{ready ? '取消' : '关闭'}</Button>
+        {ready && <Button disabled={busy} onClick={() => void sign()}>{busy ? '正在签发…' : '确认签发'}</Button>}
       </DialogFooter>
     </DialogContent>
   </Dialog>
 }
 
 function WithdrawDialog({open, roundId, signoff, onClose}: {open: boolean; roundId: string; signoff: SignoffRead; onClose: () => void}) {
-  const [reason, setReason] = useState(''), [sending, setSending] = useState(false), [problem, setProblem] = useState('')
+  const [reason, setReason] = useState(''), [sending, setSending] = useState(false), [problem, setProblem] = useState(''), [signIn, setSignIn] = useState(false)
   const reasonId = useId(), countId = useId()
-  useEffect(() => {if (open) {setReason(''); setProblem('')}}, [open])
+  useEffect(() => {if (open) {setReason(''); setProblem(''); setSignIn(false)}}, [open])
   const text = reason.trim()
   async function withdraw() {
     if (!text) {setProblem('请写明撤回原因。'); return}
-    setSending(true); setProblem('')
+    setSending(true); setProblem(''); setSignIn(false)
     try {
       signoff.apply(await request<RoundSignoff>(`${address(roundId)}/withdraw`, 'POST', {reason: text}))
       onClose()
     } catch (cause) {
       setProblem(messageOf(cause))
+      setSignIn(reauthenticate(cause))
       if (!['withdraw_reason_required', 'withdraw_reason_too_long'].includes(codeOf(cause) ?? '')) void signoff.reload()
     } finally {setSending(false)}
   }
@@ -171,6 +182,7 @@ function WithdrawDialog({open, roundId, signoff, onClose}: {open: boolean; round
         <p id={countId} className="text-right text-xs tabular-nums text-muted-foreground">{reason.length}/{WITHDRAW_REASON_MAX}</p>
         {problem && <p role="alert" className="text-destructive">{problem}</p>}
         <DialogFooter>
+          {signIn && <SignInAgain/>}
           <Button type="button" variant="outline" disabled={sending} onClick={onClose}>取消</Button>
           <Button type="submit" disabled={sending || !text}>{sending ? '正在撤回…' : '确认撤回'}</Button>
         </DialogFooter>
