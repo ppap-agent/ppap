@@ -188,14 +188,16 @@ class HttpAuthTests(unittest.TestCase):
         draft = self.client.post("/drafts", json={"request_id": str(uuid.uuid4()), "upload_preparation": preparation}, cookies=alice).json()["id"]
         self.assertEqual(self.client.post(f"/files/{draft}/versions", json=meta, cookies=alice).json(), {"error": "access_denied"})
 
-    def test_report_consent_is_explicit_and_limited_to_document_creation_and_writing(self):
+    def test_report_consent_is_explicit_and_limited_to_the_report_document(self):
         from urllib.parse import parse_qs, urlparse
 
         normal = self.client.get("/login/feishu", follow_redirects=False)
         self.assertEqual(parse_qs(urlparse(normal.headers["location"]).query).get("scope"), ["offline_access"])
         report = self.client.get("/login/feishu?purpose=report", follow_redirects=False)
         query = parse_qs(urlparse(report.headers["location"]).query)
-        self.assertEqual(query.get("scope"), ["offline_access docx:document:create docx:document:write_only"])
+        # Create and write it, read it back, set it read-only for others and attach the report PDFs (#359).
+        expected = "offline_access docx:document:create docx:document:write_only docx:document:readonly docs:permission.setting:write_only docs:permission.setting:read docs:document.media:upload"
+        self.assertEqual(query.get("scope"), [expected])
         self.assertEqual(self.client.get("/login/feishu?purpose=arbitrary", follow_redirects=False).status_code, 400)
 
     def test_login_disabled_without_feishu_credentials(self):

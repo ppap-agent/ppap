@@ -743,16 +743,45 @@ class OfficePreviewResponse(TypedDict):
     config: NotRequired[dict[str, Any]]
 
 
+class ReportReadOnly(TypedDict):
+    # Whether others in the enterprise only read the document and nobody outside sees it (#359). working: being set now;
+    # unknown: it could not be read back.
+    state: Literal["working", "set", "failed", "unknown"]
+    error_code: str | None
+
+
+class ReportAttachment(TypedDict):
+    # One frozen report PDF the document attaches, as its report page names it.
+    filename: str
+    # The first 12 hex characters of the PDF's SHA-256, as on its report page and at the top of the document.
+    fingerprint: str
+    state: Literal["working", "attached", "failed", "unknown"]
+    error_code: str | None
+
+
 class ReportExport(TypedDict):
     status: str
     document_id: str | None
     id: NotRequired[str]
     error_code: NotRequired[str | None]
+    # Absent on a document delivered before #359.
+    read_only: NotRequired[ReportReadOnly]
+    attachments: NotRequired[list[ReportAttachment]]
+    # The steps its deliverer can retry now (POST .../report/retry).
+    retry: NotRequired[list[Literal["read_only", "attachments"]]]
+    # A step failed because the person never granted it: signing in again for the report asks for it.
+    reauthorize: NotRequired[bool]
 
 
 class ReportRequest(TypedDict, total=False):
     # The content fingerprint the person saw (from GET); a different current document is refused, not sent.
     if_match: str
+
+
+class ReportRetryRequest(TypedDict):
+    # The person's own delivered document (`report.id`) and the step to retry.
+    report_id: str
+    step: Literal["read_only", "attachments"]
 
 
 class ReportEnvelope(TypedDict):
@@ -998,6 +1027,8 @@ class AuditFileReport(TypedDict):
     reason: str | None
     generated_at: NotRequired[str | None]
     artifact: NotRequired[AuditReportArtifact | None]
+    # The first 12 hex characters of the PDF's SHA-256: a Feishu report document names the same (#359).
+    fingerprint: NotRequired[str | None]
     regenerate_allowed: NotRequired[bool]
     regenerate_reason: NotRequired[str | None]
     generation_request: NotRequired[AuditAcceptance | None]

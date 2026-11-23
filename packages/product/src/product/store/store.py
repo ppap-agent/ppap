@@ -176,6 +176,47 @@ def _attempt_diagnostic(claimed: ClaimedJob, result: dict, findings: list) -> di
 MAX_REPORT_ATTEMPTS = 3
 
 
+def report_fingerprint(sha256: object) -> str | None:
+    """A report PDF as people compare it (#359): the first 12 hex characters of its SHA-256, shown on its PPAP report
+    page and at the top of the Feishu report document that attaches it."""
+    return sha256[:12] if isinstance(sha256, str) and re.fullmatch(r"[0-9a-f]{64}", sha256) else None
+
+
+# A Feishu report document's delivery (#359): who is finishing it holds it this long, renewed at every step.
+REPORT_LEASE = "interval '2 minutes'"
+REPORT_COLUMNS = "id, status, document_id, error_code, read_only, read_only_error, attachments, lease_until IS NOT NULL AND lease_until > now()"
+# The person never granted what the step needs (Feishu 99991679): signing in again for the report asks for it.
+REAUTHORIZE_CODES = ("99991679",)
+
+
+def _report_public(row) -> dict:
+    """A report document's delivery as its deliverer sees it: the document, whether it was set read-only for others and
+    which report PDFs it attaches with their fingerprints, and which of those steps they can retry now."""
+    ident, status, document_id, error_code, read_only, read_only_error, attachments, busy = row
+    report: dict = {"id": str(ident), "status": status, "document_id": document_id, "error_code": error_code}
+    if attachments is None:
+        # Delivered before #359: no read-only step and nothing attached.
+        return report
+    if document_id:
+        report["read_only"] = {"state": read_only or ("working" if busy else "unknown"), "error_code": read_only_error}
+
+    def shown(item: dict) -> str:
+        if item["state"] in ("pending", "writing") and busy:
+            return "working"
+        return {"pending": "failed", "writing": "unknown"}.get(item["state"], item["state"])
+
+    report["attachments"] = [{"filename": item["filename"], "fingerprint": item["fingerprint"], "state": shown(item), "error_code": item.get("error_code")} for item in attachments]
+    retry = []
+    if document_id and status in ("ready", "unknown") and not busy and read_only != "set":
+        retry.append("read_only")
+    if status == "ready" and not busy and any(item["state"] != "attached" for item in attachments):
+        retry.append("attachments")
+    report["retry"] = retry
+    codes = [error_code, read_only_error, *(item.get("error_code") for item in attachments)]
+    report["reauthorize"] = any(isinstance(code, str) and code.rsplit(":", 1)[-1] in REAUTHORIZE_CODES for code in codes)
+    return report
+
+
 class AuthStore:
     def __init__(
         self,
@@ -2916,29 +2957,119 @@ class AuthStore:
     def get_report(self, principal: Principal, round_id: str, fingerprint: str) -> dict | None:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT id, status, document_id, error_code FROM product.report_exports WHERE round_id=%s AND tenant_id=%s AND created_by=%s AND fingerprint=%s",
+                f"SELECT {REPORT_COLUMNS} FROM product.report_exports WHERE round_id=%s AND tenant_id=%s AND created_by=%s AND fingerprint=%s",
                 (round_id, principal.tenant_id, principal.user_id, fingerprint),
             ).fetchone()
-        return {"id": str(row[0]), "status": row[1], "document_id": row[2], "error_code": row[3]} if row else None
+        return _report_public(row) if row else None
 
-    def claim_report(self, principal: Principal, round_id: str, fingerprint: str) -> str | None:
+    def report_export(self, principal: Principal, round_id: str, ident: str) -> dict | None:
+        """One of the person's own report documents of the round, whatever its content; another's is not found."""
+        if _as_uuid(ident) is None:
+            return None
+        with self._conn() as conn:
+            row = conn.execute(
+                f"SELECT {REPORT_COLUMNS} FROM product.report_exports WHERE id=%s AND round_id=%s AND tenant_id=%s AND created_by=%s",
+                (ident, round_id, principal.tenant_id, principal.user_id),
+            ).fetchone()
+        return _report_public(row) if row else None
+
+    def claim_report(self, principal: Principal, round_id: str, fingerprint: str, *, action_id: str | None = None, attachments: list[dict] | None = None) -> str | None:
+        """Claim delivering this document; the claim holds it (its lease is its own id) until released. `action_id`: the
+        signing action delivering it, whose receipt shows the result; `attachments`: the report PDFs it attaches (#359)."""
         ident = str(uuid.uuid4())
         with self._conn() as conn:
             row = conn.execute(
-                """INSERT INTO product.report_exports (id,round_id,tenant_id,created_by,fingerprint,status)
-                   VALUES (%s,%s,%s,%s,%s,'creating')
+                f"""INSERT INTO product.report_exports (id,round_id,tenant_id,created_by,fingerprint,status,action_id,attachments,lease,lease_until)
+                   VALUES (%s,%s,%s,%s,%s,'creating',%s,%s,%s,now() + {REPORT_LEASE})
                    ON CONFLICT (round_id, created_by, fingerprint) DO UPDATE
-                   SET id=EXCLUDED.id, status='creating', error_code=NULL
+                   SET id=EXCLUDED.id, status='creating', error_code=NULL, action_id=EXCLUDED.action_id, attachments=EXCLUDED.attachments,
+                       read_only=NULL, read_only_error=NULL, lease=EXCLUDED.lease, lease_until=EXCLUDED.lease_until
                    WHERE report_exports.status='failed' AND report_exports.document_id IS NULL
                    RETURNING id""",
-                (ident, round_id, principal.tenant_id, principal.user_id, fingerprint),
+                (ident, round_id, principal.tenant_id, principal.user_id, fingerprint, action_id, Jsonb(attachments or []), ident),
             ).fetchone()
         return ident if row else None
 
-    def settle_report(self, principal: Principal, ident: str, status: str, document_id: str | None = None, error_code: str | None = None) -> None:
+    def lease_report(self, principal: Principal, round_id: str, ident: str) -> dict | None:
+        """Hold one of the person's delivered report documents to retry a step (#359), unless a request is finishing it now.
+        None when it is not theirs, not delivered, from before #359, or held."""
+        if _as_uuid(ident) is None:
+            return None
+        lease = str(uuid.uuid4())
+        with self._conn() as conn:
+            row = conn.execute(
+                f"""UPDATE product.report_exports SET lease=%s, lease_until=now() + {REPORT_LEASE}
+                   WHERE id=%s AND round_id=%s AND tenant_id=%s AND created_by=%s AND document_id IS NOT NULL AND attachments IS NOT NULL
+                     AND status IN ('ready','unknown') AND (lease IS NULL OR lease_until < now())
+                   RETURNING status, document_id, read_only, attachments""",
+                (lease, ident, round_id, principal.tenant_id, principal.user_id),
+            ).fetchone()
+        return {"lease": lease, "status": row[0], "document_id": row[1], "read_only": row[2], "attachments": row[3]} if row else None
+
+    def save_report_step(self, principal: Principal, ident: str, lease: str, *, read_only: tuple[str, str | None] | None = None, attachments: list[dict] | None = None) -> bool:
+        """Record a step's result while holding the delivery, renewing the hold; False when another request holds it now."""
+        sets: list[str] = [f"lease_until = now() + {REPORT_LEASE}"]
+        values: list[object] = []
+        if read_only is not None:
+            sets.append("read_only=%s, read_only_error=%s")
+            values.extend(read_only)
+        if attachments is not None:
+            sets.append("attachments=%s")
+            values.append(Jsonb(attachments))
+        with self._conn() as conn:
+            row = conn.execute(
+                f"UPDATE product.report_exports SET {', '.join(sets)} WHERE id=%s AND tenant_id=%s AND created_by=%s AND lease=%s RETURNING 1",
+                (*values, ident, principal.tenant_id, principal.user_id, lease),
+            ).fetchone()
+        return row is not None
+
+    def release_report(self, principal: Principal, ident: str, lease: str) -> None:
         with self._conn() as conn:
             conn.execute(
-                """UPDATE product.report_exports SET status=%s, document_id=COALESCE(%s,document_id), error_code=%s
+                "UPDATE product.report_exports SET lease=NULL, lease_until=NULL WHERE id=%s AND tenant_id=%s AND created_by=%s AND lease=%s",
+                (ident, principal.tenant_id, principal.user_id, lease),
+            )
+
+    def round_report_pdfs(self, principal: Principal, round_id: str) -> dict[str, dict]:
+        """The round's report PDFs of its current result, by audited file version (#359): what its Feishu report document
+        names and attaches. Only PDFs that were made; the caller decides what a missing one means."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT j.id, j.payload->>'source_file_version_id', j.result FROM product.audit_rounds r
+                   JOIN engine.jobs j ON j.audit_round_id = r.id AND j.tenant_id = r.tenant_id AND j.kind = 'report_pdf' AND j.status = 'succeeded'
+                     AND j.payload->>'task_id' = r.source_draft_id::text AND j.payload->>'result_attempt' = r.result_attempt::text
+                   WHERE r.id = %s AND r.tenant_id = %s""",
+                (round_id, principal.tenant_id),
+            ).fetchall()
+        found = {}
+        for report_id, version, result in rows:
+            artifact = (result or {}).get("artifact") or {}
+            fingerprint = report_fingerprint((result or {}).get("sha256"))
+            if artifact.get("content_type") == "application/pdf" and artifact.get("filename") and fingerprint:
+                found[version] = {"report_id": str(report_id), "filename": artifact["filename"], "fingerprint": fingerprint}
+        return found
+
+    def report_pdf_body(self, principal: Principal, report_id: str, fingerprint: str) -> bytes:
+        """A report PDF's bytes, exactly the ones its fingerprint names; anything else is refused, never attached."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT result FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_pdf' AND status = 'succeeded'",
+                (_as_uuid(report_id), principal.tenant_id),
+            ).fetchone()
+        result = (row[0] if row else None) or {}
+        if not result.get("object_key") or report_fingerprint(result.get("sha256")) != fingerprint:
+            raise KeyError("missing")
+        body = self.objects.get(result["object_key"])
+        if not body.startswith(b"%PDF-") or sha256_bytes(body) != result["sha256"]:
+            raise ValueError("report_artifact_conflict")
+        return body
+
+    def settle_report(self, principal: Principal, ident: str, status: str, document_id: str | None = None, error_code: str | None = None) -> None:
+        with self._conn() as conn:
+            # The claim still holds it (#359): renewed here, so no retry can start while it goes on to the next step.
+            conn.execute(
+                f"""UPDATE product.report_exports SET status=%s, document_id=COALESCE(%s,document_id), error_code=%s,
+                       lease_until = CASE WHEN lease = id THEN now() + {REPORT_LEASE} ELSE lease_until END
                    WHERE id=%s AND tenant_id=%s AND created_by=%s AND status IN ('creating','writing')""",
                 (status, document_id, error_code, ident, principal.tenant_id, principal.user_id),
             )
@@ -3483,6 +3614,8 @@ class AuthStore:
                 "reason": "报告生成失败。审核结果已保存。" if state == "failed" else None,
                 "artifact": result.get("artifact") if state == "ready" else None,
                 "generated_at": result.get("generated_at") if state == "ready" else None,
+                # The PDF as people compare it with a Feishu report document (#359).
+                "fingerprint": report_fingerprint(result.get("sha256")) if state == "ready" else None,
                 "regenerate_allowed": mine and state == "failed" and row[2] == "failed",
                 "regenerate_reason": ("重试前将重新检查可用额度，不产生新的审核费用。" if self.settings.usage_charge_enabled else None) if mine else "只有任务发起人可以重新生成报告。",
                 **({"generation_request": {"request_id": row[1]["regeneration_request_id"], "state": "accepted", "reason": None}} if row[1].get("regeneration_request_id") else {}),

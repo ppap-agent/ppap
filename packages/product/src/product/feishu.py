@@ -88,16 +88,26 @@ def callback_url(settings: Settings) -> str:
     return settings.public_api_url.rstrip("/") + "/login/feishu/callback"
 
 
+# A report document in the person's own Feishu space (#348, #359): create and write it, read its blocks back, set it
+# read-only for others (and read that back) and attach the round's report PDFs.
+REPORT_SCOPES = (
+    "docx:document:create",
+    "docx:document:write_only",
+    "docx:document:readonly",
+    "docs:permission.setting:write_only",
+    "docs:permission.setting:read",
+    "docs:document.media:upload",
+)
+
+
 def authorize_url(settings: Settings, state: str, *, report: bool = False) -> str:
     params = {
         "client_id": settings.feishu_app_id,
         "response_type": "code",
         "redirect_uri": callback_url(settings),
         "state": state,
-        "scope": "offline_access",
+        "scope": " ".join(("offline_access", *(REPORT_SCOPES if report else ()))),
     }
-    if report:
-        params["scope"] += " docx:document:create docx:document:write_only"
     return AUTHORIZE_URL + "?" + urlencode(params)
 
 

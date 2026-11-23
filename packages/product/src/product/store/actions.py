@@ -71,6 +71,7 @@ LABELS = {
     ("POST", "/rounds/{round_id}/signoff"): "签发审核结论",
     ("POST", "/rounds/{round_id}/signoff/withdraw"): "撤回签发",
 }
+REPORT_ROUTE = "/integrations/feishu/rounds/{round_id}/report"
 CHANNELS = {"web": "网页", "docs": "飞书云文档插件", "meego": "飞书项目插件", "feishu_card": "飞书卡片", "mcp": "MCP 客户端"}
 STEPS = {"revision": "冻结修订", "cards": "发问题卡片给客户", "clarified": "标记已澄清", "readings": "发布解读"}
 OUTCOMES = {"succeeded": "已完成", "failed": "没有完成", "unknown": "结果未知", "pending": "结果未知"}
@@ -122,13 +123,32 @@ def receipts(store, principal, *, ident: str | None = None, intent: str | None =
                 ([str(row[5]) for row in rows if row[5]],),
             ).fetchall()
         }
+        # The report document an action delivered, as it stands (#359): its link, read-only or not, the PDFs attached.
+        deliveries = {
+            str(action): rest
+            for action, *rest in conn.execute(
+                "SELECT action_id, document_id, read_only, attachments FROM product.report_exports WHERE tenant_id=%s AND created_by=%s AND action_id = ANY(%s::uuid[]) AND attachments IS NOT NULL",
+                (principal.tenant_id, principal.user_id, [str(row[0]) for row in rows if row[7] == REPORT_ROUTE]),
+            ).fetchall()
+        }
     # What starting an audit charged: the usage of the round it accepted, settled as the usage page settles it (#361).
     started = [row[8].split("/")[2] for row in rows if row[7] == "/audit-tasks/{task_id}/confirm" and row[10] == "succeeded"]
     charged = task_charges(store, principal.tenant_id, started) if started else {}
-    return [_receipt(row, numbers, by_round, clients, charged) for row in rows]
+    return [_receipt(row, numbers, by_round, clients, charged, deliveries) for row in rows]
 
 
-def _receipt(row, numbers: dict, by_round: dict, clients: dict, charged: dict) -> dict:
+def delivery_details(document_id: str | None, read_only: str | None, attachments: list[dict]) -> list[str]:
+    """A delivered report document in a receipt's words: where it is, whether it was set read-only, each PDF it attaches."""
+    if not document_id:
+        return []
+    lines = ["文档：https://feishu.cn/docx/" + document_id]
+    lines.append("已设为只读：企业内的人凭链接可以阅读，不能编辑，不对外分享" if read_only == "set" else "未能设为只读")
+    for item in attachments:
+        lines.append(f"报告 PDF：{item['filename']} · 指纹 {item['fingerprint']} · " + ("已附上" if item.get("state") == "attached" else "未能附上"))
+    return lines
+
+
+def _receipt(row, numbers: dict, by_round: dict, clients: dict, charged: dict, deliveries: dict | None = None) -> dict:
     ident, _user, at, channel, _grant, intent, method, route, path, params, outcome, error, day, seq = row
     params = params or {}
     parts = path.strip("/").split("/")
@@ -160,6 +180,8 @@ def _receipt(row, numbers: dict, by_round: dict, clients: dict, charged: dict) -
             details.append("没有勾选：" + "、".join(STEPS.get(step, step) for step in params["unselected"]) + (f"（原因：{params['reason']}）" if params.get("reason") else ""))
     if route == "/rounds/{round_id}/signoff/withdraw" and params.get("reason"):
         details.append(f"原因：{params['reason']}")
+    if route == REPORT_ROUTE and str(ident) in (deliveries or {}):
+        details.extend(delivery_details(*(deliveries or {})[str(ident)]))
     points = None
     if route == "/audit-tasks/{task_id}/confirm" and outcome == "succeeded":
         points = charged.get(task or "", {"points": 0, "state": "none"})

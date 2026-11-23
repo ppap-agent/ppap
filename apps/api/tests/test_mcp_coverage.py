@@ -36,6 +36,7 @@ LEFT_TO_WEB = {
     "/integrations/feishu/docs/": "飞书云文档插件",
     "/integrations/feishu/tasks/{}/document": "飞书云文档插件",
     "/integrations/feishu/rounds/{}/writeback": "飞书云文档插件把结论写回它所在的文档",
+    "/integrations/feishu/rounds/{}/report/retry": "交付人在网页结果页补设只读、补附报告 PDF；MCP 读回的交付记录写明哪一步没有完成",
     "/integrations/feishu/root-folder": "网页上传另存到飞书个人空间",
     "/files": "字节上传只在网页；MCP 的文件只来自飞书",
     "/files/": "字节上传、下载与预览只在网页；MCP 的文件只来自飞书",

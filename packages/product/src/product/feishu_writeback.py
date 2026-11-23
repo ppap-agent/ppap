@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import uuid
+import zlib
 from datetime import datetime, timezone
 from typing import cast
 from urllib.parse import quote
@@ -72,6 +74,214 @@ def append_report_blocks(http, access_token: str, document_id: str, blocks: list
             raise _report_error(response, "write")
 
 
+# Others in the enterprise read the document through its link; no one but its owner edits it; it is not shared outside
+# (#359). "更新云文档权限设置" (PATCH drive/v2/permissions/:token/public?type=docx) changes only the fields sent.
+READ_ONLY = {"external_access_entity": "closed", "link_share_entity": "tenant_readable"}
+# Feishu takes one document's edits at most three times a second; attaching paces its edits below that.
+EDIT_INTERVAL = 0.4
+UPLOAD_LIMIT = 20 * 1024 * 1024
+
+
+def _unknown(code: str) -> bool:
+    return "_unknown" in code.split(":", 1)[0]
+
+
+def _permission_url(document_id: str) -> str:
+    return OPEN_API + "/drive/v2/permissions/" + document_id + "/public"
+
+
+def make_read_only(http, access_token: str, document_id: str) -> tuple[str, str | None]:
+    """Set the report document read-only for others (#359): ("set", None), ("failed", code) or ("unknown", code).
+    Setting it again is harmless, so an unknown outcome is read back at once instead of being left unknown."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", document_id):
+        return "failed", "invalid_file_token"
+    headers = {"Authorization": "Bearer " + access_token}
+    try:
+        response = http.patch(_permission_url(document_id), params={"type": "docx"}, headers=headers, json=READ_ONLY, timeout=20)
+    except Exception:
+        code = "feishu_report_permission_unknown"
+    else:
+        if _ok(response) and _response_json(response).get("code") == 0:
+            return "set", None
+        code = str(_report_error(response, "permission"))
+        if not _unknown(code):
+            return "failed", code
+    try:
+        response = http.get(_permission_url(document_id), params={"type": "docx"}, headers=headers, timeout=20)
+    except Exception:
+        return "unknown", code
+    public = ((_response_json(response).get("data") or {}).get("permission_public") or {}) if _ok(response) else None
+    if not isinstance(public, dict) or _response_json(response).get("code") != 0:
+        return "unknown", code
+    return ("set", None) if all(public.get(key) == value for key, value in READ_ONLY.items()) else ("failed", code)
+
+
+def _file_block_id(payload: dict) -> str | None:
+    """The file block a creation made: Feishu answers with the view block (33) that holds it."""
+    for child in (payload.get("data") or {}).get("children") or []:
+        if not isinstance(child, dict):
+            continue
+        if child.get("block_type") == 23 and isinstance(child.get("block_id"), str):
+            return child["block_id"]
+        inner = child.get("children") or []
+        if child.get("block_type") == 33 and len(inner) == 1 and isinstance(inner[0], str):
+            return inner[0]
+    return None
+
+
+def create_file_block(http, access_token: str, document_id: str) -> str:
+    """An empty file block at the end of the document. One external attempt: the caller persists the boundary first."""
+    try:
+        response = http.post(
+            docx_children_url(document_id),
+            headers={"Authorization": "Bearer " + access_token},
+            json={"index": -1, "children": [{"block_type": 23, "file": {"token": ""}}]},
+            timeout=20,
+        )
+    except Exception as exc:
+        raise FeishuWritebackError("feishu_report_attach_unknown") from exc
+    payload = _response_json(response)
+    if not _ok(response) or payload.get("code") != 0:
+        raise _report_error(response, "attach")
+    block_id = _file_block_id(payload)
+    if not block_id or not re.fullmatch(r"[A-Za-z0-9_-]+", block_id):
+        raise FeishuWritebackError("feishu_report_attach_unknown")
+    return block_id
+
+
+def upload_report_pdf(http, access_token: str, document_id: str, block_id: str, filename: str, body: bytes) -> str:
+    """The PDF uploaded into its file block ("上传素材", parent_type docx_file); not shown until the block is bound to it,
+    so uploading again only leaves an unused copy behind."""
+    if len(body) > UPLOAD_LIMIT:
+        raise FeishuWritebackError("feishu_report_attach_rejected:too_large")
+    name = filename if len(filename) <= 250 else filename[:246] + ".pdf"
+    form = {
+        "file_name": name,
+        "parent_type": "docx_file",
+        "parent_node": block_id,
+        "size": str(len(body)),
+        "checksum": str(zlib.adler32(body)),
+        "extra": json.dumps({"drive_route_token": document_id}),
+    }
+    try:
+        response = http.post(
+            OPEN_API + "/drive/v1/medias/upload_all",
+            headers={"Authorization": "Bearer " + access_token},
+            data=form,
+            files={"file": (name, body, "application/pdf")},
+            timeout=60,
+        )
+    except Exception as exc:
+        raise FeishuWritebackError("feishu_report_attach_unknown") from exc
+    payload = _response_json(response)
+    token = (payload.get("data") or {}).get("file_token")
+    if not _ok(response) or payload.get("code") != 0:
+        raise _report_error(response, "attach")
+    if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+        raise FeishuWritebackError("feishu_report_attach_unknown")
+    return token
+
+
+def bind_file_block(http, access_token: str, document_id: str, block_id: str, file_token: str) -> None:
+    """Show the uploaded PDF in its file block ("更新块" replace_file); binding the same file again changes nothing."""
+    try:
+        response = http.patch(
+            OPEN_API + "/docx/v1/documents/" + document_id + "/blocks/" + block_id,
+            headers={"Authorization": "Bearer " + access_token},
+            json={"replace_file": {"token": file_token}},
+            timeout=20,
+        )
+    except Exception as exc:
+        raise FeishuWritebackError("feishu_report_attach_unknown") from exc
+    if not _ok(response) or _response_json(response).get("code") != 0:
+        raise _report_error(response, "attach")
+
+
+def _file_blocks(http, access_token: str, document_id: str) -> list[dict]:
+    """Every file block in the document as it reads now: its id and the file shown in it ("" when empty)."""
+    found: list[dict] = []
+    page = ""
+    for _ in range(100):
+        params = {"page_size": 500, **({"page_token": page} if page else {})}
+        try:
+            response = http.get(OPEN_API + "/docx/v1/documents/" + document_id + "/blocks", params=params, headers={"Authorization": "Bearer " + access_token}, timeout=20)
+        except Exception as exc:
+            raise FeishuWritebackError("feishu_report_attach_unknown") from exc
+        payload = _response_json(response)
+        if not _ok(response) or payload.get("code") != 0:
+            # Not knowing what is there is not knowing whether a block was made.
+            raise FeishuWritebackError("feishu_report_attach_unknown:" + str(_report_error(response, "attach")).rsplit(":", 1)[-1])
+        data = payload.get("data") or {}
+        for item in data.get("items") or []:
+            if isinstance(item, dict) and item.get("block_type") == 23 and isinstance(item.get("block_id"), str):
+                found.append({"block_id": item["block_id"], "token": str((item.get("file") or {}).get("token") or "")})
+        page = str(data.get("page_token") or "")
+        if not data.get("has_more") or not page:
+            return found
+    raise FeishuWritebackError("feishu_report_attach_unknown")
+
+
+def _made_block(http, access_token: str, document_id: str, recorded: set[str]) -> str | None:
+    """A creation whose outcome is unknown, read back: the one empty file block PPAP has no record of, or None when
+    there is none (it was not made). More than one cannot be told apart, so nothing is created again."""
+    empty = [block["block_id"] for block in _file_blocks(http, access_token, document_id) if block["block_id"] not in recorded and not block["token"]]
+    if len(empty) > 1:
+        raise FeishuWritebackError("feishu_report_attach_unknown:ambiguous")
+    return empty[0] if empty else None
+
+
+def pending_attachments(originals: list[dict]) -> list[dict]:
+    """What a delivery records for each report PDF it attaches, before anything is attached."""
+    return [
+        {"report_id": item["report_id"], "filename": item["filename"], "fingerprint": item["fingerprint"], "state": "pending", "block_id": None, "file_token": None, "error_code": None}
+        for item in originals
+    ]
+
+
+def attach_report_pdfs(http, access_token: str, document_id: str, items: list[dict], read_pdf, persist, pause=time.sleep) -> list[dict]:
+    """Each frozen report PDF as a file attachment at the end of the document (#359): an empty file block, the PDF
+    uploaded into it, then bound to it. Only creating a block can duplicate an attachment, so that boundary is persisted
+    before it is crossed, and a creation whose outcome is unknown is read back before another is made; uploading and
+    binding again are harmless. Stops at the first PDF not attached; `persist(items)` False means another request holds
+    the delivery now, so this one stops."""
+    items = [dict(item) for item in items]
+    for item in items:
+        if item["state"] == "attached":
+            continue
+        try:
+            try:
+                body = read_pdf(item["report_id"])
+            except Exception as exc:
+                # Only the very PDF the document names is attached; one that cannot be read is said so.
+                raise FeishuWritebackError("report_pdf_unavailable") from exc
+            if not item.get("block_id"):
+                if item["state"] in ("writing", "unknown"):
+                    item["block_id"] = _made_block(http, access_token, document_id, {str(other["block_id"]) for other in items if other.get("block_id")})
+                if not item.get("block_id"):
+                    item.update(state="writing", error_code=None)
+                    if not persist(items):
+                        return items
+                    pause(EDIT_INTERVAL)
+                    item["block_id"] = create_file_block(http, access_token, document_id)
+                if not persist(items):
+                    return items
+            if not item.get("file_token"):
+                item["file_token"] = upload_report_pdf(http, access_token, document_id, item["block_id"], item["filename"], body)
+                if not persist(items):
+                    return items
+            pause(EDIT_INTERVAL)
+            bind_file_block(http, access_token, document_id, item["block_id"], item["file_token"])
+            item.update(state="attached", error_code=None)
+            if not persist(items):
+                return items
+        except FeishuWritebackError as exc:
+            code = str(exc)
+            item.update(state="unknown" if _unknown(code) else "failed", error_code=code)
+            persist(items)
+            break
+    return items
+
+
 def docx_children_url(document_id: str) -> str:
     return OPEN_API + "/docx/v1/documents/" + document_id + "/blocks/" + document_id + "/children"
 
@@ -85,6 +295,14 @@ def round_return_url(web_url: str, round_body: dict) -> str:
     base = (web_url or "").rstrip("/")
     task_id = str(round_body.get("source_draft_id") or "")
     return base + ("/tasks/" + quote(task_id, safe="") if task_id else "/?round=" + quote(str(round_body["id"]), safe=""))
+
+
+def report_page_url(web_url: str, round_body: dict, file_version_id: str) -> str:
+    """The PPAP report page of one audited file, where its report PDF and fingerprint are shown (#359)."""
+    task_id = str(round_body.get("source_draft_id") or "")
+    if not task_id:
+        return round_return_url(web_url, round_body)
+    return round_return_url(web_url, round_body) + "?report=" + quote(file_version_id, safe="")
 
 
 def _finding_version(finding: dict) -> str:
@@ -342,13 +560,28 @@ def basis_text(round_body: dict, customer: str = "") -> str:
     return " · ".join(part for part in (f"客户：{customer_name(customer)}" if customer else "", mode, "规则：受理时冻结的版本，每份文件的规则见下文") if part)
 
 
-def report_blocks(round_body: dict, return_url: str = "", customer: str = "") -> list[dict]:
-    """Complete report, unlike the brief summary written into a source document. `customer`: the rules the task chose."""
+ORIGINALS_HEADING = "报告原件（PDF）"
+
+
+def original_line(original: dict, *, named: bool) -> dict:
+    """「以 PPAP 原件为准 · 查看原件 · 指纹 …」(#359): the link opens the file's PPAP report page, which shows the same
+    fingerprint. `named` puts the report's name in when a round has more than one."""
+    lead = "以 PPAP 原件为准 · " + (str(original["filename"]) + " · " if named else "")
+    link = {"text_run": {"content": "查看原件", "text_element_style": {"link": {"url": quote(str(original["url"]), safe="")}}}}
+    return {"block_type": 2, "text": {"elements": [_text_run(lead), link, _text_run(" · 指纹 " + str(original["fingerprint"]))]}}
+
+
+def report_blocks(round_body: dict, return_url: str = "", customer: str = "", originals: list[dict] | None = None) -> list[dict]:
+    """Complete report, unlike the brief summary written into a source document. `customer`: the rules the task chose.
+    `originals`: each audited file's frozen report PDF (filename, fingerprint, url), in the round's order; the document
+    names them at the top and attaches them at the end (#359)."""
     state = writeback_state(round_body)
     if state != "ready":
         raise FeishuWritebackError(state)
+    originals = originals or []
     blocks = [
         _heading2("PPAP 审核报告"),
+        *(original_line(original, named=len(originals) > 1) for original in originals),
         _text(MACHINE_FIRST),
         _text(signoff_text(round_body)),
         _text(basis_text(round_body, customer)),
@@ -440,6 +673,10 @@ def report_blocks(round_body: dict, return_url: str = "", customer: str = "") ->
         blocks.append(_text("参考资料（不单独审核）：" + "、".join(references)))
     if return_url:
         blocks.append(_text("查看审核与原件：" + return_url))
+    if originals:
+        # The PDFs themselves are attached under this heading once the document is written.
+        blocks.append(_heading2(ORIGINALS_HEADING))
+        blocks.append(_text("以下附件是 PPAP 中冻结的报告 PDF；指纹是 PDF 的 SHA-256 前 12 位，与文首和 PPAP 报告页一致。"))
     return blocks
 
 

@@ -1161,6 +1161,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integrations/feishu/rounds/{round_id}/report/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry Report
+         * @description Retry setting a delivered document read-only, or attaching its report PDFs (#359). Only its deliverer does.
+         */
+        post: operations["retry_report_integrations_feishu_rounds__round_id__report_retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/integrations/feishu/rounds/{round_id}/writeback": {
         parameters: {
             query?: never;
@@ -2542,6 +2562,8 @@ export interface components {
         /** AuditFileReport */
         AuditFileReport: {
             artifact?: components["schemas"]["AuditReportArtifact"] | null;
+            /** Fingerprint */
+            fingerprint?: string | null;
             /** Generated At */
             generated_at?: string | null;
             generation_request?: components["schemas"]["AuditAcceptance"] | null;
@@ -4573,6 +4595,20 @@ export interface components {
             /** Number */
             number: string;
         };
+        /** ReportAttachment */
+        ReportAttachment: {
+            /** Error Code */
+            error_code: string | null;
+            /** Filename */
+            filename: string;
+            /** Fingerprint */
+            fingerprint: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "working" | "attached" | "failed" | "unknown";
+        };
         /** ReportEnvelope */
         ReportEnvelope: {
             /** Content Fingerprint */
@@ -4581,14 +4617,31 @@ export interface components {
         };
         /** ReportExport */
         ReportExport: {
+            /** Attachments */
+            attachments?: components["schemas"]["ReportAttachment"][];
             /** Document Id */
             document_id: string | null;
             /** Error Code */
             error_code?: string | null;
             /** Id */
             id?: string;
+            read_only?: components["schemas"]["ReportReadOnly"];
+            /** Reauthorize */
+            reauthorize?: boolean;
+            /** Retry */
+            retry?: ("read_only" | "attachments")[];
             /** Status */
             status: string;
+        };
+        /** ReportReadOnly */
+        ReportReadOnly: {
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "working" | "set" | "failed" | "unknown";
         };
         /** Review */
         Review: {
@@ -8739,6 +8792,49 @@ export interface operations {
                 "application/json": {
                     /** If Match */
                     if_match?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_report_integrations_feishu_rounds__round_id__report_retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Report Id */
+                    report_id: string;
+                    /**
+                     * Step
+                     * @enum {string}
+                     */
+                    step: "read_only" | "attachments";
                 };
             };
         };

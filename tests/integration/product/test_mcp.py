@@ -24,7 +24,7 @@ from openpyxl import Workbook
 from product import build_product_store
 from product.feishu import UserTokens
 from product.fixtures import APP_ID
-from product.identity import ProviderAuthError
+from product.identity import SESSION_COOKIE, ProviderAuthError
 from product.mcp import SCOPES, pkce_challenge, read_client_document
 from worker import process_claimed
 
@@ -337,11 +337,17 @@ def book(*cells):
 
 class Drive:
     """The user's Feishu: a folder of files (None: one that will not download) with an empty folder inside it, and a
-    record of everything PPAP writes back."""
+    record of everything PPAP writes back. A report document's text is `written`; setting it read-only, its file blocks,
+    uploads and bindings are kept apart (#359). `refuse` names steps answered with a missing user grant (99991679)."""
 
     def __init__(self, **files):
         self.files = files or {"plan": ("control-plan.xlsx", book("控制计划", "测试客户", "零件号 P-1"))}
         self.written = []
+        self.permissions, self.blocks, self.uploads, self.bound = [], [], [], []
+        self.refuse: set[str] = set()
+
+    def refused(self, step):
+        return httpx.Response(400, json={"code": 99991679, "msg": "user did not grant"}) if step in self.refuse else None
 
     def handler(self, request):
         path = request.url.path
@@ -358,8 +364,27 @@ class Drive:
             if data is None:
                 return httpx.Response(404, json={"code": 99912345, "msg": "not found"})
             return httpx.Response(200, content=data, headers={"Content-Type": XLSX, "Content-Disposition": f'attachment; filename="{name}"'})
+        if path.endswith("/public"):
+            if refused := self.refused("read_only"):
+                return refused
+            self.permissions.append(json.loads(request.content))
+            return httpx.Response(200, json={"code": 0, "data": {"permission_public": json.loads(request.content)}})
+        if path.endswith("/medias/upload_all"):
+            if refused := self.refused("upload"):
+                return refused
+            form = request.content
+            node = re.search(rb'name="parent_node"\r\n\r\n([^\r]+)', form).group(1).decode()
+            self.uploads.append((node, b"%PDF" + form.split(b"\r\n\r\n%PDF", 1)[1].rsplit(b"\r\n--", 1)[0]))
+            return httpx.Response(200, json={"code": 0, "data": {"file_token": f"boxReport{len(self.uploads)}"}})
+        if request.method == "PATCH":
+            self.bound.append((path.rsplit("/", 1)[1], json.loads(request.content)["replace_file"]["token"]))
+            return httpx.Response(200, json={"code": 0, "data": {}})
         assert request.method == "POST", path
-        self.written.append((path, json.loads(request.content)))
+        body = json.loads(request.content)
+        if [child.get("block_type") for child in body.get("children", [])] == [23]:
+            self.blocks.append(f"fileBlock{len(self.blocks) + 1}")
+            return httpx.Response(200, json={"code": 0, "data": {"children": [{"block_id": "view", "block_type": 33, "children": [self.blocks[-1]]}]}})
+        self.written.append((path, body))
         return httpx.Response(200, json={"code": 0, "data": {"document": {"document_id": "approved-report"}}})
 
 
@@ -610,6 +635,84 @@ def test_a_report_on_a_round_with_review_hints_is_published(mcp_app, core_system
         key = client.get(f"/rounds/{round_id}").json()["findings"][0]["item_key"]
         saved = client.put(f"/rounds/{round_id}/reviews", json={"item_key": key, "judgment": "confirm", "rationale": "核对", "next_step": "", "version": 0})
         assert saved.status_code == 200 and "review_hint" in saved.json()["findings"][0]
+
+
+def test_a_delivered_report_is_read_only_for_others_and_attaches_its_frozen_pdf(mcp_app, core_system):
+    """#359: the document is set read-only for others and attaches the round's frozen report PDF, named at the top with
+    the fingerprint its PPAP report page shows. A step that failed leaves the document delivered and says so; its
+    deliverer retries it, and nothing is attached twice."""
+    import hashlib
+    from urllib.parse import unquote
+
+    _, store = mcp_app
+    drive = Drive()
+    # A sign-in from before #359: the person never granted setting permissions or uploading.
+    drive.refuse = {"read_only", "upload"}
+    with folder_client(store, drive) as (_app, client, token, _):
+        task, _ = audited_folder(client, store, token, core_system)
+        detail = client.get(f"/audit-tasks/{task}").json()
+        round_id = detail["round_id"]
+        (file,) = detail["files"]
+        report = file["audit"]["report"]
+        reference = {"round_id": round_id, "file_version_id": file["file"]["id"], "result_attempt": file["audit"]["result_attempt"], "artifact_id": report["artifact"]["artifact_id"]}
+        pdf = client.get(f"/audit-tasks/{task}/reports/{report['report_id']}/pdf", params=reference).content
+        # The report page shows the PDF's fingerprint: the first 12 hex characters of its SHA-256.
+        fingerprint = report["fingerprint"]
+        assert fingerprint == hashlib.sha256(pdf).hexdigest()[:12]
+
+        _, done = complete(client, call(client, token, "publish_report", task_id=task, request_id=str(uuid4())))
+        assert done.status_code == 200, done.text
+        delivered = done.json()["report"]
+        # Delivered all the same, saying what did not happen and what the person can do about it.
+        assert (delivered["status"], delivered["document_id"]) == ("ready", "approved-report")
+        assert delivered["read_only"] == {"state": "failed", "error_code": "feishu_report_permission_rejected:99991679"}
+        filename = report["artifact"]["filename"]
+        assert delivered["attachments"] == [{"filename": filename, "fingerprint": fingerprint, "state": "failed", "error_code": "feishu_report_attach_rejected:99991679"}]
+        assert delivered["retry"] == ["read_only", "attachments"] and delivered["reauthorize"] is True
+        # The top names the PDF by its fingerprint and links to its report page.
+        (header,) = [block for _, body in drive.written for block in body.get("children", []) if "以 PPAP 原件为准" in json.dumps(block, ensure_ascii=False)]
+        lead, link, tail = header["text"]["elements"]
+        assert (lead["text_run"]["content"], link["text_run"]["content"], tail["text_run"]["content"]) == ("以 PPAP 原件为准 · ", "查看原件", f" · 指纹 {fingerprint}")
+        web = store.settings.canonical_web_url().rstrip("/")
+        assert unquote(link["text_run"]["text_element_style"]["link"]["url"]) == f"{web}/tasks/{task}?report={file['file']['id']}"
+        # One empty file block was made before the upload was refused; nothing was shown in it.
+        assert len(drive.blocks) == 1 and drive.uploads == [] and drive.bound == []
+
+        # Signed in again with what the report needs, the person retries each step; the same block takes the PDF.
+        drive.refuse = set()
+        path = f"/integrations/feishu/rounds/{round_id}/report/retry"
+        other = client.cookies.get(SESSION_COOKIE)
+        client.cookies.set(
+            SESSION_COOKIE,
+            store.create_session(
+                store.principal_for_fixture("bob"), UserTokens("bob-access", "bob-refresh", datetime.now(timezone.utc) + timedelta(hours=1), datetime.now(timezone.utc) + timedelta(days=7))
+            ),
+        )
+        refused = client.post(path, json={"report_id": delivered["id"], "step": "read_only"})
+        assert (refused.status_code, refused.json()) == (403, {"error": "access_denied"}) and drive.permissions == []
+        client.cookies.set(SESSION_COOKIE, other)
+        read_only = client.post(path, json={"report_id": delivered["id"], "step": "read_only"})
+        assert read_only.status_code == 200, read_only.text
+        assert read_only.json()["report"]["read_only"] == {"state": "set", "error_code": None}
+        assert drive.permissions == [{"external_access_entity": "closed", "link_share_entity": "tenant_readable"}]
+        attached = client.post(path, json={"report_id": delivered["id"], "step": "attachments"}).json()["report"]
+        assert attached["attachments"] == [{"filename": filename, "fingerprint": fingerprint, "state": "attached", "error_code": None}]
+        assert (attached["retry"], attached["reauthorize"]) == ([], False)
+        assert drive.blocks == ["fileBlock1"] and drive.bound == [("fileBlock1", "boxReport1")]
+        ((node, uploaded),) = drive.uploads
+        assert node == "fileBlock1" and uploaded == pdf
+        # Nothing left to retry: asking again changes nothing.
+        again = client.post(path, json={"report_id": delivered["id"], "step": "attachments"})
+        assert again.status_code == 200 and len(drive.blocks) == 1 and len(drive.uploads) == 1
+        assert client.get(f"/integrations/feishu/rounds/{round_id}/report").json()["report"] == again.json()["report"]
+
+        # The receipt keeps the document, whether it is read-only, and the PDF with its fingerprint.
+        (receipt,) = [row for row in client.get("/receipts").json()["receipts"] if row["action"] == "在飞书生成报告文档"]
+        assert receipt["details"] == [
+            "文档：https://feishu.cn/docx/approved-report",
+            "已设为只读：企业内的人凭链接可以阅读，不能编辑，不对外分享",
+            f"报告 PDF：{filename} · 指纹 {fingerprint} · 已附上",
+        ]
 
 
 def test_signing_is_proposed_by_the_client_and_completed_or_declined_by_the_person(mcp_app, core_system):

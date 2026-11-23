@@ -43,6 +43,7 @@ export function ReportPreview({name, rule, reference, report, ready, issue, adap
     <header className="flex flex-wrap items-center gap-x-7 gap-y-2 border-b px-6 py-3 text-xs text-muted-foreground">{navigation}<p className="text-base font-semibold text-foreground">报告预览</p>
       <p className="flex min-w-0 gap-1"><span className="shrink-0">报告名称：</span><span className="[overflow-wrap:anywhere] text-foreground">{report?.artifact?.filename || auditReportFilename(name)}</span></p><h2 className="sr-only">{name}</h2>
       <p className="flex shrink-0 gap-1"><span>生成时间：</span><span className="text-foreground">{generated}</span></p>
+      {ready && report?.fingerprint && <p className="flex shrink-0 gap-1" title="报告 PDF 的 SHA-256 前 12 位；飞书报告文档文首的指纹与此一致，即为同一份报告"><span>指纹：</span><span className="tabular-nums text-foreground">{report.fingerprint}</span></p>}
       <div className="ml-auto flex flex-wrap items-center gap-1">
       <Dialog><DialogTrigger asChild><Button variant="ghost" size="sm"><Icon icon={iconCircleInfo}/>报告信息</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>报告信息</DialogTitle><DialogDescription>查看本报告的来源与审核记录。</DialogDescription></DialogHeader>
         <div className="min-h-0 space-y-6 overflow-y-auto px-4 pb-6 text-sm">
