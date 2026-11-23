@@ -1643,6 +1643,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rounds/{round_id}/signoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Signoff */
+        get: operations["read_signoff_rounds__round_id__signoff_get"];
+        put?: never;
+        /** Sign Round */
+        post: operations["sign_round_rounds__round_id__signoff_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rounds/{round_id}/signoff/withdraw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Withdraw Signoff */
+        post: operations["withdraw_signoff_rounds__round_id__signoff_withdraw_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rule-questionnaires": {
         parameters: {
             query?: never;
@@ -4753,6 +4788,30 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
+        /** RoundSignoff */
+        RoundSignoff: {
+            /** Can Sign */
+            can_sign: boolean;
+            /** Can Withdraw */
+            can_withdraw: boolean;
+            current: components["schemas"]["SignoffContent"] | null;
+            /** History */
+            history: components["schemas"]["SignoffEvent"][];
+            /** Round Id */
+            round_id: string;
+            signed: components["schemas"]["SignoffContent"] | null;
+            /** Signed At */
+            signed_at: string | null;
+            signer: components["schemas"]["SignoffSigner"] | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "signed" | "unsigned";
+            /** Task Id */
+            task_id: string | null;
+            unavailable: components["schemas"]["SignoffUnavailable"] | null;
+        };
         /** RoundSummaryRule */
         RoundSummaryRule: {
             /** Id */
@@ -5397,6 +5456,109 @@ export interface components {
             level: "A" | "B" | "C";
             /** Reason */
             reason: string;
+        };
+        /**
+         * SignoffContent
+         * @description What a signoff freezes: the round's one conclusion, each file's, the review version of every reviewed item, the
+         *     items accepted on the machine's conclusion and the reports' fingerprint.
+         */
+        SignoffContent: {
+            /** Accepted Count */
+            accepted_count: number;
+            /** Conclusion */
+            conclusion: ("PASS" | "NG" | "UNKNOWN" | "ERROR") | null;
+            /** Files */
+            files: components["schemas"]["SignoffFile"][];
+            /** Fingerprint */
+            fingerprint: string;
+            /** Machine Conclusion */
+            machine_conclusion: ("PASS" | "NG" | "UNKNOWN" | "ERROR") | null;
+            /** Report Fingerprint */
+            report_fingerprint: string;
+            /** Reviewed Count */
+            reviewed_count: number;
+            /** Reviews */
+            reviews: components["schemas"]["SignoffReview"][];
+            /** Unreviewed */
+            unreviewed: components["schemas"]["SignoffUnreviewed"][];
+        };
+        /** SignoffEvent */
+        SignoffEvent: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "signed" | "withdrawn";
+            /** At */
+            at: string;
+            /** By */
+            by: string;
+            /** Reason */
+            reason: string | null;
+        };
+        /** SignoffFile */
+        SignoffFile: {
+            /** Accepted Count */
+            accepted_count: number;
+            /** Conclusion */
+            conclusion: ("PASS" | "NG" | "UNKNOWN" | "ERROR") | null;
+            /** File Version Id */
+            file_version_id: string;
+            /** Filename */
+            filename: string;
+            /** Machine Conclusion */
+            machine_conclusion: ("PASS" | "NG" | "UNKNOWN" | "ERROR") | null;
+            /** Pending Count */
+            pending_count: number;
+            report: components["schemas"]["SignoffReport"] | null;
+            /** Reviewed Count */
+            reviewed_count: number;
+            /** Rule Title */
+            rule_title: string | null;
+        };
+        /** SignoffReport */
+        SignoffReport: {
+            /** Report Id */
+            report_id: string;
+            /** Sha256 */
+            sha256: string | null;
+        };
+        /** SignoffReview */
+        SignoffReview: {
+            /** Item Key */
+            item_key: string;
+            /** Judgment */
+            judgment: string;
+            /** Version */
+            version: number;
+        };
+        /** SignoffSigner */
+        SignoffSigner: {
+            /** Mine */
+            mine: boolean;
+            /** Name */
+            name: string;
+        };
+        /** SignoffUnavailable */
+        SignoffUnavailable: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "not_creator" | "not_finished";
+            /** Message */
+            message: string;
+        };
+        /** SignoffUnreviewed */
+        SignoffUnreviewed: {
+            /** Clause Id */
+            clause_id: string;
+            /** File Version Id */
+            file_version_id: string;
+            /** Item Key */
+            item_key: string | null;
+            /** Outcome */
+            outcome: string;
         };
         /** StandardExecutionPolicy */
         StandardExecutionPolicy: {
@@ -9551,6 +9713,113 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReviewHistory"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_signoff_rounds__round_id__signoff_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoundSignoff"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sign_round_rounds__round_id__signoff_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** If Match */
+                    if_match?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoundSignoff"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    withdraw_signoff_rounds__round_id__signoff_withdraw_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Reason */
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoundSignoff"];
                 };
             };
             /** @description Validation Error */

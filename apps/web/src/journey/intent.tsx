@@ -29,6 +29,8 @@ function describe(intent: Intent): [string, string] {
   if (path.endsWith('/confirm')) return ['开始审核', '核对本页的文件、规则和预计点数后，点「开始审核」完成。']
   if (path.endsWith('/report')) return ['在飞书里生成报告文档', '核对本页的审核结果后，在「报告」里点「在飞书里生成报告文档」完成。']
   if (path.endsWith('/regenerations')) return ['重新生成报告', '在「报告」里打开这份报告，点「重生成同一结果」完成。']
+  if (path.endsWith('/signoff')) return ['签发这一轮', '点本页的「签发这一轮」，在确认框里核对文件与结论后完成。']
+  if (path.endsWith('/signoff/withdraw')) return ['撤回签发', '在本页点「撤回签发」，写明原因后完成。']
   if (path.endsWith('/cards')) return ['把问题卡片发给客户', '']
   if (path.endsWith('/clarified')) return ['标记这一修订已澄清', '']
   if (path.endsWith('/readings')) return ['发布条款解读', '']

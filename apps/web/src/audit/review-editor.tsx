@@ -12,12 +12,13 @@ import {Textarea} from '../components/ui/textarea'
 import {judgmentLabels} from '../journey/judgment-state'
 import {sameSnapshot} from './result-projection'
 import {showToast} from '../components/toast'
+import {signoffChanged} from './signoff-contract'
 
 export type AuditReviewAdapter = {read: (roundId: string) => Promise<ReviewRound>; save: (roundId: string, request: ReviewRequest) => Promise<ReviewRound>}
 type Target = {roundId: string; itemKey: string; title: string; files: {id: string; name: string}[]; attempt: number | null}
 type Level = 'A' | 'B' | 'C'
 type Values = Pick<ReviewRequest, 'judgment' | 'rationale' | 'next_step'> & {citations: components['schemas']['ReviewCitation'][]; severity: Level | 'keep'}
-type Draft = {target: Target; values: Values; phase: 'loading' | 'editing' | 'sending' | 'reading' | 'unknown' | 'conflict' | 'saved' | 'error'; message: string; observation: number; base?: ReviewRound; observed?: ReviewRound; request?: ReviewRequest; retryAllowed?: boolean}
+type Draft = {target: Target; values: Values; phase: 'loading' | 'editing' | 'sending' | 'reading' | 'unknown' | 'conflict' | 'saved' | 'error' | 'signed'; message: string; observation: number; base?: ReviewRound; observed?: ReviewRound; request?: ReviewRequest; retryAllowed?: boolean}
 type Presentation = {container?: HTMLElement; onContinue?: () => void}
 export const ReviewEditorContext = createContext<{open: (target: Target, presentation?: Presentation) => void; release: (roundId: string, itemKey: string) => void; revision: number} | null>(null)
 const keyOf = (target: Target) => JSON.stringify([target.roundId, target.itemKey])
@@ -57,7 +58,7 @@ export function AuditReviewProvider({adapter, children}: {adapter: AuditReviewAd
     if (current) {
       current.observation += 1
       if (unresolved(current)) {current.phase = 'unknown'; current.message = '保存结果尚未确认，请先核对。'}
-      else drafts.current.delete(selected!)
+      else if (current.phase !== 'signed') drafts.current.delete(selected!)
     }
     setSelected(null)
   }
@@ -85,6 +86,12 @@ export function AuditReviewProvider({adapter, children}: {adapter: AuditReviewAd
     } catch (cause) {
       if (!mounted.current || observation !== draft.observation) return
       const status = (cause as {status?: number}).status
+      if ((cause as {code?: string}).code === 'round_signed') {
+        // Signed meanwhile (#357): nothing was saved. The input stays; the page learns the round is signed.
+        draft.request = undefined; draft.phase = 'signed'; draft.message = '这一轮已经签发，这次复核没有保存。撤回签发后才能更正复核。'
+        window.dispatchEvent(new CustomEvent(signoffChanged, {detail: draft.target.roundId}))
+        refresh(); return
+      }
       draft.phase = request ? 'unknown' : 'error'
       draft.message = status === 403 ? '你目前没有此复核操作的权限。' : status === 401 ? '登录已失效，请恢复登录后重新核对。' : status === 409 ? '服务器记录已更新，请先核对保存结果。' : request ? '保存结果尚未确认，请先核对。' : cause instanceof Error ? cause.message : '暂时无法读取复核记录。'
     }
@@ -95,6 +102,8 @@ export function AuditReviewProvider({adapter, children}: {adapter: AuditReviewAd
     const key = keyOf(target)
     presentations.current.set(key, presentation)
     let draft = drafts.current.get(key)
+    // Refused as signed: opened again (after a withdrawal), the kept input is edited and saved anew.
+    if (draft?.phase === 'signed') {draft.phase = 'editing'; draft.message = ''}
     if (!draft) {
       draft = {target: structuredClone(target), values: {judgment: 'pending', rationale: '', next_step: '', citations: [], severity: 'keep'}, phase: 'loading', message: '', observation: 0}
       drafts.current.set(key, draft); void observe(draft, true)
@@ -128,9 +137,9 @@ export function AuditReviewProvider({adapter, children}: {adapter: AuditReviewAd
     <div className="grid gap-2"><Label htmlFor={`${id}-next`}>后续建议</Label><Input id={`${id}-next`} value={values.next_step} maxLength={2000} disabled={locked} onChange={event => change({next_step: event.target.value})}/></div>
     <section aria-label="复核引用" className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium">原件引用{values.judgment.startsWith('manual-') ? '（必填）' : '（选填）'}</h3><Button type="button" size="sm" variant="outline" disabled={locked || values.citations.length >= 20} onClick={() => change({citations: [...values.citations, {file_version_id: draft.target.files[0]?.id || '', location: '', excerpt: ''}]})}>添加引用</Button></div>{values.citations.map((cite, index) => <fieldset className="grid min-w-0 gap-3 border-t pt-3" key={index}><div className="flex min-w-0 items-center gap-2"><Select value={cite.file_version_id} disabled={locked} onValueChange={file_version_id => change({citations: values.citations.map((row, at) => at === index ? {...row, file_version_id} : row)})}><SelectTrigger className="min-w-0 flex-1" aria-label={`引用文件 ${index + 1}`}><SelectValue/></SelectTrigger><SelectContent>{draft.target.files.map(file => <SelectItem key={file.id} value={file.id}>{file.name}</SelectItem>)}</SelectContent></Select><Button type="button" variant="ghost" size="sm" disabled={locked} onClick={() => change({citations: values.citations.filter((_, at) => at !== index)})}>移除引用 {index + 1}</Button></div><Label htmlFor={`${id}-location-${index}`}>引用位置 {index + 1}</Label><Input id={`${id}-location-${index}`} value={cite.location} maxLength={4000} disabled={locked} onChange={event => change({citations: values.citations.map((row, at) => at === index ? {...row, location: event.target.value} : row)})}/><Label htmlFor={`${id}-excerpt-${index}`}>引用摘录 {index + 1}</Label><Textarea id={`${id}-excerpt-${index}`} value={cite.excerpt} maxLength={4000} disabled={locked} onChange={event => change({citations: values.citations.map((row, at) => at === index ? {...row, excerpt: event.target.value} : row)})}/></fieldset>)}</section>
     </>}
-    {draft.message && <Alert><AlertTitle>{draft.phase === 'saved' ? '已保存' : draft.phase === 'conflict' ? '复核版本有变化' : '请核对复核记录'}</AlertTitle><AlertDescription><p role="status">{draft.message}</p></AlertDescription></Alert>}
+    {draft.message && <Alert><AlertTitle>{draft.phase === 'saved' ? '已保存' : draft.phase === 'conflict' ? '复核版本有变化' : draft.phase === 'signed' ? '这一轮已签发' : '请核对复核记录'}</AlertTitle><AlertDescription><p role="status">{draft.message}</p></AlertDescription></Alert>}
     {draft.phase === 'conflict' && serverReview && <section aria-label="服务器复核记录" className="space-y-2 text-sm"><p className="font-medium">服务器复核 v{serverReview.version} · {Object.hasOwn(judgmentLabels, serverReview.judgment) ? judgmentLabels[serverReview.judgment as keyof typeof judgmentLabels] : serverReview.judgment}</p><p className="whitespace-pre-wrap">{serverReview.rationale}</p><p className="whitespace-pre-wrap">{serverReview.next_step}</p>{serverReview.citations?.map((cite, index) => <div key={index} className="space-y-1"><p>{draft.target.files.find(file => file.id === cite.file_version_id)?.name || '本轮外的引用'}</p><p className="whitespace-pre-wrap">{cite.location}</p><p className="whitespace-pre-wrap text-muted-foreground">{cite.excerpt}</p></div>)}<Button type="button" variant="outline" onClick={() => {draft.base = draft.observed; draft.request = undefined; draft.phase = 'editing'; draft.message = '当前输入尚未保存。'; refresh()}}>以服务器版本继续编辑</Button></section>}
-    <DialogFooter><Button type="button" variant="outline" onClick={close}>{draft.phase === 'saved' ? '完成' : unresolved(draft) ? '关闭，稍后核对' : '取消'}</Button>{draft.phase === 'editing' ? <><Button type="submit" disabled={!valid}>保存人工复核</Button>{presentations.current.get(selected!)?.onContinue && <Button type="button" disabled={!valid} onClick={() => save(true)}>保存并继续</Button>}</> : draft.phase === 'unknown' || draft.phase === 'error' ? <><Button type="button" onClick={() => void observe(draft, true)}>{draft.request ? '核对保存结果' : '重新读取复核记录'}</Button>{draft.retryAllowed && <Button type="button" variant="outline" onClick={() => void observe(draft, false)}>重试保存相同内容</Button>}</> : ['sending', 'reading'].includes(draft.phase) ? <Button disabled>{draft.phase === 'sending' ? '正在保存…' : '正在读取…'}</Button> : null}</DialogFooter>
+    <DialogFooter><Button type="button" variant="outline" onClick={close}>{draft.phase === 'saved' ? '完成' : unresolved(draft) ? '关闭，稍后核对' : draft.phase === 'signed' ? '关闭' : '取消'}</Button>{draft.phase === 'editing' ? <><Button type="submit" disabled={!valid}>保存人工复核</Button>{presentations.current.get(selected!)?.onContinue && <Button type="button" disabled={!valid} onClick={() => save(true)}>保存并继续</Button>}</> : draft.phase === 'unknown' || draft.phase === 'error' ? <><Button type="button" onClick={() => void observe(draft, true)}>{draft.request ? '核对保存结果' : '重新读取复核记录'}</Button>{draft.retryAllowed && <Button type="button" variant="outline" onClick={() => void observe(draft, false)}>重试保存相同内容</Button>}</> : ['sending', 'reading'].includes(draft.phase) ? <Button disabled>{draft.phase === 'sending' ? '正在保存…' : '正在读取…'}</Button> : null}</DialogFooter>
   </form>
   const container = selected ? presentations.current.get(selected)?.container : undefined
   return <ReviewEditorContext.Provider value={{open, release, revision}}>{children}{container?.isConnected ? createPortal(<section aria-label="人工复核编辑" className="border-t pt-4">{form}</section>, container) : <Dialog open={Boolean(draft)} onOpenChange={value => {if (!value) close()}}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl" onCloseAutoFocus={event => {event.preventDefault(); if (trigger.current?.isConnected) trigger.current.focus()}}><DialogHeader><DialogTitle>人工复核</DialogTitle><DialogDescription>记录人工判断，不改变机器结果或正式报告资格；更正后，原来的复核保留在历史里。</DialogDescription></DialogHeader>{form}</DialogContent></Dialog>}</ReviewEditorContext.Provider>

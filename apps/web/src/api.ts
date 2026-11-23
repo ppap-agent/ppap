@@ -68,6 +68,12 @@ const messages: Record<string,string> = {
   content_changed: '报告内容刚刚有更新，已显示最新内容，请再确认一次。',
   feishu_user_token_missing: '请重新用飞书登录后再生成报告文档。',
   proposal_outdated: '这一步已经变化，请回到客户端按最新状态重新发起。',
+  round_signed: '这一轮已经签发，撤回签发后才能更正复核。',
+  round_already_signed: '这一轮已经签发，已显示最新状态。',
+  round_not_signed: '这一轮已经不是签发状态，已显示最新状态。',
+  round_not_finished: '审核结束、报告生成完后才能签发。',
+  withdraw_reason_required: '请写明撤回原因。',
+  withdraw_reason_too_long: '撤回原因最多 500 字。',
 }
 
 /** A signing action an external client proposed (#348): the request that completes it names it, and only that one. */
