@@ -645,7 +645,15 @@ def summary(phase: str, result: dict, first: dict | None) -> str:
 def next_action(task_id: str, phase: str, first: dict | None, waiting: int) -> dict:
     if first is None:
         if waiting:
-            return {"kind": "wait", "observe_with": "get_task", "arguments": {"task_id": task_id}, "check_after_ms": WAIT_FOR_ANSWERS_MS, "reason": "waiting_for_customer_answers"}
+            # A client does not wake up by itself an hour later: the answers reach the people preparing it on Feishu (#354).
+            return {
+                "kind": "wait",
+                "observe_with": "get_task",
+                "arguments": {"task_id": task_id},
+                "check_after_ms": WAIT_FOR_ANSWERS_MS,
+                "reason": "waiting_for_customer_answers",
+                "message": "客户答复到达时，平台负责人和这个澄清任务的准备人会收到飞书通知；收到后让 AI 继续即可，不必反复查看。",
+            }
         return {"kind": "done", "goal_status": "achieved"}
     offered = {action["id"] for action in first["allowed_actions"]}
     if first["code"] in _ASK and not offered & CONFIRM:

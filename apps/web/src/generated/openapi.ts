@@ -1419,6 +1419,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/receipts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Receipts */
+        get: operations["list_receipts_receipts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/receipts/{receipt_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Receipt */
+        get: operations["read_receipt_receipts__receipt_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/receipts/{receipt_id}/pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Receipt Pdf */
+        get: operations["receipt_pdf_receipts__receipt_id__pdf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/review-hints/responses": {
         parameters: {
             query?: never;
@@ -1599,6 +1650,26 @@ export interface paths {
         /** Read Rule Questionnaire */
         get: operations["read_rule_questionnaire_rule_questionnaires__questionnaire_id__get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rule-questionnaires/{questionnaire_id}/answer-alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Rule Answer Alerts
+         * @description 「这个版本不再提醒」: one person's own choice for the questionnaire's rulebook version; the answers stay readable here.
+         */
+        put: operations["set_rule_answer_alerts_rule_questionnaires__questionnaire_id__answer_alerts_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -4361,6 +4432,50 @@ export interface components {
             /** User Quota */
             user_quota?: number;
         };
+        /** Receipt */
+        Receipt: {
+            /** Action */
+            action: string;
+            /** At */
+            at: string;
+            /** Details */
+            details: string[];
+            /** Id */
+            id: string;
+            /** Number */
+            number: string;
+            outcome: components["schemas"]["ReceiptOutcome"];
+            points: components["schemas"]["ReceiptPoints"] | null;
+            /** Subject */
+            subject: string;
+            /** Task Id */
+            task_id: string | null;
+            /** Via */
+            via: string;
+        };
+        /** ReceiptList */
+        ReceiptList: {
+            /** Next Offset */
+            next_offset: number | null;
+            /** Receipts */
+            receipts: components["schemas"]["Receipt"][];
+        };
+        /** ReceiptOutcome */
+        ReceiptOutcome: {
+            /** Error */
+            error?: string | null;
+            /** State */
+            state: string;
+            /** Text */
+            text: string;
+        };
+        /** ReceiptPoints */
+        ReceiptPoints: {
+            /** Points */
+            points: number | null;
+            /** State */
+            state: string;
+        };
         /** RelatedAuditTask */
         RelatedAuditTask: {
             /** Id */
@@ -4623,6 +4738,14 @@ export interface components {
             title: string;
             /** Type */
             type: string | null;
+        };
+        /**
+         * RuleAnswerAlerts
+         * @description Whether this reader is told on Feishu when answers arrive on the version (#354), and has turned it off for it.
+         */
+        RuleAnswerAlerts: {
+            /** Muted */
+            muted: boolean;
         };
         /** RuleAnswerReceipt */
         RuleAnswerReceipt: {
@@ -5033,6 +5156,7 @@ export interface components {
         };
         /** RuleQuestionnaireView */
         RuleQuestionnaireView: {
+            answer_alerts: components["schemas"]["RuleAnswerAlerts"] | null;
             /** Answered */
             answered: number;
             /** Closed */
@@ -8889,6 +9013,100 @@ export interface operations {
             };
         };
     };
+    list_receipts_receipts_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReceiptList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_receipt_receipts__receipt_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                receipt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Receipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    receipt_pdf_receipts__receipt_id__pdf_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                receipt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     review_hint_counts_review_hints_responses_get: {
         parameters: {
             query?: never;
@@ -9298,6 +9516,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuleQuestionnaireView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_rule_answer_alerts_rule_questionnaires__questionnaire_id__answer_alerts_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionnaire_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Muted */
+                    muted: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleAnswerAlerts"];
                 };
             };
             /** @description Validation Error */

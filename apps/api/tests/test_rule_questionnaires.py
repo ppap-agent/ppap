@@ -6,14 +6,19 @@ questionnaire or its cards, and no model, rule, checker or audit result is invol
 
 import json
 import uuid
+from html import unescape
+from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import psycopg
 import pytest
 from api import create_app
+from api.notifications import dispatch_answer_notification
 from fastapi.testclient import TestClient
-from product import build_product_store
+from product import build_product_store, clarification
 from product.identity import SESSION_COOKIE
 from product.settings import Settings
+from product.store.workflows import WorkflowStore
 
 CARDS = [
     {
@@ -40,12 +45,14 @@ CARDS = [
 ]
 
 
-def fixture(auth_store_factory):
-    store = auth_store_factory(Settings(feishu_app_id="rule-questionnaires", usage_charge_enabled=False))
+def fixture(auth_store_factory, **settings):
+    store = auth_store_factory(Settings(feishu_app_id="rule-questionnaires", usage_charge_enabled=False, **settings))
     people = {
         "zhang": store.upsert_feishu_identity("uaes-t", "ou_zhang", "张三"),
         "li": store.upsert_feishu_identity("uaes-t", "ou_li", "李四"),
         "other": store.upsert_feishu_identity("other-t", "ou_wang", "王五"),
+        "owner": store.upsert_feishu_identity("uaes-t", "ou_owner", "负责人"),
+        "reviewer": store.upsert_feishu_identity("uaes-t", "ou_reviewer", "审查人"),
     }
     api_store = build_product_store(store.settings, objects=store.objects, role="api")
 
@@ -196,3 +203,98 @@ def test_each_rulebook_revision_carries_its_own_questionnaire(auth_store_factory
     listed = client("zhang").get("/rule-questionnaires").json()["questionnaires"]
     assert sorted((row["rulebook"]["version"], row["rulebook"]["revision"]) for row in listed) == [("v1.0", 0), ("v1.0", 1)]
     assert first in {row["id"] for row in listed}
+
+
+def notices(store) -> list[tuple[str, str, dict]]:
+    with store._conn() as conn:
+        rows = conn.execute("SELECT status, result->>'state', payload FROM engine.jobs WHERE kind='rule_answers_notification' ORDER BY created_at, id").fetchall()
+    return [(row[0], row[1], row[2]) for row in rows]
+
+
+class Feishu:
+    """The Feishu message API: records each send; `lose` drops the reply, so the send's outcome stays unknown."""
+
+    def __init__(self):
+        self.sent: list[dict] = []
+        self.lose = False
+
+    def __call__(self, request):
+        self.sent.append(json.loads(request.content))
+        if self.lose:
+            raise httpx.ReadTimeout("reply lost", request=request)
+        return httpx.Response(200, json={"code": 0, "data": {"message_id": f"om_{len(self.sent)}"}})
+
+    def card(self, index: int) -> tuple[str, str, str]:
+        """Who it went to, what the card says, and the page its button opens."""
+        card = json.loads(self.sent[index]["content"])
+        link = card["body"]["elements"][-1]["behaviors"][0]["default_url"]
+        return self.sent[index]["receive_id"], unescape(card["body"]["elements"][0]["content"]), parse_qs(urlsplit(link).query)["return_to"][0]
+
+
+def test_answers_on_a_version_being_clarified_reach_who_prepares_it_on_feishu_at_most_every_ten_minutes(auth_store_factory, monkeypatch):
+    """#354: an answer queues a notice in its own transaction for whoever opened the version's clarification and the platform
+    operators; answers within ten minutes are told together; a person can turn it off for the version."""
+    store, api_store, people, client = fixture(auth_store_factory, platform_operators="uaes-t:ou_owner")
+    zhang, li, owner, reviewer, other = (client(name) for name in ("zhang", "li", "owner", "reviewer", "other"))
+    tenant, owner_id, reviewer_id = people["zhang"].tenant_id, people["owner"].user_id, people["reviewer"].user_id
+    qid = load(store, tenant)
+    view = f"/rule-questionnaires/{qid}"
+
+    # Nobody is clarifying this version: an answer tells nobody, and nobody is offered the setting.
+    assert answer(zhang, qid, "CP:8#8.1", text="出现并有控制方法").status_code == 200
+    assert notices(store) == [] and owner.get(view).json()["answer_alerts"] is None
+
+    # The reviewer opens the clarification; from now on they and the platform operator hear about answers, the answerer does not.
+    WorkflowStore(api_store).open_shared(people["reviewer"], clarification.task_id_for(tenant, "uaes", "v1.0"), clarification.new_state("uaes", "v1.0"))
+    assert answer(zhang, qid, "common:模板", choice="A").status_code == 200
+    queued = notices(store)
+    assert sorted(payload["user_id"] for _, _, payload in queued) == sorted([owner_id, reviewer_id])
+    assert {(status, payload["customer_id"], payload["questionnaire_id"], json.dumps(payload["rulebook"])) for status, _, payload in queued} == {
+        ("queued", "uaes", qid, json.dumps({"version": "v1.0", "revision": 0}))
+    }
+    # A second answer within ten minutes adds no notice: the one not sent yet tells it too.
+    assert answer(li, qid, "PKG:1#1", choice="relayed").status_code == 200
+    assert len(notices(store)) == 2
+    assert [client.get(view).json()["answer_alerts"] for client in (owner, reviewer, zhang)] == [{"muted": False}, {"muted": False}, None]
+
+    # The operator turns it off for this version; only they are affected, and the answers stay readable.
+    path = f"/rule-questionnaires/{qid}/answer-alerts"
+    assert owner.put(path, json={"muted": True}).json() == {"muted": True}
+    assert owner.get(view).json()["answer_alerts"] == {"muted": True} and reviewer.get(view).json()["answer_alerts"] == {"muted": False}
+    assert len(owner.get(view).json()["questions"][0]["answers"]) == 1
+    assert owner.put(path, json={"muted": "yes"}).json() == {"error": "invalid_answer_alerts_request"}
+    assert (other.put(path, json={"muted": True}).status_code, other.get(view).status_code) == (403, 403)
+
+    # Sending: the operator's notice queued before they turned it off is dropped unsent; the reviewer's goes out once,
+    # naming the cards answered and who answered them, and opening the first of those cards on the rules page.
+    feishu = Feishu()
+    monkeypatch.setattr("api.notifications.tenant_access_token", lambda *args: "tenant-token")
+    settings = api_store.settings.model_copy(update={"feishu_app_secret": "secret", "feishu_notifications_enabled": True})
+    web = settings.canonical_web_url()
+    with httpx.Client(transport=httpx.MockTransport(feishu)) as http:
+        while dispatch_answer_notification(api_store, http, settings, "notifier"):
+            pass
+        assert len(feishu.sent) == 1
+        receiver, text, page = feishu.card(0)
+        assert receiver == "ou_reviewer" and "v1.0 修订 0 有 2 张卡片收到答复（张三、李四）" in text
+        assert page == f"{web}/requirements?template=uaes&ruleQuestions={qid}#common%3A%E6%A8%A1%E6%9D%BF"
+        assert sorted((status, state, payload["user_id"]) for status, state, payload in notices(store)) == sorted([("cancelled", "suppressed", owner_id), ("succeeded", "sent", reviewer_id)])
+
+        # Within ten minutes of that notice, the next answers wait for the ten minutes to be up and go out as one more notice;
+        # the operator who turned it off gets nothing.
+        assert answer(zhang, qid, "CP:8#8.1", expected=1, text="有控制方法即可").status_code == 200
+        assert answer(li, qid, "CP:8#8.1", choice=None, text="同意").status_code == 200
+        later = notices(store)[2:]
+        assert [(status, payload["user_id"]) for status, _, payload in later] == [("queued", reviewer_id)]
+        assert not dispatch_answer_notification(api_store, http, settings, "notifier") and len(feishu.sent) == 1
+        with store._conn() as conn:
+            conn.execute("UPDATE engine.jobs SET lease_until=now() - interval '1 second' WHERE kind='rule_answers_notification' AND status='queued'")
+        # Its reply is lost: the outcome stays unknown and the notice is never sent again.
+        feishu.lose = True
+        while dispatch_answer_notification(api_store, http, settings, "notifier"):
+            pass
+        assert len(feishu.sent) == 2
+        receiver, text, page = feishu.card(1)
+        assert receiver == "ou_reviewer" and "v1.0 修订 0 有 1 张卡片收到答复（张三、李四）" in text and page.endswith("#CP%3A8%238.1")
+        assert [(status, state) for status, state, _ in notices(store)[2:]] == [("leased", "unknown")]
+        assert not dispatch_answer_notification(api_store, http, settings, "notifier") and len(feishu.sent) == 2

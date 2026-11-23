@@ -123,7 +123,8 @@ def test_one_round_of_questions_takes_two_confirmations():
     (finding,) = state["reviews"]["A:1"]["findings"]
     assert card == questionnaire.clause_card(finding, questionnaire.clause_name("A 文件", "A:1"), "须已签名", 0)
     found = take(found, first)
-    assert c.project(TASK, state, found)["phase"] == "awaiting_answers"
+    waiting = c.project(TASK, state, found)
+    assert waiting["phase"] == "awaiting_answers" and "飞书通知" in waiting["next"]["message"]
 
     # Two people answer differently: the task says so and leaves the choice to a person.
     split = answer(found, "A:1#1", ("张三", "A"), ("李四", "B"))

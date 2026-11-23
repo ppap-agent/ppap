@@ -74,6 +74,7 @@ LEFT_TO_WEB = {
     "/rulebooks/{}/{}/{}/readings": "单步发布解读留给网页；MCP 的澄清按计划一次确认（/rulebooks/{}/plan）",
     "/rule-questionnaires/{}/answers": "规则确认问卷由客户成员在网页作答；MCP 只读答复",
     "/rule-questionnaires/{}/answers/": "规则确认问卷由客户成员在网页作答；MCP 只读答复",
+    "/rule-questionnaires/{}/answer-alerts": "「这个版本不再提醒」是本人在网页规则页的设置",
     "/suites": "平台运营查看与采用检查程序的内部入口",
     "/suites/": "平台运营查看与采用检查程序的内部入口",
     "/suite-revisions/": "平台运营查看检查程序修订的内部入口",

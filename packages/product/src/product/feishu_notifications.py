@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from product.customers import customer_name
 from product.feishu_drive import OPEN_API
@@ -180,6 +180,45 @@ def rule_cards_card(customer: str, customer_id: str, rulebook: dict, added: int,
                 {
                     "tag": "button",
                     "text": {"tag": "plain_text", "content": "去作答"},
+                    "type": "primary_filled",
+                    "size": "large",
+                    "width": "fill",
+                    "behaviors": [{"type": "open_url", "default_url": link}],
+                },
+            ],
+        },
+    }
+
+
+def rule_answers_card(customer: str, claimed: dict, web_url: str) -> dict:
+    """Answers arrived on a rulebook version being clarified (#354), for whoever prepares it. It opens the first answered
+    card on the rules page; turning these off is on that page (a card button waits for the new card callback, #218)."""
+    rulebook = claimed["rulebook"]
+    revision = f"{rulebook['version']} 修订 {rulebook['revision']}"
+    names = claimed["answerers"]
+    who = "、".join(names[:3]) + (f" 等 {len(names)} 人" if len(names) > 3 else "")
+    target = web_url.rstrip("/") + "/requirements?" + urlencode({"template": claimed["customer_id"], "ruleQuestions": claimed["questionnaire_id"]}) + "#" + quote(claimed["first_card"], safe="")
+    link = web_url.rstrip("/") + "/enter-current?" + urlencode({"return_to": target})
+    summary = f"{revision} 有 {claimed['cards']} 张卡片收到答复（{who}）"
+    return {
+        "schema": "2.0",
+        "config": {"summary": {"content": summary}},
+        "header": {
+            "template": "blue",
+            "title": {"tag": "plain_text", "content": "规则澄清收到答复"},
+            "subtitle": {"tag": "plain_text", "content": f"{customer} 规则库 {revision}"},
+            "padding": "12px 16px 12px 16px",
+        },
+        "body": {
+            "direction": "vertical",
+            "padding": "16px",
+            "vertical_spacing": "12px",
+            "elements": [
+                {"tag": "markdown", "content": _markdown(summary) + "。<br>看过答复后，让 AI 继续澄清即可。"},
+                {"tag": "markdown", "content": "<font color='grey'>不想再收到这个版本的提醒，可在规则页点「这个版本不再提醒」。</font>"},
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "查看答复"},
                     "type": "primary_filled",
                     "size": "large",
                     "width": "fill",

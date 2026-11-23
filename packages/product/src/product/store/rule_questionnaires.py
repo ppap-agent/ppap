@@ -9,13 +9,14 @@ checkers or audit results.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4, uuid5
 
 from psycopg import errors
 from psycopg.types.json import Jsonb
 
 from product import customers
+from product.clarification import task_id_for
 
 RELAYED = "relayed"  # the choice that confirms the answer already relayed on the card
 
@@ -132,7 +133,7 @@ def read_questionnaire(store, principal, questionnaire_id) -> dict:
         head = _questionnaire(conn, principal, questionnaire_id)
         answers = _answers(store, conn, principal, questionnaire_id)
         questions = [{**card, "answers": [{k: v for k, v in entry.items() if k != "_user"} for entry in answers.get(card["key"], [])]} for card in _cards(conn, questionnaire_id)]
-        return {**_summary(conn, principal, head), "questions": questions}
+        return {**_summary(conn, principal, head), "questions": questions, "answer_alerts": _answer_alerts(store, conn, principal, head)}
 
 
 def _text(value, limit: int) -> str | None:
@@ -210,18 +211,160 @@ def answer(store, principal, questionnaire_id, payload) -> dict:
         ).fetchone()[0]
         if current != expected:
             raise ValueError("answer_revision_conflict")
+        answered_at = datetime.now(timezone.utc)
         try:
             # The database refuses an answer to a questionnaire closed meanwhile; closing waits for this one.
             conn.execute(
                 """INSERT INTO product.rule_question_answers(operation_id,tenant_id,questionnaire_id,question_key,answered_by,revision,choice,answer_text,note,request,answered_at)
                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (operation_id, principal.tenant_id, questionnaire_id, key, principal.user_id, current + 1, choice, text, note, Jsonb(request), datetime.now(timezone.utc)),
+                (operation_id, principal.tenant_id, questionnaire_id, key, principal.user_id, current + 1, choice, text, note, Jsonb(request), answered_at),
             )
         except errors.CheckViolation as exc:
             if exc.diag.message_primary == "questionnaire_closed":
                 raise ValueError("questionnaire_closed") from None
             raise
+        _queue_answer_alerts(store, conn, principal, head, operation_id, answered_at)
         return _saved(store, conn, principal, operation_id)
+
+
+# ---- answers arriving on a version being clarified (#354) --------------------------------------------------------
+
+ALERT_WINDOW = timedelta(minutes=10)  # at most one notice per person and revision in this time
+
+
+def _alert_lock(conn, questionnaire_id: str) -> None:
+    """Answers and the notifier take turns on one questionnaire's notices, so each answer is told exactly once."""
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"rule-answer-alert:{questionnaire_id}",))
+
+
+def _alerted(store, conn, tenant_id: str, customer_id: str, version: str) -> set[str]:
+    """Who hears that customer answers arrived on a version being clarified: whoever opened its clarification task and
+    the enterprise's platform operators. A version nobody is clarifying tells nobody."""
+    task = conn.execute("SELECT created_by FROM product.audit_workflows WHERE id=%s AND tenant_id=%s", (task_id_for(tenant_id, customer_id, version), tenant_id)).fetchone()
+    if task is None:
+        return set()
+    operators = [f"{tenant_key}:{subject}" for tenant_key, subject in store.settings.platform_operator_identities()]
+    rows = conn.execute(
+        """SELECT i.user_id FROM product.identities i JOIN product.tenants t ON t.provider=i.provider AND t.external_key=i.tenant_key
+           JOIN product.memberships m ON m.user_id=i.user_id AND m.tenant_id=t.id
+           WHERE t.id=%s AND i.app_id=%s AND i.tenant_key || ':' || i.subject = ANY(%s)""",
+        (tenant_id, store.settings.feishu_app_id, operators),
+    ).fetchall()
+    return {str(task[0])} | {str(row[0]) for row in rows}
+
+
+def _muted(conn, tenant_id: str, customer_id: str, version: str) -> set[str]:
+    rows = conn.execute("SELECT user_id FROM product.rule_answer_alerts WHERE tenant_id=%s AND customer_id=%s AND rulebook_version=%s AND muted", (tenant_id, customer_id, version)).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def _queue_answer_alerts(store, conn, principal, head: dict, operation_id: str, answered_at: datetime) -> None:
+    """In the answer's own transaction: a notice to each person who hears about answers on this version, sent later by the
+    API notifier. The first goes out at once; answers within ten minutes after it are told together in one more notice
+    when the ten minutes are up, so nobody gets a message per answer and no answer goes untold."""
+    version = head["rulebook"]["version"]
+    people = _alerted(store, conn, principal.tenant_id, head["customer_id"], version) - _muted(conn, principal.tenant_id, head["customer_id"], version) - {principal.user_id}
+    if not people:
+        return
+    _alert_lock(conn, head["id"])
+    for user in sorted(people):
+        last = conn.execute(
+            """SELECT id, status, payload->>'due' FROM engine.jobs WHERE tenant_id=%s AND kind='rule_answers_notification'
+               AND payload->>'questionnaire_id'=%s AND payload->>'user_id'=%s ORDER BY created_at DESC, id DESC LIMIT 1""",
+            (principal.tenant_id, head["id"], user),
+        ).fetchone()
+        if last is not None and last[1] == "queued":
+            continue  # not sent yet: it tells this answer too
+        due, ident = answered_at, uuid5(UUID(head["id"]), f"answers:{user}:{operation_id}")
+        if last is not None and datetime.fromisoformat(last[2]) + ALERT_WINDOW > answered_at:
+            due, ident = datetime.fromisoformat(last[2]) + ALERT_WINDOW, uuid5(UUID(head["id"]), f"answers:{user}:after:{last[0]}")
+        payload = {"questionnaire_id": head["id"], "user_id": user, "customer_id": head["customer_id"], "rulebook": head["rulebook"], "since": answered_at.isoformat(), "due": due.isoformat()}
+        conn.execute(
+            """INSERT INTO engine.jobs (id, tenant_id, kind, payload, status, result, lease_until, created_at)
+               VALUES (%s, %s, 'rule_answers_notification', %s, 'queued', '{"state":"queued","reason":null}'::jsonb, %s, clock_timestamp()) ON CONFLICT DO NOTHING""",
+            (str(ident), principal.tenant_id, Jsonb(payload), due if due > answered_at else None),
+        )
+
+
+def _answer_alerts(store, conn, principal, head: dict) -> dict | None:
+    """Whether this reader hears about answers on the questionnaire's version, and has turned it off; None: they never do."""
+    version = head["rulebook"]["version"]
+    if principal.user_id not in _alerted(store, conn, principal.tenant_id, head["customer_id"], version):
+        return None
+    return {"muted": principal.user_id in _muted(conn, principal.tenant_id, head["customer_id"], version)}
+
+
+def set_answer_alerts(store, principal, questionnaire_id, payload) -> dict:
+    """「这个版本不再提醒」 and back: one person's choice for every revision of the questionnaire's rulebook version."""
+    questionnaire_id = _uuid(questionnaire_id)
+    if not isinstance(payload, dict) or set(payload) != {"muted"} or type(payload["muted"]) is not bool:
+        raise ValueError("invalid_answer_alerts_request")
+    with store._conn() as conn, conn.transaction():
+        _member(conn, principal, write=True)
+        head = _questionnaire(conn, principal, questionnaire_id)
+        conn.execute(
+            """INSERT INTO product.rule_answer_alerts(tenant_id, user_id, customer_id, rulebook_version, muted) VALUES (%s,%s,%s,%s,%s)
+               ON CONFLICT (tenant_id, user_id, customer_id, rulebook_version) DO UPDATE SET muted=EXCLUDED.muted, updated_at=now()""",
+            (principal.tenant_id, principal.user_id, head["customer_id"], head["rulebook"]["version"], payload["muted"]),
+        )
+        return {"muted": payload["muted"]}
+
+
+def claim_answer_notification(store, worker_ident: str) -> dict | None:
+    """One due notice of answers, with what it tells: the cards answered since it was queued and who answered them. A
+    person who has since turned it off, or no longer hears about this version, is not sent anything: that notice is
+    dropped and the next due one is looked at."""
+    while True:
+        with store._conn() as conn, conn.transaction():
+            row = conn.execute(
+                """SELECT id, tenant_id, payload FROM engine.jobs WHERE kind='rule_answers_notification' AND status='queued'
+                   AND (lease_until IS NULL OR lease_until < now()) ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1""",
+            ).fetchone()
+            if row is None:
+                return None
+            ident, tenant_id, payload = str(row[0]), str(row[1]), row[2]
+            _alert_lock(conn, payload["questionnaire_id"])
+            customer, version, user = payload["customer_id"], payload["rulebook"]["version"], payload["user_id"]
+            identity = conn.execute(
+                """SELECT i.tenant_key, i.subject FROM product.identities i JOIN product.tenants t ON t.provider=i.provider AND t.external_key=i.tenant_key
+                   JOIN product.memberships m ON m.user_id=i.user_id AND m.tenant_id=t.id WHERE i.user_id=%s AND t.id=%s AND i.app_id=%s""",
+                (user, tenant_id, store.settings.feishu_app_id),
+            ).fetchone()
+            answers = conn.execute(
+                """SELECT a.question_key, a.answered_by, q.position FROM product.rule_question_answers a
+                   JOIN product.rule_questions q ON q.questionnaire_id=a.questionnaire_id AND q.question_key=a.question_key
+                   WHERE a.questionnaire_id=%s AND a.answered_by<>%s AND a.answered_at>=%s ORDER BY a.answered_at, a.operation_id""",
+                (payload["questionnaire_id"], user, datetime.fromisoformat(payload["since"])),
+            ).fetchall()
+            dropped = (
+                "alerts_off"
+                if user not in _alerted(store, conn, tenant_id, customer, version) - _muted(conn, tenant_id, customer, version)
+                else "recipient_unavailable"
+                if identity is None
+                else "nothing_to_tell"
+                if not answers
+                else None
+            )
+            if dropped:
+                conn.execute("UPDATE engine.jobs SET status='cancelled', result=%s, lease_until=NULL, updated_at=now() WHERE id=%s", (Jsonb({"state": "suppressed", "reason": dropped}), ident))
+                continue
+            conn.execute(
+                """UPDATE engine.jobs SET status='leased', attempt=attempt+1, lease_owner=%s, lease_until=now()+interval '90 seconds',
+                   result='{"state":"dispatching","reason":null}'::jsonb, updated_at=now() WHERE id=%s""",
+                (worker_ident, ident),
+            )
+            answerers = list(dict.fromkeys(str(answer[1]) for answer in answers))
+            return {
+                "id": ident,
+                "kind": "rule_answers_notification",
+                "tenant_key": identity[0],
+                "receive_id": identity[1],
+                "worker": worker_ident,
+                **payload,
+                "cards": len({answer[0] for answer in answers}),
+                "first_card": min(answers, key=lambda answer: answer[2])[0],
+                "answerers": [store._display_name(conn, tenant_id, person) or "未署名成员" for person in answerers],
+            }
 
 
 def read_answer_operation(store, principal, questionnaire_id, operation_id) -> dict | None:
@@ -337,14 +480,14 @@ def claim_card_notification(store, worker_ident: str) -> dict | None:
                 (row[0],),
             )
             return None
-        return {"id": str(row[0]), "tenant_key": identity[0], "receive_id": identity[1], "worker": worker_ident, **row[2]}
+        return {"id": str(row[0]), "kind": "rule_cards_notification", "tenant_key": identity[0], "receive_id": identity[1], "worker": worker_ident, **row[2]}
 
 
-def finish_card_notification(store, claimed: dict, receipt: dict) -> None:
-    """A send whose outcome is unknown is never repeated: it stays leased and is recorded as unknown."""
+def finish_notification(store, claimed: dict, receipt: dict) -> None:
+    """A claimed rule notice's send. One whose outcome is unknown is never repeated: it stays leased and is recorded as unknown."""
     status = {"sent": "succeeded", "failed": "failed", "unknown": "leased"}[receipt["state"]]
     with store._conn() as conn, conn.transaction():
         conn.execute(
-            "UPDATE engine.jobs SET status=%s, result=%s, lease_until=NULL, updated_at=now() WHERE id=%s AND lease_owner=%s AND kind='rule_cards_notification'",
-            (status, Jsonb(receipt), claimed["id"], claimed["worker"]),
+            "UPDATE engine.jobs SET status=%s, result=%s, lease_until=NULL, updated_at=now() WHERE id=%s AND lease_owner=%s AND kind=%s",
+            (status, Jsonb(receipt), claimed["id"], claimed["worker"], claimed["kind"]),
         )

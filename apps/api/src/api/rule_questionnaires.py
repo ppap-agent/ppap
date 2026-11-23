@@ -116,8 +116,20 @@ class RuleCardsReceipt(RuleQuestionnaireSummary):
     notified: int
 
 
+class RuleAnswerAlerts(BaseModel):
+    """Whether this reader is told on Feishu when answers arrive on the version (#354), and has turned it off for it."""
+
+    muted: bool
+
+
+class RuleAnswerAlertsRequest(BaseModel):
+    muted: bool
+
+
 class RuleQuestionnaireView(RuleQuestionnaireSummary):
     questions: list[RuleQuestion]
+    # Only for who is told when answers arrive: whoever prepares the version's clarification and the platform operators.
+    answer_alerts: RuleAnswerAlerts | None
 
 
 class RuleAnswerRequest(BaseModel):
@@ -169,6 +181,11 @@ def register_rule_questionnaire_routes(app: FastAPI, store, principal_of) -> Non
     @app.post("/rule-questionnaires/{questionnaire_id}/answers", response_model=RuleAnswerReceipt, openapi_extra=wc.openapi_body(RuleAnswerRequest))
     def answer_rule_question(questionnaire_id: str, request: Request, body: Any = Body(...)):
         return call(request, lambda principal: questionnaires.answer(store, principal, questionnaire_id, body))
+
+    @app.put("/rule-questionnaires/{questionnaire_id}/answer-alerts", response_model=RuleAnswerAlerts, openapi_extra=wc.openapi_body(RuleAnswerAlertsRequest))
+    def set_rule_answer_alerts(questionnaire_id: str, request: Request, body: Any = Body(...)):
+        """「这个版本不再提醒」: one person's own choice for the questionnaire's rulebook version; the answers stay readable here."""
+        return call(request, lambda principal: questionnaires.set_answer_alerts(store, principal, questionnaire_id, body))
 
     @app.get("/rule-questionnaires/{questionnaire_id}/answers/{operation_id}", response_model=RuleAnswerReceipt | None)
     def read_rule_answer_operation(questionnaire_id: str, operation_id: str, request: Request):

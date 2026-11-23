@@ -11,6 +11,7 @@ import {RadioGroup, RadioGroupItem} from '../components/ui/radio-group'
 import {Textarea} from '../components/ui/textarea'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {message} from '../journey/remote'
+import {AnswerAlertsSetting} from './rule-answer-alerts'
 import {followRulesLink, rulesAddress} from './rule-templates-view'
 import {applyReceipt, checkedReceipt, choiceLabel, groupQuestions, questionnaireVersionLabel, RELAYED, type AnswerReceipt, type AnswerRequest, type Question, type QuestionAnswer, type QuestionnaireList, type QuestionnaireSummary, type QuestionnaireView} from './rule-questions-contract'
 
@@ -81,6 +82,7 @@ export function RuleQuestionnairePage({questionnaireId}: {questionnaireId: strin
       <a className="w-fit text-sm text-primary hover:underline" href={rulesAddress({template: view.customer_id})} onClick={event => followRulesLink(event, rulesAddress({template: view.customer_id}))}>{view.customer_name}</a>
       <h1 className="text-xl font-semibold">{questionnaireVersionLabel(view)} 待确认问题</h1>
       <p className="text-sm tabular-nums text-muted-foreground">{progress(view)} · 我答了 {view.mine} 题</p>
+      {view.answer_alerts && <AnswerAlertsSetting questionnaireId={view.id} alerts={view.answer_alerts} onChange={alerts => setView(current => current && {...current, answer_alerts: alerts})}/>}
       <nav aria-label="分组"><ul className="grid gap-1">{groups.map(group => <li key={group.key}>
         <button type="button" aria-current={group.key === active ? 'true' : undefined} aria-describedby={`rq-nav-${group.key}`} onClick={() => jump(group.key)} className={`flex h-10 w-full items-center justify-between rounded-md px-3 text-left text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${group.key === active ? 'bg-primary-soft font-semibold text-primary' : 'hover:bg-muted'}`}>
           {group.label}<span id={`rq-nav-${group.key}`} className="tabular-nums">{group.answered} / {group.questions.length}</span>
