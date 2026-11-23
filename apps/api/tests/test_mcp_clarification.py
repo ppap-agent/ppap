@@ -137,6 +137,13 @@ def test_a_round_reaches_the_customer_only_through_the_operators_approval(auth_s
 
     # The versions a client can open are listed under the same customer key the tool takes.
     assert reviewer.call("get_account")["result"]["rulebooks"]["UAES"] == [{"version": "v9.0", "revision": 0, "clause_count": 2, "clarified": False}]
+    # The clauses read word for word, grouped by document type, with the digest the rules page shows; paged on request.
+    book = member.call("get_rulebook", customer="UAES", version="v9.0")["result"]
+    assert (book["revision"], book["clauses_total"], book["next_offset"]) == (0, 2, None)
+    assert [(d["key"], [(c["id"], c["text"]) for c in d["clauses"]]) for d in book["documents"]] == [("A", [("A:1", "须已签名"), ("A:2", "须盖章")])]
+    assert all(c["digest"] for d in book["documents"] for c in d["clauses"])
+    assert member.call("get_rulebook", customer="UAES", version="v9.0", revision=0, offset=1, limit=1)["result"]["documents"][0]["clauses"][0]["id"] == "A:2"
+    assert member.call("get_rulebook", customer="UAES", version="v8.0")["next"]["reason"] == "rulebook_version_not_found"
 
     # The enterprise has one task for this version: the reviewer and the operator see the same one.
     task = reviewer.call("prepare_rule_clarification", customer="UAES", version="v9.0")

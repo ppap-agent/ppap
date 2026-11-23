@@ -18,6 +18,7 @@ TOOLS = {
     "find_submissions",
     "prepare_audit",
     "prepare_rule_clarification",
+    "get_rulebook",
     "get_task",
     "get_issue",
     "resolve_issue",

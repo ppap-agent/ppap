@@ -378,6 +378,48 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
             return failure(exc, task_id=tid)
 
     @mcp.tool(annotations=READ)
+    async def get_rulebook(
+        customer: Annotated[str, Field(min_length=1, max_length=500, description="The `key` of the customer, from the customers `get_account` lists.")],
+        version: Annotated[str, Field(pattern=r"^v\d+\.\d+$", description="The rulebook version, e.g. v1.0, as `get_account` lists it under rulebooks.")],
+        revision: Annotated[int | None, Field(ge=0, description="The revision number; empty reads the latest revision of the version.")] = None,
+        offset: Offset = 0,
+        limit: Annotated[int, Field(ge=1, le=200)] = 100,
+    ) -> Outcome:
+        """The clauses of one revision of a customer's rulebook, word for word, grouped by document type: each clause's id, text and
+        digest, what changed against the revision before it, and whether a checker covers it. Read only; nothing is changed."""
+        try:
+            actor = await authority()
+            actor.require("rulebooks:read")
+            registered = by_key(customer)
+            if registered is None:
+                raise workflow.Rejected("customer_required")
+            if revision is None:
+                listed = await gateway.get(actor, "rulebooks:read", f"/rulebooks/{registered.id}")
+                numbers = [row["revision"] for row in listed["revisions"] if row["version"] == version]
+                if not numbers:
+                    raise workflow.Rejected("rulebook_version_not_found")
+                revision = max(numbers)
+            found = await gateway.get(actor, "rulebooks:read", f"/rulebooks/{registered.id}/{version}/{revision}")
+            lines = [
+                (document, {"id": c["id"], "category": c["category"], "text": c["text"], "digest": c["digest"], "change": c["change"], "checker": c["checker"]})
+                for document in found["documents"]
+                for c in document["clauses"]
+            ]
+            documents: list[dict] = []
+            for document, clause in lines[offset : offset + limit]:
+                if not documents or documents[-1]["key"] != document["key"]:
+                    documents.append({"key": document["key"], "title": document["title"], "clauses": []})
+                documents[-1]["clauses"].append(clause)
+            head = {k: found[k] for k in ("version", "revision", "clause_count", "base", "changes", "origin", "created_at", "clarified", "checker_count")}
+            result = head | {"customer": customer, "clauses_total": len(lines), "offset": offset, "documents": documents, "next_offset": offset + limit if offset + limit < len(lines) else None}
+            outcome = Outcome(result=result, next=DONE)
+            if len(outcome.model_dump_json().encode()) > MAX_RESULT_BYTES:
+                raise McpError("result_too_large_use_smaller_limit", 413)
+            return outcome
+        except Exception as exc:
+            return failure(exc)
+
+    @mcp.tool(annotations=READ)
     async def get_task(task_id: UUID, files_offset: Offset = 0, files_limit: Limit = 50) -> Outcome:
         """Where an audit stands: its phase and stages, one line per file, the open issues and what to do next. Reading it also lets a
         task that was interrupted continue. While `next` is wait, call it again after check_after_ms."""
