@@ -1,4 +1,5 @@
 import type {components, operations} from './generated/openapi'
+import {receiptOf} from './audit/receipts-contract.ts'
 
 type Schema<Name extends keyof components['schemas']> = components['schemas'][Name]
 type JsonBody<Name extends keyof operations> = operations[Name] extends {requestBody?: infer Body}
@@ -76,6 +77,8 @@ const intentHeader = (path: string, method: string): Record<string, string> => {
   const bare = path.split('?')[0]
   return activeIntent && (activeIntent.method === method && activeIntent.path === bare || method === 'POST' && bare === `/intents/${activeIntent.id}/decline`) ? {'X-PPAP-Intent': activeIntent.id} : {}
 }
+/** A signing call names its receipt (#361); the page shows it. One that completes a client's proposal is shown in the proposal. */
+export const receiptIssued = 'ppap-receipt-issued'
 const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined
 export const requestTrace = (cause: unknown) => safeRequestTrace(cause instanceof Error && 'traceId' in cause ? cause.traceId : undefined)
 export function withResponseTrace<T extends Error>(error: T, response: Response): T {
@@ -89,6 +92,9 @@ export async function request<T, B = unknown>(path: string, method = 'GET', body
   const response = await fetch(apiUrl + path, {method, signal, credentials: 'include', headers: {'Content-Type': 'application/json', ...named}, body: body === undefined ? undefined : JSON.stringify(body)})
   // Whatever became of a client's proposal, the banner reads it again.
   if (named['X-PPAP-Intent'] && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('ppap-intent-changed', {detail: response.ok ? 'done' : ''}))
+  // Only a write can be a signing action; reads carry no receipt.
+  const receipt = method === 'GET' ? null : receiptOf(response.headers.get('X-PPAP-Action'))
+  if (receipt && !named['X-PPAP-Intent'] && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(receiptIssued, {detail: receipt}))
   const result = await response.json().catch(error => {
     if (signal?.aborted) throw error
     if (response.ok) throw withResponseTrace(new TypeError('服务器响应读取失败，请稍后重试。'), response)

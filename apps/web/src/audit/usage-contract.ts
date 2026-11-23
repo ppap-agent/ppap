@@ -14,6 +14,8 @@ export type AuditUsageAdapter = {
   readBalance?: () => Promise<number | null>
 }
 export const settlementStates = ['charged', 'pending', 'processing', 'unknown', 'trial'] as const
+/** How a charge stands, in the words the usage page, the result page and receipts all use. */
+export const settlementLabels = {charged: '已扣费', pending: '待扣费', processing: '扣费处理中', unknown: '待确认', trial: '免费额度已扣'} as const
 export const usageNotices = {
   ai_disabled: '飞书AI包开关已关闭，请联系管理员在飞书管理后台启用或联系我们获取免费额度',
   no_package: '提示：试用额度不足，且未采购飞书AI包，请联系管理员在飞书管理后台进行充值或联系我们获取免费额度',

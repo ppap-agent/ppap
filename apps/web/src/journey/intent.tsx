@@ -12,12 +12,14 @@ import {Button} from '../components/ui/button'
 import {Textarea} from '../components/ui/textarea'
 import {Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle} from '../components/ui/sheet'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
-import {auditAddressChanged} from '../audit/routes'
+import {auditAddressChanged, openInPlace, receiptsAddress} from '../audit/routes'
 
 type Intent = components['schemas']['Intent']
 type Detail = components['schemas']['IntentDetail']
 
 const settled = (intent: Intent) => intent.outcome.state === 'succeeded' || intent.outcome.state === 'declined'
+/** A client PPAP cannot vouch for names only itself (#356); the person judges it before acting on its request (#355). */
+const unverified = (intent: Intent) => intent.client_identity.level === 'unverified' || intent.client_identity.level === 'local'
 const readId = () => new URL(location.href).searchParams.get('intent')
 
 /** What the proposal does, and where on the page it is completed (a plan is completed in this panel). */
@@ -110,8 +112,9 @@ export function IntentBanner() {
     <aside role="region" aria-label="来自客户端的请求" className="fixed inset-x-0 bottom-4 z-40 mx-auto w-full max-w-2xl px-4">
       <div className="space-y-2 rounded-xl border bg-card p-4 text-sm shadow-lg">
         {!intent ? <><p>{problem || '正在读取这个请求…'}</p>{problem && <div className="flex justify-end"><Button size="sm" variant="ghost" onClick={close}>关闭</Button></div>}</> : <>
-          <p className="font-medium">「{intent.client_name}」请你{label}</p>
-          {done ? <><p className="text-muted-foreground">{outcome?.state === 'succeeded' ? '已完成。回到客户端即可看到结果。' : '你已拒绝这个请求，原因会交给客户端。'}</p><div className="flex justify-end"><Button size="sm" variant="ghost" onClick={close}>关闭</Button></div></>
+          <p className="font-medium">「{intent.client_identity.label}」请你{label}</p>
+          {unverified(intent) && !done && <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><Badge variant="warning">未验证的客户端</Badge>PPAP 无法核实它是谁，请自己判断是否照做。</p>}
+          {done ? <><p className="text-muted-foreground">{outcome?.state === 'succeeded' ? <>已完成{intent.receipt && <>，回执 <span className="tabular-nums text-foreground">{intent.receipt.number}</span></>}。回到客户端即可看到结果。</> : '你已拒绝这个请求，原因会交给客户端。'}</p><div className="flex items-center justify-end gap-2">{outcome?.state === 'succeeded' && intent.receipt && <Button size="sm" variant="link" asChild><a href={receiptsAddress(intent.receipt.id)} onClick={openInPlace}>查看回执</a></Button>}<Button size="sm" variant="ghost" onClick={close}>关闭</Button></div></>
             : intent.unavailable ? <><p className="text-muted-foreground">这一步已经变化，不能再按原样完成。请回到客户端，按最新状态重新发起。</p><div className="flex justify-end gap-2">{decline}<Button size="sm" variant="ghost" onClick={close}>关闭</Button></div></>
             : <>
               {plan ? <ul className="list-disc pl-5 text-muted-foreground">{plan.steps.map(step => <li key={step.id}>{step.summary[0] ?? step.title}</li>)}</ul> : <p className="text-muted-foreground">{where}</p>}
@@ -125,7 +128,7 @@ export function IntentBanner() {
     </aside>
     {intent && plan && <Sheet open={open} onOpenChange={setOpen}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
-        <SheetHeader><SheetTitle>{label}</SheetTitle><SheetDescription>来自「{intent.client_name}」的请求。下面是每一步现在的内容；勾选的步骤确认后一起生效，没勾的留到下一次。</SheetDescription></SheetHeader>
+        <SheetHeader><SheetTitle>{label}</SheetTitle><SheetDescription>来自「{intent.client_identity.label}」的请求{unverified(intent) && '，PPAP 无法核实它是谁'}。下面是每一步现在的内容；勾选的步骤确认后一起生效，没勾的留到下一次。</SheetDescription></SheetHeader>
         <ol className="space-y-6 px-4">{plan.steps.map(step => {
           const id = `plan-step-${step.id}`
           const needs = step.depends_on.map(need => plan.steps.find(other => other.id === need)?.title).filter(Boolean)

@@ -3,7 +3,7 @@
 import csv
 import io
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 
@@ -16,6 +16,65 @@ def _time(value) -> datetime | None:
 
 
 SETTLEMENT_LABELS = {"charged": "已扣费", "pending": "待扣费", "processing": "扣费处理中", "unknown": "待确认", "trial": "免费额度已扣"}
+
+
+def file_settlement(slices: list[dict], accepted_at: datetime, as_of: datetime) -> tuple[dict, list[dict], str | None]:
+    """How one file's charge stands, from its ledger slices: the settlement, the Feishu orders that prove a debit, and
+    when it was debited. A receipt from Feishu is not a debit; only an order with its time is."""
+    paid = [item for item in slices if not item["is_free_trial"]]
+    statuses = {item["external_status"] for item in paid}
+    orders = []
+    for item in paid:
+        debited = _time(item.get("debited_at"))
+        order = item.get("debit_order_id")
+        if isinstance(order, str) and order.strip() and debited and accepted_at <= debited <= as_of:
+            orders.append({"order_id": order, "confirmed_at": debited.isoformat()})
+    debited_at = max((item["confirmed_at"] for item in orders), key=lambda value: datetime.fromisoformat(value)) if paid and len(orders) == len(paid) else None
+    if not paid:
+        settlement = {"state": "trial", "reason": None}
+    elif debited_at:
+        settlement = {"state": "charged", "reason": None}
+    elif any(item.get("debited_at") is not None or item.get("debit_order_id") is not None for item in paid):
+        settlement = {"state": "unknown", "reason": "实际扣费凭据不完整或时间不一致，请核对原凭据。"}
+    elif statuses == {"pending"}:
+        settlement = {"state": "pending", "reason": "付费部分尚未上报飞书。"}
+    elif statuses == {"reporting"}:
+        settlement = {"state": "processing", "reason": "正在等待飞书用量回执。"}
+    else:
+        settlement = {"state": "unknown", "reason": "飞书已接收用量上报，实际扣费仍待对账。" if statuses == {"confirmed"} else "飞书用量上报结果待核对。"}
+    return settlement, orders, debited_at
+
+
+def round_charge(rows: list[dict], as_of: datetime) -> dict:
+    """What a task's accepted round charged (#361), each file settled as the usage page settles it. No usage (charging
+    off, or nothing to charge) is `none`; one file still open makes the whole round open, the least settled first."""
+    files: dict[tuple, list[dict]] = {}
+    for row in rows:
+        files.setdefault((row["round_id"], row["file_version_id"]), []).append(row)
+    if not files:
+        return {"points": 0, "state": "none"}
+    states = {file_settlement(slices, _time(slices[0]["accepted_at"]) or as_of, as_of)[0]["state"] for slices in files.values()}
+    state = next((state for state in ("unknown", "processing", "pending") if state in states), "trial" if states == {"trial"} else "charged")
+    return {"points": sum(row["consumed_points"] for row in rows), "state": state}
+
+
+def task_charges(store, tenant_id: str, task_ids: list[str]) -> dict[str, dict]:
+    """Each task's round charge, read from the ledger; a task with no usage is absent."""
+    from psycopg.rows import dict_row
+
+    with store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """SELECT u.*, a.source_draft_id::text AS task_id, a.created_at AS accepted_at FROM product.usage_events u
+               JOIN product.audit_rounds a ON a.id = u.round_id AND a.tenant_id = u.tenant_id
+               WHERE u.tenant_id = %s AND a.source_draft_id::text = ANY(%s)""",
+            (tenant_id, task_ids),
+        )
+        rows = cur.fetchall()
+    tasks: dict[str, list[dict]] = {}
+    for row in rows:
+        tasks.setdefault(row["task_id"], []).append({**row, **store.usage_event_public(row), "accepted_at": row["accepted_at"]})
+    now = datetime.now(timezone.utc)
+    return {task: round_charge(slices, now) for task, slices in tasks.items()}
 
 
 def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, archive: dict, as_of: datetime, *, every_entry: bool = False) -> dict:
@@ -49,26 +108,7 @@ def usage_page(rows: list[dict], query: dict, organization: dict, free: dict, ar
         history = archive.get((row["task_id"], version_id))
         free_points = sum(item["consumed_points"] for item in slices if item["is_free_trial"])
         paid = [item for item in slices if not item["is_free_trial"]]
-        statuses = {item["external_status"] for item in paid}
-        orders = []
-        for item in paid:
-            debited = _time(item.get("debited_at"))
-            order = item.get("debit_order_id")
-            if isinstance(order, str) and order.strip() and debited and accepted_at <= debited <= as_of:
-                orders.append({"order_id": order, "confirmed_at": debited.isoformat()})
-        debited_at = max((item["confirmed_at"] for item in orders), key=lambda value: datetime.fromisoformat(value)) if paid and len(orders) == len(paid) else None
-        if not paid:
-            settlement = {"state": "trial", "reason": None}
-        elif debited_at:
-            settlement = {"state": "charged", "reason": None}
-        elif any(item.get("debited_at") is not None or item.get("debit_order_id") is not None for item in paid):
-            settlement = {"state": "unknown", "reason": "实际扣费凭据不完整或时间不一致，请核对原凭据。"}
-        elif statuses == {"pending"}:
-            settlement = {"state": "pending", "reason": "付费部分尚未上报飞书。"}
-        elif statuses == {"reporting"}:
-            settlement = {"state": "processing", "reason": "正在等待飞书用量回执。"}
-        else:
-            settlement = {"state": "unknown", "reason": "飞书已接收用量上报，实际扣费仍待对账。" if statuses == {"confirmed"} else "飞书用量上报结果待核对。"}
+        settlement, orders, debited_at = file_settlement(slices, accepted_at, as_of)
         usage_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-usage:{organization['id']}:{round_id}:{version_id}"))
         if row.get("task_day"):
             numbers[usage_id] = f"PPAP-{row['task_day']:%Y%m%d}-{row['task_sequence']:03d}"

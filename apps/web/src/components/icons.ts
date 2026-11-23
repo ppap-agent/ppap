@@ -1,6 +1,6 @@
 // Line icons (Lucide, ISC licence) in the thin outlined style of Feishu. The only icon set; pages import from here.
 // Named imports keep the bundle to the icons used.
-import {Archive, ArrowLeft, ArrowRight, Bell, BookOpen, ChartPie, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsLeft, ChevronsRight, CircleAlert, CircleHelp, Cloud, Copy, Download, Eye, File, FileCheck, FileImage, FileSpreadsheet, FileText, FileType, Folder, FolderOpen, Image, Info, Layers, LayoutList, LoaderCircle, LogOut, Maximize, Minimize, Minus, Pencil, Plus, RefreshCw, RotateCw, Search, Send, Share2, SlidersHorizontal, SquareArrowOutUpRight, Trash2, TrendingDown, TrendingUp, Upload, WandSparkles, X} from 'lucide'
+import {Archive, ArrowLeft, ArrowRight, Bell, BookOpen, ChartPie, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsLeft, ChevronsRight, CircleAlert, CircleHelp, Cloud, Copy, Download, Eye, File, FileCheck, FileImage, FileSpreadsheet, FileText, FileType, Folder, FolderOpen, Image, Info, Layers, LayoutList, LoaderCircle, LogOut, Maximize, Minimize, Minus, Pencil, Plus, Receipt, RefreshCw, RotateCw, Search, Send, Share2, SlidersHorizontal, SquareArrowOutUpRight, Trash2, TrendingDown, TrendingUp, Upload, WandSparkles, X} from 'lucide'
 import type {IconDefinition} from './ui/icon'
 
 const line = (name: string, node: unknown): IconDefinition => ({name, node: node as IconDefinition['node']})
@@ -48,6 +48,7 @@ export const iconMinus = line('Minus', Minus)
 export const iconPaperPlane = line('Send', Send)
 export const iconPen = line('Pencil', Pencil)
 export const iconPlus = line('Plus', Plus)
+export const iconReceipt = line('Receipt', Receipt)
 export const iconRightFromBracket = line('LogOut', LogOut)
 export const iconRotateRight = line('RotateCw', RotateCw)
 export const iconShareNodes = line('Share2', Share2)

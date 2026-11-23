@@ -11,6 +11,9 @@ import uuid
 
 from psycopg.types.json import Jsonb
 
+from product.mcp import client_identity
+from product.store.usage import task_charges
+
 MAX_PARAMS = 64 * 1024
 # The person's no to a client's proposal (#348): an action like any other, with the reason as its parameter.
 DECLINE_ROUTE = "/intents/{intent_id}/decline"
@@ -65,6 +68,8 @@ LABELS = {
     ("PUT", "/rulebooks/{customer_id}/{version}/{revision}/readings"): "发布条款解读",
     ("POST", "/rule-questionnaires/cards"): "发问题卡片给客户",
     ("POST", "/rulebooks/{customer_id}/plan"): "确认规则澄清的这一轮",
+    ("POST", "/rounds/{round_id}/signoff"): "签发审核结论",
+    ("POST", "/rounds/{round_id}/signoff/withdraw"): "撤回签发",
 }
 CHANNELS = {"web": "网页", "docs": "飞书云文档插件", "meego": "飞书项目插件", "feishu_card": "飞书卡片", "mcp": "MCP 客户端"}
 STEPS = {"revision": "冻结修订", "cards": "发问题卡片给客户", "clarified": "标记已澄清", "readings": "发布解读"}
@@ -107,23 +112,18 @@ def receipts(store, principal, *, ident: str | None = None, intent: str | None =
                 (principal.tenant_id, list(by_round.values())),
             ).fetchall()
         }
-        clients = dict(
-            conn.execute(
-                """SELECT o.id::text, c.metadata->>'client_name' FROM product.mcp_operations o JOIN product.mcp_grants g ON g.id=o.grant_id
+        # The proposing client as PPAP can tell it (#356): a self-described one is marked so, never shown as verified.
+        clients = {
+            operation: client_identity(client, metadata, store.settings.mcp_verified_clients)["label"]
+            for operation, client, metadata in conn.execute(
+                """SELECT o.id::text, c.id, c.metadata FROM product.mcp_operations o JOIN product.mcp_grants g ON g.id=o.grant_id
                    JOIN product.mcp_clients c ON c.id=g.client_id WHERE o.id::text = ANY(%s)""",
                 ([str(row[5]) for row in rows if row[5]],),
             ).fetchall()
-        )
-        # What starting an audit charged: the usage of the round that request created (#361).
-        charged = {
-            str(key): (points, states)
-            for key, points, states in conn.execute(
-                """SELECT r.idempotency_key, sum(u.consumed_points), array_agg(DISTINCT u.external_status) FROM product.audit_rounds r
-                   JOIN product.usage_events u ON u.round_id=r.id AND u.tenant_id=r.tenant_id
-                   WHERE r.tenant_id=%s AND r.idempotency_key = ANY(%s) GROUP BY r.idempotency_key""",
-                (principal.tenant_id, [str((row[9] or {}).get("request_id")) for row in rows if row[7] == "/audit-tasks/{task_id}/confirm"]),
-            ).fetchall()
         }
+    # What starting an audit charged: the usage of the round it accepted, settled as the usage page settles it (#361).
+    started = [row[8].split("/")[2] for row in rows if row[7] == "/audit-tasks/{task_id}/confirm" and row[10] == "succeeded"]
+    charged = task_charges(store, principal.tenant_id, started) if started else {}
     return [_receipt(row, numbers, by_round, clients, charged) for row in rows]
 
 
@@ -143,7 +143,7 @@ def _receipt(row, numbers: dict, by_round: dict, clients: dict, charged: dict) -
         subject = "报告"
     via = CHANNELS.get(channel, channel)
     if intent:
-        via = f"由「{clients.get(str(intent)) or 'MCP 客户端'}」提议，本人在{via}完成"
+        via = f"由「{clients.get(str(intent)) or '未验证的 MCP 客户端'}」提议，本人在{via}完成"
     details = []
     if route == "/rulebooks/{customer_id}/plan":
         details.append("执行：" + "、".join(STEPS.get(step.get("step"), str(step.get("step"))) for step in params.get("steps") or []))
@@ -151,8 +151,7 @@ def _receipt(row, numbers: dict, by_round: dict, clients: dict, charged: dict) -
             details.append("没有勾选：" + "、".join(STEPS.get(step, step) for step in params["unselected"]) + (f"（原因：{params['reason']}）" if params.get("reason") else ""))
     points = None
     if route == "/audit-tasks/{task_id}/confirm" and outcome == "succeeded":
-        total, states = charged.get(str(params.get("request_id")), (None, None))
-        points = {"points": total, "state": "confirmed" if states and set(states) <= {"confirmed", "none"} else "pending" if states else "none"}
+        points = charged.get(task or "", {"points": 0, "state": "none"})
     return {
         "id": str(ident),
         "number": f"R-{day:%Y%m%d}-{seq:04d}",
@@ -161,7 +160,8 @@ def _receipt(row, numbers: dict, by_round: dict, clients: dict, charged: dict) -
         "subject": subject,
         "task_id": task,
         "via": via,
-        "outcome": {"state": outcome, "text": OUTCOMES.get(outcome, outcome) + (f"（{error}）" if outcome == "failed" and error else ""), "error": error},
+        # The reason code stays beside the words; only the PDF, a record for support, prints it.
+        "outcome": {"state": outcome, "text": OUTCOMES.get(outcome, outcome), "error": error},
         "details": details,
         "points": points,
     }

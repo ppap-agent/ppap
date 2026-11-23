@@ -1,11 +1,13 @@
 // Stitch: projects/13261964020862199279/screens/5a80a77a4f524928b808862728d5677a (login)
 // and screens/9a6cb6189e92450da32d95a31820b41c (connection failure).
 import {createContext, useContext, useEffect, useRef, useState, type ReactNode} from 'react'
-import {iconArrowRight, iconChevronDown, iconRightFromBracket, iconWandMagicSparkles} from '../components/icons'
+import {iconArrowRight, iconChevronDown, iconReceipt, iconRightFromBracket, iconWandMagicSparkles} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import {apiUrl, connect, feishuAppId, request, type HostLoginRequest, type PrincipalPublic} from '../api'
 import {isFeishuHost, requestHostCode} from '../hostLogin'
 import {IntentBanner} from './intent'
+import {ReceiptNotice} from './receipt-notice'
+import {openInPlace, receiptsAddress} from '../audit/routes'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Button} from '../components/ui/button'
 import {Alert, AlertDescription} from '../components/ui/alert'
@@ -27,6 +29,7 @@ export function AccountMenu({compact = false, className}: {compact?: boolean; cl
       {!compact && <><span className={"min-w-0 flex-1 truncate text-left"}>{name}</span><Icon icon={iconChevronDown}/></>}
     </Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end"><DropdownMenuLabel>{name}</DropdownMenuLabel><DropdownMenuSeparator/>
+      <DropdownMenuItem asChild><a href={receiptsAddress()} onClick={openInPlace}><Icon icon={iconReceipt}/>我的回执</a></DropdownMenuItem>
       <DropdownMenuItem onSelect={access?.logout}><Icon icon={iconRightFromBracket}/>退出登录</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
@@ -81,7 +84,7 @@ export function ProductAccess({children}: {children: ReactNode}) {
   }
   if (ready && principal) {
     return <AccessContext.Provider value={{principal, logout: () => void logout()}}>
-    {children}<IntentBanner/>{error && <div className="fixed right-4 bottom-4 z-40 max-w-md"><Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert></div>}
+    {children}<IntentBanner/><ReceiptNotice/>{error && <div className="fixed right-4 bottom-4 z-40 max-w-md"><Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert></div>}
   </AccessContext.Provider>
   }
   return <div className={"flex min-h-dvh flex-col bg-background text-foreground"}>

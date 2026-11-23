@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {auditAddressChanged, canonicalAddress, readAuditRoute, requestAddress, surfaceAddress, taskAddress, writeAuditAddress} from './routes.ts'
+import {auditAddressChanged, canonicalAddress, readAuditRoute, receiptsAddress, requestAddress, surfaceAddress, taskAddress, taskUsageAddress, writeAuditAddress} from './routes.ts'
+import {readUsageQuery} from './usage-contract.ts'
 
 test('local address edits retain history identity and notify without a synthetic back/forward event', () => {
   const descriptors = ['window', 'history'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const)
@@ -48,4 +49,13 @@ test('lost command recovery keeps task and request identities through refresh an
   assert.equal(prepared, '/tasks/new-task?fromRound=old&recognitionRequest=request-a')
   const confirmation = requestAddress(new URL('https://ppap.test/audit?task=t'), 't', 'acceptRequest', 'request-b')
   assert.equal(canonicalAddress(new URL(confirmation, 'https://ppap.test')), '/tasks/t?acceptRequest=request-b')
+})
+
+test('a receipt link opens my receipts with it highlighted; a round\'s points open its usage by task number', () => {
+  const receipt = new URL(receiptsAddress('0f9d6c2e-1d3b-4a51-9a0e-6a2b7c8d9e10'), 'https://ppap.test')
+  assert.deepEqual(readAuditRoute(receipt), {surface: 'receipts', taskId: null})
+  assert.equal(canonicalAddress(receipt), '/receipts?receipt=0f9d6c2e-1d3b-4a51-9a0e-6a2b7c8d9e10')
+  const usage = new URL(taskUsageAddress('PPAP-20261122-007'), 'https://ppap.test')
+  assert.equal(readAuditRoute(usage).surface, 'usage')
+  assert.deepEqual(readUsageQuery(usage.search), {range: 'all', search: 'PPAP-20261122-007', settlement: '', page: 1, page_size: 10})
 })

@@ -43,6 +43,7 @@ import type {AuditArchiveAdapter} from './archive-contract'
 import {AuditSupport, SupportEntryContext, type SupportSnapshot, type AuditSupportAdapter} from './support'
 import {executionLabel} from './status-labels'
 import {AuditUsage} from './usage'
+import {MyReceipts} from './receipts'
 import type {AuditUsageAdapter} from './usage-contract'
 import {reconcileTaskDisplay, type DisplayInfo, type DisplayReference} from './display-info-contract'
 import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
@@ -163,6 +164,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [rulesOpened, setRulesOpened] = useState(surface === 'requirements')
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
+  const [receiptsOpened, setReceiptsOpened] = useState(surface === 'receipts')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
   const ruleDetail = () => {const params = new URL(location.href).searchParams; return params.has('systemRule') || params.has('ruleQuestions') || params.has('rulebook')}
   const [ruleDetailOpen, setRuleDetailOpen] = useState(ruleDetail)
@@ -500,7 +502,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
       url.pathname = taskHref(id); url.searchParams.delete('task')
       url.searchParams.delete('report'); url.searchParams.delete('packageRequest')
       url.searchParams.delete('uploadDraft')
-      for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'fromRound', 'file', 'clause', 'focus', 'recognitionRequest', 'acceptRequest', 'checkFilter', 'round']) url.searchParams.delete(key)
+      for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'fromRound', 'file', 'clause', 'focus', 'recognitionRequest', 'acceptRequest', 'checkFilter', 'round', 'receipt']) url.searchParams.delete(key)
     }
     const state = {...history.state, auditUploadDraft: id ? null : activeUploadDraftId.current}
     writeAuditAddress(url, keepSurface ? 'replace' : 'push', state)
@@ -588,7 +590,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
     const params = new URL(location.href).searchParams, view = readSurface()
     if (view !== 'audit') {
       surfaceRef.current = view; setSurface(view)
-      if (view === 'archive') setArchiveOpened(true); else if (view === 'requirements') setRulesOpened(true); else if (view === 'usage') setUsageOpened(true)
+      if (view === 'archive') setArchiveOpened(true); else if (view === 'requirements') setRulesOpened(true); else if (view === 'usage') setUsageOpened(true); else if (view === 'receipts') setReceiptsOpened(true)
       return
     }
     const fromOtherSurface = surfaceRef.current !== 'audit'
@@ -872,7 +874,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
     if (value === 'usage') setUsageOpened(true)
     if (value === 'templates') setTemplatesOpened(true)
     const url = new URL(location.href)
-    for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'packageRequest', 'round']) url.searchParams.delete(key)
+    for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'packageRequest', 'round', 'receipt']) url.searchParams.delete(key)
     url.pathname = value === 'audit' ? taskHref(activeTaskId.current) : surfaceAddress(value)
     url.searchParams.delete('task'); url.searchParams.delete('report')
     // One page's own address state (rule tabs, chosen rule or checker) must not follow the person to another page.
@@ -1002,14 +1004,15 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
   const taskRail = frame.taskList !== 'none' && (railCollapsed
     ? <aside aria-label="审核任务" className="flex w-12 shrink-0 flex-col items-center border-r bg-card py-3"><Button variant="quiet" size="icon" aria-label="展开审核任务" onClick={() => setRailChoice('open')}><Icon icon={iconAnglesRight} aria-hidden="true"/></Button></aside>
     : <aside aria-label="审核任务" className="flex min-h-0 w-70 shrink-0 flex-col self-stretch overflow-hidden border-r bg-card"><TaskRail currentId={task?.id} tasks={shownTasks} labels={taskLabels} query={query} onQuery={setQuery} filter={filter} onFilter={setFilter} busy={listStatus.busy} ready={listStatus.ready} error={listStatus.error} hasMore={taskListNext !== null} hasTasks={summaries.length > 0} onMore={() => void loadTasks(listStatus.error ? 0 : taskListNext!)} onNew={newTask} onOpen={id => {taskAddress(id); void recover(id)}} onCollapse={() => setRailChoice('folded')}/></aside>)
-  const supportScenario = surface === 'archive' ? '审核文件' : surface === 'requirements' ? '审核规则' : surface === 'usage' ? '用量记录' : surface === 'templates' ? '模板库' : workbench ? '审核结果' : '上传与文件核对'
+  const supportScenario = surface === 'archive' ? '审核文件' : surface === 'requirements' ? '审核规则' : surface === 'usage' ? '用量记录' : surface === 'templates' ? '模板库' : surface === 'receipts' ? '我的回执' : workbench ? '审核结果' : '上传与文件核对'
   function contactReadSupport(current: AuditTask) {openSupport({scenario: '读取审核任务', traceId: readStatus[current.id]?.traceId, facts: [{label: '任务标识', value: current.id}, ...(current.round_id ? [{label: '审核轮次', value: current.round_id}] : []), {label: '服务说明', value: readStatus[current.id]?.error || ''}]})}
   const recognitionSupport = recognitionState && <Button variant="outline" size="sm" onClick={() => openSupport({scenario: '识别文件与匹配规则', traceId: recognitionState.traceId, facts: [{label: '任务标识', value: recognitionState.taskId}, {label: '识别请求', value: recognitionState.requestId}, {label: '文件', value: files.map(row => row.file.original_filename).join('\n')}, {label: '服务说明', value: recognitionState.message}]})}>联系支持</Button>
   // Library pages at their top level, and a new audit before it has a task, are named by the current pill and the window title;
   // inside Feishu they get no header row of their own.
-  const libraryTop = surface === 'archive' || surface === 'templates' || surface === 'usage' || (surface === 'requirements' && !ruleDetailOpen)
+  const libraryTop = surface === 'archive' || surface === 'templates' || surface === 'usage' || surface === 'receipts' || (surface === 'requirements' && !ruleDetailOpen)
   const quietHeader = libraryTop || (surface === 'audit' && !task && !recovery && step === 'upload')
-  const pageContext = surface !== 'audit' ? productLinks.find(link => link.view === surface)?.label : task ? task.number : recovery ? reportView ? '审核报告' : '审核任务' : '新建审核'
+  // My receipts open from the account menu, not the rail, so they name themselves.
+  const pageContext = surface === 'receipts' ? '我的回执' : surface !== 'audit' ? productLinks.find(link => link.view === surface)?.label : task ? task.number : recovery ? reportView ? '审核报告' : '审核任务' : '新建审核'
   // Inside Feishu the window title names the current page (Feishu shows the address when it is blank).
   useEffect(() => {if (inFeishu) document.title = pageContext || 'PPAP Audit'}, [inFeishu, pageContext])
   const taskCoverage = task?.customer_preference ? coverageOf(task.customer_preference) : null
@@ -1122,6 +1125,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
         {archiveOpened && <div className={surface === 'archive' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}><AuditArchive active={surface === 'archive'} headerTitle={surface === 'archive' && !inFeishu ? pageTitle : null} adapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} precheckAdapter={adapter.precheck} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/></div>}
         {rulesOpened && <div className={surface !== 'requirements' ? 'hidden' : ruleDetailOpen ? 'min-w-0' : 'flex min-h-0 min-w-0 flex-1 flex-col'}>{rules?.(surface === 'requirements', surface === 'requirements' ? pageActions : null)}</div>}
         {templatesOpened && <div className={surface === 'templates' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}><TemplateLibraryPage adapter={templateAdapter}/></div>}
+        {receiptsOpened && <div hidden={surface !== 'receipts'}><MyReceipts active={surface === 'receipts'}/></div>}
         {usageOpened && <div hidden={surface !== 'usage'}><AuditUsage headerActions={surface === 'usage' ? pageActions : null} active={surface === 'usage'} adapter={usageAdapter} archiveAdapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}} onSupport={notice => openSupport({scenario: `用量记录 · ${notice}`})}/></div>}
         <div className={surface !== 'audit' ? 'hidden' : workbench && !reportView ? 'flex h-full flex-col' : flowPage ? 'flex min-h-0 flex-1 flex-col' : 'space-y-6'}>
         {!flowPage && notices}

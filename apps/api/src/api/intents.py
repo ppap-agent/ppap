@@ -2,8 +2,9 @@
 
 An MCP client proposes a signing action; the person opens the page the proposal names and completes it there, with the
 request naming the proposal in `X-PPAP-Intent`, or declines it here. What became of it is read from what the person
-did (#362). A rule-clarification plan has no page of its own, so it is described from the task's current state, step by
-step, for the person to check (#351).
+did (#362), with their receipt (#361); the client is named as far as PPAP can tell who it is (#356). A rule-clarification
+plan has no page of its own, so it is described from the task's current state, step by step, for the person to check
+(#351).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import Any
 from fastapi import Body, Request
 from fastapi.responses import JSONResponse
 from product.mcp import McpError
+from product.store import actions
 from product.store.actions import DECLINE_ROUTE
 
 from api import web_contract as wc
@@ -35,11 +37,16 @@ def register_intent_routes(app, session_of) -> None:
         if store is None or found is None:
             return JSONResponse({"error": "intent_not_found"}, status_code=404)
         arguments = found["arguments"]
-        shown: dict[str, Any] = {key: found[key] for key in ("id", "tool", "client_name", "created_at", "outcome")} | {
+        shown: dict[str, Any] = {key: found[key] for key in ("id", "tool", "client_identity", "created_at", "outcome")} | {
             "method": arguments["method"],
             "path": arguments["path"],
             "page": arguments["page"],
         }
+        if found["outcome"]["state"] not in {"proposed", "declined"}:
+            # The person's receipt for doing it (#361), shown where they did it.
+            done = await asyncio.to_thread(actions.receipts, store.product, session.principal, intent=found["id"], limit=1)
+            if done:
+                shown["receipt"] = {"id": done[0]["id"], "number": done[0]["number"]}
         request_input = arguments["request"]
         if request_input.get("action_id") in STEPS and found["outcome"]["state"] not in SETTLED:
             try:

@@ -256,8 +256,7 @@ def test_consent_and_connections_say_who_the_client_is(mcp_app):
         proposal = {"method": "POST", "path": "/rounds/x/report", "page": "/tasks/x", "request": {}}
         proposed = mcp.propose(mcp.delegation(local["id"]), str(uuid4()), "publish_report", proposal, "identity:read")
         intent = client.get("/intents/" + proposed["id"]).json()
-        assert intent["client_name"] == "Pi MCP test", intent
-        assert mcp.intent(alice, proposed["id"])["client_identity"]["label"] == "本机应用 · 无法验证来源（自称：Pi MCP test）"
+        assert intent["client_identity"] == {"level": "local", "name": "Pi MCP test", "domain": None, "label": "本机应用 · 无法验证来源（自称：Pi MCP test）"}, intent
 
 
 def test_browser_cookie_alone_cannot_call_mcp(mcp_app):
@@ -474,7 +473,7 @@ def test_a_feishu_folder_is_prepared_confirmed_and_audited_and_an_interruption_c
         assert call(client, token, "confirm_audit", task_id=task, quote_id="an-older-quote", request_id=str(uuid4()))["next"]["reason"] == "quote_changed"
         confirm, intent, started = confirmed(client, token, task, quote["quote_id"])
         # The client proposed; the person started it on the task page, which shows the current files and price (#348).
-        assert intent["page"] == f"/tasks/{task}" and intent["client_name"] and intent["outcome"]["state"] == "proposed"
+        assert intent["page"] == f"/tasks/{task}" and intent["client_identity"]["label"] and intent["outcome"]["state"] == "proposed"
         assert started["result"]["phase"] == "auditing" and started["next"]["kind"] == "wait", started
         assert call(client, token, "confirm_audit", **confirm)["result"]["phase"] == "auditing"
         job = worker.claim_job("mcp-audit")
@@ -651,7 +650,9 @@ def test_signing_is_proposed_by_the_client_and_completed_or_declined_by_the_pers
 
         intent, done = complete(client, asked)
         assert done.status_code == 200 and len(drive.written) == 2, done.text
-        assert client.get(f"/intents/{ident}").json()["outcome"]["state"] == "succeeded"
+        settled = client.get(f"/intents/{ident}").json()
+        # Done where the person did it, with their receipt (#361).
+        assert settled["outcome"]["state"] == "succeeded" and settled["receipt"]["number"].startswith("R-") and done.headers["x-ppap-action"] == settled["receipt"]["id"]
         assert call(client, token, "publish_report", **arguments)["next"]["kind"] == "done" and len(drive.written) == 2
         # A settled proposal cannot be declined afterwards.
         assert client.post(f"/intents/{ident}/decline", json={}, headers={"X-PPAP-Intent": ident}).status_code == 409

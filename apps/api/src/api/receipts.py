@@ -1,17 +1,23 @@
 """Receipts: a person's own signing actions, as recorded (#361, #362). There is no receipt table; each receipt is one
-row of `product.actions` on a signing route, numbered within the enterprise's day and downloadable as a PDF."""
+row of `product.actions` on a signing route, numbered within the enterprise's day and downloadable as a PDF.
+
+What starting an audit charged is read here too, once for the receipt and the task's result page alike."""
 
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime
 from io import BytesIO
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import Query, Request
 from fastapi.responses import JSONResponse, Response
 from product.store import actions
+from product.store.usage import SETTLEMENT_LABELS, task_charges
 from pydantic import BaseModel
+
+from api.access import object_denied
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 HEADERS = {"Cache-Control": "private, no-store"}
@@ -23,10 +29,12 @@ class ReceiptOutcome(BaseModel):
     error: str | None = None
 
 
-class ReceiptPoints(BaseModel):
-    # What starting the audit charged; none yet (or a preview that charges nothing) is said so, never guessed.
-    points: int | None
-    state: str
+class Charge(BaseModel):
+    """What a task's accepted round charged (#361), each file settled as the usage page settles it: `none` when nothing
+    was charged (charging off), otherwise the least settled state among its files. Never guessed."""
+
+    points: int
+    state: Literal["none", "trial", "charged", "pending", "processing", "unknown"]
 
 
 class Receipt(BaseModel):
@@ -39,7 +47,7 @@ class Receipt(BaseModel):
     via: str
     outcome: ReceiptOutcome
     details: list[str]
-    points: ReceiptPoints | None
+    points: Charge | None
 
 
 class ReceiptList(BaseModel):
@@ -62,12 +70,12 @@ def render(receipt: dict, person: str) -> bytes:
         ("操作", receipt["action"]),
         ("对象", receipt["subject"]),
         ("经由", receipt["via"]),
-        ("结果", receipt["outcome"]["text"]),
+        ("结果", receipt["outcome"]["text"] + (f"（{receipt['outcome']['error']}）" if receipt["outcome"]["state"] == "failed" and receipt["outcome"]["error"] else "")),
     ]
     rows += [("说明", line) for line in receipt["details"]]
     if receipt["points"]:
         points = receipt["points"]
-        rows.append(("本轮扣点", f"{points['points']} 点" if points["points"] is not None else "未扣点"))
+        rows.append(("本轮扣点", "未扣点" if points["state"] == "none" else f"{points['points']} 点（{SETTLEMENT_LABELS[points['state']]}）"))
     body = "".join(f"<tr><td>{text(label)}</td><td>{text(value)}</td></tr>" for label, value in rows)
     html = (
         '<html lang="zh"><body><h1>PPAP 操作回执</h1>'
@@ -117,6 +125,18 @@ def register_receipt_routes(app, store, session_of) -> None:
             return JSONResponse({"error": "receipt_not_found"}, status_code=404, headers=HEADERS)
         body = await asyncio.to_thread(render, found[0], session.principal.display_name or "本人")
         return Response(body, media_type="application/pdf", headers={**HEADERS, "Content-Disposition": f'attachment; filename="{found[0]["number"]}.pdf"'})
+
+    @app.get("/audit-tasks/{task_id}/charge", response_model=Charge)
+    async def task_charge(task_id: str, request: Request):
+        """The points the task's accepted round charged, for its result page; anyone in the enterprise who reads the task."""
+        session = await principal(request)
+        if not session:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401, headers=HEADERS)
+        denied = await asyncio.to_thread(object_denied, store, session.principal, task_id, kind="audit_draft")
+        if denied:
+            return denied
+        found = await asyncio.to_thread(task_charges, store, session.principal.tenant_id, [_uuid(task_id)])
+        return JSONResponse(found.get(_uuid(task_id), {"points": 0, "state": "none"}), headers=HEADERS)
 
 
 def _uuid(value: str) -> str:

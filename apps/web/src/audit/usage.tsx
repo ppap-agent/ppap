@@ -22,9 +22,9 @@ import type {AuditReportAdapter} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {sameSnapshot} from './result-projection'
 import {readAuditRoute} from './routes'
-import {readUsageQuery, settlementStates, writeUsageQuery, usageNotices, validUsagePage, type AuditUsageAdapter, type UsagePage, type UsageMetric, type UsageQuery} from './usage-contract'
+import {readUsageQuery, settlementLabels, settlementStates, writeUsageQuery, usageNotices, validUsagePage, type AuditUsageAdapter, type UsagePage, type UsageMetric, type UsageQuery} from './usage-contract'
 
-const states = {charged: '已扣费', pending: '待扣费', processing: '扣费处理中', unknown: '待确认', trial: '免费额度已扣'}
+const states = settlementLabels
 const stateTone = {charged: 'success', pending: 'warning', processing: 'info', unknown: 'warning', trial: 'outline'} as const
 const ranges = [['7d', '最近 7 天'], ['30d', '最近 30 天'], ['90d', '最近 90 天'], ['all', '全部记录']] as const
 const zoneLabel = (zone: string) => ({'Asia/Shanghai': '北京时间'} as Record<string, string>)[zone] || zone

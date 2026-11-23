@@ -401,6 +401,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-tasks/{task_id}/charge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Task Charge
+         * @description The points the task's accepted round charged, for its result page; anyone in the enterprise who reads the task.
+         */
+        get: operations["task_charge_audit_tasks__task_id__charge_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-tasks/{task_id}/confirm": {
         parameters: {
             query?: never;
@@ -3488,6 +3508,20 @@ export interface components {
             /** Registration */
             registration?: string;
         };
+        /**
+         * Charge
+         * @description What a task's accepted round charged (#361), each file settled as the usage page settles it: `none` when nothing
+         *     was charged (charging off), otherwise the least settled state among its files. Never guessed.
+         */
+        Charge: {
+            /** Points */
+            points: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "none" | "trial" | "charged" | "pending" | "processing" | "unknown";
+        };
         /** ClauseChange */
         ClauseChange: {
             /** After */
@@ -3503,6 +3537,24 @@ export interface components {
              * @enum {string}
              */
             kind: "added" | "removed" | "changed" | "unchanged";
+        };
+        /**
+         * ClientIdentity
+         * @description Who the proposing client is, as far as PPAP can tell (#356); `label` is what the person reads. Only `verified`
+         *     and `metadata` are vouched for; `unverified` and `local` are what the client says of itself.
+         */
+        ClientIdentity: {
+            /** Domain */
+            domain: string | null;
+            /** Label */
+            label: string;
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "verified" | "metadata" | "unverified" | "local";
+            /** Name */
+            name: string;
         };
         /** Coverage */
         Coverage: {
@@ -3969,8 +4021,7 @@ export interface components {
          * @description A signing action an external client proposed (#348). The person completes it on `page`, or declines it.
          */
         Intent: {
-            /** Client Name */
-            client_name: string;
+            client_identity: components["schemas"]["ClientIdentity"];
             /** Created At */
             created_at: string;
             /** Id */
@@ -3983,6 +4034,7 @@ export interface components {
             /** Path */
             path: string;
             plan?: components["schemas"]["IntentPlan"] | null;
+            receipt?: components["schemas"]["IntentReceipt"];
             /** Tool */
             tool: string;
             /** Unavailable */
@@ -4056,6 +4108,16 @@ export interface components {
             summary: string[];
             /** Title */
             title: string;
+        };
+        /**
+         * IntentReceipt
+         * @description The person's receipt for completing the proposal (#361).
+         */
+        IntentReceipt: {
+            /** Id */
+            id: string;
+            /** Number */
+            number: string;
         };
         /** JobError */
         JobError: {
@@ -4445,7 +4507,7 @@ export interface components {
             /** Number */
             number: string;
             outcome: components["schemas"]["ReceiptOutcome"];
-            points: components["schemas"]["ReceiptPoints"] | null;
+            points: components["schemas"]["Charge"] | null;
             /** Subject */
             subject: string;
             /** Task Id */
@@ -4468,13 +4530,6 @@ export interface components {
             state: string;
             /** Text */
             text: string;
-        };
-        /** ReceiptPoints */
-        ReceiptPoints: {
-            /** Points */
-            points: number | null;
-            /** State */
-            state: string;
         };
         /** RelatedAuditTask */
         RelatedAuditTask: {
@@ -6713,6 +6768,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    task_charge_audit_tasks__task_id__charge_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Charge"];
                 };
             };
             /** @description Validation Error */

@@ -58,7 +58,7 @@ export function useMinWidth(width: number) {
 
 /** The customer register, read once per page load; until it arrives (or if it cannot), a type shows as recorded. */
 let registerRead: Promise<CustomerCatalog> | null = null
-function useCustomerCatalog() {
+export function useCustomerCatalog() {
   const [catalog, setCatalog] = useState<CustomerCatalog | null>(null)
   useEffect(() => {
     let active = true

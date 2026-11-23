@@ -53,6 +53,7 @@ LEFT_TO_WEB = {
     "/audit-tasks/{}/precheck/report": "预检报告 PDF 下载只在网页；MCP 把预检问题列为 get_task 的 issues",
     "/audit-tasks/{}/reports/{}/pdf": "报告 PDF 下载只在网页；MCP 用 publish_report 交付到飞书",
     "/audit-tasks/{}/reports/{}/regenerations/{}": "重新生成的进度已含在 get_task 的报告状态里",
+    "/audit-tasks/{}/charge": "结果页的本轮扣点；MCP 在报价里给出点数，签字回执附本轮扣点",
     "/audit-rounds/{}/fact-answers/": "答复回执与确认报告下载；MCP 按请求 ID 读回",
     "/audit-archive": "网页按文档归档检索；MCP 用 find_audits",
     "/audit-archive/": "网页按文档归档检索；MCP 用 find_audits",

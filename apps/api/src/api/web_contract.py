@@ -803,12 +803,29 @@ class IntentPlan(TypedDict):
     steps: list[IntentPlanStep]
 
 
+class ClientIdentity(TypedDict):
+    """Who the proposing client is, as far as PPAP can tell (#356); `label` is what the person reads. Only `verified`
+    and `metadata` are vouched for; `unverified` and `local` are what the client says of itself."""
+
+    level: Literal["verified", "metadata", "unverified", "local"]
+    name: str
+    domain: str | None
+    label: str
+
+
+class IntentReceipt(TypedDict):
+    """The person's receipt for completing the proposal (#361)."""
+
+    id: str
+    number: str
+
+
 class Intent(TypedDict):
     """A signing action an external client proposed (#348). The person completes it on `page`, or declines it."""
 
     id: str
     tool: str
-    client_name: str
+    client_identity: ClientIdentity
     created_at: str
     method: str
     path: str
@@ -817,6 +834,7 @@ class Intent(TypedDict):
     plan: NotRequired[IntentPlan | None]
     # Why a step can no longer be shown as proposed (the task moved on, the connection was revoked).
     unavailable: NotRequired[str]
+    receipt: NotRequired[IntentReceipt]
 
 
 class IntentDecline(TypedDict, total=False):

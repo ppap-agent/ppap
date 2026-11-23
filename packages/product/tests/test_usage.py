@@ -196,3 +196,17 @@ def test_a_rounds_usage_is_found_by_its_task_number():
     rows = [fee(task_day=date(2026, 10, 31), task_sequence=7), fee(round_id="round-b", task_id="task-b", file_version_id="version-b", task_day=date(2026, 10, 31), task_sequence=8)]
     page = usage_page(rows, {**QUERY, "range": "all", "search": "ppap-20261031-007"}, ORG, FREE, {}, AS_OF)
     assert [entry["reference"]["round_id"] for entry in page["entries"]] == ["round-a"]
+
+
+def test_a_round_charge_is_its_files_points_at_the_least_settled_state():
+    from product.store.usage import round_charge
+
+    assert round_charge([], AS_OF) == {"points": 0, "state": "none"}
+    assert round_charge([fee(file_version_id="a"), fee(file_version_id="b")], AS_OF) == {"points": 1000, "state": "trial"}
+    debited = fee(file_version_id="b", is_free_trial=False, external_status="confirmed", external_record_id="r", debit_order_id="order-1", debited_at="2026-10-31T17:00:00+00:00")
+    assert round_charge([fee(file_version_id="a"), debited], AS_OF) == {"points": 1000, "state": "charged"}
+    waiting = fee(file_version_id="c", is_free_trial=False, external_status="pending")
+    assert round_charge([fee(file_version_id="a"), debited, waiting], AS_OF) == {"points": 1500, "state": "pending"}
+    # A report Feishu acknowledged without an order is not a debit; it outranks a debt not yet reported.
+    acknowledged = fee(file_version_id="d", is_free_trial=False, external_status="confirmed", external_record_id="r")
+    assert round_charge([waiting, acknowledged], AS_OF)["state"] == "unknown"
