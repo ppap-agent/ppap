@@ -2954,6 +2954,18 @@ class AuthStore:
                     return self._round_public(conn, parsed, read_view=True, principal=principal)
             return self._round_public(conn, parsed, principal=principal)
 
+    def round_customer(self, round_id: str) -> str:
+        """The customer whose rules the round's task chose (#361); a task's customer does not change once accepted."""
+        parsed = _as_uuid(round_id)
+        if not parsed:
+            return ""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT d.customer_preference FROM product.audit_rounds r JOIN product.audit_drafts d ON d.id = r.source_draft_id WHERE r.id = %s",
+                (parsed,),
+            ).fetchone()
+        return (row[0] or "") if row else ""
+
     def list_rounds(self, principal: Principal, limit: int = 50, offset: int = 0, q: str = "", execution: str = "", unreviewed: bool = False) -> list[dict]:
         needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         with self._conn() as conn:

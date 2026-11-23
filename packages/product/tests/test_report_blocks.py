@@ -105,6 +105,17 @@ class ReportBlocksTests(unittest.TestCase):
         withdrawn = {**self.body(), "signoff": {"state": "unsigned", "signed_at": None, "signer": None}}
         self.assertEqual(opening(withdrawn)[1], "交付时未签发。")
 
+    def test_the_report_says_whose_rules_and_which_mode_beside_the_signoff(self):
+        """#361: the document's top says what the round stands on, as the result page does."""
+
+        def basis(body, customer=""):
+            block = report_blocks(body, customer=customer)[3]
+            return "".join(part["text_run"]["content"] for value in block.values() if isinstance(value, dict) for part in value["elements"])
+
+        self.assertEqual(basis(self.body(), "UAES"), "客户：联电科技/UAES · 标准模式 · 规则：受理时冻结的版本，每份文件的规则见下文")
+        self.assertTrue(basis({**self.body(), "deep_mode": True}, "UAES").startswith("客户：联电科技/UAES · 深度模式"))
+        self.assertEqual(basis(self.body()), "标准模式 · 规则：受理时冻结的版本，每份文件的规则见下文")
+
     def test_no_complete_report_from_error_or_missing_results(self):
         for findings in ([], [{"status": "ERR", "locator": {"file_version_id": "v1"}}]):
             body = self.body()

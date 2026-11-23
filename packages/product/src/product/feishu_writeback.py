@@ -14,6 +14,7 @@ from audit.models import public_locator
 from audit.rule_coverage import REASON_MANUAL_ONLY, REASON_UNSUPPORTED, unsupported_item_note
 from documents.location import location_label
 
+from product.customers import customer_name
 from product.feishu_drive import OPEN_API
 
 
@@ -335,8 +336,14 @@ def signoff_text(round_body: dict) -> str:
     return f"交付时已签发 · {signoff.get('signer') or '签发人'} · {_audit_clock({'created_at': signoff['signed_at']})}（UTC）"
 
 
-def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
-    """Complete report, unlike the brief summary written into a source document."""
+def basis_text(round_body: dict, customer: str = "") -> str:
+    """What the round stands on, as the result page says it (#361): the customer's rules, standard or deep, frozen rules."""
+    mode = "深度模式" if round_body.get("deep_mode") else "标准模式"
+    return " · ".join(part for part in (f"客户：{customer_name(customer)}" if customer else "", mode, "规则：受理时冻结的版本，每份文件的规则见下文") if part)
+
+
+def report_blocks(round_body: dict, return_url: str = "", customer: str = "") -> list[dict]:
+    """Complete report, unlike the brief summary written into a source document. `customer`: the rules the task chose."""
     state = writeback_state(round_body)
     if state != "ready":
         raise FeishuWritebackError(state)
@@ -344,6 +351,7 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
         _heading2("PPAP 审核报告"),
         _text(MACHINE_FIRST),
         _text(signoff_text(round_body)),
+        _text(basis_text(round_body, customer)),
         _text("审核时间（UTC）：" + _audit_clock(round_body)),
         _text("机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。"),
     ]

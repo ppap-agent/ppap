@@ -33,7 +33,7 @@ def register_report_routes(app, store, session_of, http, settings):
             # The id names a draft or file of the enterprise, not a round.
             return None, None, None, JSONResponse({"error": "access_denied"}, status_code=403)
         try:
-            blocks = report_blocks(body, round_return_url(settings.canonical_web_url(), body))
+            blocks = report_blocks(body, round_return_url(settings.canonical_web_url(), body), store.round_customer(round_id))
             fingerprint = hashlib.sha256(json.dumps(blocks, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         except McpError as exc:
             return None, None, None, JSONResponse({"error": exc.code}, status_code=exc.status)
