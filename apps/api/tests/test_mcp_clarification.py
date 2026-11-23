@@ -153,7 +153,7 @@ def test_a_round_reaches_the_customer_only_through_the_operators_approval(auth_s
     first = reviewer.call("get_issue", task_id=task["task_id"], issue_id=task["next"]["arguments"]["issue_id"])["result"]
     assert first["detail"]["clause"]["text"] == "须已签名"
     refused = reviewer.resolve(task, first, "submit_review", review("须已盖章"))
-    assert refused["next"]["error_code"] == "review_rejected" and refused["next"]["problems"]
+    assert refused["next"]["reason"] == "review_rejected" and refused["next"]["problems"] and refused["next"]["tool"] == "resolve_issue"
     task = reviewer.resolve(task, first, "submit_review", review("须已签名", [FINDING]))
     second = next(issue for issue in task["issues"] if issue["code"] == "CLAUSE_REVIEW")
     task = reviewer.resolve(task, second, "submit_review", review("须盖章"))

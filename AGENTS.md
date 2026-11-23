@@ -76,7 +76,7 @@ PostgreSQL  对象存储
 - **执行**：Worker 用短事务领取工作（含过期租约重试，同一轮只增加 attempt），事务外执行，用当前 attempt 提交。审核执行 job 中冻结的 `ppap-checker-core` 与 Suite 快照；深度模式在一个 guest 里按文件执行，同组上下文共享，每份文件各自计时（`agent.execution.budget`：检查程序 3 分钟，深度复核 6 分钟），guest 每开始一个任务就报告进度，宿主每次再给一个任务时长（两者取大再加 1 分钟，即 7 分钟），超过它没有新进度才判定卡死，Worker 侧再多等 30 秒；一轮没有总时限。Worker 经有界 UDS 调 Controller，不持有 Docker socket；协议 `extra=forbid`，不接受路径、命令、挂载、镜像或环境变量。整次失败写结构化 failure，不伪造判定、不回退。生产要求 `PPAP_DEEP_RUNTIME=container-only` 与 `PPAP_DEEP_SANDBOX_PROFILE`（`off` 是降权容器，不是 gVisor/VM）；细节见 [deploy/deep](deploy/deep/README.md)。
 - 深度与标准受理都把实际执行配置的摘要写进 job（`DeepExecutionPolicy`、`standard-v1:`），执行前由真实 runtime 再核对，配置变化不替换旧轮次的策略；摘要不证明远端模型权重不变。
 - 原件预览可用 OnlyOffice（只读、单文件单租户十分钟凭证，Document Server 属于可信边界），没有时回退到有上限的摘录；`.doc` 在 Worker 里经受限的 LibreOffice 转换，没有运行时就明确失败。
-- **通知**（审核任务、报告 ZIP、规则问卷卡片）复用 `engine.jobs`，意图与业务事务一起提交，只由 API 进程领取和发送；Worker 不领取通知，也不持有飞书凭据。发送前以当前 claim 持久化发送边界；越过边界后超时不能证明未送达，未知保留，不自动重发。有效消息 ID 才算发送成功，不代表已读。卡片只放打开页面的链接，不直接开始审核（签字在网页，#355）。并发模型见 [NotificationDispatch](docs/models/NotificationDispatch.tla)（只证明安全性，不证明送达）。
+- **通知**（审核任务、报告 ZIP、规则问卷卡片、规则答复提醒）复用 `engine.jobs`，意图与业务事务一起提交，只由 API 进程领取和发送；Worker 不领取通知，也不持有飞书凭据。发送前以当前 claim 持久化发送边界；越过边界后超时不能证明未送达，未知保留，不自动重发。有效消息 ID 才算发送成功，不代表已读。卡片只放打开页面的链接，不直接开始审核（签字在网页，#355）。并发模型见 [NotificationDispatch](docs/models/NotificationDispatch.tla)（只证明安全性，不证明送达）。
 - 外部能力（飞书、Partner AI 计费、LLM/OCR、Deep Controller）都是可选能力，不成为 Core 启动或普通 CI 的前置。只有当前需求证明价值时才新增服务、框架或隔离层。
 
 ## 数据

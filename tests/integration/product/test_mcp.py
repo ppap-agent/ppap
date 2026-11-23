@@ -628,7 +628,7 @@ def test_signing_is_proposed_by_the_client_and_completed_or_declined_by_the_pers
         assert call(client, token, "publish_report", **arguments)["next"]["url"] == asked["next"]["url"]
         # The same request_id is one proposal: other input under it is refused.
         other = call(client, token, "publish_report", task_id=str(uuid4()), request_id=arguments["request_id"])
-        assert other["next"]["kind"] == "blocked", other
+        assert other["next"]["reason"] == "request_conflict" and other["next"]["strategy"] == "new_request_id", other
         # The proposal names one call; it cannot be spent on another.
         assert client.post(f"/audit-tasks/{task}/confirm", json={}, headers={"X-PPAP-Intent": ident}).json()["error"] == "intent_mismatch"
         # Completing a client's proposal needs a recent sign-in; the person's own Web action does not.

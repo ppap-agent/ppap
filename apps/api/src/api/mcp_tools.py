@@ -49,10 +49,27 @@ _SAY = {
     "role_required": "这一步要由平台负责人或受委托的审查方来做。",
     "signing_requires_person": "这一步要由用户本人在 PPAP 网页里完成，客户端只能提议。",
     "source_required": "需要用户给出一个飞书文件夹或文件的链接。",
+    "invalid_token": "这个连接已失效。请用户在客户端重新连接 PPAP。",
+    "unauthenticated": "这个连接已失效。请用户在客户端重新连接 PPAP，并用飞书登录。",
     "not_a_folder": "这不是飞书文件夹的链接。请让用户给出要浏览的文件夹链接，或留空从云盘顶层开始。",
 }
 # The only dead ends: what PPAP must not do for this person (permission, role, policy). Everything else has a way on (#349).
-REFUSALS = frozenset({"access_denied", "insufficient_scope", "task_not_found", "platform_operator_required", "role_required", "round_has_errors", "signing_requires_person"})
+REFUSALS = frozenset(
+    {
+        "access_denied",
+        "insufficient_scope",
+        "task_not_found",
+        "platform_operator_required",
+        "role_required",
+        "round_has_errors",
+        "signing_requires_person",
+        # The connection itself: only the person can sign in again and reconnect.
+        "provider_reauthorization_required",
+        "feishu_user_token_missing",
+        "invalid_token",
+        "unauthenticated",
+    }
+)
 # What only the user can give: ask for it, then make the same call again with it.
 _ASK = {
     "not_a_feishu_link": {"source": "飞书文件夹或文件的链接"},
