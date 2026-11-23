@@ -125,6 +125,12 @@ def test_a_document_without_usable_callbacks_or_with_a_secret_is_refused(overrid
         read()
 
 
+def test_grants_ppap_never_issues_are_left_out_of_the_record():
+    # As Claude's own document declares them: PPAP signs it in with a code and refreshes it, nothing more.
+    read, _ = serve(json_response(document(grant_types=["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:jwt-bearer"])))
+    assert read()["grant_types"] == ["authorization_code", "refresh_token"]
+
+
 def test_a_read_document_holds_as_its_cache_headers_say():
     now = 1_800_000_000.0
     assert fresh_until({}, now) == now + 3600

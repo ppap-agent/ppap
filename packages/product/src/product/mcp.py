@@ -226,17 +226,20 @@ def read_client_document(url: str, *, resolve: Callable[[str, int], list[str]] =
         raise McpError("invalid_client_metadata") from None
     if not isinstance(document, dict) or document.get("client_id") != url:
         raise McpError("client_document_mismatch")
+    declared = document.get("grant_types", list(GRANT_TYPES))
     record = {
         "client_id": url,
         "client_name": document.get("client_name", host),
         "redirect_uris": document.get("redirect_uris"),
         "token_endpoint_auth_method": "none",
-        "grant_types": document.get("grant_types", list(GRANT_TYPES)),
+        # A document may also declare grants PPAP never issues (Claude's lists jwt-bearer): they are left out, not refused.
+        "grant_types": [grant for grant in GRANT_TYPES if isinstance(declared, list) and grant in declared],
         "response_types": document.get("response_types", ["code"]),
         # Like a client registered without a scope, it may ask for any; the person picks what is granted.
         "scope": " ".join(SCOPES),
     }
-    if not valid_client_metadata(record) or {"client_secret", "client_secret_expires_at"} & document.keys() or document.get("token_endpoint_auth_method", "none") != "none":
+    secret = {"client_secret", "client_secret_expires_at"} & document.keys() or document.get("token_endpoint_auth_method", "none") != "none"
+    if "authorization_code" not in record["grant_types"] or not valid_client_metadata(record) or secret:
         raise McpError("invalid_client_metadata")
     now = time.time()
     return {**record, DOCUMENT: {"read_at": int(now), "fresh_until": fresh_until(headers, now)}}
