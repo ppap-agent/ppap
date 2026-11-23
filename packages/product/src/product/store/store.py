@@ -127,6 +127,11 @@ def _as_uuid(value: str) -> str | None:
         return None
 
 
+def _review_public(judgment, rationale, next_step, version, citations, severity) -> dict:
+    """One version of a human review as readers see it; severity only when the reviewer changed it."""
+    return {"judgment": judgment, "rationale": rationale, "next_step": next_step, "version": version, "citations": citations or [], **({"severity": severity} if severity else {})}
+
+
 def _deep_reviews(coverage: dict) -> dict[str, dict]:
     """Each target's committed deep review state; absent until a result is committed."""
     execution = coverage.get("checker_execution") or {}
@@ -3172,9 +3177,12 @@ class AuthStore:
         version: int,
         citations: list[dict] | None = None,
         *,
+        severity: str | None = None,
         mcp_operation_id: str | None = None,
     ) -> dict:
         text, why, nxt, seen = normalize_review(judgment, rationale, next_step, version)
+        if severity is not None and severity not in {"A", "B", "C"}:
+            raise ValueError("invalid_review_severity")
         parsed = _as_uuid(round_id)
         key = str(item_key or "").strip()
         if not parsed or not key:
@@ -3196,6 +3204,8 @@ class AuthStore:
                     command = {"item_key": item_key, "judgment": judgment, "rationale": rationale, "next_step": next_step, "version": version}
                     if citations is not None:
                         command["citations"] = citations
+                    if severity is not None:
+                        command["severity"] = severity
                     if not operation or str(operation[3]) != principal.user_id or operation[0].get("path") != f"/rounds/{round_id}/reviews" or operation[0].get("body") != command:
                         raise ValueError("invalid_review_confirmation")
                     if operation[1] == "succeeded":
@@ -3224,31 +3234,27 @@ class AuthStore:
                         raise ValueError("invalid_review_citations")
                 if text.startswith("manual-") and (not why or not cites):
                     raise ValueError("manual_review_evidence_required")
-                if seen == 0:
-                    try:
-                        conn.execute(
-                            """
-                            INSERT INTO product.reviews
-                                (round_id, item_key, user_id, judgment, rationale, next_step, version, citations)
-                            VALUES (%s, %s, %s, %s, %s, %s, 1, %s)
-                            """,
-                            (parsed, key, principal.user_id, text, why, nxt, Jsonb(cites)),
-                        )
-                    except UniqueViolation as exc:
-                        raise ValueError("review_conflict") from exc
-                else:
-                    row = conn.execute(
+                # A correction adds the next version; earlier ones stay as they were (#358).
+                latest = conn.execute(
+                    "SELECT version, severity FROM product.reviews WHERE round_id = %s AND item_key = %s ORDER BY version DESC LIMIT 1",
+                    (parsed, key),
+                ).fetchone()
+                if (latest[0] if latest else 0) != seen:
+                    raise ValueError("review_conflict")
+                kept = latest[1] if latest else None
+                if severity is not None and severity != kept and not why:
+                    raise ValueError("review_severity_reason_required")
+                try:
+                    conn.execute(
                         """
-                        UPDATE product.reviews
-                        SET judgment = %s, rationale = %s, next_step = %s, user_id = %s,
-                            version = version + 1, updated_at = now(), citations = %s
-                        WHERE round_id = %s AND item_key = %s AND version = %s
-                        RETURNING version
+                        INSERT INTO product.reviews
+                            (round_id, item_key, user_id, judgment, rationale, next_step, version, citations, severity)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (text, why, nxt, principal.user_id, Jsonb(cites), parsed, key, seen),
-                    ).fetchone()
-                    if not row:
-                        raise ValueError("review_conflict")
+                        (parsed, key, principal.user_id, text, why, nxt, seen + 1, Jsonb(cites), severity if severity is not None else kept),
+                    )
+                except UniqueViolation as exc:
+                    raise ValueError("review_conflict") from exc
                 result = cast(dict, self._round_public(conn, parsed))
                 if mcp_operation_id is not None:
                     conn.execute(
@@ -3257,6 +3263,17 @@ class AuthStore:
                         (Jsonb({"data": result, "http_status": 200, "probes": [f"/rounds/{round_id}"]}), mcp_operation_id),
                     )
                 return result
+
+    def review_history(self, round_id: str, item_key: str) -> list[dict]:
+        """Every version of one item's human review, newest first, with who wrote it."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT r.judgment, r.rationale, r.next_step, r.version, r.citations, r.severity, r.updated_at,
+                          (SELECT i.display_name FROM product.identities i WHERE i.user_id = r.user_id ORDER BY i.display_name IS NULL LIMIT 1)
+                   FROM product.reviews r WHERE r.round_id = %s AND r.item_key = %s ORDER BY r.version DESC""",
+                (_as_uuid(round_id), item_key),
+            ).fetchall()
+        return [{**_review_public(*row[:6]), "reviewed_at": row[6].isoformat(), "reviewer": row[7] or ""} for row in rows]
 
     def round_work(self, round_id: str) -> RoundWork | None:
         parsed = _as_uuid(round_id)
@@ -4449,7 +4466,7 @@ class AuthStore:
                 FROM product.findings WHERE round_id = ANY(%s::uuid[]) GROUP BY round_id, status""",
                 (round_ids,),
             )
-            reviews = conn.execute("SELECT round_id, item_key, judgment, rationale, citations FROM product.reviews WHERE round_id = ANY(%s::uuid[])", (round_ids,))
+            reviews = conn.execute("SELECT round_id, item_key, judgment, rationale, citations FROM product.current_reviews WHERE round_id = ANY(%s::uuid[])", (round_ids,))
         by_id = {str(row[0]): row for row in rounds.fetchall()}
         groups = []
         for cursor in (inputs, counts, reviews):
@@ -4547,9 +4564,9 @@ class AuthStore:
             )
             findings_read = conn.execute(
                 """SELECT f.item_key, f.classification, f.item, f.priority, f.status, f.suggestions, f.locator,
-                       rv.judgment, rv.rationale, rv.next_step, rv.version, rv.citations
+                       rv.judgment, rv.rationale, rv.next_step, rv.version, rv.citations, rv.severity
                 FROM product.findings f
-                LEFT JOIN product.reviews rv ON rv.round_id = f.round_id AND rv.item_key = f.item_key
+                LEFT JOIN product.current_reviews rv ON rv.round_id = f.round_id AND rv.item_key = f.item_key
                 WHERE f.round_id = %s ORDER BY f.item_key""",
                 (round_id,),
             )
@@ -4559,7 +4576,9 @@ class AuthStore:
                 WHERE j.audit_round_id = %s AND j.kind = 'audit' ORDER BY j.created_at LIMIT 1""",
                 (round_id,),
             )
-            reviews_read = conn.execute("SELECT item_key, judgment, rationale, next_step, version, citations FROM product.reviews WHERE round_id = %s AND item_key LIKE 'coverage:%%'", (round_id,))
+            reviews_read = conn.execute(
+                "SELECT item_key, judgment, rationale, next_step, version, citations, severity FROM product.current_reviews WHERE round_id = %s AND item_key LIKE 'coverage:%%'", (round_id,)
+            )
         row = round_read.fetchone()
         if not row:
             return None
@@ -4586,7 +4605,7 @@ class AuthStore:
         if progress and row[1] == EXEC_RUNNING:
             progress = {**progress, "updated_at": job[2].isoformat()}
         coverage = dict(row[2] or {})
-        reviews = {review[0]: {"judgment": review[1], "rationale": review[2], "next_step": review[3], "version": review[4], "citations": review[5] or []} for review in reviews_read.fetchall()}
+        reviews = {review[0]: _review_public(*review[1:]) for review in reviews_read.fetchall()}
         if coverage.get("rule_items"):
             coverage["rule_items"] = [{**item, "review": reviews.get(f"coverage:{item.get('file_version_id')}:{item.get('id')}")} for item in coverage["rule_items"]]
         deep_reviews = _deep_reviews(coverage) if row[11] else {}
@@ -4629,15 +4648,7 @@ class AuthStore:
                     "status": item[4],
                     "suggestions": item[5],
                     "locator": item[6],
-                    "review": None
-                    if item[7] is None
-                    else {
-                        "judgment": item[7],
-                        "rationale": item[8],
-                        "next_step": item[9],
-                        "version": item[10],
-                        "citations": item[11] or [],
-                    },
+                    "review": None if item[7] is None else _review_public(*item[7:13]),
                 }
                 for item in findings
             ],

@@ -19,6 +19,7 @@ import {displayFields, fileDisplayValues, validDisplayInfo} from './display-info
 import {RecordedReview, frozenOriginal} from './recorded-review'
 import {HistoricalFindings} from './historical-findings'
 import {ReviewEditorContext} from './review-editor'
+import {readReviewHistory} from './native-adapter'
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '../components/ui/resizable'
 import {filterChecks, nextUnreviewed, reviewable, reviewed} from './review-navigation'
 import {diffRounds} from './round-diff'
@@ -209,9 +210,9 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       </div>
     }) : <div className="space-y-3"><p className="text-sm text-muted-foreground">未提供来源证据，请核对原件。</p><Button variant="outline" size="sm" onClick={() => setSource(null)}>打开原件</Button></div>}</section>
     {programNotice(check) && <Disclosure summary="程序执行说明"><p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">{programNotice(check)}</p></Disclosure>}
-    {review && <RecordedReview review={review} originalFor={authorizedOriginal} onCitation={cite => setSource({kind: 'review', reference: cite})}/>}
+    {review && <RecordedReview review={review} originalFor={authorizedOriginal} onCitation={cite => setSource({kind: 'review', reference: cite})} loadHistory={check.review_item_key ? () => readReviewHistory(roundId, check.review_item_key!) : undefined}/>}
     {/* One action row: recording a review is the step for a result that looks wrong. */}
-    {reviewEditor && !issue && check.review_item_key && ['completed', 'failed'].includes(check.execution) && <div className="sticky bottom-0 mt-auto flex flex-wrap items-center gap-2 border-t bg-background py-3"><Button size="sm" onClick={() => reviewEditor.open({roundId, itemKey: check.review_item_key!, title: clauseLabel(clauses, check.rule_item.id), attempt: audit!.result_attempt, files: originals.filter(row => frozenFileVersionIds.includes(row.file_version_id)).map(row => ({id: row.file_version_id, name: row.file?.original_filename || '本轮原件'}))}, {container: editorHost.current || undefined, onContinue: next ? () => navigateClause(next.rule_item.id, true) : undefined})}>记录人工复核</Button></div>}
+    {reviewEditor && !issue && check.review_item_key && ['completed', 'failed'].includes(check.execution) && <div className="sticky bottom-0 mt-auto flex flex-wrap items-center gap-2 border-t bg-background py-3"><Button size="sm" onClick={() => reviewEditor.open({roundId, itemKey: check.review_item_key!, title: clauseLabel(clauses, check.rule_item.id), attempt: audit!.result_attempt, files: originals.filter(row => frozenFileVersionIds.includes(row.file_version_id)).map(row => ({id: row.file_version_id, name: row.file?.original_filename || '本轮原件'}))}, {container: editorHost.current || undefined, onContinue: next ? () => navigateClause(next.rule_item.id, true) : undefined})}>{review ? '更正复核' : '记录人工复核'}</Button></div>}
   </article>
   const attentionCount = filterCount('attention'), ngCount = filterCount('ng')
   // When everything that needs attention is non-conforming, one chip says it; the default filter lands on it.

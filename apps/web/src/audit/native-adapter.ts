@@ -218,6 +218,9 @@ export const nativeReviewAdapter: AuditReviewAdapter = {
   read: id => request(`/rounds/${encodeURIComponent(id)}`),
   save: (id, payload) => request(`/rounds/${encodeURIComponent(id)}/reviews`, 'PUT', payload),
 }
+/** Every version of one item's human review, newest first (#358). */
+export const readReviewHistory = (roundId: string, itemKey: string) =>
+  request<components['schemas']['ReviewHistory']>(`/rounds/${encodeURIComponent(roundId)}/reviews/history?${new URLSearchParams({item_key: itemKey})}`).then(body => body.versions)
 export const nativeDisplayAdapter: AuditDisplayAdapter = {
   save: command => request(`/audit-tasks/${encodeURIComponent(command.reference.task_id)}/display-info`, 'POST', command),
   async read(command) {

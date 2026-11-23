@@ -277,6 +277,36 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(updated.json()["findings"][0]["status"], machine)
         self.assertEqual(updated.json()["findings"][0]["review"]["judgment"], "通过")
 
+    def test_a_corrected_review_keeps_every_earlier_version(self):
+        """A correction adds a version and never rewrites one; a severity change carries its reason (#358)."""
+        self._login("alice")
+        target = self._upload("report.xlsx", b"target-bytes")
+        round_id = self._accept({target["id"]: RULE_A})["id"]
+        self._finish_worker()
+        key = self.client.get(f"/rounds/{round_id}").json()["findings"][0]["item_key"]
+
+        def save(version, **fields):
+            return self.client.put(f"/rounds/{round_id}/reviews", json={"item_key": key, "judgment": "confirm", "rationale": "", "next_step": "", "version": version, **fields})
+
+        self.assertEqual(save(0, rationale="第一次").status_code, 200)
+        refused = save(1, severity="A")
+        self.assertEqual((refused.status_code, refused.json()["error"]), (400, "review_severity_reason_required"))
+        self.assertEqual(save(1, rationale="改为 A：影响装配", severity="A").status_code, 200)
+        third = save(2, judgment="disagree", rationale="再次核对")
+        self.assertEqual(third.status_code, 200)
+        # The severity a reviewer set stays in effect until changed again.
+        self.assertEqual(third.json()["findings"][0]["review"] | {"citations": []}, {"judgment": "disagree", "rationale": "再次核对", "next_step": "", "version": 3, "citations": [], "severity": "A"})
+        self.assertEqual(save(2, rationale="过期版本").json()["error"], "review_conflict")
+        self.assertEqual(save(9, rationale="不存在的版本").json()["error"], "review_conflict")
+        history = self.client.get(f"/rounds/{round_id}/reviews/history", params={"item_key": key}).json()["versions"]
+        self.assertEqual(
+            [(row["version"], row["judgment"], row["rationale"], row.get("severity")) for row in history],
+            [(3, "disagree", "再次核对", "A"), (2, "confirm", "改为 A：影响装配", "A"), (1, "confirm", "第一次", None)],
+        )
+        self.assertTrue(all(row["reviewer"] and row["reviewed_at"] for row in history))
+        # Versions are only ever added: the API role cannot rewrite or delete one.
+        self.assertFalse(self._scalar("SELECT has_table_privilege('ppap_api', 'product.reviews', 'UPDATE') OR has_table_privilege('ppap_api', 'product.reviews', 'DELETE')"))
+
     def test_reaudit_keeps_old_round(self):
         self._login("alice")
         first = self._upload("report.xlsx", b"version-one")

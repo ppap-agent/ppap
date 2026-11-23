@@ -15,7 +15,8 @@ import {showToast} from '../components/toast'
 
 export type AuditReviewAdapter = {read: (roundId: string) => Promise<ReviewRound>; save: (roundId: string, request: ReviewRequest) => Promise<ReviewRound>}
 type Target = {roundId: string; itemKey: string; title: string; files: {id: string; name: string}[]; attempt: number | null}
-type Values = Pick<ReviewRequest, 'judgment' | 'rationale' | 'next_step'> & {citations: components['schemas']['ReviewCitation'][]}
+type Level = 'A' | 'B' | 'C'
+type Values = Pick<ReviewRequest, 'judgment' | 'rationale' | 'next_step'> & {citations: components['schemas']['ReviewCitation'][]; severity: Level | 'keep'}
 type Draft = {target: Target; values: Values; phase: 'loading' | 'editing' | 'sending' | 'reading' | 'unknown' | 'conflict' | 'saved' | 'error'; message: string; observation: number; base?: ReviewRound; observed?: ReviewRound; request?: ReviewRequest; retryAllowed?: boolean}
 type Presentation = {container?: HTMLElement; onContinue?: () => void}
 export const ReviewEditorContext = createContext<{open: (target: Target, presentation?: Presentation) => void; release: (roundId: string, itemKey: string) => void; revision: number} | null>(null)
@@ -24,7 +25,12 @@ const judgments = ['confirm', 'disagree', 'unknown', 'manual-satisfied', 'manual
 const unresolved = (draft: Draft) => ['sending', 'reading', 'unknown'].includes(draft.phase)
 function valuesOf(round: ReviewRound, key: string): Values {
   const review = reviewOf(round, key)
-  return {judgment: review && judgments.some(value => value === review.judgment) ? review.judgment : 'pending', rationale: review?.rationale || '', next_step: review?.next_step || '', citations: structuredClone(review?.citations || [])}
+  return {judgment: review && judgments.some(value => value === review.judgment) ? review.judgment : 'pending', rationale: review?.rationale || '', next_step: review?.next_step || '', citations: structuredClone(review?.citations || []), severity: 'keep'}
+}
+/** The severity in effect: a reviewer's change, else the checker's level, else the rule's default (#358). */
+function severityOf(round: ReviewRound, key: string): Level | undefined {
+  const semantic = round.findings.find(row => row.item_key === key)?.locator?.semantic
+  return reviewOf(round, key)?.severity ?? semantic?.severity_override?.level ?? semantic?.severity
 }
 function eligible(round: ReviewRound, target: Target) {
   const versions = round.inputs.map(row => row.file_version_id)
@@ -90,7 +96,7 @@ export function AuditReviewProvider({adapter, children}: {adapter: AuditReviewAd
     presentations.current.set(key, presentation)
     let draft = drafts.current.get(key)
     if (!draft) {
-      draft = {target: structuredClone(target), values: {judgment: 'pending', rationale: '', next_step: '', citations: []}, phase: 'loading', message: '', observation: 0}
+      draft = {target: structuredClone(target), values: {judgment: 'pending', rationale: '', next_step: '', citations: [], severity: 'keep'}, phase: 'loading', message: '', observation: 0}
       drafts.current.set(key, draft); void observe(draft, true)
     }
     setSelected(key)
@@ -102,7 +108,9 @@ export function AuditReviewProvider({adapter, children}: {adapter: AuditReviewAd
   function save(andContinue = false) {
     if (!draft?.base || !values || locked || !valid) return
     if (andContinue) continueAfterSave.current.add(keyOf(draft.target))
-    draft.request = {...values, rationale: values.rationale.trim(), next_step: values.next_step.trim(), citations: values.citations.map(cite => ({...cite, location: cite.location.trim(), excerpt: cite.excerpt.trim()})), item_key: draft.target.itemKey, version: reviewOf(draft.base, draft.target.itemKey)?.version || 0}
+    const {severity, ...rest} = values
+    const changed = severity !== 'keep' && severity !== severityOf(draft.base, draft.target.itemKey) ? {severity} : {}
+    draft.request = {...rest, ...changed, rationale: values.rationale.trim(), next_step: values.next_step.trim(), citations: values.citations.map(cite => ({...cite, location: cite.location.trim(), excerpt: cite.excerpt.trim()})), item_key: draft.target.itemKey, version: reviewOf(draft.base, draft.target.itemKey)?.version || 0}
     void observe(draft, false)
   }
   function change(patch: Partial<Values>) {if (values && !locked) {Object.assign(values, patch); refresh()}}
@@ -115,6 +123,7 @@ export function AuditReviewProvider({adapter, children}: {adapter: AuditReviewAd
     <p className="break-words text-sm font-medium">{draft.target.title}</p>
     {draft.phase === 'loading' ? <ReadSkeleton label="正在读取复核记录…" kind="detail"/> : <>
     <div className="grid gap-2"><Label htmlFor={`${id}-judgment`}>人工判断</Label><Select value={values.judgment} disabled={locked} onValueChange={judgment => change({judgment})}><SelectTrigger id={`${id}-judgment`} aria-label="人工判断"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="pending" disabled>请选择判断</SelectItem>{judgments.map(value => <SelectItem key={value} value={value}>{judgmentLabels[value]}</SelectItem>)}</SelectContent></Select></div>
+    {draft.base && <div className="grid gap-2"><Label htmlFor={`${id}-severity`}>严重程度</Label><Select value={values.severity} disabled={locked} onValueChange={severity => change({severity: severity as Values['severity']})}><SelectTrigger id={`${id}-severity`} aria-label="严重程度"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="keep">{`不改（当前${severityOf(draft.base, draft.target.itemKey) ? ` ${severityOf(draft.base, draft.target.itemKey)} 级` : '未分级'}）`}</SelectItem>{(['A', 'B', 'C'] as const).filter(level => level !== severityOf(draft.base!, draft.target.itemKey)).map(level => <SelectItem key={level} value={level}>改为 {level} 级</SelectItem>)}</SelectContent></Select></div>}
     <div className="grid gap-2"><Label htmlFor={`${id}-reason`}>判断理由</Label><Textarea id={`${id}-reason`} value={values.rationale} maxLength={2000} disabled={locked} onChange={event => change({rationale: event.target.value})}/></div>
     <div className="grid gap-2"><Label htmlFor={`${id}-next`}>后续建议</Label><Input id={`${id}-next`} value={values.next_step} maxLength={2000} disabled={locked} onChange={event => change({next_step: event.target.value})}/></div>
     <section aria-label="复核引用" className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium">原件引用{values.judgment.startsWith('manual-') ? '（必填）' : '（选填）'}</h3><Button type="button" size="sm" variant="outline" disabled={locked || values.citations.length >= 20} onClick={() => change({citations: [...values.citations, {file_version_id: draft.target.files[0]?.id || '', location: '', excerpt: ''}]})}>添加引用</Button></div>{values.citations.map((cite, index) => <fieldset className="grid min-w-0 gap-3 border-t pt-3" key={index}><div className="flex min-w-0 items-center gap-2"><Select value={cite.file_version_id} disabled={locked} onValueChange={file_version_id => change({citations: values.citations.map((row, at) => at === index ? {...row, file_version_id} : row)})}><SelectTrigger className="min-w-0 flex-1" aria-label={`引用文件 ${index + 1}`}><SelectValue/></SelectTrigger><SelectContent>{draft.target.files.map(file => <SelectItem key={file.id} value={file.id}>{file.name}</SelectItem>)}</SelectContent></Select><Button type="button" variant="ghost" size="sm" disabled={locked} onClick={() => change({citations: values.citations.filter((_, at) => at !== index)})}>移除引用 {index + 1}</Button></div><Label htmlFor={`${id}-location-${index}`}>引用位置 {index + 1}</Label><Input id={`${id}-location-${index}`} value={cite.location} maxLength={4000} disabled={locked} onChange={event => change({citations: values.citations.map((row, at) => at === index ? {...row, location: event.target.value} : row)})}/><Label htmlFor={`${id}-excerpt-${index}`}>引用摘录 {index + 1}</Label><Textarea id={`${id}-excerpt-${index}`} value={cite.excerpt} maxLength={4000} disabled={locked} onChange={event => change({citations: values.citations.map((row, at) => at === index ? {...row, excerpt: event.target.value} : row)})}/></fieldset>)}</section>
@@ -124,6 +133,6 @@ export function AuditReviewProvider({adapter, children}: {adapter: AuditReviewAd
     <DialogFooter><Button type="button" variant="outline" onClick={close}>{draft.phase === 'saved' ? '完成' : unresolved(draft) ? '关闭，稍后核对' : '取消'}</Button>{draft.phase === 'editing' ? <><Button type="submit" disabled={!valid}>保存人工复核</Button>{presentations.current.get(selected!)?.onContinue && <Button type="button" disabled={!valid} onClick={() => save(true)}>保存并继续</Button>}</> : draft.phase === 'unknown' || draft.phase === 'error' ? <><Button type="button" onClick={() => void observe(draft, true)}>{draft.request ? '核对保存结果' : '重新读取复核记录'}</Button>{draft.retryAllowed && <Button type="button" variant="outline" onClick={() => void observe(draft, false)}>重试保存相同内容</Button>}</> : ['sending', 'reading'].includes(draft.phase) ? <Button disabled>{draft.phase === 'sending' ? '正在保存…' : '正在读取…'}</Button> : null}</DialogFooter>
   </form>
   const container = selected ? presentations.current.get(selected)?.container : undefined
-  return <ReviewEditorContext.Provider value={{open, release, revision}}>{children}{container?.isConnected ? createPortal(<section aria-label="人工复核编辑" className="border-t pt-4">{form}</section>, container) : <Dialog open={Boolean(draft)} onOpenChange={value => {if (!value) close()}}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl" onCloseAutoFocus={event => {event.preventDefault(); if (trigger.current?.isConnected) trigger.current.focus()}}><DialogHeader><DialogTitle>人工复核</DialogTitle><DialogDescription>记录人工判断，不改变机器结果或正式报告资格。</DialogDescription></DialogHeader>{form}</DialogContent></Dialog>}</ReviewEditorContext.Provider>
+  return <ReviewEditorContext.Provider value={{open, release, revision}}>{children}{container?.isConnected ? createPortal(<section aria-label="人工复核编辑" className="border-t pt-4">{form}</section>, container) : <Dialog open={Boolean(draft)} onOpenChange={value => {if (!value) close()}}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl" onCloseAutoFocus={event => {event.preventDefault(); if (trigger.current?.isConnected) trigger.current.focus()}}><DialogHeader><DialogTitle>人工复核</DialogTitle><DialogDescription>记录人工判断，不改变机器结果或正式报告资格；更正后，原来的复核保留在历史里。</DialogDescription></DialogHeader>{form}</DialogContent></Dialog>}</ReviewEditorContext.Provider>
 }
 import {ReadSkeleton} from '../components/read-skeleton'

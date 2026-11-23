@@ -503,6 +503,19 @@ class Review(TypedDict):
     next_step: str
     version: int
     citations: NotRequired[list[ReviewCitation]]
+    # The severity a reviewer gave the item; absent when no reviewer changed it.
+    severity: NotRequired[Literal["A", "B", "C"]]
+
+
+class ReviewVersion(Review):
+    reviewed_at: str
+    reviewer: str
+
+
+class ReviewHistory(TypedDict):
+    """Every version of one item's human review, newest first."""
+
+    versions: list[ReviewVersion]
 
 
 class ReviewHint(TypedDict):
@@ -634,6 +647,8 @@ class ReviewRequest(TypedDict):
     next_step: str
     version: int
     citations: NotRequired[list[ReviewCitation]]
+    # Change the item's severity; omitted keeps the one in effect. A change needs a rationale.
+    severity: NotRequired[Literal["A", "B", "C"]]
 
 
 class AuditDurationInterval(TypedDict):

@@ -9,5 +9,5 @@ export function reviewOf(round: ReviewRound, key: string) {
 
 export function reviewMatches(round: ReviewRound, request: ReviewRequest) {
   const review = reviewOf(round, request.item_key)
-  return Boolean(review && review.version === request.version + 1 && review.judgment === request.judgment && review.rationale === request.rationale && review.next_step === request.next_step && (review.citations || []).length === (request.citations || []).length && (review.citations || []).every((cite, index) => cite.file_version_id === request.citations?.[index]?.file_version_id && cite.location === request.citations?.[index]?.location && cite.excerpt === request.citations?.[index]?.excerpt))
+  return Boolean(review && review.version === request.version + 1 && review.judgment === request.judgment && review.rationale === request.rationale && review.next_step === request.next_step && (request.severity === undefined || review.severity === request.severity) && (review.citations || []).length === (request.citations || []).length && (review.citations || []).every((cite, index) => cite.file_version_id === request.citations?.[index]?.file_version_id && cite.location === request.citations?.[index]?.location && cite.excerpt === request.citations?.[index]?.excerpt))
 }

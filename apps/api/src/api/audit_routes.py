@@ -584,8 +584,16 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 cast(str, body.get("next_step")),
                 cast(int, body.get("version")),
                 body.get("citations"),
+                severity=body.get("severity"),
                 mcp_operation_id=request.scope.get("ppap.mcp_operation_id"),
             )
         except (KeyError, ValueError) as exc:
             return fail(exc)
         return JSONResponse(updated)
+
+    @app.get("/rounds/{round_id}/reviews/history", response_model=wc.ReviewHistory)
+    def rounds_review_history(round_id: str, item_key: str, request: Request) -> JSONResponse:
+        _principal, denied = require_object(request, round_id)
+        if denied:
+            return denied
+        return JSONResponse({"versions": store.review_history(round_id, item_key)})

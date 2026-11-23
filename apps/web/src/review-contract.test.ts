@@ -17,3 +17,13 @@ test('a coverage review uses its original key and confirms every submitted field
   }
   assert.equal(reviewMatches(round, {...request, item_key: 'another-key'}), false)
 })
+
+test('a severity change counts as saved only when the server kept that level', () => {
+  const asked = {...request, severity: 'A' as const}
+  const saved = structuredClone(round)
+  Object.assign(saved.coverage.rule_items![0].review!, {severity: 'A'})
+  assert.equal(reviewMatches(saved, asked), true)
+  assert.equal(reviewMatches(round, asked), false)
+  // Without a change the level in effect is not part of the request.
+  assert.equal(reviewMatches(saved, request), true)
+})

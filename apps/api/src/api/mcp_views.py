@@ -134,12 +134,28 @@ def review(finding: dict, body: dict) -> tuple[list[str], list[dict]]:
         details.append(
             {
                 "kind": "facts",
-                "title": f"现有人工复核（第 {prior.get('version')} 次，将被这次替换）",
-                "rows": [("人工判断", prior.get("judgment")), ("判断理由", prior.get("rationale")), ("后续建议", prior.get("next_step"))],
+                "title": f"现有人工复核（第 {prior.get('version')} 次，更正后保留在历史里）",
+                "rows": [
+                    ("人工判断", prior.get("judgment")),
+                    *([("严重程度", prior["severity"])] if prior.get("severity") else []),
+                    ("判断理由", prior.get("rationale")),
+                    ("后续建议", prior.get("next_step")),
+                ],
             }
         )
     cites = [[c.get("file_version_id"), c.get("location"), c.get("excerpt")] for c in body.get("citations") or []]
-    details.append({"kind": "facts", "title": "这次的人工复核", "rows": [("人工判断", body["judgment"]), ("判断理由", body["rationale"]), ("后续建议", body.get("next_step") or None)]})
+    details.append(
+        {
+            "kind": "facts",
+            "title": "这次的人工复核",
+            "rows": [
+                ("人工判断", body["judgment"]),
+                *([("改为严重程度", body["severity"])] if body.get("severity") else []),
+                ("判断理由", body["rationale"]),
+                ("后续建议", body.get("next_step") or None),
+            ],
+        }
+    )
     details.append({"kind": "table", "title": "原件引用", "head": ["文件", "位置", "摘录"], **_rows(cites)})
     details.append({"kind": "note", "text": "记录人工判断，不改变机器结果或正式报告资格。复核与机器结论并列保存。"})
     return summary, details

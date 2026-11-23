@@ -426,7 +426,10 @@ def register_tools(mcp, gateway, authority, runtime):
             actor = await authority()
             actor.require("audits:read")
             _audit, round_id = await audit_round(actor, tid)
-            return Outcome(task_id=tid, result=page_result(await finding(actor, round_id, item_key), page or PageRequest()).model_dump(), next=DONE)
+            found = await finding(actor, round_id, item_key)
+            # Every earlier version of the human review stays readable (#358).
+            history = await gateway.get(actor, "audits:read", f"/rounds/{round_id}/reviews/history", params={"item_key": item_key})
+            return Outcome(task_id=tid, result=page_result({**found, "review_history": history["versions"]}, page or PageRequest()).model_dump(), next=DONE)
         except Exception as exc:
             return failure(exc, task_id=tid)
 
@@ -439,6 +442,7 @@ def register_tools(mcp, gateway, authority, runtime):
         rationale: str,
         next_step: str,
         citations: list[wc.ReviewCitation] | None = None,
+        severity: Annotated[Literal["A", "B", "C"] | None, Field(description="Change the item's severity, with the reason in rationale; omit to keep the one in effect.")] = None,
     ) -> Outcome:
         """Record a person's judgment on one finding, in that person's words. It is kept beside the machine's conclusion, which stays as
         it was, and is saved only after the person approves the exact text in the browser."""
@@ -448,7 +452,16 @@ def register_tools(mcp, gateway, authority, runtime):
             actor.require("reviews:write")
             replayed = await runtime.replay(actor, rid, "record_review")
             if replayed is not None:
-                arguments = {"task_id": tid, "request_id": rid, "item_key": item_key, "judgment": judgment, "rationale": rationale, "next_step": next_step, "citations": citations}
+                arguments = {
+                    "task_id": tid,
+                    "request_id": rid,
+                    "item_key": item_key,
+                    "judgment": judgment,
+                    "rationale": rationale,
+                    "next_step": next_step,
+                    "citations": citations,
+                    "severity": severity,
+                }
                 return receipt(replayed, "record_review", arguments, task_id=tid) or Outcome(task_id=tid, request_id=rid, result={"item_key": item_key, "saved": True}, next=DONE)
             _audit, round_id = await audit_round(actor, tid)
             path = f"/rounds/{round_id}"
@@ -459,6 +472,8 @@ def register_tools(mcp, gateway, authority, runtime):
             body: dict[str, Any] = {"item_key": item_key, "judgment": judgment, "rationale": rationale, "next_step": next_step, "version": version}
             if citations:
                 body["citations"] = citations
+            if severity is not None:
+                body["severity"] = severity
             source = await gateway.get(actor, "audits:read", path)
             # The clause, the machine's finding and its evidence: what the Web shows beside its review form.
             row: dict[str, Any] = next((f for f in source.get("findings", []) if f["item_key"] == item_key), {})
