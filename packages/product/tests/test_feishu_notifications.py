@@ -313,3 +313,46 @@ def test_card_body_names_the_chosen_rule_set_by_its_registered_name() -> None:
     task = {"id": "task-a", "number": "001", "customer_preference": "UAES", "files": []}
     assert "审核客户：联电科技/UAES" in _text(task_notification_card(task, "started", "https://ppap.example.test"))
     assert "客户" not in _text(task_notification_card({**task, "customer_preference": None}, "started", "https://ppap.example.test"))
+
+
+def test_a_card_that_lists_everything_starts_the_audit_through_the_web_route() -> None:
+    """With card callbacks reaching PPAP, the button is the Web's own start call, bound to the card's revision and quote (#355)."""
+    from product.feishu_notifications import start_call
+
+    task = {
+        "id": "1b4e28ba-2fa1-41d2-883f-0016d3cca427",
+        "number": "001",
+        "estimated_points": 500,
+        "input_revision": 3,
+        "confirmation_basis_digest": "q-3",
+        "files": [{"selection": "selected", "file": {"id": "v-1", "original_filename": "控制计划.xlsx"}, "match": {"state": "matched", "rule": {"title": "控制计划要求"}}}],
+    }
+    plain = task_notification_card(task, "confirmation", "https://ppap.example.test")
+    assert [button["behaviors"][0]["type"] for button in plain["body"]["elements"][1:]] == ["open_url"]
+    card = task_notification_card(task, "confirmation", "https://ppap.example.test", buttons=True)
+    start, opened = card["body"]["elements"][1:]
+    call = start["behaviors"][0]["value"]["call"]
+    assert call == start_call(task) and call["path"] == f"/audit-tasks/{task['id']}/confirm" and call["method"] == "POST"
+    assert call["body"]["expected_revision"] == 3 and call["body"]["expected_confirmation_basis_digest"] == "q-3"
+    # The same card, clicked twice, is the same request; a newer quote is another one.
+    assert start_call(task)["body"]["request_id"] == call["body"]["request_id"] != start_call({**task, "confirmation_basis_digest": "q-4"})["body"]["request_id"]
+    assert "预计点数：500" in start["confirm"]["text"]["content"] and opened["behaviors"][0]["type"] == "open_url"
+
+
+def test_a_card_click_is_a_signing_call_only_on_a_route_cards_may_call() -> None:
+    from product.feishu import CardAction, CardCall, UnknownEvent, parse_event
+
+    def click(value):
+        return parse_event(
+            {
+                "schema": "2.0",
+                "header": {"event_type": "card.action.trigger"},
+                "event": {"operator": {"tenant_key": "t", "open_id": "ou_a"}, "action": {"tag": "button", "value": value}, "context": {"open_message_id": "om_1"}},
+            }
+        )
+
+    path = "/audit-tasks/1b4e28ba-2fa1-41d2-883f-0016d3cca427/confirm"
+    assert click({"call": {"method": "POST", "path": path, "body": {"request_id": "r"}}}) == CardCall("t", "ou_a", "om_1", "POST", path, {"request_id": "r"})
+    assert isinstance(click({"call": {"method": "POST", "path": "/rulebooks/uaes/plan", "body": {}}}), UnknownEvent)
+    assert isinstance(click({"call": {"method": "DELETE", "path": path, "body": {}}}), UnknownEvent)
+    assert isinstance(click({"action": "confirm_audit_task", "notification_id": "n"}), CardAction)

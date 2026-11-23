@@ -22,6 +22,7 @@ from product.feishu import (
     AppMismatch,
     AppTicket,
     CardAction,
+    CardCall,
     Challenge,
     EncryptedEvent,
     FeishuError,
@@ -65,7 +66,7 @@ from product.files import (
     safe_content_type,
 )
 from product.fixtures import SUBJECTS
-from product.identity import DOCS_SESSION_SECONDS, DOCS_TOKEN_PREFIX, EDITION_COOKIE, SESSION_COOKIE, ProviderAuthError, new_token, safe_return_to
+from product.identity import DOCS_SESSION_SECONDS, DOCS_TOKEN_PREFIX, EDITION_COOKIE, SESSION_COOKIE, ProviderAuthError, Session, new_token, safe_return_to
 from product.logs import QUIET_PATHS, bind, emit, new_request_id, reset, round_id_from_path
 from product.logs import configure as configure_logs
 from product.mcp import McpError
@@ -78,6 +79,7 @@ from product.writeback_targets import public_target
 from api import web_contract as wc
 from api.access import object_denied
 from api.audit_routes import register_audit_routes
+from api.card_actions import handle_card_call
 from api.feishu_jsapi_routes import register_feishu_jsapi_routes
 from api.intents import register_intent_routes
 from api.meego_routes import register_meego_routes
@@ -209,16 +211,21 @@ def create_app(
         from product.mcp import Delegation, McpError
 
         delegated = request.scope.get("ppap.delegation")
+        # A card button's call, made in-process as the person Feishu verified (#355, CR-06); no network request sets it.
+        carded = request.scope.get("ppap.card_session")
         host_token = docs_token = ""
         authorization = request.headers.get("authorization", "")
-        if not isinstance(delegated, Delegation) and authorization[:7].lower() == "bearer ":
+        if not isinstance(delegated, Delegation) and not isinstance(carded, Session) and authorization[:7].lower() == "bearer ":
             bearer = authorization[7:].strip()
             if bearer.startswith(DOCS_TOKEN_PREFIX):
                 docs_token = bearer
             elif settings.meego_enabled():
                 host_token = bearer
         channel = "docs" if docs_token else "web"
-        if isinstance(delegated, Delegation):
+        session: Session | None
+        if isinstance(carded, Session):
+            session, raw = carded, ""
+        elif isinstance(delegated, Delegation):
             try:
                 current = app.state.mcp_store.delegation(delegated.id)
             except McpError:
@@ -242,7 +249,8 @@ def create_app(
                 return None
         refresh_possible = session.needs_refresh(datetime.now(timezone.utc))
         try:
-            session = store.fresh_provider_session(session, lambda token: refresh_user_token(http, settings, token))
+            # A card click carries no Feishu user token of its own; there is nothing to renew.
+            session = session if isinstance(carded, Session) else store.fresh_provider_session(session, lambda token: refresh_user_token(http, settings, token))
         except ProviderAuthError as exc:
             if exc.status == 503:
                 raise HTTPException(503, exc.code, headers={"Retry-After": "5"}) from None
@@ -387,16 +395,18 @@ def create_app(
         return JSONResponse(body, status_code=200 if ok else 503)
 
     @app.post("/integrations/feishu/events")
-    def feishu_events(body: dict) -> JSONResponse:
+    async def feishu_events(body: dict) -> JSONResponse:
         parsed = accept_event(settings, body)
         if isinstance(parsed, Challenge):
             return JSONResponse({"challenge": parsed.value})
         if isinstance(parsed, AppTicket):
             if parsed.issued_at is None:
                 return JSONResponse({"error": "invalid_ticket_timestamp"}, status_code=400)
-            updated = store.save_app_ticket(settings.feishu_app_id, parsed.value, issued_at=parsed.issued_at)
+            updated = await asyncio.to_thread(store.save_app_ticket, settings.feishu_app_id, parsed.value, issued_at=parsed.issued_at)
             emit("feishu_app_ticket_received", updated=updated)
             return JSONResponse({"ok": True})
+        if isinstance(parsed, CardCall):
+            return await handle_card_call(app, store, parsed)
         if isinstance(parsed, CardAction):
             # Cards sent before signing moved to the Web still carry a start button (#355): send the person to the page.
             return JSONResponse({"toast": {"type": "info", "content": "请点「查看并核对规则」，在页面上核对后开始审核。"}})

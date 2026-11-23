@@ -1765,7 +1765,10 @@ class AuthStore:
             if reason:
                 self._finish_task_notification(conn, claimed, worker_ident, {"state": "suppressed", "reason": reason, "message_id": None}, before_dispatch=True)
                 return None
-            card = task_notification_card(task, stage, self.settings.canonical_web_url(), report_package)
+            # A card may start the audit itself once card callbacks reach PPAP (#355, CR-06). Not while points are charged:
+            # reading the AI package needs the person's own Feishu token, which a card click does not carry.
+            buttons = bool(self.settings.feishu_verification_token.strip()) and not self.settings.usage_charge_enabled
+            card = task_notification_card(task, stage, self.settings.canonical_web_url(), report_package, buttons=buttons)
             dispatch = {"receive_id": principal.subject, "card": card}
             saved = {"dispatch": dispatch}
             row = conn.execute(

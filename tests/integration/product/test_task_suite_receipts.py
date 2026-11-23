@@ -619,3 +619,44 @@ def test_round_discloses_accepted_samples_not_rerun_after_later_validation(syste
     assert releases.active(principal, suite.revision.suite_key)["validation"]["samples_not_rerun"] is False
     assert client.get(path).json()["files"][0]["audit"]["checker_verification"] == frozen
     assert client.get("/rounds/" + accepted.json()["round_id"]).json()["inputs"][0]["checker_verification"] == frozen
+
+
+def test_a_card_button_starts_the_audit_through_the_web_route_as_the_person(system, core_system):
+    """CR-06 (#355): the card's button is the Web's own start call, made as the Feishu-verified person who clicked."""
+    client, _, admin, principal = system
+    admin.settings.feishu_verification_token = "card-callback-token"
+    path, _ = prepare(system, core_system, "UAES", "U12")
+    task = client.get(path).json()
+    claimed, actor = admin.claim_task_notification("notifier", task_id=task["id"])
+    delivery = admin.start_task_notification(claimed, "notifier", actor)
+    assert admin.finish_task_notification(claimed, "notifier", {"state": "sent", "reason": None, "message_id": "om-card"})
+    value = delivery["card"]["body"]["elements"][1]["behaviors"][0]["value"]
+    assert value["call"]["path"] == path + "/confirm"
+
+    def click(open_id=principal.subject, message="om-card"):
+        event = {"operator": {"tenant_key": principal.tenant_key, "open_id": open_id}, "action": {"tag": "button", "value": value}, "context": {"open_message_id": message}}
+        body = {"schema": "2.0", "header": {"event_type": "card.action.trigger", "token": "card-callback-token", "app_id": admin.settings.feishu_app_id}, "event": event}
+        response = client.post("/integrations/feishu/events", json=body)
+        assert response.status_code == 200, response.text
+        answers.append(response.json())
+        return response.json()["toast"]
+
+    answers: list[dict] = []
+
+    # A value copied onto another message, or a member who did not create the task, starts nothing.
+    assert click(message="om-forged")["type"] == "warning"
+    other = admin.upsert_feishu_identity(principal.tenant_key, "someone-else")
+    assert click(open_id=other.subject)["content"] == "只有这次审核的创建人能开始它。"
+    assert rounds_of(system) == []
+    started = click()
+    assert started["type"] == "success", started
+    assert len(rounds_of(system)) == 1
+    # The result is written back to the card: it says the audit started and has no button left.
+    card = answers[-1]["card"]["data"]
+    assert card["header"]["title"]["content"] == "审核已开始"
+    assert '"callback"' not in json.dumps(card)
+    # The same card clicked again is the same request: still one round.
+    assert click()["type"] == "success" and len(rounds_of(system)) == 1
+    with admin._conn() as conn:
+        rows = conn.execute("SELECT channel, outcome FROM product.actions WHERE route = '/audit-tasks/{task_id}/confirm' ORDER BY at").fetchall()
+    assert [tuple(row) for row in rows] == [("feishu_card", "failed"), ("feishu_card", "succeeded"), ("feishu_card", "succeeded")]

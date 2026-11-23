@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from urllib.parse import quote, urlencode
 
 from product.customers import customer_name
@@ -20,7 +21,16 @@ def _counts_text(counts: dict) -> str:
     return " · ".join(f"{label} {counts[key]} 项" for key, label in labels.items() if key in counts and (key in {"pass_count", "ng_count"} or counts[key]))
 
 
-def task_notification_card(task: dict, stage: str, web_url: str, report_package: dict | None = None) -> dict:
+def start_call(task: dict) -> dict:
+    """The Web's own start-audit call, for a card button (#355, CR-06): the revision and quote the card shows are its
+    preconditions, and they name the request, so a second click is the same request."""
+    request_id = str(uuid.uuid5(uuid.UUID(task["id"]), f"card-start:{task['input_revision']}:{task['confirmation_basis_digest']}"))
+    body = {"request_id": request_id, "expected_revision": task["input_revision"], "expected_confirmation_basis_digest": task["confirmation_basis_digest"]}
+    return {"method": "POST", "path": f"/audit-tasks/{task['id']}/confirm", "body": body}
+
+
+def task_notification_card(task: dict, stage: str, web_url: str, report_package: dict | None = None, *, buttons: bool = False) -> dict:
+    """`buttons`: card callbacks reach PPAP, so a card that lists everything may start the audit itself."""
     files = task["files"]
     references = [row for row in files if row["selection"] == "selected" and (row.get("match") or {}).get("state") == "reference"]
     targets = [row for row in files if row["selection"] == "selected" and (row.get("match") or {}).get("state") != "reference"]
@@ -129,8 +139,36 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
         },
         "body": {"direction": "vertical", "padding": "16px", "vertical_spacing": "12px", "elements": [body, opened]},
     }
-    # Starting an audit is signed by the person in the Web (#348, #355): the card links to the task, it does not start it.
     elements = card["body"]["elements"]
+    if (
+        buttons
+        and stage == "confirmation"
+        and matched
+        and type(task.get("estimated_points")) is int
+        and task.get("confirmation_basis_digest")
+        and all((row.get("match") or {}).get("state") == "unmatched" or (row.get("match") or {}).get("state") == "matched" and (row.get("match") or {}).get("rule") for row in targets)
+    ):
+        # Only a card that lists every file, rule, exclusion and the price may start the audit; the click is the person's own,
+        # through the same signing route as the Web (#355).
+        elements.insert(
+            1,
+            {
+                "tag": "button",
+                "type": "primary_filled",
+                "size": "large",
+                "width": "fill",
+                "text": {"tag": "plain_text", "content": "确认规则并开始审核"},
+                "behaviors": [{"type": "callback", "value": {"call": start_call(task)}}],
+                "confirm": {
+                    "title": {"tag": "plain_text", "content": "开始本次审核？"},
+                    "text": {
+                        "tag": "plain_text",
+                        "content": f"按卡片所列规则{'以深度模式' if task.get('deep_mode') else ''}审核 {matched} 份文件。未匹配文件不纳入审核。预计点数：{task['estimated_points']}。",
+                    },
+                },
+            },
+        )
+        opened["type"] = "default"
     while blocks and len(json.dumps(card, ensure_ascii=False).encode()) > 26000:
         elements[1:] = [opened]
         opened["type"] = "primary_filled"

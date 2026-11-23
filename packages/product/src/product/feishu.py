@@ -32,10 +32,28 @@ class AppTicket:
 
 @dataclass(frozen=True)
 class CardAction:
+    """A start button on a card sent before signing moved to the Web; it only answers with a pointer to the page."""
+
     tenant_key: str
     subject: str
     notification_id: str
     message_id: str
+
+
+# The signing calls a card button may make (#355, CR-06): the same route the Web calls, as the person who clicked.
+CARD_CALLS = (re.compile(r"/audit-tasks/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/confirm"),)
+
+
+@dataclass(frozen=True)
+class CardCall:
+    """A card button's signing call: who clicked (Feishu-verified), on which message, and the route with its body."""
+
+    tenant_key: str
+    subject: str
+    message_id: str
+    method: str
+    path: str
+    body: dict
 
 
 @dataclass(frozen=True)
@@ -109,7 +127,7 @@ def ticket_event_time(body: dict, header: dict) -> Decimal | None:
     return issued_at if 0 < issued_at <= Decimal(str(datetime.now(timezone.utc).timestamp())) + 300 else None
 
 
-def parse_event(body: dict) -> Challenge | AppTicket | CardAction | EncryptedEvent | UnknownEvent:
+def parse_event(body: dict) -> Challenge | AppTicket | CardAction | CardCall | EncryptedEvent | UnknownEvent:
     if not isinstance(body, dict):
         return UnknownEvent()
     if body.get("type") == "url_verification" or "challenge" in body and not body.get("event"):
@@ -131,15 +149,23 @@ def parse_event(body: dict) -> Challenge | AppTicket | CardAction | EncryptedEve
         if not isinstance(operator, dict) or not isinstance(action, dict) or not isinstance(context, dict):
             return UnknownEvent()
         value = action.get("value")
-        if action.get("tag") != "button" or not isinstance(value, dict) or set(value) != {"action", "notification_id"} or value["action"] != "confirm_audit_task":
+        if action.get("tag") != "button" or not isinstance(value, dict):
             return UnknownEvent()
-        fields = (operator.get("tenant_key"), operator.get("open_id"), value["notification_id"], context.get("open_message_id"))
-        if all(isinstance(field, str) and field.strip() and len(field) <= 256 for field in fields):
-            return CardAction(*(cast(str, field).strip() for field in fields))
+        who = (operator.get("tenant_key"), operator.get("open_id"), context.get("open_message_id"))
+        if not all(isinstance(field, str) and field.strip() and len(field) <= 256 for field in who):
+            return UnknownEvent()
+        tenant_key, subject, message_id = (cast(str, field).strip() for field in who)
+        call = value.get("call")
+        if set(value) == {"call"} and isinstance(call, dict) and set(call) == {"method", "path", "body"}:
+            if call["method"] == "POST" and isinstance(call["path"], str) and any(route.fullmatch(call["path"]) for route in CARD_CALLS) and isinstance(call["body"], dict):
+                return CardCall(tenant_key, subject, message_id, call["method"], call["path"], call["body"])
+            return UnknownEvent()
+        if set(value) == {"action", "notification_id"} and value["action"] == "confirm_audit_task" and isinstance(value["notification_id"], str) and value["notification_id"].strip():
+            return CardAction(tenant_key, subject, value["notification_id"].strip(), message_id)
     return UnknownEvent()
 
 
-def accept_event(settings: Settings, body: dict) -> Challenge | AppTicket | CardAction | EncryptedEvent | UnknownEvent | UnauthenticatedEvent | AppMismatch:
+def accept_event(settings: Settings, body: dict) -> Challenge | AppTicket | CardAction | CardCall | EncryptedEvent | UnknownEvent | UnauthenticatedEvent | AppMismatch:
     """Feishu Verification Token plus app_id binding. Not a generic webhook framework."""
     parsed = parse_event(body)
     if isinstance(parsed, (EncryptedEvent, UnknownEvent)):
@@ -148,7 +174,7 @@ def accept_event(settings: Settings, body: dict) -> Challenge | AppTicket | Card
     got = event_token(body)
     if not expected or not got or not constant_time_equal(got, expected):
         return UnauthenticatedEvent()
-    if isinstance(parsed, (AppTicket, CardAction)):
+    if isinstance(parsed, (AppTicket, CardAction, CardCall)):
         app_id = event_app_id(body)
         if not app_id or app_id != settings.feishu_app_id:
             return AppMismatch()
