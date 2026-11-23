@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {fileConclusion, reviewLockOf, signoffEventText, signoffStatusText, signoffSummary, type SignoffContent} from './signoff-contract.ts'
+import {factLockOf, fileConclusion, reviewLockOf, signoffEventText, signoffStatusText, signoffSummary, type SignoffContent} from './signoff-contract.ts'
 
 const file = (filename: string, conclusion: SignoffContent['files'][number]['conclusion'], counts: {reviewed: number; accepted: number; pending: number}) => ({
   file_version_id: filename, filename, rule_title: null, conclusion, machine_conclusion: conclusion, pending_count: counts.pending, reviewed_count: counts.reviewed, accepted_count: counts.accepted, report: null,
@@ -34,4 +34,10 @@ test('reviews close only while the round is signed', () => {
   assert.equal(reviewLockOf({state: 'signed'}), '撤回签发后才能更正复核')
   assert.equal(reviewLockOf({state: 'unsigned'}), undefined)
   assert.equal(reviewLockOf(null), undefined)
+})
+
+test('a signed round closes confirming original facts as it closes reviews, until the signoff is withdrawn', () => {
+  assert.equal(factLockOf({state: 'signed'}), '这一轮已签发，撤回签发后才能确认原件事实')
+  assert.equal(factLockOf({state: 'unsigned'}), undefined)
+  assert.equal(factLockOf(null), undefined)
 })

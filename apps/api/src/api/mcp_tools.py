@@ -54,7 +54,8 @@ _SAY = {
     "invalid_token": "这个连接已失效。请用户在客户端重新连接 PPAP。",
     "unauthenticated": "这个连接已失效。请用户在客户端重新连接 PPAP，并用飞书登录。",
     "not_a_folder": "这不是飞书文件夹的链接。请让用户给出要浏览的文件夹链接，或留空从云盘顶层开始。",
-    "round_signed": "这一轮已经签发，复核不能再改。要更正，请用户先在 PPAP 网页的任务页撤回签发并写明原因，再记录复核。",
+    "round_signed": "这一轮已经签发，复核和原件事实确认都不能再改。要更正，请用户先在 PPAP 网页的任务页撤回签发并写明原因，再记录。",
+    "signoff_has_errors": "这一轮有技术错误，结论不完整，不能签发。可以对同一份资料复审，再签发复审的那一轮。",
 }
 # The only dead ends: what PPAP must not do for this person (permission, role, policy). Everything else has a way on (#349).
 REFUSALS = frozenset(
@@ -501,7 +502,7 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
             ]
             if audit.get("conclusion") != "ERROR":
                 actions.append({"tool": "publish_report", "arguments": {"task_id": tid}, "summary": "把审核结果交付到飞书；需要用户同意。"})
-            if (found.get("signoff") or {}).get("state") == "unsigned" and audit.get("state") == "completed" and (audit.get("creator") or {}).get("mine"):
+            if (found.get("signoff") or {}).get("state") == "unsigned" and audit.get("state") == "completed" and audit.get("conclusion") != "ERROR" and (audit.get("creator") or {}).get("mine"):
                 actions.append({"tool": "sign_round", "arguments": {"task_id": tid}, "summary": "签发这一轮的结论；由用户本人在网页完成。"})
             return Outcome(task_id=tid, result=result, next=DONE, available_actions=actions)
         except Exception as exc:
@@ -625,6 +626,8 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
                     # Only the person who ran the round signs it; an audit still making its reports is waited on.
                     if (standing.get("unavailable") or {}).get("code") == "not_creator":
                         raise McpError("access_denied", 403)
+                    if (standing.get("unavailable") or {}).get("code") == "round_has_errors":
+                        raise workflow.Rejected("signoff_has_errors")
                     raise workflow.Rejected("results_not_ready")
                 reply = await gateway.propose(actor, "reviews:write", "sign_round", rid, "POST", path, page=f"/tasks/{tid}", request={"task_id": tid}, probes=[path])
             pending = receipt(reply, "sign_round", {"task_id": tid, "request_id": rid}, task_id=tid)

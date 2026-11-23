@@ -99,7 +99,7 @@ def register_fact_answer_routes(app: FastAPI, store, principal_of) -> None:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         except ValueError as exc:
             code = str(exc)
-            return JSONResponse({"error": code}, status_code=409 if any(word in code for word in ("conflict", "expired", "changed")) else 400)
+            return JSONResponse({"error": code}, status_code=409 if code == "round_signed" or any(word in code for word in ("conflict", "expired", "changed")) else 400)
 
     @app.get("/audit-rounds/{round_id}/fact-answers", response_model=FactAnswersView, response_model_exclude_unset=True)
     def read_fact_answers(round_id: str, request: Request):

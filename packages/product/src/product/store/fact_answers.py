@@ -168,7 +168,7 @@ def apply_answer(store, principal, round_id, payload):
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("fact-answer:" + request["operation_id"],))
         # One revision boundary for answers and all affected results. No Worker,
         # queue, usage-event, new Round, rule appendix or model call is involved.
-        row = conn.execute("SELECT execution,result_attempt FROM product.audit_rounds WHERE id=%s FOR UPDATE", (round_id,)).fetchone()
+        row = conn.execute("SELECT execution,result_attempt,signed_at FROM product.audit_rounds WHERE id=%s FOR UPDATE", (round_id,)).fetchone()
         old = conn.execute("SELECT request,receipt,answered_by,round_id FROM product.original_fact_answers WHERE operation_id=%s", (request["operation_id"],)).fetchone()
         if old:
             if old[0] != request or str(old[2]) != principal.user_id or str(old[3]) != round_id:
@@ -176,6 +176,9 @@ def apply_answer(store, principal, round_id, payload):
             return old[1]
         if not row or row[0] != "completed":
             raise ValueError("fact_answers_requires_completed")
+        # A signed round's facts stand as signed (#357): its signer withdraws the signoff first.
+        if row[2] is not None:
+            raise ValueError("round_signed")
         view = _view(conn, round_id)
         if request["expected_revision"] != view["revision"]:
             raise ValueError("fact_revision_conflict")

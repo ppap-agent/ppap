@@ -36,7 +36,8 @@ export const nativeFactAnswersAdapter: FactAnswersAdapter = {
 
 export function definiteFactAnswerRejection(cause: unknown) {
   const {status, code} = (cause as {status?: number; code?: string}) || {}
-  if (status === 409) return ['fact_revision_conflict', 'fact_question_changed', 'fact_question_expired', 'fact_answer_conflict'].includes(code || '')
+  // A signed round (#357) refuses an answer outright: nothing was written.
+  if (status === 409) return ['fact_revision_conflict', 'fact_question_changed', 'fact_question_expired', 'fact_answer_conflict', 'round_signed'].includes(code || '')
   return status !== undefined && [400, 401, 403, 404, 422].includes(status)
 }
 

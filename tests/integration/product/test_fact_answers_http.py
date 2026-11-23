@@ -98,3 +98,22 @@ def test_http_stale_fact_answer_is_conflict_without_writing(auth_store_factory, 
         response = client.post(f"/audit-rounds/{rid}/fact-answers", json={**request, "expected_question_fingerprint": "a" * 64})
         assert response.status_code == 409 and response.json() == {"error": "fact_question_changed"}
     assert api.read_fact_answers(alice, rid)["answers"] == []
+
+
+def test_a_signed_round_takes_no_fact_answer_until_its_signoff_is_withdrawn(auth_store_factory, tmp_path, monkeypatch):
+    """#357: a signed round's original facts stand as signed; its signer withdraws the signoff first."""
+    store, api, alice, rid, version, observed = prepare_fact_round(auth_store_factory, tmp_path, monkeypatch)
+    request = answer_request(api, alice, rid)
+    action = str(uuid4())
+    with store._conn() as conn:
+        conn.execute(
+            """INSERT INTO product.actions (id, tenant_id, user_id, channel, method, route, path, outcome)
+               VALUES (%s, %s, %s, 'web', 'POST', '/rounds/{round_id}/signoff', %s, 'succeeded')""",
+            (action, alice.tenant_id, alice.user_id, f"/rounds/{rid}/signoff"),
+        )
+        conn.execute("UPDATE product.audit_rounds SET signed_at = now(), signoff = '{}'::jsonb, signoff_action_id = %s WHERE id = %s", (action, rid))
+    with TestClient(create_app(store.settings, auth_store=api)) as client:
+        client.cookies.set(SESSION_COOKIE, store.create_session(alice))
+        response = client.post(f"/audit-rounds/{rid}/fact-answers", json=request)
+        assert response.status_code == 409 and response.json() == {"error": "round_signed"}
+    assert api.read_fact_answers(alice, rid)["answers"] == []

@@ -937,7 +937,8 @@ def available_actions(task_id: str, phase: str, state: dict, facts: dict) -> lis
         if (facts.get("audit") or {}).get("conclusion") != "ERROR":
             # A round with unfinished checks has no report to deliver.
             actions.append({"tool": "publish_report", "arguments": {"task_id": task_id}, "summary": "把审核结果交付到飞书；需要用户同意。"})
-        if (facts.get("signoff") or {}).get("state") == "unsigned" and ((facts.get("audit") or {}).get("creator") or {}).get("mine"):
+        audit = facts.get("audit") or {}
+        if (facts.get("signoff") or {}).get("state") == "unsigned" and audit.get("conclusion") != "ERROR" and (audit.get("creator") or {}).get("mine"):
             # Signing is the person's own, in the Web; only proposed when the user asks for it (#357).
             actions.append({"tool": "sign_round", "arguments": {"task_id": task_id}, "summary": "签发这一轮的结论；由用户本人在网页完成。"})
         actions.append({"tool": "prepare_audit", "arguments": {"follows_task_id": task_id}, "summary": "供应商补件后，对新的资料复审并关联这一次。"})

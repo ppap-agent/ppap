@@ -51,4 +51,8 @@ export function signoffEventText(event: SignoffEvent): {action: '签发' | '撤�
 /** Review editing closes while the round is signed; the signer withdraws it first. */
 export const reviewLockOf = (signoff: Pick<RoundSignoff, 'state'> | null | undefined) => signoff?.state === 'signed' ? signedReviewLock : undefined
 
+/** Confirming original facts closes too: what was signed stands until the signer withdraws it. */
+export const signedFactLock = '这一轮已签发，撤回签发后才能确认原件事实'
+export const factLockOf = (signoff: Pick<RoundSignoff, 'state'> | null | undefined) => signoff?.state === 'signed' ? signedFactLock : undefined
+
 export const WITHDRAW_REASON_MAX = 500

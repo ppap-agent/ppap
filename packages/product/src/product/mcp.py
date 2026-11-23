@@ -28,7 +28,7 @@ SCOPES = {
     "audits:read": "读取审核任务、结果与历史",
     "audits:write": "准备审核、处理准备中的问题",
     "audits:execute": "提议开始审核或重审，由你在网页完成",
-    "reviews:write": "提交人工复核、确认原件事实",
+    "reviews:write": "提交人工复核、确认原件事实；提议签发，由你在网页完成",
     "reports:read": "读取已授权报告",
     "reports:write": "提议重新生成报告，由你在网页完成",
     "reports:send": "提议在飞书交付报告，由你在网页完成",

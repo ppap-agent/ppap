@@ -15,6 +15,7 @@ import {RemoteSourcePane} from '../journey/remote-source'
 import {checkedFactAnswer, definiteFactAnswerRejection, factValueLabel, groupFactQuestions, nativeFactAnswersAdapter, type FactAnswerReceipt, type FactAnswersView, type FactQuestion} from './fact-answers-contract'
 import {resultLabel, resultTone} from './status-labels'
 import {writeAuditAddress} from './routes'
+import {signoffChanged} from './signoff-contract'
 import {Disclosure} from '../components/disclosure'
 
 type FileVersion = components['schemas']['FileVersion']
@@ -33,8 +34,9 @@ function keepOperation(roundId: string, operationId: string | null) {
   writeAuditAddress(url)
 }
 /** Answers apply only to this frozen original and round. Machine findings stay untouched. */
-/** `editable` is the task creator's: everyone in the enterprise reads the answers, only the creator gives them. */
-export function FactQuestions({roundId, files, findings = [], fileVersionId, editable = true}: {roundId: string; files: FileVersion[]; findings?: MachineFinding[]; fileVersionId?: string; editable?: boolean}) {
+/** `editable` is the task creator's: everyone in the enterprise reads the answers, only the creator gives them.
+ * `lock` says why answering is closed now (a signed round, #357); the answers stay readable. */
+export function FactQuestions({roundId, files, findings = [], fileVersionId, editable = true, lock}: {roundId: string; files: FileVersion[]; findings?: MachineFinding[]; fileVersionId?: string; editable?: boolean; lock?: string}) {
   const [view, setView] = useState<FactAnswersView | null>(null)
   const [error, setError] = useState(''), [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false)
@@ -75,7 +77,11 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, edi
       if (!mounted.current) return
       if (definiteFactAnswerRejection(cause)) {
         setPending(null); keepOperation(roundId, null)
-        if ((cause as {status?: number})?.status === 409) {
+        if ((cause as {code?: string})?.code === 'round_signed') {
+          // Signed meanwhile: nothing was saved, and the page holding the signoff learns it.
+          setNotice('这一轮已经签发，这次回答没有保存。撤回签发后才能确认原件事实。')
+          window.dispatchEvent(new CustomEvent(signoffChanged, {detail: roundId}))
+        } else if ((cause as {status?: number})?.status === 409) {
           setView(null)
           await read()
           setNotice('问题或回答已更新，已重新读取。请核对当前内容后再明确提交。')
@@ -116,7 +122,8 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, edi
     {notice && <p role="status" className="text-sm">{notice}</p>}
     {pending && <div className="flex flex-wrap items-center gap-3 text-sm"><p role="status">{saving ? '正在保存并核对回答…' : '有一次回答等待确认，当前不能再次提交。'}</p><Button variant="outline" disabled={saving} onClick={() => void recover()}>查看原回答操作</Button></div>}
     {!editable && questions.some(question => !question.answered) && <p className="text-sm text-muted-foreground">只有任务发起人可以确认这些事实。</p>}
-    {editable && groups.map(group => {
+    {editable && lock && questions.some(question => !question.answered) && <p className="text-sm text-muted-foreground">{lock}。</p>}
+    {editable && !lock && groups.map(group => {
       const question = (row: FactQuestion) => <FactQuestionForm key={`${row.file_version_id}:${row.field}:${row.fingerprint}`} question={row} file={files.find(file => file.id === row.file_version_id)} roundId={roundId} disabled={loading || saving || Boolean(pending)} onAnswer={value => void apply(row, value)}/>
       return <section key={group.fileVersionId} aria-label={`${filename(group.fileVersionId)}的事实问题`} className="space-y-4 border-t pt-4"><h3 className="font-medium"><FileName name={filename(group.fileVersionId)}/></h3>{group.visible.map(question)}{group.folded.length > 0 && <Disclosure  summary={<>更多待确认事实（{group.folded.length}）</>}><div className="space-y-4">{group.folded.map(question)}</div></Disclosure>}</section>
     })}

@@ -16,7 +16,7 @@ import json
 from psycopg.types.json import Jsonb
 
 from product.identity import Principal
-from product.store.task_view import pending_count
+from product.store.task_view import PENDING_OUTCOMES, pending_count
 
 SIGN_ROUTE = "/rounds/{round_id}/signoff"
 WITHDRAW_ROUTE = "/rounds/{round_id}/signoff/withdraw"
@@ -58,7 +58,8 @@ def content(store, conn, principal: Principal, round_id: str, task_id: str | Non
                 "machine_conclusion": audit["conclusion"],
                 "pending_count": pending_count(audit),
                 "reviewed_count": sum(bool(check.get("review")) for check in checks),
-                "accepted_count": sum(not check.get("review") for check in checks),
+                # Accepted as the machine concluded: decided items no person reviewed. 待审核 stays 待审核, counted apart.
+                "accepted_count": sum(not check.get("review") and check.get("outcome") not in PENDING_OUTCOMES for check in checks),
                 "report": None,
             }
         )
@@ -139,6 +140,9 @@ def _status(store, conn, principal: Principal, round_id: str, action_id: str | N
         code, reason = "not_creator", "只有发起这一轮审核的人可以签发。"
     elif current is None:
         code, reason = "not_finished", "审核结束、报告生成完后才能签发。"
+    elif current["machine_conclusion"] == "ERROR":
+        # A round with a technical error has no whole conclusion to stand by; its re-audit is signed instead.
+        code, reason = "round_has_errors", "这一轮有技术错误，结论不完整，不能签发。可以对同一份资料复审，再签发复审的那一轮。"
     else:
         code, reason = None, None
     return {
@@ -149,7 +153,7 @@ def _status(store, conn, principal: Principal, round_id: str, action_id: str | N
         "signer": {"name": store._display_name(conn, principal.tenant_id, signer[0]), "mine": signer[0] == principal.user_id} if signer else None,
         "signed": frozen,
         "current": current,
-        "can_sign": not signed_at and mine and current is not None,
+        "can_sign": not signed_at and code is None,
         "can_withdraw": bool(signed_at) and mine,
         "unavailable": {"code": code, "message": reason} if code else None,
         "history": _history(store, conn, principal, round_id, creator, [str(item) for item in (signing_action, action_id) if item]),
@@ -178,6 +182,8 @@ def sign(store, principal: Principal, round_id: str, *, action_id: str | None, e
         current = content(store, conn, principal, round_id, task_id)
         if current is None:
             raise ValueError("round_not_finished")
+        if current["machine_conclusion"] == "ERROR":
+            raise ValueError("round_has_errors")
         if expected is not None and expected != current["fingerprint"]:
             raise ValueError("content_changed")
         conn.execute(

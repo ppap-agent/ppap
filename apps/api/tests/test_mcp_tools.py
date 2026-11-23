@@ -1,6 +1,7 @@
 """The tools against an in-memory Product API: what a client is told at each point of an audit."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -413,6 +414,11 @@ def test_signing_off_is_proposed_for_the_person_who_ran_the_round_and_done_by_th
     assert seen["result"]["signoff"]["state"] == "unsigned" and "sign_round" in {action["tool"] for action in seen["available_actions"]}
     # The task itself offers it too, beside the next step.
     assert "sign_round" in {action["tool"] for action in world.call("get_task", task_id=task)["available_actions"]}
+    # Not for a round with a technical error.
+    world.product.audit.update(conclusion="ERROR")
+    assert "sign_round" not in {action["tool"] for action in world.call("get_results", task_id=task)["available_actions"]}
+    assert "sign_round" not in {action["tool"] for action in world.call("get_task", task_id=task)["available_actions"]}
+    world.product.audit.update(conclusion="NG")
 
     # Someone else's round is refused before anything is put to the user.
     world.product.signoff.update(can_sign=False, unavailable={"code": "not_creator", "message": "只有发起这一轮审核的人可以签发。"})
@@ -421,6 +427,10 @@ def test_signing_off_is_proposed_for_the_person_who_ran_the_round_and_done_by_th
     # An audit still making its reports is waited on.
     world.product.signoff.update(unavailable={"code": "not_finished", "message": "审核结束、报告生成完后才能签发。"})
     assert world.call("sign_round", task_id=task, request_id=str(uuid4()))["next"]["kind"] == "wait" and world.product.operations == {}
+    # A round with a technical error has no whole conclusion: nothing is proposed, and its re-audit is the way on.
+    world.product.signoff.update(unavailable={"code": "round_has_errors", "message": "这一轮有技术错误，结论不完整，不能签发。"})
+    errored = world.call("sign_round", task_id=task, request_id=str(uuid4()))
+    assert errored["next"]["kind"] != "wait" and "复审" in json.dumps(errored["next"], ensure_ascii=False) and world.product.operations == {}
 
     world.product.signoff.update(can_sign=True, unavailable=None)
     request = str(uuid4())

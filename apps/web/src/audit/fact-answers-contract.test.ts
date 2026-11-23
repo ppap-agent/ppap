@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {factMachineFindings, factValueLabel, groupFactQuestions, nativeFactAnswersAdapter, type FactAnswerReceipt, type FactAnswerRequest, type FactQuestion} from './fact-answers-contract.ts'
+import {definiteFactAnswerRejection, factMachineFindings, factValueLabel, groupFactQuestions, nativeFactAnswersAdapter, type FactAnswerReceipt, type FactAnswerRequest, type FactQuestion} from './fact-answers-contract.ts'
 import type {components} from '../generated/openapi.ts'
 
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
@@ -38,4 +38,9 @@ test('explicit human answer uses one POST and its original operation for readbac
     assert.deepEqual(calls.map(call => [call.url, call.init?.method]), [['/audit-rounds/round%2F1/fact-answers', 'POST'], ['/audit-rounds/round%2F1/fact-answers/op-1', 'GET']])
     assert.deepEqual(JSON.parse(String(calls[0].init?.body)), input)
   } finally {globalThis.fetch = originalFetch}
+})
+
+test('an answer refused because the round is signed was not written, so it is not left unknown', () => {
+  assert.equal(definiteFactAnswerRejection({status: 409, code: 'round_signed'}), true)
+  assert.equal(definiteFactAnswerRejection({status: 409, code: 'something_else'}), false)
 })

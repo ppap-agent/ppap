@@ -41,7 +41,11 @@ def test_the_person_who_ran_the_round_signs_withdraws_with_a_reason_and_signs_ag
         assert frozen_file["report"]["report_id"] == audit["report"]["report_id"] and len(frozen_file["report"]["sha256"]) == 64
         assert current["reviews"] == [{"item_key": key, "version": 1, "judgment": "confirm"}]
         assert current["reviewed_count"] == frozen_file["reviewed_count"] == 1
-        assert current["accepted_count"] == len(current["unreviewed"]) == len(audit["checks"]) - 1
+        assert len(current["unreviewed"]) == len(audit["checks"]) - 1
+        # Accepted as the machine concluded: decided items nobody reviewed; 待审核 ones are counted apart, never accepted.
+        decided = [item for item in current["unreviewed"] if item["outcome"] not in {"UNABLE", "uncovered"}]
+        assert current["accepted_count"] == frozen_file["accepted_count"] == len(decided)
+        assert frozen_file["pending_count"] == sum(check["outcome"] in {"UNABLE", "uncovered"} for check in audit["checks"])
         assert all(item["item_key"] != key for item in current["unreviewed"])
         assert call(client, token, "get_results", task_id=task)["result"]["signoff"] == {"state": "unsigned", "signed_at": None, "signer": None}
 
