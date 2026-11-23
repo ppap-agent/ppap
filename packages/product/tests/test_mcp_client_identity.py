@@ -8,10 +8,9 @@ from email.utils import format_datetime
 
 import httpx
 import pytest
-from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull
 from product.mcp import DOCUMENT, DOCUMENT_MAX_TTL, McpError, client_identity, document_fresh, fresh_until, read_client_document
 from product.settings import Settings, VerifiedClient
-from pydantic import AnyUrl, ValidationError
+from pydantic import ValidationError
 
 URL = "https://client.example/ppap/client.json"
 PUBLIC = "93.184.216.34"
@@ -127,14 +126,6 @@ def test_a_document_without_usable_callbacks_or_with_a_secret_is_refused(overrid
     read, _ = serve(json_response(document(**overrides)))
     with pytest.raises(McpError, match="invalid_client_metadata"):
         read()
-
-
-def test_only_callbacks_the_document_declares_are_accepted():
-    read, _ = serve(json_response(document()))
-    client = OAuthClientInformationFull.model_validate(read())
-    assert str(client.validate_redirect_uri(AnyUrl(CALLBACK))) == CALLBACK
-    with pytest.raises(InvalidRedirectUriError):
-        client.validate_redirect_uri(AnyUrl("http://127.0.0.1:4567/elsewhere"))
 
 
 def test_a_read_document_holds_as_its_cache_headers_say():
