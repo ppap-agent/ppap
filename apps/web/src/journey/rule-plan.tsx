@@ -66,10 +66,11 @@ function Block({block}: {block: Detail}) {
   return null
 }
 
-function ClauseRow({clause, document, change, before}: {clause: Clause; document: string; change: Change; before: string | undefined}) {
+/** `before`: the wording now; undefined while it is read, null when it could not be read. */
+function ClauseRow({clause, document, change, before}: {clause: Clause; document: string; change: Change; before: string | null | undefined}) {
   const [open, setOpen] = useState(false)
   const id = `plan-clause-${clause.id}`
-  const marks = before === undefined ? new Set<number>() : added(before, clause.text)
+  const marks = before == null ? new Set<number>() : added(before, clause.text)
   return <li className="border-t">
     <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}
       className="grid w-full grid-cols-[6rem_9rem_minmax(0,1fr)_auto] items-center gap-4 px-5 py-2.5 text-left text-sm outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50">
@@ -81,7 +82,7 @@ function ClauseRow({clause, document, change, before}: {clause: Clause; document
     {open && <div id={id} className="space-y-3 bg-muted/40 px-5 py-4">
       <div className="grid gap-3 lg:grid-cols-2">
         <div className="space-y-1.5"><h3 className="text-xs font-medium text-muted-foreground">现在的写法</h3>
-          <p className="whitespace-pre-wrap rounded-md border bg-card px-3 py-2 text-sm">{before ?? '正在读取原文…'}</p></div>
+          <p className="whitespace-pre-wrap rounded-md border bg-card px-3 py-2 text-sm">{before === undefined ? '正在读取原文…' : before === null ? '原文暂时读不出，请稍后重新打开。' : before}</p></div>
         <div className="space-y-1.5"><h3 className="text-xs font-medium text-muted-foreground">确认后的写法</h3>
           <div className="space-y-2 rounded-md border border-primary-line bg-card px-3 py-2 text-sm">{clause.text.split(/\n{2,}/).map((part, index) =>
             <p key={index} className={cn('whitespace-pre-wrap', marks.has(index) && 'rounded-sm bg-primary-soft px-1.5 py-0.5')}>{part}</p>)}</div>
@@ -99,8 +100,8 @@ function RevisionList({body, customer}: {body: RevisionBody; customer: string}) 
   const [shown, setShown] = useState(PAGE), [base, setBase] = useState<Map<string, string> | null>(null)
   useEffect(() => {
     if (!body.base) return
-    request<{revision: Base}>(`/rulebooks/${encodeURIComponent(customer)}/${encodeURIComponent(body.base.version)}/${body.base.revision}`)
-      .then(found => setBase(new Map(found.revision.documents.flatMap(document => document.clauses.map(clause => [clause.id, clause.text] as const)))))
+    request<Base>(`/rulebooks/${encodeURIComponent(customer)}/${encodeURIComponent(body.base.version)}/${body.base.revision}`)
+      .then(found => setBase(new Map(found.documents.flatMap(document => document.clauses.map(clause => [clause.id, clause.text] as const)))))
       .catch(() => setBase(new Map()))
   }, [customer, body.base])
   const rows = useMemo(() => body.documents.flatMap(document => document.clauses.filter(clause => body.changes[clause.id]).map(clause => ({clause, document: document.title, change: body.changes[clause.id]}))), [body])
@@ -120,7 +121,7 @@ function RevisionList({body, customer}: {body: RevisionBody; customer: string}) 
     </div>
     <div className="grid grid-cols-[6rem_9rem_minmax(0,1fr)_auto] gap-4 border-t bg-muted/40 px-5 py-2 text-xs text-muted-foreground" aria-hidden="true"><span>条款</span><span>文件类型</span><span>改了什么</span><span>依据与改动</span></div>
     {visible.length === 0 ? <p className="border-t px-5 py-6 text-sm text-muted-foreground">没有符合筛选的条款。</p>
-      : <ul aria-label="改动的条款">{visible.slice(0, shown).map(row => <ClauseRow key={row.clause.id} {...row} before={body.base ? base?.get(row.clause.id) : ''}/>)}</ul>}
+      : <ul aria-label="改动的条款">{visible.slice(0, shown).map(row => <ClauseRow key={row.clause.id} {...row} before={!body.base ? '' : base === null ? undefined : base.get(row.clause.id) ?? null}/>)}</ul>}
     {visible.length > shown && <div className="border-t px-5 py-3"><Button variant="ghost" size="sm" onClick={() => setShown(shown + PAGE)}>再显示 {Math.min(PAGE, visible.length - shown)} 条（还有 {visible.length - shown} 条）</Button></div>}
   </>
 }
@@ -168,7 +169,7 @@ export function RulePlanPage({plan, title, chosen, setChosen, busy, reauth, sign
             {problem && <p role="alert" className="w-full text-sm text-destructive">{problem}</p>}
             {declining && <div className="w-full space-y-2"><Textarea aria-label="拒绝原因（选填）" placeholder="可以写一句为什么拒绝（选填）" maxLength={500} value={reason} onChange={event => setReason(event.target.value)}/>
               <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setDeclining(false)}>取消</Button><Button variant="outline" disabled={busy} onClick={() => onDecline(reason)}>拒绝这一轮</Button></div></div>}
-            {!declining && plan.steps.some(step => !chosen.has(step.id)) && <Textarea aria-label="没勾选的原因（选填）" placeholder="没勾的步骤留到下一次；可以写一句为什么（选填）" maxLength={500} value={left} onChange={event => setLeft(event.target.value)} className="w-full"/>}
+            {!declining && plan.steps.some(step => !chosen.has(step.id)) && <Input aria-label="没勾选的原因（选填）" placeholder="没勾的步骤留到下一次；可以写一句为什么（选填）" maxLength={500} value={left} onChange={event => setLeft(event.target.value)} className="w-full"/>}
           </div>
         </div>
       </div>
