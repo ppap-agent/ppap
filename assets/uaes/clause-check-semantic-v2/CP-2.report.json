@@ -8,9 +8,15 @@
     "source": "rules/CP.json#CP:2",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "2f0c48ad3f5025d2222442e8ac9400038ee2d332c2ddbe292856b2542b5d04d9",
+  "review_sha256": "f4a64fd775510994b05b80350b16e507f2850a7fa8b15bdb5c1ffe82d6917787",
   "findings": [],
-  "excluded": [],
+  "excluded": [
+    {
+      "quote": "进料、出入库、出货三类环节的对应行均须写明追溯标识方式（批次号／炉号／序列号／流转卡等），三段串成闭合追溯链。",
+      "issue": "控制计划里没有某一类环节的行时，是否算没有判定对象",
+      "reason": "原文要求三类环节都写明并串成闭合追溯链；缺一类环节的行，三段就闭合不了，按原文即不满足，不是原文没有结论。"
+    }
+  ],
   "policy_sha256": {
     "通用判定说明.md": "57105ab34618ef9bd6d72987981a54439eb0d31a172142e086bfbce640830995"
   }
