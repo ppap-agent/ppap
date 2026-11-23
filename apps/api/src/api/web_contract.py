@@ -832,16 +832,6 @@ class IntentPlan(TypedDict):
     steps: list[IntentPlanStep]
 
 
-class ClientIdentity(TypedDict):
-    """Who the proposing client is, as far as PPAP can tell (#356); `label` is what the person reads. Only `verified`
-    and `metadata` are vouched for; `unverified` and `local` are what the client says of itself."""
-
-    level: Literal["verified", "metadata", "unverified", "local"]
-    name: str
-    domain: str | None
-    label: str
-
-
 class IntentReceipt(TypedDict):
     """The person's receipt for completing the proposal (#361)."""
 
@@ -850,11 +840,11 @@ class IntentReceipt(TypedDict):
 
 
 class Intent(TypedDict):
-    """A signing action an external client proposed (#348). The person completes it on `page`, or declines it."""
+    """A signing action proposed through MCP (#348). The person completes it on `page`, or declines it; which tool asked
+    is not shown (#356)."""
 
     id: str
     tool: str
-    client_identity: ClientIdentity
     created_at: str
     method: str
     path: str

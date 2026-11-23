@@ -45,6 +45,32 @@ def test_a_signing_action_is_the_persons_receipt(auth_store_factory, tmp_path):
     assert latest["number"] == f"R-{today}-0002" and latest["outcome"] == {"state": "failed", "text": "没有完成", "error": "plan_step_requires_revision"}
 
 
+def test_a_receipt_says_where_the_person_did_it_never_which_tool_asked():
+    """#356: a receipt for a completed proposal names only the place the person signed; an old row signed through MCP
+    before signing moved to the Web has no such place. Neither the list nor the PDF names a tool."""
+    import uuid
+    from datetime import date, timezone
+
+    import pymupdf
+    from api.receipts import render
+    from product.store import actions
+
+    task, round_id = str(uuid.uuid4()), str(uuid.uuid4())
+    at = datetime(2026, 11, 23, 2, 0, tzinfo=timezone.utc)
+
+    def row(channel: str, intent: str | None):
+        route = "/rounds/{round_id}/signoff"
+        return (uuid.uuid4(), "user", at, channel, "grant" if channel == "mcp" else None, intent, "POST", route, f"/rounds/{round_id}/signoff", {}, "succeeded", None, date(2026, 11, 23), 1)
+
+    proposed = actions._receipt(row("web", str(uuid.uuid4())), {task: "PPAP-20261123-001"}, {round_id: task}, {})
+    assert (proposed["action"], proposed["subject"], proposed["via"]) == ("签发审核结论", "PPAP-20261123-001", "网页")
+    assert actions._receipt(row("mcp", None), {}, {}, {})["via"] == actions.NO_PLACE == "—"
+    for receipt in (proposed, actions._receipt(row("mcp", None), {}, {}, {})):
+        with pymupdf.open(stream=render(receipt, "负责人"), filetype="pdf") as printed:
+            text = "".join(page.get_text() for page in printed) + str(receipt)
+        assert "经由" in text and not [word for word in ("客户端", "自称", "已验证", "未验证", "本机应用", "MCP") if word in text], text
+
+
 def _accepted_task(store, principal, charges: list[tuple[int, bool, str]]) -> str:
     """A task whose round was accepted, with the usage its acceptance recorded (no file split, as charging off leaves none)."""
     import uuid

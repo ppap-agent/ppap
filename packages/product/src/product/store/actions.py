@@ -11,11 +11,10 @@ import uuid
 
 from psycopg.types.json import Jsonb
 
-from product.mcp import client_identity
 from product.store.usage import task_charges
 
 MAX_PARAMS = 64 * 1024
-# The person's no to a client's proposal (#348): an action like any other, with the reason as its parameter.
+# The person's no to a proposal (#348): an action like any other, with the reason as its parameter.
 DECLINE_ROUTE = "/intents/{intent_id}/decline"
 
 
@@ -72,7 +71,10 @@ LABELS = {
     ("POST", "/rounds/{round_id}/signoff/withdraw"): "撤回签发",
 }
 REPORT_ROUTE = "/integrations/feishu/rounds/{round_id}/report"
-CHANNELS = {"web": "网页", "docs": "飞书云文档插件", "meego": "飞书项目插件", "feishu_card": "飞书卡片", "mcp": "MCP 客户端"}
+# Where the person did it (#356): only places a person signs. A proposal's tool is not named; an old `mcp` row, signed
+# before signing moved to the Web, has no such place and shows NO_PLACE, as the Web table and the PDF show any empty value.
+CHANNELS = {"web": "网页", "docs": "飞书云文档插件", "meego": "飞书项目插件", "feishu_card": "飞书卡片"}
+NO_PLACE = "—"
 STEPS = {"revision": "冻结修订", "cards": "发问题卡片给客户", "clarified": "标记已澄清", "readings": "发布解读"}
 OUTCOMES = {"succeeded": "已完成", "failed": "没有完成", "unknown": "结果未知", "pending": "结果未知"}
 
@@ -114,15 +116,6 @@ def receipts(store, principal, *, ident: str | None = None, intent: str | None =
                 (principal.tenant_id, list(by_round.values())),
             ).fetchall()
         }
-        # The proposing client as PPAP can tell it (#356): a self-described one is marked so, never shown as verified.
-        clients = {
-            operation: client_identity(client, metadata, store.settings.mcp_verified_clients)["label"]
-            for operation, client, metadata in conn.execute(
-                """SELECT o.id::text, c.id, c.metadata FROM product.mcp_operations o JOIN product.mcp_grants g ON g.id=o.grant_id
-                   JOIN product.mcp_clients c ON c.id=g.client_id WHERE o.id::text = ANY(%s)""",
-                ([str(row[5]) for row in rows if row[5]],),
-            ).fetchall()
-        }
         # The report document an action delivered, as it stands (#359): its link, read-only or not, the PDFs attached.
         deliveries = {
             str(action): rest
@@ -134,7 +127,7 @@ def receipts(store, principal, *, ident: str | None = None, intent: str | None =
     # What starting an audit charged: the usage of the round it accepted, settled as the usage page settles it (#361).
     started = [row[8].split("/")[2] for row in rows if row[7] == "/audit-tasks/{task_id}/confirm" and row[10] == "succeeded"]
     charged = task_charges(store, principal.tenant_id, started) if started else {}
-    return [_receipt(row, numbers, by_round, clients, charged, deliveries) for row in rows]
+    return [_receipt(row, numbers, by_round, charged, deliveries) for row in rows]
 
 
 def delivery_details(document_id: str | None, read_only: str | None, attachments: list[dict]) -> list[str]:
@@ -148,8 +141,8 @@ def delivery_details(document_id: str | None, read_only: str | None, attachments
     return lines
 
 
-def _receipt(row, numbers: dict, by_round: dict, clients: dict, charged: dict, deliveries: dict | None = None) -> dict:
-    ident, _user, at, channel, _grant, intent, method, route, path, params, outcome, error, day, seq = row
+def _receipt(row, numbers: dict, by_round: dict, charged: dict, deliveries: dict | None = None) -> dict:
+    ident, _user, at, channel, _grant, _intent, method, route, path, params, outcome, error, day, seq = row
     params = params or {}
     parts = path.strip("/").split("/")
     task = (
@@ -170,9 +163,7 @@ def _receipt(row, numbers: dict, by_round: dict, clients: dict, charged: dict, d
         subject = f"{params.get('customer_id', '')} 规则库 {rulebook.get('version', '')} 修订 {rulebook.get('revision', '')}"
     else:
         subject = "报告"
-    via = CHANNELS.get(channel, channel)
-    if intent:
-        via = f"由「{clients.get(str(intent)) or '未验证的 MCP 客户端'}」提议，本人在{via}完成"
+    via = CHANNELS.get(channel, NO_PLACE)
     details = []
     if route == "/rulebooks/{customer_id}/plan":
         details.append("执行：" + "、".join(STEPS.get(step.get("step"), str(step.get("step"))) for step in params.get("steps") or []))

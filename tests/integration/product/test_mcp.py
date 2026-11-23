@@ -184,9 +184,18 @@ def test_client_registered_without_scope_can_ask_for_every_scope(mcp_app):
         assert started.status_code == 302 and "/oauth/consent/" in started.headers["location"], started.headers.get("location")
 
 
-def test_consent_and_connections_say_who_the_client_is(mcp_app):
-    # #356: a web client the platform registered is verified, a client named by its own HTTPS document shows that
-    # document's domain, any other client only what it says of itself.
+# What no page a person reads may say (#356): the tool is the person's, the authority is their own act.
+NEVER_SHOWN = ("客户端", "自称", "已验证", "未验证", "本机应用", "MCP")
+
+
+def never_names_the_tool(text: str, *names: str) -> None:
+    said = [word for word in (*NEVER_SHOWN, *names) if word in text]
+    assert not said, (said, text)
+
+
+def test_consent_and_connections_never_name_the_client(mcp_app):
+    # #356: whoever asks (a registered web client, one named by its own HTTPS document, one calling back to this machine),
+    # the person reads only what they grant, when, until when and what it allows.
     app, store = mcp_app
     document_url = "https://client.example/ppap/client.json"
     documents = {
@@ -224,7 +233,11 @@ def test_consent_and_connections_say_who_the_client_is(mcp_app):
             path = urlsplit(started.headers["location"]).path
             shown = client.get(path)
             csrf = re.search(r'name="csrf" value="([^"]+)"', shown.text)[1]
-            assert client.post(path, data={"csrf": csrf, "decision": "approve", "scope": ["identity:read"]}).status_code == 200
+            decided = client.post(path, data={"csrf": csrf, "decision": "approve", "scope": ["identity:read"]})
+            assert decided.status_code == 200
+            # The way back still leads to the callback; the words around it do not name the tool.
+            assert redirect in unescape(decided.text)
+            never_names_the_tool(re.sub(r"<[^>]+>", "", unescape(decided.text)))
             return unescape(shown.text)
 
         def register(name, redirect):
@@ -237,27 +250,31 @@ def test_consent_and_connections_say_who_the_client_is(mcp_app):
         assert undeclared.status_code == 400 and "location" not in undeclared.headers
         assert ask("https://client.example/ppap/borrowed.json", "http://127.0.0.1:4567/callback").status_code == 400
         chatgpt = "https://chatgpt.com/connector/oauth/yjAMZ-kP_fvM"
-        labels = {
-            "Doc Client · 来自 client.example": (document_url, "http://127.0.0.1:4567/callback"),
-            "ChatGPT · 已验证（chatgpt.com）": (register("PPAP 官方助手", chatgpt), chatgpt),
-            "未验证（自称：PPAP 官方助手）": (register("PPAP 官方助手", "https://app.example/callback"), "https://app.example/callback"),
-            "本机应用 · 无法验证来源（自称：Pi MCP test）": (register("Pi MCP test", "http://127.0.0.1:54121/callback"), "http://127.0.0.1:54121/callback"),
-        }
-        for label, (cid, redirect) in labels.items():
+        asking = [
+            (document_url, "http://127.0.0.1:4567/callback"),
+            (register("ChatGPT", chatgpt), chatgpt),
+            (register("PPAP 官方助手", "https://app.example/callback"), "https://app.example/callback"),
+            (register("Pi MCP test", "http://127.0.0.1:54121/callback"), "http://127.0.0.1:54121/callback"),
+        ]
+        names = ("Doc Client", "client.example", "ChatGPT", "chatgpt.com", "官方助手", "app.example", "Pi MCP test", "127.0.0.1:4567", "127.0.0.1:54121")
+        for cid, redirect in asking:
             shown = consent(cid, redirect)
-            assert f"<strong>{label}</strong> 请求访问你的 PPAP 数据" in shown, shown
-            assert ("PPAP 无法核实" in shown) == label.startswith(("未验证", "本机应用"))
-        # Read once while it holds; the connections page says the same as the consent page.
-        assert fetched.count(document_url) == 1
+            assert "<h1>授权访问 PPAP</h1>" in shown and "授权后可以：" in shown, shown
+            never_names_the_tool(shown, *names)
+        assert fetched.count(document_url) == 1  # read once while it holds
         connections = unescape(client.get("/mcp/connections").text)
-        assert all(f"<h2>{label}</h2>" in connections for label in labels), connections
-        # A proposal carries its client's identity, for the Web to mark one from a client PPAP cannot verify.
+        assert "<h1>已授权的连接</h1>" in connections and len(re.findall(r"<h2>[^<]+ 授权</h2>", connections)) == len(asking), connections
+        assert "撤销后，这个连接不能再读取或发起新操作" in connections
+        never_names_the_tool(connections, *names)
+        # A proposal says only what it asks the person to do.
         mcp, alice = app.state.mcp_store, store.principal_for_fixture("alice")
-        local = next(entry for entry in mcp.connections(alice) if entry["client_identity"]["level"] == "local")
+        granted = mcp.connections(alice)
+        assert all(set(entry) == {"id", "scopes", "created_at", "expires_at", "revoked_at"} for entry in granted), granted
         proposal = {"method": "POST", "path": "/rounds/x/report", "page": "/tasks/x", "request": {}}
-        proposed = mcp.propose(mcp.delegation(local["id"]), str(uuid4()), "publish_report", proposal, "identity:read")
+        proposed = mcp.propose(mcp.delegation(granted[0]["id"]), str(uuid4()), "publish_report", proposal, "identity:read")
         intent = client.get("/intents/" + proposed["id"]).json()
-        assert intent["client_identity"] == {"level": "local", "name": "Pi MCP test", "domain": None, "label": "本机应用 · 无法验证来源（自称：Pi MCP test）"}, intent
+        assert set(intent) == {"id", "tool", "created_at", "outcome", "method", "path", "page"}, intent
+        never_names_the_tool(json.dumps(intent, ensure_ascii=False), *names)
 
 
 def test_browser_cookie_alone_cannot_call_mcp(mcp_app):
@@ -499,7 +516,7 @@ def test_a_feishu_folder_is_prepared_confirmed_and_audited_and_an_interruption_c
         assert call(client, token, "confirm_audit", task_id=task, quote_id="an-older-quote", request_id=str(uuid4()))["next"]["reason"] == "quote_changed"
         confirm, intent, started = confirmed(client, token, task, quote["quote_id"])
         # The client proposed; the person started it on the task page, which shows the current files and price (#348).
-        assert intent["page"] == f"/tasks/{task}" and intent["client_identity"]["label"] and intent["outcome"]["state"] == "proposed"
+        assert intent["page"] == f"/tasks/{task}" and "client_identity" not in intent and intent["outcome"]["state"] == "proposed"
         assert started["result"]["phase"] == "auditing" and started["next"]["kind"] == "wait", started
         assert call(client, token, "confirm_audit", **confirm)["result"]["phase"] == "auditing"
         job = worker.claim_job("mcp-audit")
@@ -757,6 +774,16 @@ def test_signing_is_proposed_by_the_client_and_completed_or_declined_by_the_pers
         settled = client.get(f"/intents/{ident}").json()
         # Done where the person did it, with their receipt (#361).
         assert settled["outcome"]["state"] == "succeeded" and settled["receipt"]["number"].startswith("R-") and done.headers["x-ppap-action"] == settled["receipt"]["id"]
+        # The receipt says where the person did it, not which tool proposed it (#356), on the page and in its PDF.
+        receipt = client.get(f"/receipts/{settled['receipt']['id']}").json()
+        assert receipt["via"] == "网页", receipt
+        never_names_the_tool(json.dumps(receipt, ensure_ascii=False), "MCP contract test")
+        import pymupdf
+
+        with pymupdf.open(stream=client.get(f"/receipts/{settled['receipt']['id']}/pdf").content, filetype="pdf") as printed:
+            text = "".join(page.get_text() for page in printed)
+        assert "经由" in text and "网页" in text, text
+        never_names_the_tool(text, "MCP contract test")
         assert call(client, token, "publish_report", **arguments)["next"]["kind"] == "done" and len(drive.written) == 2
         # A settled proposal cannot be declined afterwards.
         assert client.post(f"/intents/{ident}/decline", json={}, headers={"X-PPAP-Intent": ident}).status_code == 409

@@ -9,7 +9,7 @@ import json
 import re
 import socket
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import timezone
 from email.utils import parsedate_to_datetime
@@ -19,7 +19,6 @@ import httpx
 
 from product.identity import Session
 from product.model_endpoint import ModelEndpointError, normalize_base_url
-from product.settings import VerifiedClient
 
 SCOPES = {
     "identity:read": "读取当前身份与服务能力",
@@ -96,7 +95,6 @@ def valid_redirect(uri: str) -> bool:
         return False
 
 
-LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 GRANT_TYPES = ("authorization_code", "refresh_token")
 
 
@@ -247,33 +245,6 @@ def read_client_document(url: str, *, resolve: Callable[[str, int], list[str]] =
 def document_fresh(metadata: Mapping, now: float) -> bool:
     document = metadata.get(DOCUMENT)
     return isinstance(document, dict) and document.get("fresh_until", 0) > now
-
-
-def verified_callback(pattern: str, uri: str) -> bool:
-    if pattern.endswith("/*"):
-        prefix = pattern[:-1]
-        return uri.startswith(prefix) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", uri[len(prefix) :]) is not None
-    return uri == pattern
-
-
-def client_identity(client_id: str, metadata: Mapping, verified: Iterable[VerifiedClient]) -> dict:
-    """Who a client is, as far as PPAP can tell (#356), in this order: a web client the platform registered (every
-    callback is one of its own); a client whose own HTTPS document names it (its domain); otherwise only what it says
-    of itself, and for a client calling back to this machine not even where it comes from.
-
-    `label` is what the consent page, the connections page and the Web show; `level` is what signing reads."""
-    raw = metadata.get("client_name")
-    name = " ".join(raw.split()) if isinstance(raw, str) and raw.strip() else "MCP 客户端"
-    redirects = [u for u in metadata.get("redirect_uris") or [] if isinstance(u, str)]
-    for entry in verified if redirects else ():
-        if all(any(verified_callback(p, u) for p in entry.redirect_uris) for u in redirects):
-            return {"level": "verified", "name": entry.name, "domain": entry.domain, "label": f"{entry.name} · 已验证（{entry.domain}）"}
-    if isinstance(metadata.get(DOCUMENT), dict) and metadata.get("client_id") == client_id and document_client_id(client_id):
-        domain = urlsplit(client_id).hostname
-        return {"level": "metadata", "name": name, "domain": domain, "label": f"{name} · 来自 {domain}"}
-    if redirects and all(urlsplit(u).hostname in LOOPBACK_HOSTS for u in redirects):
-        return {"level": "local", "name": name, "domain": None, "label": f"本机应用 · 无法验证来源（自称：{name}）"}
-    return {"level": "unverified", "name": name, "domain": None, "label": f"未验证（自称：{name}）"}
 
 
 def fingerprint(value: object) -> str:

@@ -1,4 +1,4 @@
-"""Connection states are read from their own dates and said in local time."""
+"""Connection states are read from their own dates and said in local time; a connection is told by when it was granted."""
 
 from datetime import UTC, datetime
 
@@ -12,15 +12,15 @@ def entry(**dates):
 
 
 def test_an_expired_connection_is_not_shown_as_valid():
-    assert connection_state(entry(expires_at="2026-10-30T18:39:43.266589+00:00"), NOW) == ("expired", "已过期（10 月 31 日）")
+    assert connection_state(entry(expires_at="2026-10-30T18:39:43.266589+00:00"), NOW) == ("expired", "11 月 22 日 18:00 授权", "已过期（10 月 31 日）")
 
 
 def test_a_revoked_connection_says_when():
-    assert connection_state(entry(revoked_at="2026-11-22T11:00:00+00:00"), NOW) == ("revoked", "已撤销（11 月 22 日）")
+    assert connection_state(entry(revoked_at="2026-11-22T11:00:00+00:00"), NOW) == ("revoked", "11 月 22 日 18:00 授权", "已撤销（11 月 22 日）")
 
 
-def test_a_valid_connection_says_when_it_ends_and_began_in_local_time():
-    assert connection_state(entry(), NOW) == ("active", "11 月 30 日 06:11 到期 · 11 月 22 日连接")
+def test_a_valid_connection_says_when_it_was_granted_and_ends_in_local_time():
+    assert connection_state(entry(), NOW) == ("active", "11 月 22 日 18:00 授权", "11 月 30 日 06:11 到期")
 
 
 def test_another_year_is_named():

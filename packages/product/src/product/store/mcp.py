@@ -12,7 +12,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from product.identity import Principal, ProviderAuthError, Session, new_token, token_hash
-from product.mcp import DOCUMENT, Delegation, McpError, client_identity, fingerprint, parse_scopes, pkce_challenge, valid_client_metadata
+from product.mcp import DOCUMENT, Delegation, McpError, fingerprint, parse_scopes, pkce_challenge, valid_client_metadata
 from product.store.actions import DECLINE_ROUTE
 
 
@@ -66,10 +66,6 @@ class McpStore:
             row = conn.execute("SELECT metadata FROM product.mcp_clients WHERE id=%s", (ident,)).fetchone()
         return row["metadata"] if row else None
 
-    def identity(self, ident: str, metadata: dict) -> dict:
-        """The client's identity level and label, read from its record against the platform's current registrations."""
-        return client_identity(ident, metadata, self.settings.mcp_verified_clients)
-
     def code(self, code: str, client_id: str) -> dict | None:
         with self.connection() as conn:
             return conn.execute(
@@ -121,14 +117,7 @@ class McpStore:
             ).fetchone()
             if not row:
                 raise McpError("authorization_expired", 404)
-            client = conn.execute("SELECT metadata FROM product.mcp_clients WHERE id=%s", (row["client_id"],)).fetchone()
-        return {
-            "client": client["metadata"],
-            "identity": self.identity(row["client_id"], client["metadata"]),
-            "scopes": row["scopes"],
-            "csrf": csrf,
-            "redirect_uri": row["redirect_uri"],
-        }
+        return {"scopes": row["scopes"], "csrf": csrf}
 
     def consent(self, ident: str, browser: str, csrf: str, session: Session, scopes: list[str], approve: bool) -> dict:
         code = new_token()
@@ -285,19 +274,14 @@ class McpStore:
         return result
 
     def connections(self, principal: Principal) -> list[dict]:
+        """The person's grants: when each was given, until when, what it allows. Never which tool holds it."""
         with self.connection() as conn:
             rows = conn.execute(
-                """SELECT g.id,g.client_id,c.metadata,g.scopes,g.created_at,g.expires_at,g.revoked_at
-                                   FROM product.mcp_grants g JOIN product.mcp_clients c ON c.id=g.client_id
-                                   WHERE g.user_id=%s AND g.tenant_id=%s ORDER BY g.created_at DESC LIMIT 100""",
+                """SELECT id,scopes,created_at,expires_at,revoked_at FROM product.mcp_grants
+                   WHERE user_id=%s AND tenant_id=%s ORDER BY created_at DESC LIMIT 100""",
                 (principal.user_id, principal.tenant_id),
             ).fetchall()
-        shown = []
-        for r in rows:
-            identity = self.identity(r.pop("client_id"), r.pop("metadata"))
-            entry = {k: v.isoformat() if isinstance(v, datetime) else str(v) if isinstance(v, uuid.UUID) else v for k, v in r.items()}
-            shown.append({**entry, "client_name": identity["name"], "client_identity": identity})
-        return shown
+        return [{k: v.isoformat() if isinstance(v, datetime) else str(v) if isinstance(v, uuid.UUID) else v for k, v in r.items()} for r in rows]
 
     def revoke_connection(self, principal: Principal, grant_id: str) -> None:
         with self.connection() as conn:
@@ -329,29 +313,21 @@ class McpStore:
         return self.operation_public(row)
 
     def intent(self, principal: Principal, operation_id: str) -> dict | None:
-        """A proposal as its person sees it: theirs only, with the client that made it and what became of it."""
+        """A proposal as its person sees it: theirs only, and what became of it. The tool that asked is not shown: it acts
+        for the person, and the authority is the person's own act."""
         try:
             ident = str(uuid.UUID(operation_id))
         except ValueError:
             return None
         with self.connection() as conn:
             row = conn.execute(
-                """SELECT o.*, g.client_id, c.metadata AS client_metadata FROM product.mcp_operations o
-                   JOIN product.mcp_grants g ON g.id=o.grant_id JOIN product.mcp_clients c ON c.id=g.client_id
+                """SELECT o.* FROM product.mcp_operations o JOIN product.mcp_grants g ON g.id=o.grant_id
                    WHERE o.id=%s AND o.state='proposed' AND g.user_id=%s AND g.tenant_id=%s""",
                 (ident, principal.user_id, principal.tenant_id),
             ).fetchone()
         if row is None:
             return None
-        identity = self.identity(row["client_id"], row["client_metadata"])
-        return {
-            **self.operation_public(row),
-            "grant_id": str(row["grant_id"]),
-            "client_name": identity["name"],
-            # Signing reads `level`: a proposal from an unverified client is marked as such in the Web (#355, #356).
-            "client_identity": identity,
-            "outcome": self.intent_outcome(ident),
-        }
+        return {**self.operation_public(row), "grant_id": str(row["grant_id"]), "outcome": self.intent_outcome(ident)}
 
     def intent_outcome(self, operation_id: str) -> dict:
         """What became of a proposal, from what the person did (#362): the latest action that named it."""

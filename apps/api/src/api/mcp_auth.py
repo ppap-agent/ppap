@@ -27,12 +27,6 @@ from starlette.types import ASGIApp
 
 from api.mcp_pages import page
 
-# What the person is told when PPAP cannot say who the client is (#356); the name shown is the client's own claim.
-UNVERIFIED = {
-    "unverified": "PPAP 无法核实这个客户端的身份，上面的名称是它自己报的。只有你认得它、并且是你自己刚刚发起的连接，才允许。",
-    "local": "这个客户端运行在你的电脑上，PPAP 无法核实它是哪个应用，上面的名称是它自己报的。只有是你自己刚刚在本机发起的连接，才允许。",
-}
-
 
 class OAuthProvider(TokenVerifier):
     """Let the SDK parse OAuth and check PKCE; PPAP owns atomic token rotation."""
@@ -295,23 +289,19 @@ def register_oauth(app, provider: OAuthProvider, session_of):
         try:
             view = provider.store.consent_view(ident, request.cookies.get(SESSION_COOKIE, ""))
         except McpError as exc:
-            return page("授权请求已失效", "<p>请回到客户端重新连接。</p>", exc.status)
+            return page("授权请求已失效", "<p>授权请求已失效，请重新连接。</p>", exc.status)
 
-        # Everything the client asked for is pre-selected: an audit needs upload and start, and a client left read-only
-        # fails at the first file. Signing (starting, delivering, freezing rules) is still the person's own act in the Web.
+        # Everything asked for is pre-selected: an audit needs upload and start, and a read-only grant fails at the first
+        # file. Signing (starting, delivering, freezing rules) is still the person's own act in the Web. The page says what
+        # the person grants, never which tool asked: the tool is the person's, the authority is their own act.
         def box(s):
             return f'<label><input type="checkbox" name="scope" value="{escape(s)}" checked>{escape(SCOPES[s])}</label>'
 
-        boxes = "".join(map(box, view["scopes"])) + "<p><small>开始审核、发送报告、确认规则仍由你本人在 PPAP 网页里完成，客户端只能提议。</small></p>"
-        identity = view["identity"]
-        caution = UNVERIFIED.get(identity["level"])
+        boxes = "".join(map(box, view["scopes"])) + "<p><small>开始审核、发送报告、确认规则仍由你本人在 PPAP 网页里完成。</small></p>"
         return page(
-            "连接外部客户端",
-            f"<p><strong>{escape(identity['label'])}</strong> 请求访问你的 PPAP 数据。</p>"
-            + (f'<p class="notice">{escape(caution)}</p>' if caution else "")
-            + f"<p>当前用户：{escape(session.principal.display_name)}。权限仅限你当前可访问的对象，可随时撤销。</p>"
-            f'<p><small>客户端回调：{escape(view["redirect_uri"])}</small></p><form method="post">'
-            f'<input type="hidden" name="csrf" value="{escape(view["csrf"])}">{boxes}'
+            "授权访问 PPAP",
+            f"<p>当前用户：{escape(session.principal.display_name)}。权限仅限你当前可访问的对象，可随时撤销。</p>"
+            f'<form method="post"><input type="hidden" name="csrf" value="{escape(view["csrf"])}"><p>授权后可以：</p>{boxes}'
             '<button name="decision" value="approve">允许所选权限</button><button name="decision" value="deny">拒绝</button></form>',
         )
 
@@ -328,15 +318,15 @@ def register_oauth(app, provider: OAuthProvider, session_of):
                 provider.store.consent, ident, request.cookies.get(SESSION_COOKIE, ""), str(form.get("csrf", "")), session, [str(s) for s in form.getlist("scope")], form.get("decision") == "approve"
             )
         except McpError as exc:
-            return page("授权未保存", "<p>授权请求失效或校验未通过。请从客户端重新连接。</p>", exc.status)
+            return page("授权未保存", "<p>授权请求已失效或校验未通过，请重新连接。</p>", exc.status)
         parts = urlsplit(result.pop("redirect_uri"))
         target = escape(urlunsplit(parts._replace(query=urlencode([*parse_qsl(parts.query), *result.items()]))), quote=True)
         # A 303 from this POST is still checked against the consent document's
         # form-action 'self', which blocks external/loopback OAuth callbacks.
         # Commit a new document before navigating; keep every form same-origin.
         return page(
-            "返回客户端",
-            f'<meta http-equiv="refresh" content="0;url={target}"><p>授权请求已处理，正在返回客户端。</p><p>若没有自动返回，请<a href="{target}" rel="noreferrer">返回客户端</a>。</p>',
+            "授权已处理",
+            f'<meta http-equiv="refresh" content="0;url={target}"><p>授权请求已处理，正在返回。</p><p>若没有自动返回，请<a href="{target}" rel="noreferrer">点此返回</a>。</p>',
         )
 
     # Mount after browser routes so /oauth/consent remains owned by the real session.

@@ -1,10 +1,10 @@
-"""Proposals from external clients, as the person sees them in the Web (#348).
+"""Proposals made through MCP, as the person sees them in the Web (#348).
 
-An MCP client proposes a signing action; the person opens the page the proposal names and completes it there, with the
+A signing action is proposed through MCP; the person opens the page the proposal names and completes it there, with the
 request naming the proposal in `X-PPAP-Intent`, or declines it here. What became of it is read from what the person
-did (#362), with their receipt (#361); the client is named as far as PPAP can tell who it is (#356). A rule-clarification
-plan has no page of its own, so it is described from the task's current state, step by step, for the person to check
-(#351).
+did (#362), with their receipt (#361). The page shows what the person does, never which tool asked (#356): the tool is
+the person's, the authority is their own act. A rule-clarification plan has no page of its own, so it is described from
+the task's current state, step by step, for the person to check (#351).
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def register_intent_routes(app, session_of) -> None:
         if store is None or found is None:
             return JSONResponse({"error": "intent_not_found"}, status_code=404)
         arguments = found["arguments"]
-        shown: dict[str, Any] = {key: found[key] for key in ("id", "tool", "client_identity", "created_at", "outcome")} | {
+        shown: dict[str, Any] = {key: found[key] for key in ("id", "tool", "created_at", "outcome")} | {
             "method": arguments["method"],
             "path": arguments["path"],
             "page": arguments["page"],

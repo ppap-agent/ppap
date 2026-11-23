@@ -183,7 +183,7 @@ def install_mcp(app, product, http, session_of):
         inactive: list[str] = []
         for entry in entries:
             ident = entry["id"]
-            state, said = connection_state(entry, now)
+            state, granted, said = connection_state(entry, now)
             form = (
                 f'<form method="post" action="{escape(provider.base)}/mcp/connections/{ident}/revoke">'
                 f'<input type="hidden" name="csrf" value="{revocation_csrf(browser, ident)}">'
@@ -192,8 +192,8 @@ def install_mcp(app, product, http, session_of):
                 else ""
             )
             scopes = "；".join(SCOPES[s] for s in entry["scopes"] if s in SCOPES)
-            # The same identity label as on the consent page (#356).
-            row = f'<section><h2>{escape(entry["client_identity"]["label"])}</h2><p class="muted">{escape(said)}</p><p class="muted">{escape(scopes)}</p>{form}</section>'
+            # A grant is told by when it was given, until when and what it allows; never by the tool that holds it.
+            row = f'<section><h2>{escape(granted)}</h2><p class="muted">{escape(said)}</p><p class="muted">可以：{escape(scopes)}</p>{form}</section>'
             (active if state == "active" else inactive).append(row)
         shown = request.query_params.get("show") == "inactive"
         body = "".join(active) or '<p class="muted">没有有效的连接。</p>'
@@ -205,7 +205,7 @@ def install_mcp(app, product, http, session_of):
                 + f'<button type="submit" aria-describedby="inactive-count">{"收起已失效的连接" if shown else "显示已失效的连接"}</button></form>'
             )
             body += f'<h3>已失效的连接 <span id="inactive-count" class="muted">{len(inactive)} 个</span></h3>{toggle}' + ("".join(inactive) if shown else "")
-        return page("已连接的客户端", body + '<p class="notice">撤销后，这个客户端不能再读取或发起新操作；已经开始的审核照常完成。</p>')
+        return page("已授权的连接", body + '<p class="notice">撤销后，这个连接不能再读取或发起新操作；已经开始的审核照常完成。</p>')
 
     @app.post("/mcp/connections/{grant_id}/revoke", include_in_schema=False)
     async def connections_revoke(grant_id: UUID, request: Request):

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from functools import lru_cache
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
 from audit.policy import DeepExecutionPolicy
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from product.standard_policy import config_digest
@@ -23,51 +22,6 @@ ISOLATED_DEV_PLATFORM_OPERATORS = "isolated-dev-a:ou_alice,isolated-dev-b:ou_car
 
 def _held_production_secret(value: str) -> bool:
     return bool(value.strip()) and value != ISOLATED_DEV_SECRET
-
-
-class VerifiedClient(BaseModel):
-    """A web client the platform vouches for (#356): its name, its domain and the only callbacks that reach it.
-
-    A client whose every callback is one of these is shown under this name as verified, whatever it calls itself: the
-    authorization code can only arrive at this domain. A callback ending in `/*` stands for that path plus one
-    identifier segment (ChatGPT gives each connector its own)."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    name: str = Field(min_length=1, max_length=100)
-    domain: str
-    redirect_uris: tuple[str, ...] = Field(min_length=1, max_length=20)
-
-    @model_validator(mode="after")
-    def callbacks_on_own_domain(self) -> Self:
-        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+", self.domain):
-            raise ValueError("a verified MCP client's domain is a lowercase host name")
-        for uri in self.redirect_uris:
-            fixed = uri.removesuffix("/*") + ("/" if uri.endswith("/*") else "")
-            parts = urlsplit(fixed)
-            host = parts.hostname or ""
-            if (
-                "*" in fixed
-                or any(ord(c) < 33 or ord(c) > 126 or c == "\\" for c in fixed)
-                or parts.scheme != "https"
-                or parts.netloc != host
-                or parts.query
-                or parts.fragment
-                or not parts.path.startswith("/")
-                or not (host == self.domain or host.endswith("." + self.domain))
-            ):
-                raise ValueError("a verified MCP client's callbacks are HTTPS addresses on its own domain")
-        return self
-
-
-def _verified_clients() -> list[VerifiedClient]:
-    # The web clients whose callbacks live on their own domain (#356). Clients that call back to the user's own
-    # machine (Codex, Doubao, Pi) cannot be verified this way.
-    return [
-        VerifiedClient(name="ChatGPT", domain="chatgpt.com", redirect_uris=("https://chatgpt.com/connector/oauth/*", "https://chatgpt.com/connector_platform_oauth_redirect")),
-        VerifiedClient(name="Claude", domain="claude.ai", redirect_uris=("https://claude.ai/api/mcp/auth_callback",)),
-        VerifiedClient(name="Claude", domain="claude.com", redirect_uris=("https://claude.com/api/mcp/auth_callback",)),
-    ]
 
 
 class Settings(BaseSettings):
@@ -139,8 +93,6 @@ class Settings(BaseSettings):
     # enterprise. They cannot send, confirm or publish anything; a platform operator does that.
     clause_reviewers: str = Field(default="", alias="PPAP_CLAUSE_REVIEWERS")
     mcp_allowed_origins: list[str] = Field(default_factory=list, alias="PPAP_MCP_ALLOWED_ORIGINS")
-    # Pre-registered MCP clients shown as verified on the consent and connections pages (#356).
-    mcp_verified_clients: list[VerifiedClient] = Field(default_factory=_verified_clients, alias="PPAP_MCP_VERIFIED_CLIENTS")
     # Feishu Project (Meego) plugin host. Off unless the plugin credential and
     # an explicit Meego tenant -> Feishu tenant mapping are configured.
     meego_plugin_id: str = Field(default="", alias="PPAP_MEEGO_PLUGIN_ID")

@@ -3595,24 +3595,6 @@ export interface components {
              */
             kind: "added" | "removed" | "changed" | "unchanged";
         };
-        /**
-         * ClientIdentity
-         * @description Who the proposing client is, as far as PPAP can tell (#356); `label` is what the person reads. Only `verified`
-         *     and `metadata` are vouched for; `unverified` and `local` are what the client says of itself.
-         */
-        ClientIdentity: {
-            /** Domain */
-            domain: string | null;
-            /** Label */
-            label: string;
-            /**
-             * Level
-             * @enum {string}
-             */
-            level: "verified" | "metadata" | "unverified" | "local";
-            /** Name */
-            name: string;
-        };
         /** Coverage */
         Coverage: {
             /** Checked */
@@ -4075,10 +4057,10 @@ export interface components {
         };
         /**
          * Intent
-         * @description A signing action an external client proposed (#348). The person completes it on `page`, or declines it.
+         * @description A signing action proposed through MCP (#348). The person completes it on `page`, or declines it; which tool asked
+         *     is not shown (#356).
          */
         Intent: {
-            client_identity: components["schemas"]["ClientIdentity"];
             /** Created At */
             created_at: string;
             /** Id */

@@ -69,7 +69,7 @@ const messages: Record<string,string> = {
   feishu_user_token_missing: '请重新登录飞书后再生成报告文档。',
   report_pdf_not_ready: '报告 PDF 还没有全部生成，全部生成后才能在飞书里生成报告文档。',
   report_retry_unavailable: '这份报告文档正在处理，或这一步已经完成，已显示最新状态。',
-  proposal_outdated: '这一步已经变化，请回到客户端按最新状态重新发起。',
+  proposal_outdated: '这一步已经变化，请按最新状态重新发起。',
   round_signed: '这一轮已经签发，撤回签发后才能更正复核。',
   round_already_signed: '这一轮已经签发，已显示最新状态。',
   round_not_signed: '这一轮已经不是签发状态，已显示最新状态。',

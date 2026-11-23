@@ -19,7 +19,7 @@ PPAP 唯一公开 HTTP API（含同进程的 `/mcp`）。isolated-dev 的构建�
 - **报价与确认**：`quote_id` 随文件、规则版本、模式或计费依据变化而变；与当前报价不符、文件夹已变或不在待确认时不开始。网页完成时按当前内容和业务前提执行，内容变了返回 409 并刷新为最新内容。
 - **写操作**：每个写操作带新的随机 UUID `request_id` 并一直沿用；任务编号由用户和 `request_id` 共同决定。同编号同参数读回原结果，换参数拒绝；结果未知不换编号。复审用 `follows_task_id`。
 - **服务与授权**：`PPAP_MCP_ENABLED=true` 时 API 提供 `/mcp`（Streamable HTTP）；生产地址 `https://ppap.icoastline.com/ppap/mcp`。授权服务器在 API 下的 `/oauth`，`resource` 必须精确等于服务器地址；客户端申请的权限默认全选，用户可取消。发现地址 `https://ppap.icoastline.com/.well-known/oauth-authorization-server/ppap/oauth` 与 `.../oauth-protected-resource/ppap/mcp` 必须由代理交给 API（`deploy/tke/edition-proxy.conf`）。其他网页直接调用时把完整 HTTPS Origin 加入 `PPAP_MCP_ALLOWED_ORIGINS`。用户在 `/mcp/connections` 撤销连接，已受理的审核照常执行。
-- **客户端身份**（#356）：除动态注册外支持客户端元数据文档（`client_id` 是 HTTPS 地址，元数据声明 `client_id_metadata_document_supported`）。授权页、连接页和网页提议横幅按四级标出：已验证（`PPAP_MCP_VERIFIED_CLIENTS` 预先登记的显示名、域名与回调地址）、元数据（显示文档所在域名）、未验证（只有自称的名字）、本机（回调是本机，无法验证来源）；后两种在网页上明确标为未验证的客户端，由本人判断。
+- **客户端身份**（#356）：除动态注册外支持客户端元数据文档（`client_id` 是 HTTPS 地址，元数据声明 `client_id_metadata_document_supported`）。外部客户端只是人的工具，授权来自人本身的行为：授权页、连接页、网页提议横幅和回执只写人做了或要做什么（授权、连接、请求，回执的经由只写本人完成的地方），从不显示是哪个工具发起的。
 - **接入**：任何支持 Streamable HTTP 与 OAuth 的客户端都可连接，如 `codex mcp add ppap --url https://ppap.icoastline.com/ppap/mcp` 后 `codex mcp login ppap --oauth-client-registration dcr`。豆包工作建 MCP OAuth 2.1 连接器，并上传 [`deploy/doubao/ppap-audit`](../../deploy/doubao/ppap-audit/SKILL.md) 技能。停止使用时先撤销委托，再清客户端凭据。
 
 ## 飞书外部事实

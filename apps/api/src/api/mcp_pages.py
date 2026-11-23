@@ -122,10 +122,12 @@ def local_time(value: str, now: datetime, *, clock: bool = True) -> str:
     return f"{year}{at.month} 月 {at.day} 日" + (f" {at:%H:%M}" if clock else "")
 
 
-def connection_state(entry: dict, now: datetime) -> tuple[str, str]:
-    """(state, what to say) of one connection, from its own dates: active, expired or revoked."""
+def connection_state(entry: dict, now: datetime) -> tuple[str, str, str]:
+    """(state, when it was granted, what to say of it now) of one connection, from its own dates: active, expired or
+    revoked."""
+    granted = f"{local_time(entry['created_at'], now)} 授权"
     if entry["revoked_at"]:
-        return "revoked", f"已撤销（{local_time(entry['revoked_at'], now, clock=False)}）"
+        return "revoked", granted, f"已撤销（{local_time(entry['revoked_at'], now, clock=False)}）"
     if datetime.fromisoformat(entry["expires_at"]) <= now:
-        return "expired", f"已过期（{local_time(entry['expires_at'], now, clock=False)}）"
-    return "active", f"{local_time(entry['expires_at'], now)} 到期 · {local_time(entry['created_at'], now, clock=False)}连接"
+        return "expired", granted, f"已过期（{local_time(entry['expires_at'], now, clock=False)}）"
+    return "active", granted, f"{local_time(entry['expires_at'], now)} 到期"
