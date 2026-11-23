@@ -2295,9 +2295,11 @@ class AuthStore:
             cur.execute(
                 """SELECT i.*, f.file_id, f.tenant_id, f.original_filename, f.content_type, f.byte_size, f.sha256, f.object_key, f.status,
                 j.status AS analysis_status, j.result AS analysis_result, j.payload AS analysis_payload,
-                j.lease_until < now() AS analysis_expired, j.updated_at AS analysis_updated_at
+                j.lease_until < now() AS analysis_expired, j.updated_at AS analysis_updated_at,
+                s.provider AS source_provider, s.object_kind AS source_kind
                 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id
                 LEFT JOIN engine.jobs j ON j.id = i.analysis_job_id
+                LEFT JOIN product.file_version_sources s ON s.file_version_id = f.id
                 WHERE i.draft_id = %s ORDER BY i.position""",
                 (task_id,),
             )
@@ -2373,7 +2375,8 @@ class AuthStore:
                     updated = max(updated, row["analysis_updated_at"])
             files.append(
                 {
-                    "file": version.public(),
+                    # Where the file came from (a Feishu import, or uploaded here), as the import itself answered it.
+                    "file": version.public() | {"origin": public_target({"provider": row["source_provider"], "object_kind": row["source_kind"]} if row["source_provider"] else None)},
                     "selection": row["selection"],
                     "removal_reason": row["removal_reason"],
                     **({"validation_id": str(row["validation_job_id"])} if row["validation_job_id"] else {}),
@@ -2591,8 +2594,10 @@ class AuthStore:
             if not rows:
                 return []
             files = conn.execute(
-                """SELECT i.draft_id, i.selection, f.id, f.file_id, f.tenant_id, f.original_filename, f.content_type, f.byte_size, f.sha256, f.object_key, f.status
+                """SELECT i.draft_id, i.selection, f.id, f.file_id, f.tenant_id, f.original_filename, f.content_type, f.byte_size, f.sha256, f.object_key, f.status,
+                s.provider, s.object_kind
                 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id
+                LEFT JOIN product.file_version_sources s ON s.file_version_id = f.id
                 WHERE i.draft_id = ANY(%s::uuid[]) ORDER BY i.draft_id, i.position""",
                 ([str(row[0]) for row in rows],),
             ).fetchall()
@@ -2615,7 +2620,8 @@ class AuthStore:
                     subjects[key] = subject
             grouped: dict[str, list] = {}
             for file in files:
-                grouped.setdefault(str(file[0]), []).append({"file": self._version_from_row(file[2:]).public(), "selection": file[1]})
+                origin = public_target({"provider": file[11], "object_kind": file[12]} if file[11] else None)
+                grouped.setdefault(str(file[0]), []).append({"file": self._version_from_row(file[2:]).public() | {"origin": origin}, "selection": file[1]})
             histories = {row["id"]: row for row in self._round_histories(conn, [str(row[7]) for row in rows if row[7]])}
             names = {str(user): self._display_name(conn, principal.tenant_id, user) for user in {row[10] for row in rows}}
             return [
@@ -4641,6 +4647,15 @@ class AuthStore:
                 str(item[1]): {"id": str(item[1]), "file_id": str(item[2]), "original_filename": item[3], "status": item[4], "content_type": item[8], "byte_size": int(item[9]), "sha256": item[10]}
                 for item in inputs
             }
+            # Each file's origin, as the task page shows it.
+            sources = {
+                str(vid): {"provider": provider, "object_kind": kind}
+                for vid, provider, kind in conn.execute(
+                    "SELECT file_version_id, provider, object_kind FROM product.file_version_sources WHERE file_version_id = ANY(%s::uuid[])", (list(versions),)
+                ).fetchall()
+            }
+            for vid, version in versions.items():
+                version["origin"] = public_target(sources.get(vid))
             view = round_read_view(body, versions)
             if row[8] and principal is not None:
                 reports, _updated_at = self._task_file_reports(conn, principal.tenant_id, str(row[4]), round_id, row[5], mine=str(row[12]) == principal.user_id)

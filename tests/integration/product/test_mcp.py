@@ -497,6 +497,9 @@ def test_a_feishu_folder_is_prepared_confirmed_and_audited_and_an_interruption_c
         ingest = next(stage for stage in seen["result"]["stages"] if stage["stage"] == "ingest")
         assert (ingest["state"], ingest["imported"], ingest["failed"]) == ("partial", 1, 1)
         assert "quote" in seen["result"]
+        # The task page says where each file came from: imported from Feishu, never 「本地上传」.
+        origins = [row["file"].get("origin") for row in client.get(f"/audit-tasks/{task}").json()["files"]]
+        assert origins and all(origin == {"available": True, "provider": "feishu", "object_kind": "file"} for origin in origins), origins
         decision = {"task_id": task, "issue_id": blocking[0]["id"], "action_id": "exclude", "expected_revision": seen["task_revision"], "request_id": str(uuid4())}
         ready = call(client, token, "resolve_issue", **decision)
         assert ready["result"]["phase"] == "ready_to_confirm" and not any(issue["blocking"] for issue in ready["issues"]), ready
