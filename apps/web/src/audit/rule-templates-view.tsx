@@ -84,7 +84,8 @@ function CustomerRulesDetail({entry, focus, questions}: {entry: CustomerRules; f
   const rows = types.flatMap((type): {type: TypeRules; rule: RuleRow | null; first: boolean}[] => type.rules.length ? type.rules.map((rule, index) => ({type, rule, first: index === 0})) : [{type, rule: null, first: true}])
   return <section aria-label={`${customer.name} 的规则`} className="flex min-h-0 flex-1 flex-col">
     <h2 className="sr-only">{customer.name}</h2>
-    {questions}
+    {/* Revisions and questionnaires grow with every clarification round: they scroll in their own band, the rules stay in view. */}
+    {questions && <div className="max-h-[40vh] min-h-0 shrink-0 overflow-y-auto">{questions}</div>}
     {entry.types === null ? <Alert className="m-4 w-auto"><Icon icon={iconCircleExclamation} aria-hidden="true"/><AlertTitle>这个客户的文件类型范围尚未配置</AlertTitle><AlertDescription>暂不显示规则覆盖。请联系我们配置后再查看。</AlertDescription></Alert> : <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {rows.length ? <Table aria-label={`${customer.name} 的规则列表`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>文件类型</TableHead><TableHead>规则</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead></TableRow></TableHeader><TableBody>{rows.map(({type, rule, first}) => {
         const href = rule && rulesAddress({systemRule: rule.id}), updated = rule ? day(rule.updatedAt) : ''
