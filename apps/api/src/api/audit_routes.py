@@ -42,6 +42,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "upload_preparation_input_conflict",
                 "file_not_ready",
                 "review_conflict",
+                "round_signed",
                 "review_hint_response_conflict",
                 "model_configuration_changed",
                 "task_input_locked",

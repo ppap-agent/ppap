@@ -22,6 +22,9 @@ SIGNING = {
     ("PUT", "/rulebooks/{customer_id}/{version}/{revision}/readings"),
     ("POST", "/rule-questionnaires/cards"),
     ("POST", "/rulebooks/{customer_id}/plan"),
+    # Signing off a round and withdrawing it (#357).
+    ("POST", "/rounds/{round_id}/signoff"),
+    ("POST", "/rounds/{round_id}/signoff/withdraw"),
 }
 
 

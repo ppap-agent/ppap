@@ -113,7 +113,7 @@ audit_round
 
 - 各进程用最小运行权限；外部身份按 provider/app/tenant/subject 绑定；登录不等于跨租户访问。PostgreSQL 连接默认自动提交，读改写必须显式开事务。
 - **MCP 委托**绑定身份、客户端和固定资源地址；Scope 只缩小当前用户权限，每次调用和任务推进的每一步都重新检查授权。浏览器 Cookie 不能直接调 MCP。授权码用 S256 PKCE 且只能兑换一次；刷新令牌轮换，重用旧刷新令牌会撤销整个委托。飞书凭据续期先持久 claim，并发返回 `provider_refresh_in_progress`；中断后不释放刷新权，要求重新登录。
-- **签字**：开始审核与重审、发布或写回飞书报告、报告分享、重新生成报告、规则修订、已澄清、发布解读、发卡（规则澄清时合为一次按步骤勾选的确认，`POST /rulebooks/{客户}/plan`，一个事务）是签字时刻，接口带 `Depends(signing)` 标记（`api.signing`，合同测试从标记枚举）：代理令牌调用返回 `signing_requires_person`，只能由本人在网页完成。MCP 只记下提议（`mcp_operations` 状态 `proposed`）并给出网页深链接 `?intent=`；网页按当前数据显示，调用带业务前提（版本号、报价编号、报告内容指纹 `if_match`）和 `X-PPAP-Intent`，只链接本人的、未结束的、同一接口的提议，会话登录超过 30 分钟先重新登录；拒绝走 `POST /intents/{id}/decline`。谁、何时、经由什么做了什么只记在 `product.actions`，提议的结果从中读出。人工复核与事实确认不是签字，凭授权直接写。授权表单只向同源提交（`form-action 'self'`），完成后经 HTML refresh 跳回已验证的回调。`next` 只是建议，不构成收费或对外发送的授权，也不含被审文件内容。
+- **签字**：开始审核与重审、发布或写回飞书报告、报告分享、重新生成报告、签发与撤回签发、规则修订、已澄清、发布解读、发卡（规则澄清时合为一次按步骤勾选的确认，`POST /rulebooks/{客户}/plan`，一个事务）是签字时刻，接口带 `Depends(signing)` 标记（`api.signing`，合同测试从标记枚举）：代理令牌调用返回 `signing_requires_person`，只能由本人在网页完成。MCP 只记下提议（`mcp_operations` 状态 `proposed`）并给出网页深链接 `?intent=`；网页按当前数据显示，调用带业务前提（版本号、报价编号、报告内容指纹 `if_match`）和 `X-PPAP-Intent`，只链接本人的、未结束的、同一接口的提议，会话登录超过 30 分钟先重新登录；拒绝走 `POST /intents/{id}/decline`。谁、何时、经由什么做了什么只记在 `product.actions`，提议的结果从中读出。人工复核与事实确认不是签字，凭授权直接写。授权表单只向同源提交（`form-action 'self'`），完成后经 HTML refresh 跳回已验证的回调。`next` 只是建议，不构成收费或对外发送的授权，也不含被审文件内容。
 - **文件与输入**：文件只经上传、飞书或飞书项目导入进入，不抓任意网址；扩展名不是安全判断；文档内容是数据不是授权，不能让模型或解析器获得工具、网络或凭据。
 - **Secret**（API key、app secret、verification token、session、生产数据库和对象存储凭据）只经 gitignored `.env`、GitHub Secrets 或部署 Secret 注入；日志不输出 token、cookie、signed URL 或客户原文；反向代理不记录 OAuth 查询串。
 - **模型凭据**：平台 Key 只在部署 Secret；企业 Key（BYOK）由运营用 `python -m product.tenant_models` 从标准输入写入，用 `PPAP_MODEL_CREDENTIAL_ENCRYPTION_KEY` 加密并绑定租户、地址、模型与配置修订，地址须在 `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS` 精确批准（不跟随重定向、不用代理、不接受本机与特殊地址）。企业 Key 不可用时报告不可用，不回退平台模型；受理时冻结非秘密模型身份，不一致即 `model_configuration_changed`。Deep guest 只拿本地网关的短期 Grant，接触不到真实 Key。
@@ -125,7 +125,7 @@ audit_round
 
 ## MCP
 
-用户给一个飞书文件夹，PPAP 在服务端把它准备成一次可确认的审核，只有人能决定的事才问人。任务是持久状态机：`product.workflow` 的 `apply`/`effects`/`project` 不做读写，`api.mcp_runtime` 经 Product API 执行副作用，状态存在 `product.audit_workflows`。每次返回 `result`、`issues`、`next`；`next` 是建议不是授权，`confirm_audit`、`record_review`、`publish_report` 只在用户明确要求时调用；签字类只提议，由本人在网页完成。MCP 只收飞书文件夹或链接，不传字节，不改审核用的规则。每个面向用户的路由要么由工具到达，要么在 `apps/api/tests/test_mcp_coverage.py` 写明为何留给网页。工具、阶段、问题类别、报价、写操作幂等、授权与接入见 [apps/api/README.md](apps/api/README.md#mcp)。开发用的 coding agent 默认不加载它；需要时用 [`.agents/mcp.json`](.agents/mcp.json)（Claude Code `claude --mcp-config .agents/mcp.json`，Codex 按 apps/api/README.md「接入」`codex mcp add`）。
+用户给一个飞书文件夹，PPAP 在服务端把它准备成一次可确认的审核，只有人能决定的事才问人。任务是持久状态机：`product.workflow` 的 `apply`/`effects`/`project` 不做读写，`api.mcp_runtime` 经 Product API 执行副作用，状态存在 `product.audit_workflows`。每次返回 `result`、`issues`、`next`；`next` 是建议不是授权，`confirm_audit`、`record_review`、`publish_report`、`sign_round` 只在用户明确要求时调用；签字类只提议，由本人在网页完成。MCP 只收飞书文件夹或链接，不传字节，不改审核用的规则。每个面向用户的路由要么由工具到达，要么在 `apps/api/tests/test_mcp_coverage.py` 写明为何留给网页。工具、阶段、问题类别、报价、写操作幂等、授权与接入见 [apps/api/README.md](apps/api/README.md#mcp)。开发用的 coding agent 默认不加载它；需要时用 [`.agents/mcp.json`](.agents/mcp.json)（Claude Code `claude --mcp-config .agents/mcp.json`，Codex 按 apps/api/README.md「接入」`codex mcp add`）。
 
 ## 规则
 

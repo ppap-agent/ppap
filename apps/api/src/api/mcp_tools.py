@@ -25,6 +25,8 @@ EXTERNAL_READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempo
 EXTERNAL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 # Replaces what was there before: a task's inputs, a human review, an answer.
 UPDATE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True)
+# Proposes a signing moment inside PPAP; the person does it in the Web.
+SIGN = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 Limit = Annotated[int, Field(ge=1, le=50)]
 Offset = Annotated[int, Field(ge=0)]
 DONE = {"kind": "done", "goal_status": "achieved"}
@@ -52,6 +54,7 @@ _SAY = {
     "invalid_token": "这个连接已失效。请用户在客户端重新连接 PPAP。",
     "unauthenticated": "这个连接已失效。请用户在客户端重新连接 PPAP，并用飞书登录。",
     "not_a_folder": "这不是飞书文件夹的链接。请让用户给出要浏览的文件夹链接，或留空从云盘顶层开始。",
+    "round_signed": "这一轮已经签发，复核不能再改。要更正，请用户先在 PPAP 网页的任务页撤回签发并写明原因，再记录复核。",
 }
 # The only dead ends: what PPAP must not do for this person (permission, role, policy). Everything else has a way on (#349).
 REFUSALS = frozenset(
@@ -164,6 +167,21 @@ def receipt(reply: Reply, tool: str, arguments: dict, *, task_id: str | None) ->
         prompt = f"用户在网页上拒绝了这次操作{reason}。请按用户的意思调整，再用新的 request_id 重新发起；不要重复同一个请求。"
         return Outcome(task_id=task_id, request_id=rid, next={"kind": "user_action", "action_id": "denied_by_user", "prompt": prompt, "reason": reply.error})
     return blocked(reply.error or "business_request_failed", task_id=task_id, request_id=rid)
+
+
+def signoff_view(standing: dict) -> dict:
+    """A round's signoff as a person would say it: signed or not, by whom and when, and what was (or would be) signed."""
+    content = standing.get("signed") or standing.get("current") or {}
+    return {
+        "state": standing["state"],
+        "signed_at": standing.get("signed_at"),
+        "signer": (standing.get("signer") or {}).get("name"),
+        "conclusion": content.get("conclusion"),
+        "files": [{"filename": row["filename"], "conclusion": row["conclusion"]} for row in content.get("files", [])],
+        "reviewed_count": content.get("reviewed_count"),
+        "accepted_count": content.get("accepted_count"),
+        "history": [{key: row[key] for key in ("action", "at", "by", "reason")} for row in standing.get("history", [])],
+    }
 
 
 def _short(text, limit: int = 300):
@@ -470,6 +488,8 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
             found = await gateway.get(actor, "audits:read", f"/rounds/{round_id}")
             result = result_view(found, str(file_version_id) if file_version_id else None, status, offset, limit)
             result["conclusion"] = audit.get("conclusion")
+            # Signed off by the person who ran it, or not yet: live, never what a delivered document said (#357).
+            result["signoff"] = found.get("signoff")
             result["reports"] = [
                 {"filename": row["file"]["original_filename"], "state": ((row.get("audit") or {}).get("report") or {}).get("state")} for row in audit.get("files", []) if row.get("audit")
             ]
@@ -481,6 +501,8 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
             ]
             if audit.get("conclusion") != "ERROR":
                 actions.append({"tool": "publish_report", "arguments": {"task_id": tid}, "summary": "把审核结果交付到飞书；需要用户同意。"})
+            if (found.get("signoff") or {}).get("state") == "unsigned" and audit.get("state") == "completed" and (audit.get("creator") or {}).get("mine"):
+                actions.append({"tool": "sign_round", "arguments": {"task_id": tid}, "summary": "签发这一轮的结论；由用户本人在网页完成。"})
             return Outcome(task_id=tid, result=result, next=DONE, available_actions=actions)
         except Exception as exc:
             return failure(exc, task_id=tid)
@@ -577,6 +599,40 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
             # The document as it reads now; none when the report changed after it was delivered.
             current = await gateway.get(actor, "audits:read", f"/integrations/feishu/rounds/{round_id}/report")
             return with_receipt(Outcome(task_id=tid, request_id=rid, result={"delivered": True, "delivery": current["report"]}, next=DONE), reply)
+        except Exception as exc:
+            return failure(exc, task_id=tid, request_id=rid)
+
+    @mcp.tool(annotations=SIGN)
+    async def sign_round(task_id: UUID, request_id: UUID) -> Outcome:
+        """Propose signing off a finished audit: the person who ran it declares this round's conclusion their own (each
+        file's conclusion, the items they reviewed and those accepted on the machine's conclusion). Only that person signs,
+        on the task page in the PPAP Web; call again with the same request_id to read what they did. A signed round's
+        reviews are corrected only after the person withdraws the signoff there. Never because `next` suggested it; only on
+        the user's word."""
+        tid, rid = str(task_id), str(request_id)
+        try:
+            actor = await authority()
+            actor.require("reviews:write")
+            reply = await runtime.replay(actor, rid, "sign_round", {"task_id": tid})
+            if reply is None:
+                _audit, round_id = await audit_round(actor, tid)
+                path = f"/rounds/{round_id}/signoff"
+                standing = await gateway.get(actor, "audits:read", path)
+                if standing["state"] == "signed":
+                    # Signed already: nothing to propose; withdrawing is the person's own act in the Web.
+                    return Outcome(task_id=tid, request_id=rid, result={"signoff": signoff_view(standing)}, next=DONE)
+                if not standing["can_sign"]:
+                    # Only the person who ran the round signs it; an audit still making its reports is waited on.
+                    if (standing.get("unavailable") or {}).get("code") == "not_creator":
+                        raise McpError("access_denied", 403)
+                    raise workflow.Rejected("results_not_ready")
+                reply = await gateway.propose(actor, "reviews:write", "sign_round", rid, "POST", path, page=f"/tasks/{tid}", request={"task_id": tid}, probes=[path])
+            pending = receipt(reply, "sign_round", {"task_id": tid, "request_id": rid}, task_id=tid)
+            if pending is not None:
+                return pending
+            _audit, round_id = await audit_round(actor, tid)
+            standing = await gateway.get(actor, "audits:read", f"/rounds/{round_id}/signoff")
+            return with_receipt(Outcome(task_id=tid, request_id=rid, result={"signoff": signoff_view(standing)}, next=DONE), reply)
         except Exception as exc:
             return failure(exc, task_id=tid, request_id=rid)
 

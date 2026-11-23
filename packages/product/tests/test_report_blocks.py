@@ -92,6 +92,19 @@ class ReportBlocksTests(unittest.TestCase):
         for expected in ("本轮摘要", "不符合 1", "未记录人工复核 0 项", "本报告不代表正式批准", "未自动检查的规则条目会单独列出"):
             self.assertIn(expected, text)
 
+    def test_the_report_opens_with_what_it_is_and_the_signoff_at_delivery(self):
+        """#357: the machine's result stands only as confirmed and signed; the document says whether it was signed when delivered."""
+
+        def opening(body):
+            blocks = report_blocks(body)
+            return [part["text_run"]["content"] for block in blocks[1:3] for value in block.values() if isinstance(value, dict) for part in value["elements"]]
+
+        self.assertEqual(opening(self.body()), ["机器初审结果，以人工确认和签发为准。", "交付时未签发。"])
+        signed = {**self.body(), "signoff": {"state": "signed", "signed_at": "2026-11-22T06:05:00+00:00", "signer": "曹阳"}}
+        self.assertEqual(opening(signed), ["机器初审结果，以人工确认和签发为准。", "交付时已签发 · 曹阳 · 2026 年 11 月 22 日 06:05（UTC）"])
+        withdrawn = {**self.body(), "signoff": {"state": "unsigned", "signed_at": None, "signer": None}}
+        self.assertEqual(opening(withdrawn)[1], "交付时未签发。")
+
     def test_no_complete_report_from_error_or_missing_results(self):
         for findings in ([], [{"status": "ERR", "locator": {"file_version_id": "v1"}}]):
             body = self.body()

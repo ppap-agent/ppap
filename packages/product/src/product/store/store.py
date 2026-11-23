@@ -3019,6 +3019,10 @@ class AuthStore:
                         return operation[2]["data"]
                     if operation[1] != "running":
                         raise ValueError("invalid_review_confirmation")
+                # A signed round is corrected only after its signer withdraws the signoff (#357); signing waits on this lock.
+                signed = conn.execute("SELECT signed_at FROM product.audit_rounds WHERE id = %s FOR SHARE", (parsed,)).fetchone()
+                if signed and signed[0] is not None:
+                    raise ValueError("round_signed")
                 finding = conn.execute(
                     "SELECT 1 FROM product.findings WHERE round_id = %s AND item_key = %s",
                     (parsed, key),
@@ -4358,7 +4362,10 @@ class AuthStore:
                        source_draft_id, result_attempt, created_at, case_context,
                        EXISTS (SELECT 1 FROM product.audit_drafts d WHERE d.id = source_draft_id AND d.task_fingerprint IS NOT NULL),
                        (SELECT json_build_object('provider', provider, 'object_kind', object_kind, 'object_ref', object_ref)
-                        FROM product.round_writeback_targets WHERE round_id = a.id), a.review_document_pairs, a.deep_mode, a.created_by
+                        FROM product.round_writeback_targets WHERE round_id = a.id), a.review_document_pairs, a.deep_mode, a.created_by,
+                       a.signed_at, (SELECT i.display_name FROM product.actions x JOIN product.tenants t ON t.id = x.tenant_id
+                        JOIN product.identities i ON i.user_id = x.user_id AND i.provider = t.provider AND i.tenant_key = t.external_key
+                        WHERE x.id = a.signoff_action_id ORDER BY i.display_name <> '' DESC LIMIT 1)
                 FROM product.audit_rounds a WHERE id = %s""",
                 (round_id,),
             )
@@ -4430,6 +4437,8 @@ class AuthStore:
             "writeback": public_target(row[9]),
             "review_document_pairs": row[10],
             "deep_mode": bool(row[11]),
+            # Whether its creator signed it off, live (#357); what was signed is read with GET /rounds/{id}/signoff.
+            "signoff": {"state": "signed", "signed_at": row[13].isoformat(), "signer": row[14] or ""} if row[13] else {"state": "unsigned", "signed_at": None, "signer": None},
             **_executor_public(payload),
             "progress": progress,
             "failure": diagnostic.get("failure"),

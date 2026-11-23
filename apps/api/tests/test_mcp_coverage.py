@@ -45,6 +45,7 @@ LEFT_TO_WEB = {
     "/rounds/{}/files/": "原件下载与预览只在网页",
     "/rounds/{}/reaudit-inputs": "网页重审沿用上一轮文件；MCP 的复审来自新的飞书资料",
     "/rounds/{}/review-document-pairs": "网页复核时人工配对两份文件",
+    "/rounds/{}/signoff/withdraw": "撤回签发由签发人本人在网页写明原因完成；MCP 只提议签发（sign_round）",
     "/audit-task-events": "网页实时推送；MCP 用 get_task",
     "/audit-tasks/{}/events": "网页实时推送；MCP 用 get_task",
     "/audit-tasks/{}/recognitions/{}": "识别回执已含在 get_task 的任务里",

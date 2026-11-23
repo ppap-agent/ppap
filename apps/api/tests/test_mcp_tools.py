@@ -25,6 +25,7 @@ TOOLS = {
     "get_finding",
     "record_review",
     "publish_report",
+    "sign_round",
     "find_audits",
     "get_operation",
     "get_account",
@@ -46,6 +47,8 @@ class Product:
         self.audit = None
         self.imports = 0
         self.outcome = {"state": "proposed"}  # what the person did with a proposal, in the Web
+        # Where the round's signoff stands, as GET /rounds/{id}/signoff says (#357).
+        self.signoff = {"state": "unsigned", "signed_at": None, "signer": None, "signed": None, "current": None, "can_sign": True, "unavailable": None, "history": []}
         self.operations = {}
         self.settings = Settings()
 
@@ -96,6 +99,8 @@ class Product:
             return response(200, self.audit)
         if method == "GET" and path == "/rounds/round-1":
             return response(200, self.round)
+        if method == "GET" and path == "/rounds/round-1/signoff":
+            return response(200, self.signoff)
         return response(404, {"error": "missing"})
 
     async def get(self, actor, scope, path, *, params=None):
@@ -394,6 +399,67 @@ def test_a_review_is_written_at_once_under_the_granted_scope():
     review = {"task_id": task, "request_id": str(uuid4()), "item_key": "k1", "judgment": "confirm", "rationale": "已核对原件", "next_step": ""}
     assert world.call("record_review", **review)["result"] == {"item_key": "k1", "saved": True}
     assert world.call("record_review", **review)["result"] == {"item_key": "k1", "saved": True}
+
+
+def test_signing_off_is_proposed_for_the_person_who_ran_the_round_and_done_by_them_in_the_web():
+    """#357: sign_round only proposes; the person who ran the round signs it on the task page, and the client reads it back."""
+    world = World("a.xlsx")
+    ask = str(uuid4())
+    task = task_id_for("u", ask)
+    world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")
+    world.product.audit.update(state="completed", round_id="round-1", conclusion="NG")
+    world.product.round["signoff"] = {"state": "unsigned", "signed_at": None, "signer": None}
+    seen = world.call("get_results", task_id=task)
+    assert seen["result"]["signoff"]["state"] == "unsigned" and "sign_round" in {action["tool"] for action in seen["available_actions"]}
+
+    # Someone else's round is refused before anything is put to the user.
+    world.product.signoff.update(can_sign=False, unavailable={"code": "not_creator", "message": "只有发起这一轮审核的人可以签发。"})
+    refused = world.call("sign_round", task_id=task, request_id=str(uuid4()))
+    assert refused["next"]["kind"] == "blocked" and refused["next"]["error_code"] == "access_denied" and world.product.operations == {}
+    # An audit still making its reports is waited on.
+    world.product.signoff.update(unavailable={"code": "not_finished", "message": "审核结束、报告生成完后才能签发。"})
+    assert world.call("sign_round", task_id=task, request_id=str(uuid4()))["next"]["kind"] == "wait" and world.product.operations == {}
+
+    world.product.signoff.update(can_sign=True, unavailable=None)
+    request = str(uuid4())
+    asked = world.call("sign_round", task_id=task, request_id=request)
+    assert asked["next"]["action_id"] == "complete_in_web" and asked["next"]["url"] == f"https://ppap.example/tasks/{task}?intent=op-{request}"
+    proposal = world.product.operations[request]
+    assert (proposal["tool"], proposal["arguments"]["method"], proposal["arguments"]["path"]) == ("sign_round", "POST", "/rounds/round-1/signoff")
+    assert world.product.signoff["state"] == "unsigned"  # proposing signs nothing
+    assert world.call("sign_round", task_id=task, request_id=request)["next"]["url"] == asked["next"]["url"]
+
+    content = {"conclusion": "NG", "files": [{"filename": "a.xlsx", "conclusion": "NG"}], "reviewed_count": 1, "accepted_count": 2}
+    world.product.signoff.update(state="signed", signed_at="2026-11-22T06:05:00+00:00", signer={"name": "Alice", "mine": True}, signed=content, can_sign=False)
+    world.product.outcome = {"state": "succeeded"}
+    done = world.call("sign_round", task_id=task, request_id=request)
+    assert done["next"]["kind"] == "done", done
+    assert {key: done["result"]["signoff"][key] for key in ("state", "signer", "conclusion", "reviewed_count", "accepted_count")} == {
+        "state": "signed",
+        "signer": "Alice",
+        "conclusion": "NG",
+        "reviewed_count": 1,
+        "accepted_count": 2,
+    }
+    # A signed round is read back under a new request; nothing is proposed again.
+    again = world.call("sign_round", task_id=task, request_id=str(uuid4()))
+    assert again["result"]["signoff"]["state"] == "signed" and len(world.product.operations) == 1
+
+
+def test_a_review_on_a_signed_round_says_to_withdraw_the_signoff_first():
+    world = World("a.xlsx")
+    ask = str(uuid4())
+    task = task_id_for("u", ask)
+    world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")
+    world.product.audit.update(state="completed", round_id="round-1", conclusion="NG")
+
+    async def refused(actor, scope, tool, rid, method, path, body, *, probes, result_path=None):
+        return Reply(status="error", error="round_signed", request_id=rid)
+
+    world.product.write = refused
+    review = {"task_id": task, "request_id": str(uuid4()), "item_key": "k1", "judgment": "disagree", "rationale": "原件有零件号", "next_step": ""}
+    said = world.call("record_review", **review)["next"]
+    assert said["error_code"] == "round_signed" and "撤回签发" in said["message"]
 
 
 def test_a_file_the_user_gives_joins_the_same_task_and_the_old_quote_no_longer_starts_it():

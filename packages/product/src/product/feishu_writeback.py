@@ -323,12 +323,30 @@ def _semantic_source_text(source: dict) -> str:
     return f"来源：{source['filename']}（{role}）；位置：{location_label(source['locator'])}；原文摘录：{source['excerpt']}"
 
 
+MACHINE_FIRST = "机器初审结果，以人工确认和签发为准。"
+
+
+def signoff_text(round_body: dict) -> str:
+    """The round's signoff as it stands when the document is delivered (#357). A delivered document is never changed
+    afterwards; its link leads to where the round stands now."""
+    signoff = round_body.get("signoff") or {}
+    if signoff.get("state") != "signed" or not signoff.get("signed_at"):
+        return "交付时未签发。"
+    return f"交付时已签发 · {signoff.get('signer') or '签发人'} · {_audit_clock({'created_at': signoff['signed_at']})}（UTC）"
+
+
 def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
     """Complete report, unlike the brief summary written into a source document."""
     state = writeback_state(round_body)
     if state != "ready":
         raise FeishuWritebackError(state)
-    blocks = [_heading2("PPAP 审核报告"), _text("审核时间（UTC）：" + _audit_clock(round_body)), _text("机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。")]
+    blocks = [
+        _heading2("PPAP 审核报告"),
+        _text(MACHINE_FIRST),
+        _text(signoff_text(round_body)),
+        _text("审核时间（UTC）：" + _audit_clock(round_body)),
+        _text("机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。"),
+    ]
     targets = {item["file_version_id"]: item for item in round_body["inputs"] if item.get("role") == TARGET}
     findings = round_body.get("findings") or []
     counts = {status: sum(row.get("status") == status for row in findings) for status in (PASS, NG, UNABLE, NA, ERR)}

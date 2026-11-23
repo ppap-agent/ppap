@@ -55,6 +55,7 @@ TOOLS = {
     "get_finding",
     "record_review",
     "publish_report",
+    "sign_round",
     "find_audits",
     "get_operation",
     "get_account",
