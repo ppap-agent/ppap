@@ -8,7 +8,7 @@
     "source": "rules/PCE.json#PCE:1",
     "source_sha256": "6a15f61c213494c15e9c25bc7ba48ff47361aa9fc5dfbf8ff79399b5f13a8a58"
   },
-  "review_sha256": "c079aac6ec80c9cb173d9d959c0379b58f21f1acae3400ba54cabe2055e67816",
+  "review_sha256": "6e50f7e20de7fdf5b1b256e67e8c8e05d3bad52c01af75369fc700f907d0a2b2",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "125个预留格是否就等于125个样本",
       "reason": "只计实际有读数的格。若有125个预留格但只有120个读数，不满足样本量要求。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

@@ -51,7 +51,6 @@
       "meaning": "其他工序即使写了设备，也不能冲抵本工序漏填。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

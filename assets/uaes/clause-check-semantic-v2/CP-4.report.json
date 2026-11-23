@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:4",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "a19269438a082eba78d3e2164fc131db2f187f3d4f195f2a26d02693bada29fe",
+  "review_sha256": "e3de4bf4f5caed794256b4519076e9e023cd633912622f34355da71f3deac294",
   "findings": [],
   "excluded": [
     {
@@ -16,6 +16,5 @@
       "issue": "近似而未登记的列名是否自动认可？",
       "reason": "条款已指定人工确认的处理方式，不需要就单一近似列名再次发通用问卷。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

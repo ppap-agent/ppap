@@ -75,7 +75,6 @@
       "meaning": "没有整表豁免，实际列出的要求行继续按性质逐行查实测值与 OK 结论。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

@@ -81,7 +81,6 @@
       "meaning": "本条不能代替规则2，也不以规则2的结论代替本条。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

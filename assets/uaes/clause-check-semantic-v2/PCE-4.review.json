@@ -45,7 +45,6 @@
       "meaning": "认可不同的目录标题，不凭名称差异直接否决。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

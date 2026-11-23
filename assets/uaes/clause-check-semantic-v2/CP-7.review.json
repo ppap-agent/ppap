@@ -45,7 +45,6 @@
       "meaning": "按特性实际所属工序归属，不把行号所在块当作决定依据。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

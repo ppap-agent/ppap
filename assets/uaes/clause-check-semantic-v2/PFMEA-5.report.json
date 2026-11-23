@@ -8,7 +8,7 @@
     "source": "rules/PFMEA.json#PFMEA:5",
     "source_sha256": "0cfccce9c5233cf5f78ee1dfb2171c61d6fce5aeb2beda6487ac7c41a19a2180"
   },
-  "review_sha256": "fd47e023aa4a93621f4bff38732a4b73d60fd0ae7fa2449e5b7e6aac6e685b56",
+  "review_sha256": "4570d2ba5cd52e09047c3dd7fd496c92f0805faf25ab4196d08cd19d5a55014a",
   "findings": [
     {
       "id": "PFMEA:5#2",
@@ -52,6 +52,5 @@
       "issue": "一行 PFMEA 对三个工序是否必定漏项",
       "reason": "能逐一对应三道工序的失效模式即可，不得仅比较行数。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

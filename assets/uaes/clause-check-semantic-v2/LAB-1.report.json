@@ -8,7 +8,7 @@
     "source": "rules/LAB.json#LAB:1",
     "source_sha256": "e62b4dfb051ee0cbb31ccb95e3e80f4719c0c933d25605c6f32646526d3a6f7f"
   },
-  "review_sha256": "9b4b0b62561516a0a608d4141ab3d0b934b9e308bcabbc6fe9aa729a78867209",
+  "review_sha256": "a7663810042e3858ad872bec1b2bb2eb81d579685219134d4b193c1b4e9857b7",
   "findings": [],
   "excluded": [
     {
@@ -31,6 +31,5 @@
       "issue": "机构核对的提醒能否覆盖必判项",
       "reason": "设计验证报告附加提醒本身不是新条件；若特定证书被用来覆盖某试验报告，其实验室名称匹配要求仍有效。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

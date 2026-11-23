@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:7",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "95000ac25437f10250b29f2173f959c19e8ac2b62a97b4dcb54647981a6d1705",
+  "review_sha256": "1b4e5d2cfff2af56eaa46f90e6527f7737ccfcb6d20ec5d1d36ef85b31a84f1a",
   "findings": [],
   "excluded": [
     {
@@ -16,6 +16,5 @@
       "issue": "采购件质量计划整份未交，能否按未含 PGQP1 而跳过？",
       "reason": "不能。独立质量计划本身是三份必需文件之一；只有其内部 PGQP1 的工艺比对带有条件。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

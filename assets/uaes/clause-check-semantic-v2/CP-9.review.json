@@ -27,7 +27,6 @@
       "meaning": "必须在相应行确认该项，不可用几行各自零散字段拼出一项。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": []
 }

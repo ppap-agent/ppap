@@ -8,7 +8,7 @@
     "source": "rules/PFD.json#PFD:4",
     "source_sha256": "81aa83efd4b4178e9cd2104210d940b4fe925215c64fffed3444aff7e5b03094"
   },
-  "review_sha256": "516ac16874b13c52ce439fa6c60941d2d00fded569ad7a02846db9fa68c8a5ee",
+  "review_sha256": "f208bc142867ace0678c6dda31c654c1f8ac915d29478b346bc756428bfd96ee",
   "findings": [],
   "excluded": [
     {
@@ -26,6 +26,5 @@
       "issue": "“四选一”与括内列五项是否需要客户选判",
       "reason": "枚举数量的写法不准，但括内明确列五项并明说命中任一项。只有“偏差处理”也已被明文接纳，不存在相反的可用判定。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

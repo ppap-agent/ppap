@@ -8,7 +8,7 @@
     "source": "rules/PFMEA.json#PFMEA:2",
     "source_sha256": "0cfccce9c5233cf5f78ee1dfb2171c61d6fce5aeb2beda6487ac7c41a19a2180"
   },
-  "review_sha256": "31d10a0009c480000425c983ed128c35b36af71b608ff5a26193eae46c312fb8",
+  "review_sha256": "75f121e0e7cda8bf02d12c683c8c8d6e5b07de330cd4a95991720ddf3cb3767f",
   "findings": [
     {
       "id": "PFMEA:2#8.1",
@@ -59,6 +59,5 @@
       "issue": "低风险优化后留空是否导致初始评分不合格",
       "reason": "豁免仅覆盖列明的改进栏，不免除初始三列；两项作用域不同。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

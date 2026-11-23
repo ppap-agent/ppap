@@ -81,7 +81,6 @@
       "meaning": "不能把单边限值不同的非对称公差视为与对称公差等价。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

@@ -39,7 +39,6 @@
       "meaning": "缺工序名称列不是客观无出货工序，不得为此套用通过特例。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

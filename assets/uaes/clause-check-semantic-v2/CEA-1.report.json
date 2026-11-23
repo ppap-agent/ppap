@@ -8,7 +8,7 @@
     "source": "rules/CEA.json#CEA:1",
     "source_sha256": "e8ada583bd3204ff2d2fc05512209b50c4363f978240d8683031d6c872a0cea0"
   },
-  "review_sha256": "02dbbf4af4fa285eda9802bcdde50e0ed41aa316fc27b79a9825ea342072e7b2",
+  "review_sha256": "17e888e292addaddfa56fe857fbec086eb25424048ad97f70126d793722cb71d",
   "findings": [
     {
       "id": "CEA:1#1",
@@ -53,6 +53,5 @@
       "issue": "有完全认可字样又承诺整改是否一律按文字冲突失败",
       "reason": "条文专门将此种备注导向偏差分支；不可分流的冲突才走无法辨识。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

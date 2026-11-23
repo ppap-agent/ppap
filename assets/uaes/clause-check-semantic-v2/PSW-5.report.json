@@ -8,7 +8,7 @@
     "source": "rules/PSW.json#PSW:5",
     "source_sha256": "701acff9b912b1ea3fe5ff70638f10c55b5a5673511bb890a9049eeccef8dfdc"
   },
-  "review_sha256": "167ee95d598f1d14651f0391f40f9b39ed695142417199e1e5694f83bee5a712",
+  "review_sha256": "3e5f36b420b0f9437860f3376e2225cbd8bce0da8814d799b933f22c8c577521",
   "findings": [],
   "excluded": [
     {
@@ -16,6 +16,5 @@
       "issue": "只同时勾选中英文的等级 3，是否违反单选",
       "reason": "两种写法是同一项，原文明确要求先合并再计数。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

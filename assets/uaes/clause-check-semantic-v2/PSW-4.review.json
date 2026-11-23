@@ -33,7 +33,6 @@
       "meaning": "任一适用要求不满足就不通过。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:13",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "c2d3a9eb49e04863281023acb278ce95049f31be996c87cdccb3fc691c404427",
+  "review_sha256": "7f60d1e737a0a556727dd0398d878d27dffb33fa11eedd3f2cd1ce2a78e34be1",
   "findings": [
     {
       "id": "CP:13#5",
@@ -47,6 +47,5 @@
       "issue": "在频率栏写明“每件全检”，可否忽略同一行独立容量格为空？",
       "reason": "两项不是同一个判断。全检强度当然足够，不必为它换算抽样数；但基准规定了容量且独立容量格确实空白时，下一段明定按容量缺失判不通过。“判满足”没有说可以不设容量栏或让容量格空白。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

@@ -8,7 +8,7 @@
     "source": "rules/PFD.json#PFD:3",
     "source_sha256": "81aa83efd4b4178e9cd2104210d940b4fe925215c64fffed3444aff7e5b03094"
   },
-  "review_sha256": "cc3b85a4ead450888e055654c2afe0dc1e41505d04ec05bb6f8a267cb0818e7a",
+  "review_sha256": "45d2231ab88bdb3c2de59ac1472c5fd66912db7374bd706ce1d23309661628dc",
   "findings": [],
   "excluded": [
     {
@@ -16,6 +16,5 @@
       "issue": "能否套用流程图规则2不可辨记未审",
       "reason": "规则2的例外指工序分类图形。受控章有自己的明确结论：疑似章不可辨时不通过，并请人工复核；不能仅凭文本没提取到就说无章。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

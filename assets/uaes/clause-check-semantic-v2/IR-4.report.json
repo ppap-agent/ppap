@@ -8,7 +8,7 @@
     "source": "rules/IR.json#IR:4",
     "source_sha256": "185cdaf9c3b9f6c96a981afdc8da3e8fb1ba166fd6a3fce839cb1a3e66acb418"
   },
-  "review_sha256": "3df223721475660d02bb61026c357ec39c5574db990be01453bbfd5ece4d1f3c",
+  "review_sha256": "ab9a5490a0e966d5b035855f3778e6b129bd39370930f8124b2eda8d1e632519",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "允许等价写法是否等于只要求上下公差的总宽相等",
       "reason": "不是。比如 +0.15/-0.05 与 ±0.10 总宽虽同，两个边界不同，原文明确不等价。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

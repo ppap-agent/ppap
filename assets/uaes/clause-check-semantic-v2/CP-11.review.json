@@ -27,7 +27,6 @@
       "meaning": "缺图纸、漏任一应比尺寸行或该行无所需 SPC 管控，都不通过。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

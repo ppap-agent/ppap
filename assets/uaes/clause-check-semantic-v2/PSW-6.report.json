@@ -8,7 +8,7 @@
     "source": "rules/PSW.json#PSW:6",
     "source_sha256": "701acff9b912b1ea3fe5ff70638f10c55b5a5673511bb890a9049eeccef8dfdc"
   },
-  "review_sha256": "a459cbb444dd8166f8e3623f72ba6f2e381a1c7df352e604c7cb9d1fbd205a56",
+  "review_sha256": "af2a9e53402d9a85c0af8e1883ed7a1d4dc0e266e604f4bfb1176b823ec4623a",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "总括为“是”，一项只有数值且后来在检验报告中查出超差，是否直接视同本条标明 NG",
       "reason": "本条明确要求四项中有不合格标记才按第 3 项处理；不在此处另做检验报告的超差判定。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

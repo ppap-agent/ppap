@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:6",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "14c0e69cf9427b43ed4b2dd384ba802a813f7dee7abda161baa7bbf712c03858",
+  "review_sha256": "57f2cf6af828631d1e9dc6d34368fdb34149b000f2f7bc7f34cdb6af48e623b5",
   "findings": [
     {
       "id": "CP:6#1",
@@ -46,6 +46,5 @@
       "issue": "表头日期值空白是否等同缺少日期格或履历日期？",
       "reason": "不是。表头八格要存在；七项非空不含日期格。但本条仍独立要求比较履历末条日期和图纸日期，表头日期格不替代该比较。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

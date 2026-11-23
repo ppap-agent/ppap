@@ -8,7 +8,7 @@
     "source": "rules/PHOTO.json#PHOTO:1",
     "source_sha256": "05d24f17e5a31dac962f508dc6763552edb721a8504411d5de58348b33d6da93"
   },
-  "review_sha256": "9c848ff391fec5684f27205608d5041f31974a2ae183faaaa4bdcf90aca65171",
+  "review_sha256": "eaf9380f2fdda1a25fa14c71319a936804683351c73cebf079098c283a44712c",
   "findings": [
     {
       "id": "PHOTO:1#1",
@@ -52,6 +52,5 @@
       "issue": "空文件名叫 JPG，应该记“未审”吗",
       "reason": "不能。此处已给出缺件性质及不通过结论，不能用扩展名或通用不可辨流程改判。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

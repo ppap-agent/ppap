@@ -8,7 +8,7 @@
     "source": "rules/MCMP.json#MCMP:1",
     "source_sha256": "3cc60c35b02b5141fe2d57fb989944ee80420b0a8a2ce04fb7bd406f6bd5bdd0"
   },
-  "review_sha256": "faa56bca27a0359f6155ae4ddd46a8fb432b6a976942df1249fec84fcd597b80",
+  "review_sha256": "2c37b555dc178019bcd02d7b118b0aa45a84968bde8af79021a74aa12b511816",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "仅因印章是检验专用章就要求一律改盖公章",
       "reason": "原文要求对该签署有效的供应商印章，没有指定公章。专用章真实且属于供应商，并不能单凭这一事实证明它适用于该报告；如授权范围不明，缺的是用章证据，不等于有两种合法规则。若已有证据证明对该报告有效，按章名另外加设公章条件无原文依据。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

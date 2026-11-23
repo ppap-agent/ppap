@@ -8,7 +8,7 @@
     "source": "rules/MSL.json#MSL:4",
     "source_sha256": "4dce7692496cc3b44b4863377a844870f5b475daca330f699ffa9b2043e3cf1f"
   },
-  "review_sha256": "b35b6ad1ab120dbee13583b6ab8080ee0ea078acdf01e1c3dced343ea05a595b",
+  "review_sha256": "53717fec1f83451cd590c4bca95f25a3bf1bc4c6a589fd9bf849d8fd4f3c2947",
   "findings": [
     {
       "id": "MSL:4#4",
@@ -51,6 +51,5 @@
       "issue": "只有简称或供应商写法不同，能否视为缺节点",
       "reason": "不能用字串差异代替工程语义核对。工程语义能对应时，仅写法不同不构成溯源缺失。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

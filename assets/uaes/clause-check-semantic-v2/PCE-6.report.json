@@ -8,7 +8,7 @@
     "source": "rules/PCE.json#PCE:6",
     "source_sha256": "6a15f61c213494c15e9c25bc7ba48ff47361aa9fc5dfbf8ff79399b5f13a8a58"
   },
-  "review_sha256": "51ceb3c27ef2e21532c6b5e435a579094b963096d3b7a02f76cb079a2f88bfc4",
+  "review_sha256": "44c84f243209a2387a6a14f35a32428858196733e229c693bba12737968ebe23",
   "findings": [
     {
       "id": "PCE:6#1",
@@ -57,6 +57,5 @@
       "issue": "把等价公差展开为上下两项是否导致规格不一致",
       "reason": "数值相同不作为不一致，例如±0.1与+0.1／-0.1；依据须说明归一。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

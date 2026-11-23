@@ -8,7 +8,7 @@
     "source": "rules/PSW.json#PSW:3",
     "source_sha256": "701acff9b912b1ea3fe5ff70638f10c55b5a5673511bb890a9049eeccef8dfdc"
   },
-  "review_sha256": "f375b6ae5db96a8e3252fe32b63935ede5d2cdebadad29e1bb33d62e55c57a90",
+  "review_sha256": "9a17260efc9a142c84dbf4013f6df11b9f62b65c94fb74876ab36f6fad6e14c1",
   "findings": [
     {
       "id": "PSW:3#2",
@@ -47,6 +47,5 @@
       "issue": "签字栏、手签和印章齐全，但无电话，是否既要通过又要不通过",
       "reason": "“才”列的是必要条件，不是充分条件。联系信息要求仍独立适用；明确缺电话就不能通过。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

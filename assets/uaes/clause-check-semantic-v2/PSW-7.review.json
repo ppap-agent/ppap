@@ -45,7 +45,6 @@
       "meaning": "只执行 PSW 到 CP 的对照，不以单独的反向要求改判本条。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

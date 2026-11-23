@@ -11,8 +11,7 @@ the answers exported from there into a backfill list.
 hand-edited report stops the build. Each
 unanswered ambiguity, undefined case, gap or conflict is one finding, named `<条款 id>#<处>` (`CP:8#1`, `CP:8#8.1`, `CP:8#G1`,
 `CP:8#C1`). The curation file says which findings a common question covers, which were settled by an answer already
-relayed, which go back to the customer for a conclusion, and the questions about the rulebook's general notes;
-every other finding becomes a card of its own.
+relayed, and which go back to the customer for a conclusion; every other finding becomes a card of its own.
 
 A finding becomes a card through `clause_card`, which the product's clarification loop also uses: the card's key is
 the finding ID on a version's first revision and names the revision after it (`card_key`).
@@ -38,10 +37,10 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from check import REPORT_SCHEMA, check_review, load_source, resolve
+from check import REPORT_SCHEMA, check_review, load_source
 
 NUMBERS = "一二三四五六七八九十"
-GROUPS = ("common", "conclusion", "general", "clause")
+GROUPS = ("common", "conclusion", "clause")
 RELAYED = "relayed"  # the choice that confirms the answer already relayed on a card
 VERDICT_OPTIONS = [{"key": "PASS", "label": "通过"}, {"key": "NG", "label": "不通过"}, {"key": "UNABLE", "label": "待审核（交人工）"}]
 
@@ -71,10 +70,6 @@ def findings(directory: Path, rule_version: str) -> tuple[list[dict], dict[str, 
             raise SystemExit(f"[报告] {path.name} 审查原件校验失败：" + "；".join(errors))
         if payload.get("schema") != REPORT_SCHEMA or payload.get("review_sha256") != hashlib.sha256(raw).hexdigest() or payload.get("clause") != clause or payload.get("findings") != expected:
             raise SystemExit(f"[报告] {path.name} 已过期或被手工修改；请重跑 check.py")
-        for filename, digest in payload.get("policy_sha256", {}).items():
-            policy_file = resolve(review_path, filename)
-            if not policy_file or hashlib.sha256(policy_file.read_bytes()).hexdigest() != digest:
-                raise SystemExit(f"[报告] {path.name} 引用政策已变化；请重新审查并重跑 check.py")
         rule_id = clause["id"]
         title = re.sub(r"（[^（）]*" + re.escape(rule_version) + r"[^（）]*）$", "", clause["title"]).strip()
         name = clause_name(title, rule_id)
@@ -175,7 +170,8 @@ def build(directory: Path, plan_path: Path, out: Path) -> None:
     relayed = plan.get("relayed", {})
     applied = plan.get("applied", {})
     conclusion = plan.get("conclusion") or {"cards": []}
-    general = plan.get("general") or {"points": []}
+    if plan.get("general"):
+        raise SystemExit("[整理] 不再收通用判定说明的问题：条款需要的口径写进条文，问题按条款提出")
     used = Counter([*applied, *(i for card in plan.get("common", []) for i in card["items"]), *(i for card in conclusion["cards"] for i in card.get("items", []))])
     problems = [f"没有这处发现：{i}" for i in used if i not in by_id] + [f"用了不止一次：{i}" for i, n in used.items() if n > 1]
     problems += [f"没有这条转达的答复：{rule['relayed']}" for rule in applied.values() if rule["relayed"] not in relayed]
@@ -214,17 +210,6 @@ def build(directory: Path, plan_path: Path, out: Path) -> None:
                 "items": card.get("items", []),
             }
         )
-    for number, point in enumerate(general["points"], 1):
-        cards.append(
-            {
-                "key": f"general:{number}",
-                "group": "general",
-                "question": point,
-                "why": general.get("why", ""),
-                "options": lettered(general.get("options", [])),
-                "expect": general.get("expect", ""),
-            }
-        )
     order = plan.get("clause_order") or []
 
     def position(item: dict) -> tuple:
@@ -251,7 +236,7 @@ def build(directory: Path, plan_path: Path, out: Path) -> None:
     counts = Counter(card["group"] for card in cards)
     print(
         f"发现 {len(items)} 处；卡片 {len(cards)} 张：共性问题 {counts['common']}（管 {sum(len(c['items']) for c in plan.get('common', []))} 处）、"
-        f"交客户补结论 {counts['conclusion']}、通用判定说明 {counts['general']}、逐条问题 {counts['clause']}（其中按转达答复处理 {len(applied)}）"
+        f"交客户补结论 {counts['conclusion']}、逐条问题 {counts['clause']}（其中按转达答复处理 {len(applied)}）"
     )
     leaked = [
         word for word in ("OWL", "本体", "公理", "推理", "ofn", "__") if word in json.dumps([{k: v for k, v in c.items() if k not in ("key", "items", "sources")} for c in cards], ensure_ascii=False)

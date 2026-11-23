@@ -8,7 +8,7 @@
     "source": "rules/SCL.json#SCL:2",
     "source_sha256": "f0eeea0dd5294277e9e82fc2eab37834237f8ac2ec305cd4aa27ebe4c9e16952"
   },
-  "review_sha256": "f4cab4bc68b23ff4710951b00e944d4bc65ddf391ce206fd4900f1d54476b40d",
+  "review_sha256": "182a0d3bea2499e567a320f1cebbd720c45256329ac7857844480403a245e6b6",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "前一行的公差能否与后一行的名称拼成完整记录",
       "reason": "不得跨行拼配；本件每条有编号的记录要逐行查。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

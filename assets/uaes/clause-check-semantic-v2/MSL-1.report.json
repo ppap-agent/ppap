@@ -8,7 +8,7 @@
     "source": "rules/MSL.json#MSL:1",
     "source_sha256": "4dce7692496cc3b44b4863377a844870f5b475daca330f699ffa9b2043e3cf1f"
   },
-  "review_sha256": "2c5077c8dabb58c41dd34b7d28a203b7a3e9b84953e4b654594d81a5a42d356a",
+  "review_sha256": "78d759b8ee13f4a6e9b4427d071c45bb2777fa3f275c954e232e36a6e182af6a",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "非备注字段填任一字符，或在模板尾部有空行，是否都按字面机械判",
       "reason": "占位不是实质内容，须区别于单元格空白；相反，模板底部预留行不是有效记录，不据此判缺。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

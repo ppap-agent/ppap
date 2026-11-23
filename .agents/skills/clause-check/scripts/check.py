@@ -99,21 +99,8 @@ def check_review(review_path: Path, review: dict, clause: dict) -> tuple[list[st
             require_text(req.get("scope"), f"{at}.scope", errors)
             require_text(req.get("meaning"), f"{at}.meaning", errors)
 
-    policies = review.get("policies", [])
-    if not isinstance(policies, list):
-        errors.append("policies 必须是数组")
-        policies = []
-    for i, policy in enumerate(policies, 1):
-        at = f"policies[{i}]"
-        if not isinstance(policy, dict):
-            errors.append(f"{at} 必须是对象")
-            continue
-        name = require_text(policy.get("source"), f"{at}.source", errors)
-        file = resolve(review_path, name) if name else None
-        if file is None:
-            errors.append(f"{at} 找不到明确引用的政策文件 {name}")
-        else:
-            quoted(policy.get("quote"), file.read_text(encoding="utf-8"), f"{at}.quote", errors)
+    if "policies" in review:
+        errors.append("审查只依据条款原文，不收 policies；条款需要的口径要写进条文")
 
     excluded = review.get("excluded", [])
     if not isinstance(excluded, list):
@@ -284,8 +271,6 @@ def main(argv: list[str] | None = None) -> int:
         "review_sha256": hashlib.sha256(raw).hexdigest(),
         "findings": findings,
         "excluded": review.get("excluded", []),
-        # check_review already refused a policy whose file cannot be found.
-        "policy_sha256": {policy["source"]: hashlib.sha256(Path(str(resolve(review_path, policy["source"]))).read_bytes()).hexdigest() for policy in review.get("policies", [])},
     }
     report_path.write_text(render(clause, review, findings), encoding="utf-8")
     data_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

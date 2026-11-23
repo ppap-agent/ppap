@@ -8,7 +8,7 @@
     "source": "rules/PSW.json#PSW:1",
     "source_sha256": "701acff9b912b1ea3fe5ff70638f10c55b5a5673511bb890a9049eeccef8dfdc"
   },
-  "review_sha256": "76ad21e57b3a020811b7fbcc37f37459169cd38a26790aef34e2772068421c88",
+  "review_sha256": "877f28a724d95da4ab3814addd3e25dbe2214f0d5840a2ad51a56530b9669f50",
   "findings": [
     {
       "id": "PSW:1#1",
@@ -51,6 +51,5 @@
       "issue": "备注写明本次生产节拍，是否已证明整份 PSW 合格",
       "reason": "只能确认备注有实质内容，不能代替净重、字段和勾选等检查。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

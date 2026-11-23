@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:5",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "ffb78166d79396d44bbc4d2262085a47d3ed6272a6e0b859f6714c4e9b4db597",
+  "review_sha256": "3c004725e2ab6427dd706486fa8567be176106c62240e891ce3524edc83cc9ae",
   "findings": [],
   "excluded": [
     {
@@ -16,6 +16,5 @@
       "issue": "一个尺寸行写了 Cpk 是否整份计划就通过？",
       "reason": "该句位于“对每个跑道尺寸行”之后，只解决当前行的管控方式。其他适用行仍须逐行判断。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

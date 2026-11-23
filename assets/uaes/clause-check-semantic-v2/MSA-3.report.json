@@ -8,7 +8,7 @@
     "source": "rules/MSA.json#MSA:3",
     "source_sha256": "6ed0d5240c65b51c1cf40e64e6dfbd8a1c810697aba3824627d12d3959855eee"
   },
-  "review_sha256": "445ec66a819154a7f87e0af77d380030b0cf1c60f77ba14183362b112884c482",
+  "review_sha256": "b596259a78cc7c9786bcc5b4129e36e89ed4cd78062786c07b1b92a9be48e8af",
   "findings": [
     {
       "id": "MSA:3#1",
@@ -52,6 +52,5 @@
       "issue": "缺 PGQP1 能否援引规则6回退",
       "reason": "不能；本条把 PGQP1 列为必交，缺件时保留本条不通过，包级只记一次。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

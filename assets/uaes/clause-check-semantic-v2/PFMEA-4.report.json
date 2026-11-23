@@ -8,7 +8,7 @@
     "source": "rules/PFMEA.json#PFMEA:4",
     "source_sha256": "0cfccce9c5233cf5f78ee1dfb2171c61d6fce5aeb2beda6487ac7c41a19a2180"
   },
-  "review_sha256": "7a11ad71e2c3385f75ad4f430d5ac0fde2226919e5749b619f7896f896fd385d",
+  "review_sha256": "08028b1b7cc11c9675a75067e9f9d495ee65b4fe7777e7c05822ff1efe86c252",
   "findings": [],
   "excluded": [
     {
@@ -16,6 +16,5 @@
       "issue": "清单、图纸足够详细是否可以代替 PGQP1",
       "reason": "即使二者都全，本条也明禁以其并集替代；缺件计一次不是把本条改判通过。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

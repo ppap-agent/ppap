@@ -51,7 +51,6 @@
       "meaning": "未覆盖表尾只能记未审，不能以局部检索证明缺记录。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

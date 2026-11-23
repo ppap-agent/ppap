@@ -8,7 +8,7 @@
     "source": "rules/IR.json#IR:1",
     "source_sha256": "185cdaf9c3b9f6c96a981afdc8da3e8fb1ba166fd6a3fce839cb1a3e66acb418"
   },
-  "review_sha256": "b733a5e316647389d291162388f426f06a3280a5c0a0c2f76ca7163b2cc3b628",
+  "review_sha256": "5f8a9d8180c0cab4b7999e2ae7cf783adb7a817af5776a42a78cf698400f8956",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "有偏差批准，是否可以顺带免除实测值列数的限制",
       "reason": "批准针对本项超差，不豁免独立的报告与列数条件，也不自动决定其他条款的结论。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

@@ -8,7 +8,7 @@
     "source": "rules/PSW.json#PSW:4",
     "source_sha256": "701acff9b912b1ea3fe5ff70638f10c55b5a5673511bb890a9049eeccef8dfdc"
   },
-  "review_sha256": "a4b9aee2b02a7ffd20317a90899d4677ddddeff4b749ae980fd9c92ab96e68b4",
+  "review_sha256": "c817fadb18cf8741beae28e950533be4fc64af7f4e0f0083a127fd22913efcc8",
   "findings": [],
   "excluded": [
     {
@@ -16,6 +16,5 @@
       "issue": "勾了两个正常原因是否一定多选不合格",
       "reason": "本条规定下限，没有规定只能选一个；若同时勾“其它”，其旁仍要填说明。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

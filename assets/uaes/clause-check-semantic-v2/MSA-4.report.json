@@ -8,7 +8,7 @@
     "source": "rules/MSA.json#MSA:4",
     "source_sha256": "6ed0d5240c65b51c1cf40e64e6dfbd8a1c810697aba3824627d12d3959855eee"
   },
-  "review_sha256": "ad29cb912ba1c79197fb027e44ea141e355a82123dad8efe6443e50aebac1519",
+  "review_sha256": "ae4214f85b8775fe213ce1058887347f7714fd3b715724424f0c830f80398312",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "结论合格但标题不含“目视”就缺报告吗",
       "reason": "不按标题逐字匹配。需能对应到同件号对应工序的检验人员；能对应只提示，不能对应才按缺少。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

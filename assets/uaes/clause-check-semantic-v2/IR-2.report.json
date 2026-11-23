@@ -8,7 +8,7 @@
     "source": "rules/IR.json#IR:2",
     "source_sha256": "185cdaf9c3b9f6c96a981afdc8da3e8fb1ba166fd6a3fce839cb1a3e66acb418"
   },
-  "review_sha256": "60bea0b4b5563f0d3558257811d242b350b6f066f19cf3450a382be19fa3d0f8",
+  "review_sha256": "e37631cea8afc891bec5092fdd54f5752de50e79b2d54415cf8877f6f4905a53",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "尺寸实测超差但另有顾客许可，能否把规则 1 的条件移来放行本条",
       "reason": "两条不是同一作用域。本条明确要求所有定量实测值合规且同行结果合格，没有写入尺寸报告列数条款的许可条件。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

@@ -8,7 +8,7 @@
     "source": "rules/PCE.json#PCE:2",
     "source_sha256": "6a15f61c213494c15e9c25bc7ba48ff47361aa9fc5dfbf8ff79399b5f13a8a58"
   },
-  "review_sha256": "3a91228997b2bc1634c9ed61b86994844db9a0437774bb2064af8e8fd211100a",
+  "review_sha256": "9af4735701a68df86856a1da01702001368fcefb2c9c53ae988846b15783fc28",
   "findings": [
     {
       "id": "PCE:2#3",
@@ -51,6 +51,5 @@
       "issue": "可否因计算Ppk而把空格也算样本再数一次",
       "reason": "本条复用规则1的有读数单元格计数，不另列计数单位；这不回答单值移动极差法的规定数指哪一个数。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

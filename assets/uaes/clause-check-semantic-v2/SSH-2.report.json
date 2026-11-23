@@ -8,7 +8,7 @@
     "source": "rules/SSH.json#SSH:2",
     "source_sha256": "d70d520694345ebdaa2cbe52327dfcdbed7caf8a9e75a8f0cad157cca05a967c"
   },
-  "review_sha256": "99f2f00fb978d3cd6a18303d337b7557c9515fdfb89147d59df97c987b333bfd",
+  "review_sha256": "c89d107b2dc3952f3998d765dc9a837ae7c9ece5c86941c66ef7f509fbcf80bb",
   "findings": [
     {
       "id": "SSH:2#1",
@@ -46,6 +46,5 @@
       "issue": "只有工程更改一览表就能直接判不适用吗",
       "reason": "不能。若该表承载送样履历，必须依五维度映射并逐行检查；整个批次确未提交该对象才适用缺表分支。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

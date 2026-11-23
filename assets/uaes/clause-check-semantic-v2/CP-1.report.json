@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:1",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "302f02bdeb1d59a2c6f63a1bd51a5f676f168b50000dc3eccda2daff67d648aa",
+  "review_sha256": "63048747dd98e320810b8c6cf8aa7fdc39a3080482c9ebc1bf32fb0bcc4887ef",
   "findings": [],
   "excluded": [
     {
@@ -16,6 +16,5 @@
       "issue": "另设设备列只填一行，能否盖过其他有设备工序漏填？",
       "reason": "不能。例如设备列写了车床，另一清洗工序主行无值且无继承，末句已判不通过。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

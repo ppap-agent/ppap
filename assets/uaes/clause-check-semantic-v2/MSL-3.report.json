@@ -8,7 +8,7 @@
     "source": "rules/MSL.json#MSL:3",
     "source_sha256": "4dce7692496cc3b44b4863377a844870f5b475daca330f699ffa9b2043e3cf1f"
   },
-  "review_sha256": "c4be79bfd52aa35800a12bcde48c72c06daebc782513c5caf75bfb8816adb2d4",
+  "review_sha256": "3e51f04d47789a92c10d4b8b0af8f915a66aebd47b81c70fa947785808538af9",
   "findings": [
     {
       "id": "MSL:3#1",
@@ -47,6 +47,5 @@
       "issue": "错件号能否再转成“零件名称不一致”",
       "reason": "不能。先核同号；已确定错件号属于源错配，不再逐格找名称差异。名称相同也不能自行认定编号等价。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

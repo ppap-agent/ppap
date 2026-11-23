@@ -8,7 +8,7 @@
     "source": "rules/PSW.json#PSW:2",
     "source_sha256": "701acff9b912b1ea3fe5ff70638f10c55b5a5673511bb890a9049eeccef8dfdc"
   },
-  "review_sha256": "0f8a4290f76ba730e781f5371696f014e2b2eddae8fb465b7d660d6763054998",
+  "review_sha256": "9cc40c517583ff87dda7591672c20cbc2138543622ab5e8604b3508efc526933",
   "findings": [],
   "excluded": [
     {
@@ -16,6 +16,5 @@
       "issue": "材料信息的问题必须回答“是”才算勾选合格吗",
       "reason": "本条要求恰好勾选一个选项，没有指定必须选“是”；通用说明区分勾“否”与旁设说明栏却未说明，递交方式仍须另查。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

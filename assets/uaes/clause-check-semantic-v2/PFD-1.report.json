@@ -8,7 +8,7 @@
     "source": "rules/PFD.json#PFD:1",
     "source_sha256": "81aa83efd4b4178e9cd2104210d940b4fe925215c64fffed3444aff7e5b03094"
   },
-  "review_sha256": "f7e0000169e68b6c00d27bd260938331f08beee600a407fd96fd3397343dd54f",
+  "review_sha256": "a4a9a4efd2b1023edc2b74e0dbfcda74e42144576e601007bc94a5f6b99ed7cf",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "能否借别的文件的标识说明补齐本图",
       "reason": "要求说明在本文件内；同批对端用于确认是否漏标特性，不替代本图图例或注释。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

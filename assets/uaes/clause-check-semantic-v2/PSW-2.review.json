@@ -45,7 +45,6 @@
       "meaning": "五项中任一项不满足就不通过。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

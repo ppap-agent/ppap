@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:2",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "a06cf7b1a517828cb7d2785539dcab559970382b50e8e4d4fed503fd34aa2d16",
+  "review_sha256": "0e6b6535f87b33f7b0b5f36fd167e8120be895d098bf8b63fe034db0dad22843",
   "findings": [],
   "excluded": [
     {
@@ -16,6 +16,5 @@
       "issue": "控制计划里没有某一类环节的行时，是否算没有判定对象",
       "reason": "原文要求三类环节都写明并串成闭合追溯链；缺一类环节的行，三段就闭合不了，按原文即不满足，不是原文没有结论。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

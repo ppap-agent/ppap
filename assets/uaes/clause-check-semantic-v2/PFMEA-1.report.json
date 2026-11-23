@@ -8,7 +8,7 @@
     "source": "rules/PFMEA.json#PFMEA:1",
     "source_sha256": "0cfccce9c5233cf5f78ee1dfb2171c61d6fce5aeb2beda6487ac7c41a19a2180"
   },
-  "review_sha256": "192930603420f4b371134ea410090a009af04b63578956dc2cc1f78ca73a1a3f",
+  "review_sha256": "b7072f93009063a64f27877f1db8661c5d5536324cda44ed834bf76f1a51af95",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "“首次发行”是否自带经验教训免查",
       "reason": "该词单独填写恰被明确排除，没有首次发行例外。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

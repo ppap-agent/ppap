@@ -21,7 +21,6 @@
       "meaning": "阶段不符或受控章不符，均不能通过。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": []
 }

@@ -33,7 +33,6 @@
       "meaning": "只在合并后仍有多个不同等级时才判多选，不数同义标签的字面个数。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

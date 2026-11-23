@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:11",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "0e307446154a65229340fd77ac49050eebdd64f85d023815a28942ce3a72be67",
+  "review_sha256": "476cf2ecd6aed865185012f81ff8031196bacada36f7a2123d2c48102fed7f1a",
   "findings": [],
   "excluded": [
     {
@@ -16,6 +16,5 @@
       "issue": "能否沿用规则 5 的任一栏目命中，接受只在控制方法栏写 SPC？",
       "reason": "不能。此处以图纸特殊且有 CPK 要求的尺寸为范围，并明确指定对应行的频率/频次；规则 5 的列选项不能移用。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

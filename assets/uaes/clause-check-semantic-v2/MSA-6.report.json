@@ -8,7 +8,7 @@
     "source": "rules/MSA.json#MSA:6",
     "source_sha256": "6ed0d5240c65b51c1cf40e64e6dfbd8a1c810697aba3824627d12d3959855eee"
   },
-  "review_sha256": "177745fa7554b185232e5a2679b7659245d061ab63245bd431edc4aba3dfbfd3",
+  "review_sha256": "67b5c4c88154b0971657fe8ff266c60d3c4b2887dc2f9e640c54d3354642d40b",
   "findings": [],
   "excluded": [
     {
@@ -26,6 +26,5 @@
       "issue": "缺 PGQP1 一律失败，或一律可以回退",
       "reason": "两者都不成立。本条可以回退特殊特性清单；PFMEA规则4所需比对对象不同，不随本条改变。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

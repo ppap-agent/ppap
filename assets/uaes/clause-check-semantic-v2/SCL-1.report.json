@@ -8,7 +8,7 @@
     "source": "rules/SCL.json#SCL:1",
     "source_sha256": "f0eeea0dd5294277e9e82fc2eab37834237f8ac2ec305cd4aa27ebe4c9e16952"
   },
-  "review_sha256": "08b717f169851fdb7afe3bb7488a57a25cb3b1df99585e906f02efcd3cbddcfa",
+  "review_sha256": "3116f456848c08dd35773d6eab41eab1f00f958c30d5d12595171bb525fb945a",
   "findings": [
     {
       "id": "SCL:1#5",
@@ -52,6 +52,5 @@
       "issue": "有电子签名图层是否天然等于没有签字",
       "reason": "电子手写签名与电子签章在原文分别明确认可，但不能相互代替。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

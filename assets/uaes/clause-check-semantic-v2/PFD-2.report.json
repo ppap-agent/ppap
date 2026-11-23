@@ -8,7 +8,7 @@
     "source": "rules/PFD.json#PFD:2",
     "source_sha256": "81aa83efd4b4178e9cd2104210d940b4fe925215c64fffed3444aff7e5b03094"
   },
-  "review_sha256": "a2943b356939b5750b852a40414156b21e912525dee11b69e994f35324cc4c93",
+  "review_sha256": "9d2b30c22e6193b1f42b7394751a67fcac133f0a78188e3563764b0ac0c8ffec",
   "findings": [
     {
       "id": "PFD:2#1",
@@ -58,6 +58,5 @@
       "issue": "旧卡片与现行条文是否冲突",
       "reason": "原文已明示修订优先且通用说明同源。完成视觉取证仍不可辨时记未审并提示复核；可辨且确定缺符号则是另一事实。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

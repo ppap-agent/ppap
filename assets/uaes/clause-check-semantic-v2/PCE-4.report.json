@@ -8,7 +8,7 @@
     "source": "rules/PCE.json#PCE:4",
     "source_sha256": "6a15f61c213494c15e9c25bc7ba48ff47361aa9fc5dfbf8ff79399b5f13a8a58"
   },
-  "review_sha256": "73cc831a2e503ef8889c578c66b6fe9b7581f5bedf4a8cc3e46663a5d80bfa70",
+  "review_sha256": "5a4d2aa3b4f3ef6f2886b656a8e1912f2877e6dba5f893356a370905c8737ce0",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "已交质量计划但无整张PGQP1，是否按不适用或改用图纸",
       "reason": "本条及通用说明的逐条专表已同时点明这一情况为不通过；别的条款的回退规则不适用。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

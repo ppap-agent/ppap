@@ -8,7 +8,7 @@
     "source": "rules/PCE.json#PCE:5",
     "source_sha256": "6a15f61c213494c15e9c25bc7ba48ff47361aa9fc5dfbf8ff79399b5f13a8a58"
   },
-  "review_sha256": "13ab4dd9736c4eac181187aa451308a782eb1725023f14ba8aeddb30686b31f3",
+  "review_sha256": "fa9229665c4ef2204d7fbb45d58ac5884c2062e1e70005544ff95a6a64ec70a8",
   "findings": [],
   "excluded": [
     {
@@ -26,6 +26,5 @@
       "issue": "普通尺寸的目录能力列可填斜线，是否等于免所有研究页",
       "reason": "合法留空有特定行、列和范围；目录能力列可留空不等于已经提供本条要求的定量过程特性研究页和实测值。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

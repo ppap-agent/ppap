@@ -8,7 +8,7 @@
     "source": "rules/PSW.json#PSW:7",
     "source_sha256": "701acff9b912b1ea3fe5ff70638f10c55b5a5673511bb890a9049eeccef8dfdc"
   },
-  "review_sha256": "20d167df8d5567912e5c279c58b77022a1a6058dad12ec93b6edd2fdb73f3572",
+  "review_sha256": "63574e1828262e0f7a7746652059153884e41028605875da41d0c569d7a49bb2",
   "findings": [],
   "excluded": [
     {
@@ -21,6 +21,5 @@
       "issue": "能否把相差一位、但名称一样的客户编号擅作同号",
       "reason": "不能据名称或近似字符放宽；按通用说明使用客户件号等价口径，尚未裁定的等价争议登记交裁决，不自行改号。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

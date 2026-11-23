@@ -33,7 +33,6 @@
       "meaning": "恰为1.33已满足Cpk项。三条阈值方向均为含等号，不将Ppk的门槛改写成Cpk的数值。"
     }
   ],
-  "policies": [],
   "findings": [],
   "excluded": [
     {

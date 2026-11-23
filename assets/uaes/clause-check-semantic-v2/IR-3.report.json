@@ -8,7 +8,7 @@
     "source": "rules/IR.json#IR:3",
     "source_sha256": "185cdaf9c3b9f6c96a981afdc8da3e8fb1ba166fd6a3fce839cb1a3e66acb418"
   },
-  "review_sha256": "2fdd9f50f144803a872b08ac4fc7a73807707b8442542854641dc56978f24d79",
+  "review_sha256": "fb60d00b4cc72e85513cc46dc19750f68897e271f9fd97fe744948ca67153c9d",
   "findings": [
     {
       "id": "IR:3#1",
@@ -82,6 +82,5 @@
       "issue": "是否任意一处印章仅因文字层没读到就算缺失",
       "reason": "缺章和没有读到章并非同一事实；应先核对签署区域的图像，仍不可辨按通用证据规则处理。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

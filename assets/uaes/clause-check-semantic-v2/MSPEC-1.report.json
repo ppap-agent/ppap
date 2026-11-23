@@ -8,7 +8,7 @@
     "source": "rules/MSPEC.json#MSPEC:1",
     "source_sha256": "1493424c28867476ca00977d6befd0a63098ef21fa833f14e2e5695d4245f608"
   },
-  "review_sha256": "ebbdf366e2e7eb69136005ffb92890f29f71dcc822968537263118af55f300d9",
+  "review_sha256": "b49b203ab51fcd788ba7b875454c9c7d5a7637c1dbfd3c0fe48afcfe10a815f6",
   "findings": [
     {
       "id": "MSPEC:1#1",
@@ -52,6 +52,5 @@
       "issue": "确认没有受控章与章印模糊是否可用同样的依据",
       "reason": "两者结论虽均不通过，模糊情形还须指出不可辨并提示人工复核，而不能声称无章。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }

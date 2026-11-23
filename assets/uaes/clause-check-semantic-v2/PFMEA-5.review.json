@@ -45,7 +45,6 @@
    "meaning": "只看 PFD 到 PFMEA 的工序覆盖；不查工序名称文字完全相同、PFD 符号、CP 覆盖或特性覆盖。"
   }
  ],
- "policies": [],
  "findings": [
   {
    "id": "2",

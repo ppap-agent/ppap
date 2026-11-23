@@ -8,7 +8,7 @@
     "source": "rules/CP.json#CP:10",
     "source_sha256": "34d3b60dccbbc83a4eca4500f070db52bbafac75b262f68a314254c9f280da97"
   },
-  "review_sha256": "29d528f037e0e915c5788a47a662049f65b59dc6f8687bfd344b4c78e9e5093f",
+  "review_sha256": "24c33a83a8a40d3d995a9b1317e5077219bd2b34cc1410dc81c95a8c8b0a9d65",
   "findings": [
     {
       "id": "CP:10#1.1",
@@ -30,6 +30,5 @@
       "issue": "未交 PGQP1 能否算表内没有试验？",
       "reason": "不能。未交表是明确的不通过情形；无适用项目必须基于已提交的表核实，不能用缺表代替。"
     }
-  ],
-  "policy_sha256": {}
+  ]
 }
