@@ -495,6 +495,10 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
                     # Say so before sending the user to something that cannot happen.
                     raise workflow.Rejected("round_has_errors")
                 path = f"/integrations/feishu/rounds/{round_id}/report"
+                delivered = (await gateway.get(actor, "audits:read", path))["report"]
+                if delivered and delivered["status"] == "ready":
+                    # This very document is already in the user's Feishu space: nothing to sign, nothing to send again.
+                    return Outcome(task_id=tid, request_id=rid, result={"delivered": True, "delivery": delivered}, next=DONE)
                 reply = await gateway.propose(actor, "reports:send", "publish_report", rid, "POST", path, page=f"/tasks/{tid}", request={"task_id": tid}, probes=[path])
             pending = receipt(reply, "publish_report", {"task_id": tid, "request_id": rid}, task_id=tid)
             if pending is not None:

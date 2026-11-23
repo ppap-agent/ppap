@@ -35,6 +35,12 @@ function RulesWorkspace({active}: {active: boolean}) {
     return () => {window.removeEventListener('popstate', restore); window.removeEventListener(auditAddressChanged, restore)}
   }, [])
   useEffect(() => {
+    // A rule step a client proposed and the person just completed here changes what this page lists.
+    const completed = (event: Event) => {if ((event as CustomEvent<string>).detail === 'done') setRevision(value => value + 1)}
+    window.addEventListener('ppap-intent-changed', completed)
+    return () => window.removeEventListener('ppap-intent-changed', completed)
+  }, [])
+  useEffect(() => {
     if (!active) return
     const controller = new AbortController()
     setRead(previous => ({...previous, loading: true, error: ''}))
@@ -53,20 +59,20 @@ function RulesWorkspace({active}: {active: boolean}) {
       .then(list => {if (!controller.signal.aborted) setQuestionnaires(list)})
       .catch(() => {if (!controller.signal.aborted) setQuestionnaires(null)})
     return () => controller.abort()
-  }, [active, route.questions])
+  }, [active, route.questions, revision])
   const entries = read.catalog ? customerRules(read.catalog.customers, read.catalog.type_names, read.rules) : []
   if (read.error) return <Alert variant="destructive"><AlertTitle>客户规则未能读取</AlertTitle><AlertDescription><p>{read.error}</p><Button variant="outline" size="sm" onClick={() => setRevision(value => value + 1)}>重新读取</Button></AlertDescription></Alert>
   if (route.questions) return <RuleQuestionnairePage questionnaireId={route.questions}/>
   if (route.rulebook) {
     const owner = entries.find(entry => entry.customer.customer_id === route.customer)?.customer
     if (read.loading && !owner) return null
-    return <RulebookRevisionPage customer={{id: route.customer, name: owner?.name ?? route.customer}} revision={route.rulebook} questionnaires={questionnaires}/>
+    return <RulebookRevisionPage key={revision} customer={{id: route.customer, name: owner?.name ?? route.customer}} revision={route.rulebook} questionnaires={questionnaires}/>
   }
   if (route.rule) {
     const owner = entries.find(entry => entry.types?.some(type => type.rules.some(rule => rule.id === route.rule)))?.customer
     return <RuleDetail ruleId={route.rule} customer={owner && {id: owner.customer_id, name: owner.name}}/>
   }
   return <section aria-label="审核规则库" className="flex min-h-0 flex-1 flex-col">
-    <CustomerRulesBrowser entries={entries} selectedId={route.customer} loading={read.loading} questions={customerId => <CustomerRulebook customerId={customerId} questionnaires={questionnaires}/>}/>
+    <CustomerRulesBrowser entries={entries} selectedId={route.customer} loading={read.loading} questions={customerId => <CustomerRulebook key={revision} customerId={customerId} questionnaires={questionnaires}/>}/>
   </section>
 }

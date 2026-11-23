@@ -559,21 +559,25 @@ def test_signing_is_proposed_by_the_client_and_completed_or_declined_by_the_pers
         assert call(client, token, "get_operation", request_id=arguments["request_id"])["next"]["kind"] == "user_action"
         with store._conn() as conn:
             conn.execute("UPDATE product.sessions SET created_at = now()")
+        # Declined, with a reason the client reads back; the declined proposal cannot be completed.
+        declined = {"task_id": task, "request_id": str(uuid4())}
+        other = intent_of(call(client, token, "publish_report", **declined))
+        said = client.post(f"/intents/{other}/decline", json={"reason": "先等供应商补件"}, headers={"X-PPAP-Intent": other})
+        assert said.status_code == 200 and said.json() == {"state": "declined", "reason": "先等供应商补件"}
+        answer = call(client, token, "publish_report", **declined)
+        assert answer["next"]["action_id"] == "denied_by_user" and answer["next"]["reason"] == "先等供应商补件", answer
+        assert client.post(path, json={}, headers={"X-PPAP-Intent": other}).json()["error"] == "intent_unavailable"
+        assert drive.written == []
+
         intent, done = complete(client, asked)
         assert done.status_code == 200 and len(drive.written) == 2, done.text
         assert client.get(f"/intents/{ident}").json()["outcome"]["state"] == "succeeded"
         assert call(client, token, "publish_report", **arguments)["next"]["kind"] == "done" and len(drive.written) == 2
-        # A settled proposal cannot be completed or declined again.
+        # A settled proposal cannot be declined afterwards.
         assert client.post(f"/intents/{ident}/decline", json={}, headers={"X-PPAP-Intent": ident}).status_code == 409
-
-        declined = {"task_id": task, "request_id": str(uuid4())}
-        asked = call(client, token, "publish_report", **declined)
-        ident = intent_of(asked)
-        said = client.post(f"/intents/{ident}/decline", json={"reason": "先等供应商补件"}, headers={"X-PPAP-Intent": ident})
-        assert said.status_code == 200 and said.json() == {"state": "declined", "reason": "先等供应商补件"}
-        answer = call(client, token, "publish_report", **declined)
-        assert answer["next"]["action_id"] == "denied_by_user" and answer["next"]["reason"] == "先等供应商补件", answer
-        assert client.post(path, json={}, headers={"X-PPAP-Intent": ident}).json()["error"] == "intent_unavailable"
+        # The same document asked for again is already delivered: read back at once, nothing proposed or sent.
+        again = call(client, token, "publish_report", task_id=task, request_id=str(uuid4()))
+        assert again["next"]["kind"] == "done" and again["result"]["delivery"]["status"] == "ready", again
         assert len(drive.written) == 2
 
 

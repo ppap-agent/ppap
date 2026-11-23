@@ -37,7 +37,7 @@ export function FeishuReportDocument({roundId}: {roundId: string}) {
           <DialogTitle>在飞书里生成报告文档</DialogTitle>
           <DialogDescription>在你的飞书云空间新建一份文档，写入本次审核的结论和逐项结果，内容与本页一致。之后可以在飞书里分享给同事。</DialogDescription>
         </DialogHeader>
-        {documentUrl ? <p className="text-sm">这份报告已经生成过。<a className="text-primary underline-offset-4 hover:underline" href={documentUrl} target="_blank" rel="noreferrer">在飞书里打开</a></p>
+        {documentUrl ? <p className="text-sm">报告文档已在你的飞书云空间里。<a className="text-primary underline-offset-4 hover:underline" href={documentUrl} target="_blank" rel="noreferrer">在飞书里打开</a></p>
           : pending ? <p className="text-sm text-muted-foreground">{report?.status === 'unknown' ? '上次生成的结果还不确定，文档可能已在你的飞书云空间里。请先在飞书里查看，系统不会重复生成。' : '报告文档正在生成，请稍后再看。'}</p> : null}
         {problem && <Alert variant="destructive"><AlertDescription>{problem}</AlertDescription></Alert>}
         <DialogFooter>
