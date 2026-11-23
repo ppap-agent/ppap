@@ -40,6 +40,8 @@ class RulebookRevisionSummary(BaseModel):
     origin: Literal["shipped", "local", "clarification"]
     created_at: str
     clarified: bool
+    # Clauses an installed checker program is written against, in this very wording.
+    checker_count: int
 
 
 class RulebookRevisionList(BaseModel):
@@ -72,6 +74,8 @@ class RulebookClause(BaseModel):
     digest: str
     change: RulebookClauseChange | None
     reading: RulebookClauseReading | None
+    # An installed checker program is written against this very wording.
+    checker: bool
 
 
 class RulebookDocument(BaseModel):

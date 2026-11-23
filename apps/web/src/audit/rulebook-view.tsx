@@ -37,7 +37,7 @@ export function CustomerRulebook({customerId, questionnaires}: {customerId: stri
       {[...revisions].reverse().map(row => {
         const href = rulesAddress({template: customerId, rulebook: revisionKey(row)}), id = `rb-${revisionKey(row)}`
         const questionnaire = questionnaireFor(questionnaires, customerId, row)
-        const facts = [`${row.clause_count} 条`, row.clarified ? '已澄清' : '', changeSummary(row), questionnaire ? progress(questionnaire) : ''].filter(Boolean).join(' · ')
+        const facts = [`${row.clause_count} 条`, row.clarified ? '已澄清' : '', changeSummary(row), `检查程序 ${row.checker_count} / ${row.clause_count}`, questionnaire ? progress(questionnaire) : ''].filter(Boolean).join(' · ')
         return <Item key={id} variant="outline" size="sm" asChild>
           <a href={href} aria-labelledby={`${id}-title`} aria-describedby={`${id}-facts`} onClick={event => followRulesLink(event, href)}>
             <ItemContent><ItemTitle id={`${id}-title`} wrap>规则 {revisionLabel(row)}</ItemTitle><ItemDescription id={`${id}-facts`}>{facts}</ItemDescription></ItemContent>
@@ -99,7 +99,7 @@ export function RulebookRevisionPage({customer, revision, questionnaires}: {cust
       {trail}
       <div className="grid gap-2">
         <h1 className="text-xl font-semibold">规则 {revisionLabel(view)}</h1>
-        <p className="text-sm text-muted-foreground">{view.clause_count} 条{view.clarified ? '；已澄清' : ''}{view.changes ? `；${changeSummary(view)}` : ''}</p>
+        <p className="text-sm text-muted-foreground">{view.clause_count} 条{view.clarified ? '；已澄清' : ''}{view.changes ? `；${changeSummary(view)}` : ''}；检查程序 {view.checker_count} / {view.clause_count} 条</p>
       </div>
       {questionnaire && questionnaireHref && <Item variant="outline" size="sm" asChild>
         <a href={questionnaireHref} aria-labelledby="rb-questions-title" aria-describedby="rb-questions-progress" onClick={event => followRulesLink(event, questionnaireHref)}>
@@ -121,7 +121,8 @@ export function RulebookRevisionPage({customer, revision, questionnaires}: {cust
         <RuleClauseList className="border-t">{document.clauses.map(clause => {
           const cards = cardsOf(clause.id), number = Number(clause.id.split(':')[1]) || 0
           return <RuleClause key={clause.id} number={number} title={clause.category} text={clause.text}
-            aside={clause.change && <Badge variant={clause.change.kind === 'same' ? 'outline' : clause.change.kind === 'new' ? 'info' : 'warning'}>{CHANGE_LABEL[clause.change.kind]}</Badge>}
+            aside={<span className="flex flex-wrap justify-end gap-1.5">{clause.change && <Badge variant={clause.change.kind === 'same' ? 'outline' : clause.change.kind === 'new' ? 'info' : 'warning'}>{CHANGE_LABEL[clause.change.kind]}</Badge>}
+              <Badge variant={clause.checker ? 'success' : 'outline'}>{clause.checker ? '有检查程序' : '暂未检查'}</Badge></span>}
             details={(clause.change?.note || cards.length > 0 || clause.reading) && <div className="grid gap-3 text-sm">
               {clause.change?.note && <p className="text-muted-foreground">{view.base ? `相对 ${revisionLabel(view.base)}：` : ''}{clause.change.note}</p>}
               {(clause.change?.sources ?? []).length > 0 && <ul className="grid gap-1 text-muted-foreground">{clause.change!.sources!.map((source, index) => {

@@ -105,8 +105,10 @@ def precheck_actual(precheck: dict[str, Any], metadata: dict[str, Any], file_ver
     }
 
 
-def run_batch(batch: Batch) -> list[dict[str, Any]]:
-    """按产品路径提交一批，返回本批 ``files`` 的报告行：每份文件一行预检，每个条款一行审核结论。"""
+def run_batch(batch: Batch, suites: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """按产品路径提交一批，返回本批 ``files`` 的报告行：每份文件一行预检，每个条款一行审核结论。
+
+    ``suites`` 按目录叶子路径给出要运行的检查程序；不给时用人工真值所对应的冻结版本。"""
     from agent.execution.audit_runtime import run_audit
     from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
     from audit.standard_suites import library_revision
@@ -167,7 +169,7 @@ def run_batch(batch: Batch) -> list[dict[str, Any]]:
         for identity in sorted(reported)
     ]
 
-    suites = suite_sources()
+    suites = suites if suites is not None else suite_sources()
     inputs: list[FrozenInput] = []
     targets: list[FrozenTarget] = []
     for row in rows:

@@ -4955,6 +4955,8 @@ export interface components {
             /** Category */
             category: string;
             change: components["schemas"]["RulebookClauseChange"] | null;
+            /** Checker */
+            checker: boolean;
             /** Digest */
             digest: string;
             /** Id */
@@ -5019,6 +5021,8 @@ export interface components {
         RulebookRevisionSummary: {
             base: components["schemas"]["RulebookRevisionRef"] | null;
             changes: components["schemas"]["RulebookChangeCounts"] | null;
+            /** Checker Count */
+            checker_count: number;
             /** Clarified */
             clarified: boolean;
             /** Clause Count */
@@ -5043,6 +5047,8 @@ export interface components {
         RulebookRevisionView: {
             base: components["schemas"]["RulebookRevisionRef"] | null;
             changes: components["schemas"]["RulebookChangeCounts"] | null;
+            /** Checker Count */
+            checker_count: number;
             /** Clarified */
             clarified: boolean;
             /** Clause Count */

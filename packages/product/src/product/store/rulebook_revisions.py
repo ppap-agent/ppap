@@ -17,7 +17,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from product import customers, rulebooks
+from product import checker_wordings, customers, rulebooks
 from product.logs import emit
 
 ORIGINS = {"shipped", "local", "clarification"}
@@ -94,6 +94,8 @@ def _summary(head, customer_id: str, version: str, revision: int, documents: lis
         "origin": head[4],
         "created_at": head[6].isoformat(),
         "clarified": head[7] is not None,
+        # Clauses an installed checker program is written against, in this very wording.
+        "checker_count": sum(1 for document in documents for clause in document["clauses"] if checker_wordings.has_checker(customer_id, clause["id"], rulebooks.clause_digest(clause["text"]))),
     }
 
 
@@ -124,6 +126,7 @@ def read_revision(store, principal, customer_id: str, version: str, revision: in
                 clause["change"] = changes.get(clause["id"])
                 clause["reading"] = readings.get(clause["id"])
                 clause["digest"] = rulebooks.clause_digest(clause["text"])
+                clause["checker"] = checker_wordings.has_checker(customer_id, clause["id"], clause["digest"])
         return {**_summary(head, customer_id, version, revision, documents), "documents": documents}
 
 
