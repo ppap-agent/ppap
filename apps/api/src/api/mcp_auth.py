@@ -273,11 +273,11 @@ def register_oauth(app, provider: OAuthProvider, session_of):
             return page("授权请求已失效", "<p>请回到客户端重新连接。</p>", exc.status)
 
         # Everything the client asked for is pre-selected: an audit needs upload and start, and a client left read-only
-        # fails at the first file. Starting, reviewing and sending are still approved in the browser one call at a time.
+        # fails at the first file. Signing (starting, delivering, freezing rules) is still the person's own act in the Web.
         def box(s):
             return f'<label><input type="checkbox" name="scope" value="{escape(s)}" checked>{escape(SCOPES[s])}</label>'
 
-        boxes = "".join(map(box, view["scopes"])) + "<p><small>开始审核、提交复核、发送报告时，每一次仍会请你在浏览器里确认。</small></p>"
+        boxes = "".join(map(box, view["scopes"])) + "<p><small>开始审核、发送报告、确认规则仍由你本人在 PPAP 网页里完成，客户端只能提议。</small></p>"
         return page(
             "连接外部客户端",
             f"<p><strong>{escape(view['client'].get('client_name') or 'MCP client')}</strong> 请求访问你的 PPAP 数据。</p>"

@@ -5,6 +5,7 @@ import {iconArrowRight, iconChevronDown, iconRightFromBracket, iconWandMagicSpar
 import {Icon} from '../components/ui/icon'
 import {apiUrl, connect, feishuAppId, request, type HostLoginRequest, type PrincipalPublic} from '../api'
 import {isFeishuHost, requestHostCode} from '../hostLogin'
+import {IntentBanner} from './intent'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {Button} from '../components/ui/button'
 import {Alert, AlertDescription} from '../components/ui/alert'
@@ -80,7 +81,7 @@ export function ProductAccess({children}: {children: ReactNode}) {
   }
   if (ready && principal) {
     return <AccessContext.Provider value={{principal, logout: () => void logout()}}>
-    {children}{error && <div className="fixed right-4 bottom-4 z-40 max-w-md"><Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert></div>}
+    {children}<IntentBanner/>{error && <div className="fixed right-4 bottom-4 z-40 max-w-md"><Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert></div>}
   </AccessContext.Provider>
   }
   return <div className={"flex min-h-dvh flex-col bg-background text-foreground"}>

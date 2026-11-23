@@ -1,5 +1,5 @@
 """A clarification round through the tools, against the real Product API and database: what the customer sees only
-changes when the platform operator approved it."""
+changes when the platform operator completes the step on the rules page."""
 
 import asyncio
 import json
@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from api import create_app
+from api.mcp_clarification import ClarificationRuntime
 from api.mcp_gateway import Reply
 from api.mcp_runtime import TaskRuntime
 from api.mcp_tools import register_tools
@@ -14,16 +15,16 @@ from fastapi.testclient import TestClient
 from fastmcp import Client, FastMCP
 from product import build_product_store
 from product.identity import SESSION_COOKIE
-from product.mcp import SCOPES, McpError, fingerprint
+from product.mcp import SCOPES, McpError
 from product.settings import Settings
 from product.store.workflows import WorkflowStore
 
 
 class Gateway:
-    """The Product API as one signed-in person reaches it; a write that needs approval waits until `approved`."""
+    """The Product API as one signed-in person reaches it; a signing step is only proposed (#348)."""
 
     def __init__(self, client, settings):
-        self.client, self.settings, self.operations, self.approved = client, settings, {}, False
+        self.client, self.settings, self.operations = client, settings, {}
 
     async def request(self, actor, method, path, *, body=None, params=None, **_):
         return self.client.request(method, path, json=body, params=params)
@@ -34,24 +35,15 @@ class Gateway:
             raise McpError(found.json().get("error", "business_request_failed"), found.status_code)
         return found.json()
 
-    async def write(self, actor, scope, tool, rid, method, path, body, *, probes, confirmation=None, result_path=None):
-        recorded = self.operations.setdefault(
-            rid,
-            {"tool": tool, "state": "ready", "arguments": {"method": method, "path": path, "body": body, "probes": probes}, "confirmation": confirmation, "required_scope": scope, "request_id": rid},
-        )
-        if fingerprint(recorded["confirmation"]) != fingerprint(confirmation):
-            raise McpError("confirmation_content_changed", 409)
-        if not self.approved:
-            recorded["state"] = "confirmation_required"
-            return Reply(status="confirmation_required", request_id=rid, confirmation_url="https://ppap.example/mcp/confirm/" + rid)
-        done = self.client.request(method, path, json=body)
-        recorded.update(state="succeeded" if done.is_success else "failed", error=None if done.is_success else done.json().get("error"))
+    async def propose(self, actor, scope, tool, rid, method, path, *, page, request, probes):
+        arguments = {"method": method, "path": path, "page": page, "request": request, "probes": probes}
+        recorded = self.operations.setdefault(rid, {"tool": tool, "state": "proposed", "arguments": arguments, "required_scope": scope, "request_id": rid, "outcome": "proposed"})
         return await self.operation_reply(actor, recorded)
 
     async def operation_reply(self, actor, operation):
-        if operation["state"] == "succeeded":
-            return Reply(status="ok", data={}, request_id=operation["request_id"])
-        return Reply(status="error", error=operation["error"], request_id=operation["request_id"])
+        if operation["outcome"] == "succeeded":
+            return Reply(status="ok", request_id=operation["request_id"])
+        return Reply(status="confirmation_required", request_id=operation["request_id"], confirmation_url="https://ppap.example" + operation["arguments"]["page"])
 
     @property
     def store(self):
@@ -70,16 +62,20 @@ class Person:
         self.web.cookies.set(SESSION_COOKIE, store.create_session(self.principal))
         self.gateway = Gateway(self.web, store.settings)
         self.runtime = TaskRuntime(self.gateway, WorkflowStore(api))
+        self.clarifications = ClarificationRuntime(self.runtime)
+
+    def actor(self):
+        return SimpleNamespace(session=SimpleNamespace(principal=self.principal), scopes=frozenset(SCOPES), require=lambda scope: None)
 
     def call(self, tool, **arguments):
-        actor = SimpleNamespace(session=SimpleNamespace(principal=self.principal), scopes=frozenset(SCOPES), require=lambda scope: None)
+        actor = self.actor()
 
         async def authority():
             return actor
 
         async def run():
             server = FastMCP("tools")
-            register_tools(server, self.gateway, authority, self.runtime)
+            register_tools(server, self.gateway, authority, self.runtime, self.clarifications)
             async with Client(server) as client:
                 return (await client.call_tool(tool, arguments)).structured_content
 
@@ -89,14 +85,17 @@ class Person:
         return self.call("resolve_issue", task_id=task["task_id"], issue_id=issue["id"], action_id=action, expected_revision=task["task_revision"], request_id=rid or str(uuid4()), value=value)
 
     def approve(self, task, issue, action):
-        """Ask, be sent to the browser, approve there, and call again with the same request."""
+        """Propose, complete the step on the rules page as it reads now, and call again with the same request."""
         rid = str(uuid4())
         asked = self.resolve(task, issue, action, rid=rid)
-        assert asked["next"]["action_id"] == "approve_in_browser"
-        self.gateway.approved = True
-        done = self.resolve(task, issue, action, rid=rid)
-        self.gateway.approved = False
-        return done
+        assert asked["next"]["action_id"] == "complete_in_web" and asked["next"]["url"].startswith("https://ppap.example/requirements?template=")
+        proposal = self.gateway.operations[rid]
+        step = asyncio.run(self.clarifications.describe(self.actor(), proposal["arguments"]["request"]))
+        assert (step["method"], step["path"]) == (proposal["arguments"]["method"], proposal["arguments"]["path"]) and step["summary"]
+        done = self.web.request(step["method"], step["path"], json=step["body"])
+        assert done.is_success, done.text
+        proposal["outcome"] = "succeeded"
+        return self.resolve(task, issue, action, rid=rid)
 
 
 def issue_of(task, code):

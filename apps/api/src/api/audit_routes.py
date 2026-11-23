@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal, cast
 
-from fastapi import FastAPI, Query, Request
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
 from product.customers import in_type_set
 from product.files import ObjectMissing, attachment_content_disposition, original_filename, safe_content_type
@@ -11,6 +11,7 @@ from product.store import AuthStore
 
 from api import web_contract as wc
 from api.access import object_denied
+from api.signing import signing
 
 
 def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_for) -> None:
@@ -214,7 +215,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
-    @app.post("/audit-tasks/{task_id}/confirm", response_model=wc.AuditTask, status_code=201, openapi_extra=wc.openapi_body(wc.AuditTaskConfirmRequest))
+    @app.post("/audit-tasks/{task_id}/confirm", dependencies=[Depends(signing)], response_model=wc.AuditTask, status_code=201, openapi_extra=wc.openapi_body(wc.AuditTaskConfirmRequest))
     def audit_tasks_confirm(task_id: str, body: dict, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
@@ -296,7 +297,13 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
-    @app.post("/audit-tasks/{task_id}/reports/{report_id}/regenerations", response_model=wc.AuditReportUpdate, status_code=201, openapi_extra=wc.openapi_body(wc.AuditReportRegenerationRequest))
+    @app.post(
+        "/audit-tasks/{task_id}/reports/{report_id}/regenerations",
+        dependencies=[Depends(signing)],
+        response_model=wc.AuditReportUpdate,
+        status_code=201,
+        openapi_extra=wc.openapi_body(wc.AuditReportRegenerationRequest),
+    )
     def audit_report_regenerate(task_id: str, report_id: str, body: dict, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:

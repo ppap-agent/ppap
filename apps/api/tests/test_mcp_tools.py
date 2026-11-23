@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from uuid import uuid4
 
+from api.mcp_clarification import ClarificationRuntime
 from api.mcp_gateway import Reply
 from api.mcp_runtime import TaskRuntime
 from api.mcp_tools import register_tools
@@ -44,7 +45,7 @@ class Product:
         self.round = {"id": "round-1", "findings": [{"item_key": "k1", "status": "NG", "item": "须有零件号", "suggestions": "缺零件号", "locator": {"filename": "a.xlsx"}}]}
         self.audit = None
         self.imports = 0
-        self.approved = False
+        self.outcome = {"state": "proposed"}  # what the person did with a proposal, in the Web
         self.operations = {}
         self.settings = Settings()
 
@@ -103,28 +104,37 @@ class Product:
             raise McpError(found.json().get("error", "business_request_failed"), found.status_code)
         return found.json()
 
-    async def write(self, actor, scope, tool, rid, method, path, body, *, probes, confirmation=None, result_path=None):
+    async def write(self, actor, scope, tool, rid, method, path, body, *, probes, result_path=None):
         arguments = {"method": method, "path": path, "body": body, "probes": probes}
-        recorded = self.operations.setdefault(rid, {"tool": tool, "state": "ready", "arguments": arguments, "confirmation": confirmation, "required_scope": scope, "request_id": rid})
-        if fingerprint(recorded["confirmation"]) != fingerprint(confirmation):
-            raise McpError("confirmation_content_changed", 409)
-        if confirmation is not None and not self.approved:
-            recorded["state"] = "confirmation_required"
-            return Reply(status="confirmation_required", request_id=rid, confirmation_url="https://ppap.example/mcp/confirm/" + rid)
-        if tool == "confirm_audit":
-            # The audit task itself refuses a confirmation whose basis has changed since the user agreed.
-            if body["expected_confirmation_basis_digest"] != self.audit["confirmation_basis_digest"]:
-                recorded.update(state="failed", error="task_confirmation_changed")
-                return Reply(status="error", error="task_confirmation_changed", request_id=rid)
-            self.audit["state"] = "reviewing"
+        recorded = self.operations.setdefault(rid, {"tool": tool, "state": "ready", "arguments": arguments, "required_scope": scope, "request_id": rid})
+        if recorded["arguments"] != arguments:
+            raise McpError("request_conflict", 409)
         recorded["state"] = "succeeded"
         return Reply(status="ok", data={}, request_id=rid)
 
+    async def propose(self, actor, scope, tool, rid, method, path, *, page, request, probes):
+        arguments = {"method": method, "path": path, "page": page, "request": request, "probes": probes}
+        recorded = self.operations.setdefault(rid, {"id": "op-" + rid, "tool": tool, "state": "proposed", "arguments": arguments, "required_scope": scope, "request_id": rid})
+        return await self.operation_reply(actor, recorded)
+
     async def operation_reply(self, actor, operation):
-        """What a settled write did, read back without doing it again."""
+        """What became of a write or a proposal, read back without doing it again."""
+        if operation["state"] == "proposed":
+            outcome = self.outcome
+            if outcome["state"] == "succeeded":
+                return Reply(status="ok", request_id=operation["request_id"])
+            if outcome["state"] == "declined":
+                return Reply(status="denied", error=outcome.get("reason"), request_id=operation["request_id"])
+            url = "https://ppap.example" + operation["arguments"]["page"] + "?intent=" + operation["id"]
+            return Reply(status="confirmation_required", error=outcome.get("error"), request_id=operation["request_id"], confirmation_url=url)
         if operation["state"] == "succeeded":
             return Reply(status="ok", data={}, request_id=operation["request_id"])
         return Reply(status="error", error=operation["error"], request_id=operation["request_id"])
+
+    def start(self):
+        """The person starts the proposed audit on the task page."""
+        self.audit["state"] = "reviewing"
+        self.outcome = {"state": "succeeded"}
 
     @property
     def store(self):
@@ -181,7 +191,7 @@ class World:
 
         async def run():
             server = FastMCP("tools")
-            register_tools(server, self.product, authority, self.runtime)
+            register_tools(server, self.product, authority, self.runtime, ClarificationRuntime(self.runtime))
             async with Client(server) as client:
                 if tool == "tools":
                     return {t.name for t in await client.list_tools()}
@@ -232,7 +242,7 @@ def test_a_failed_file_is_an_issue_with_its_own_choices_and_the_rest_is_kept():
     assert world.call("resolve_issue", **decision)["result"]["phase"] == "ready_to_confirm"
 
 
-def test_confirming_takes_the_agreed_quote_and_the_users_own_approval():
+def test_starting_is_proposed_on_the_agreed_quote_and_done_by_the_user_in_the_web():
     world = World("a.xlsx")
     ask = str(uuid4())
     task = task_id_for("u", ask)
@@ -241,13 +251,32 @@ def test_confirming_takes_the_agreed_quote_and_the_users_own_approval():
 
     request = str(uuid4())
     asked = world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
-    assert asked["next"]["kind"] == "user_action" and asked["next"]["url"].endswith(request)
+    assert asked["next"]["kind"] == "user_action" and asked["next"]["action_id"] == "complete_in_web"
+    assert asked["next"]["url"] == f"https://ppap.example/tasks/{task}?intent=op-{request}"
     assert asked["next"]["then"] == {"tool": "confirm_audit", "arguments": {"task_id": task, "quote_id": quote, "request_id": request, "notify_when_done": None}}
-    world.product.approved = True
+    assert world.product.audit["state"] == "pending_confirm"  # proposing starts nothing
+    # The same request_id with another quote is not a second proposal.
+    assert world.call("confirm_audit", task_id=task, quote_id="another", request_id=request)["next"]["error_code"] == "request_conflict"
+    world.product.start()
     started = world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
     assert started["result"]["phase"] == "auditing" and started["next"]["kind"] == "wait"
     early = world.call("get_results", task_id=task)["next"]
     assert early["kind"] == "wait" and early["observe_with"] == "get_task" and early["reason"] == "results_not_ready"
+
+
+def test_a_proposal_the_user_declined_or_could_not_complete_says_so():
+    world = World("a.xlsx")
+    ask = str(uuid4())
+    task = task_id_for("u", ask)
+    quote = world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")["result"]["quote"]["quote_id"]
+    request = str(uuid4())
+    asked = world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
+    world.product.outcome = {"state": "failed", "error": "task_revision_conflict"}
+    tried = world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)["next"]
+    assert tried["url"] == asked["next"]["url"] and tried["reason"] == "task_revision_conflict" and "没有完成" in tried["prompt"]
+    world.product.outcome = {"state": "declined", "reason": "先等供应商补件"}
+    said = world.call("get_operation", request_id=request)["next"]
+    assert said["action_id"] == "denied_by_user" and said["reason"] == "先等供应商补件"
 
 
 def test_a_folder_changed_since_it_was_prepared_is_put_to_the_user_before_anything_starts():
@@ -310,37 +339,6 @@ def test_a_task_that_cannot_be_read_is_an_error_not_a_wait():
     assert seen["result"] is None and seen["next"]["kind"] == "recover" and seen["next"]["reason"] == "internal_error"
 
 
-def test_an_approval_survives_fields_that_move_on_their_own_and_a_changed_quote_is_asked_again():
-    world = World("a.xlsx")
-    ask = str(uuid4())
-    task = task_id_for("u", ask)
-    quote = world.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")["result"]["quote"]["quote_id"]
-    request = str(uuid4())
-    world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
-    world.product.approved = True
-    world.product.operations[request]["state"] = "ready"  # what the approval page records
-    # Approved but not yet carried out: the receipt says to call the tool again, never to wait.
-    pending = world.call("get_operation", request_id=request)
-    assert pending["next"]["kind"] == "call_tool" and pending["next"]["tool"] == "confirm_audit" and pending["next"]["reason"] == "approved_not_started"
-    world.product.audit["updated_at"] = "later"  # the task moved on without changing what was agreed
-    assert world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)["result"]["phase"] == "auditing"
-    # Called again once it ran: the same receipt, not a fresh judgment of a task that is no longer waiting.
-    assert world.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)["result"]["phase"] == "auditing"
-
-    other = World("a.xlsx")
-    ask = str(uuid4())
-    task = task_id_for("u", ask)
-    quote = other.call("prepare_audit", request_id=ask, source="fld1", customer="UAES")["result"]["quote"]["quote_id"]
-    request = str(uuid4())
-    other.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
-    other.product.approved = True
-    other.product.audit["confirmation_basis_digest"] = "a-new-quote"  # what confirming would start has changed
-    changed = other.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)
-    assert changed["next"] == {"kind": "call_tool", "tool": "get_task", "arguments": {"task_id": task}, "reason": "quote_changed"}
-    assert other.call("confirm_audit", task_id=task, quote_id=quote, request_id=request)["next"] == changed["next"]
-    assert other.product.audit["state"] == "pending_confirm"
-
-
 def test_an_unfinished_audit_offers_no_delivery_and_says_why_before_any_approval():
     world = World("a.xlsx")
     ask = str(uuid4())
@@ -351,7 +349,7 @@ def test_an_unfinished_audit_offers_no_delivery_and_says_why_before_any_approval
     assert seen["result"]["phase"] == "completed" and "publish_report" not in {action["tool"] for action in seen["available_actions"]}
     refused = world.call("publish_report", task_id=task, request_id=str(uuid4()))
     assert refused["next"]["error_code"] == "round_has_errors" and "复审" in refused["next"]["message"]
-    assert world.product.operations == {}  # nothing was put to the user to approve
+    assert world.product.operations == {}  # nothing was put to the user
 
 
 def test_finding_audits_lists_what_a_person_scans_for_not_whole_tasks():

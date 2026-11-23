@@ -9,10 +9,11 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any, Generic, Literal, TypeVar
+from urllib.parse import urlencode
 
 import httpx
 from product.logs import REQUEST_ID, emit
-from product.mcp import MAX_RESULT_BYTES, ApprovedCall, Delegation, McpError, fingerprint
+from product.mcp import MAX_RESULT_BYTES, Delegation, McpError
 from product.store.mcp import McpStore
 from pydantic import BaseModel, Field
 
@@ -85,12 +86,12 @@ class BusinessGateway:
     def __init__(self, app, store: McpStore):
         self.app, self.store = app, store
 
-    async def request(self, delegation: Delegation, method: str, path: str, *, body=None, params=None, content=None, operation_id=None, approval=None) -> httpx.Response:
+    async def request(self, delegation: Delegation, method: str, path: str, *, body=None, params=None, content=None, operation_id=None) -> httpx.Response:
         if not path.startswith("/") or "?" in path or "#" in path:
             raise McpError("invalid_business_path")
 
         async def authorized(scope, receive, send):
-            scope = {**scope, "ppap.delegation": delegation, "ppap.mcp_operation_id": operation_id, "ppap.mcp_approval": approval}
+            scope = {**scope, "ppap.delegation": delegation, "ppap.mcp_operation_id": operation_id}
             await self.app(scope, receive, send)
 
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=authorized), base_url="http://ppap.internal") as client:
@@ -113,19 +114,14 @@ class BusinessGateway:
             if not response.is_success:
                 raise McpError("access_denied", 403)
 
-    async def write(
-        self, delegation: Delegation, scope: str, tool: str, request_id: str, method: str, path: str, body: dict | None, *, probes: list[str], confirmation: dict | None = None, result_path=None
-    ) -> Reply:
+    async def write(self, delegation: Delegation, scope: str, tool: str, request_id: str, method: str, path: str, body: dict | None, *, probes: list[str], result_path=None) -> Reply:
+        """A write the grant itself allows (never a signing one, #348), carried out once under its request_id."""
         delegation.require(scope)
         await self.require_probes(delegation, probes)
         arguments = {"method": method, "path": path, "body": body, "probes": probes}
-        operation = await asyncio.to_thread(self.store.prepare_operation, delegation, request_id, tool, arguments, scope, confirmation)
-        if operation["state"] == "confirmation_required":
-            return Reply(status="confirmation_required", request_id=request_id, confirmation_url=self.store.settings.public_api_url.rstrip("/") + "/mcp/confirm/" + operation["id"])
+        operation = await asyncio.to_thread(self.store.prepare_operation, delegation, request_id, tool, arguments, scope)
         if operation["state"] != "ready":
             return await self.operation_reply(delegation, operation)
-        if operation["confirmation"] is not None and fingerprint(operation["confirmation"]) != fingerprint(confirmation):
-            raise McpError("confirmation_content_changed", 409)
         if not await asyncio.to_thread(self.store.claim_operation, delegation, operation["id"]):
             return await self.operation_reply(delegation, await asyncio.to_thread(self.store.operation, delegation, request_id))
         correlation = {
@@ -139,7 +135,7 @@ class BusinessGateway:
         emit("mcp_write_claimed", **correlation)
         # Disconnect/cancellation never restores the right to issue this write.
         try:
-            response = await self.request(delegation, method, path, body=body, operation_id=operation["id"], approval=ApprovedCall.from_operation(delegation.id, operation))
+            response = await self.request(delegation, method, path, body=body, operation_id=operation["id"])
             value = response.json()
             checks = list(probes)
             if response.is_success and result_path is not None:
@@ -155,12 +151,41 @@ class BusinessGateway:
             raise
         return await self.operation_reply(delegation, await asyncio.to_thread(self.store.operation, delegation, request_id))
 
+    async def propose(self, delegation: Delegation, scope: str, tool: str, request_id: str, method: str, path: str, *, page: str, request: dict, probes: list[str]) -> Reply:
+        """A signing action (#348): recorded as the client's proposal; the person completes it on `page` in the Web, which
+        shows what it does now. `request` is the tool's own input, kept to describe it again."""
+        delegation.require(scope)
+        await self.require_probes(delegation, probes)
+        arguments = {"method": method, "path": path, "page": page, "request": request, "probes": probes}
+        operation = await asyncio.to_thread(self.store.propose, delegation, request_id, tool, arguments, scope)
+        return await self.operation_reply(delegation, operation)
+
+    def intent_url(self, operation: dict) -> str:
+        """The page, entered the way a Feishu card enters it: signed in and in the current edition."""
+        web, page = self.store.settings.canonical_web_url().rstrip("/"), operation["arguments"]["page"]
+        target = web + page + ("&" if "?" in page else "?") + "intent=" + operation["id"]
+        return web + "/enter-current?" + urlencode({"return_to": target})
+
     async def operation_reply(self, delegation: Delegation, operation: dict) -> Reply:
         await self.require_probes(delegation, operation["arguments"].get("probes", []))
+        state = operation["state"]
+        if state == "proposed":
+            # What the person did with it, as recorded (#362).
+            outcome = await asyncio.to_thread(self.store.intent_outcome, operation["id"])
+            rid = operation["request_id"]
+            if outcome["state"] == "proposed":
+                return Reply(status="confirmation_required", request_id=rid, confirmation_url=self.intent_url(operation))
+            if outcome["state"] == "declined":
+                return Reply(status="denied", error=outcome["reason"], request_id=rid)
+            if outcome["state"] == "succeeded":
+                return Reply(status="ok", request_id=rid, provenance={"client_id": delegation.client_id, "completed_at": outcome["at"]})
+            if outcome["state"] == "failed":
+                # Not done; the person may still complete it from the same link.
+                return Reply(status="confirmation_required", error=outcome["error"], request_id=rid, confirmation_url=self.intent_url(operation))
+            return Reply(status="unknown", request_id=rid)
         result: dict = operation.get("result") or {}
         if result:
             await self.require_probes(delegation, result.get("probes", []))
-        state = operation["state"]
         if state in {"succeeded", "failed"} and "data" not in result:
             raise McpError("operation_receipt_unavailable", 503)
         if state == "succeeded":
@@ -169,24 +194,8 @@ class BusinessGateway:
                 # The receipt remains durable. A native read with a JSON Pointer
                 # returns the requested portion; never silently truncate facts.
                 return Reply(status="ok", data={"receipt_saved": True, "read_paths": result["probes"]}, request_id=operation["request_id"])
-            return Reply(
-                status="ok",
-                data=value,
-                request_id=operation["request_id"],
-                provenance={
-                    "client_id": delegation.client_id,
-                    "confirmed_by": operation["confirmed_by"],
-                    "confirmed_at": operation["confirmed_at"],
-                },
-            )
+            return Reply(status="ok", data=value, request_id=operation["request_id"], provenance={"client_id": delegation.client_id})
         if state == "failed":
             value = result["data"]
             return Reply(status="error", error=value.get("error", "business_request_failed"), request_id=operation["request_id"])
-        if state == "denied":
-            return Reply(status="denied", error=result.get("denied_reason") or None, request_id=operation["request_id"])
-        return Reply(
-            status=state if state in {"confirmation_required", "running", "unknown", "denied"} else "running",
-            request_id=operation["request_id"],
-            retry_after_seconds=5 if state == "running" else None,
-            confirmation_url=self.store.settings.public_api_url.rstrip("/") + "/mcp/confirm/" + operation["id"] if state == "confirmation_required" else None,
-        )
+        return Reply(status=state if state in {"running", "unknown"} else "running", request_id=operation["request_id"], retry_after_seconds=5 if state == "running" else None)

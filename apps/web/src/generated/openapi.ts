@@ -1195,6 +1195,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/intents/{intent_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Intent */
+        get: operations["get_intent_intents__intent_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intents/{intent_id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decline Intent */
+        post: operations["decline_intent_intents__intent_id__decline_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/isolated-dev/reap-staging": {
         parameters: {
             query?: never;
@@ -1617,7 +1651,7 @@ export interface paths {
         put?: never;
         /**
          * Send Rule Cards
-         * @description Putting cards before the customer is a platform operator's decision; through MCP, one they approved.
+         * @description Putting cards before the customer is a platform operator's decision, made by them in person (a signing moment).
          */
         post: operations["send_rule_cards_rule_questionnaires_cards_post"];
         delete?: never;
@@ -3838,6 +3872,78 @@ export interface components {
             subject: string;
             /** Tenant Key */
             tenant_key: string;
+        };
+        /**
+         * Intent
+         * @description A signing action an external client proposed (#348). The person completes it on `page`, or declines it.
+         */
+        Intent: {
+            /** Client Name */
+            client_name: string;
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Method */
+            method: string;
+            outcome: components["schemas"]["IntentOutcome"];
+            /** Page */
+            page: string;
+            /** Path */
+            path: string;
+            step?: components["schemas"]["IntentStep"] | null;
+            /** Tool */
+            tool: string;
+            /** Unavailable */
+            unavailable?: string;
+        };
+        /** IntentDetail */
+        IntentDetail: {
+            /** Head */
+            head?: string[];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "facts" | "table" | "text" | "note";
+            /** More */
+            more?: number;
+            /** Rows */
+            rows?: unknown[][];
+            /** Text */
+            text?: string;
+            /** Title */
+            title?: string;
+        };
+        /** IntentOutcome */
+        IntentOutcome: {
+            /** At */
+            at?: string;
+            /** Error */
+            error?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "proposed" | "declined" | "pending" | "succeeded" | "failed" | "unknown";
+        };
+        /** IntentStep */
+        IntentStep: {
+            /** Body */
+            body: unknown;
+            /** Details */
+            details: components["schemas"]["IntentDetail"][];
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "POST" | "PUT";
+            /** Path */
+            path: string;
+            /** Summary */
+            summary: string[];
         };
         /** JobError */
         JobError: {
@@ -8207,7 +8313,14 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** If Match */
+                    if_match?: string;
+                };
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -8319,6 +8432,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QuotaEstimate"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_intent_intents__intent_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Intent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decline_intent_intents__intent_id__decline_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Reason */
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntentOutcome"];
                 };
             };
             /** @description Validation Error */

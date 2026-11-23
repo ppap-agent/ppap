@@ -1,6 +1,5 @@
 """Actual PostgreSQL + public OAuth/MCP wire contract. Feishu sign-in is separate live evidence."""
 
-import asyncio
 import concurrent.futures
 import io
 import json
@@ -12,7 +11,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from html import unescape
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import uuid4
 
 import httpx
@@ -197,16 +196,32 @@ def call(client, token, name, **arguments):
     return result["structuredContent"]
 
 
-def approve(client, asked):
-    """The user opens the approval page the tool pointed at and approves; returns what the page said."""
-    assert asked["next"]["kind"] == "user_action" and asked["next"]["action_id"] == "approve_in_browser", asked
-    url = asked["next"]["url"]
-    page = client.get(url)
-    assert page.status_code == 200, page.text
-    csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
-    assert client.post(url, data={"csrf": "wrong", "decision": "approve"}).status_code == 403
-    assert client.post(url, data={"csrf": csrf, "decision": "approve"}).status_code == 200
-    return page.text
+def intent_of(asked) -> str:
+    step = asked["next"]
+    assert step["kind"] == "user_action" and step["action_id"] == "complete_in_web", asked
+    # The link enters the current edition first, then opens the page with the proposal.
+    page = parse_qs(urlsplit(step["url"]).query)["return_to"][0]
+    return parse_qs(urlsplit(page).query)["intent"][0]
+
+
+def web_body(client, intent):
+    """What the Web sends for this page's action, from what the page shows now (#348)."""
+    if intent["path"].endswith("/confirm"):
+        task = client.get(intent["path"].removesuffix("/confirm")).json()
+        return {"request_id": str(uuid4()), "expected_revision": task["input_revision"], "expected_confirmation_basis_digest": task["confirmation_basis_digest"]}
+    if intent["path"].endswith("/report"):
+        return {"if_match": client.get(intent["path"]).json()["content_fingerprint"]}
+    return (intent.get("step") or {}).get("body")
+
+
+def complete(client, asked, body=None):
+    """The person opens the page the proposal names and completes it there, naming the proposal; returns it and the reply."""
+    ident = intent_of(asked)
+    intent = client.get(f"/intents/{ident}")
+    assert intent.status_code == 200, intent.text
+    intent = intent.json()
+    response = client.request(intent["method"], intent["path"], json=web_body(client, intent) if body is None else body, headers={"X-PPAP-Intent": ident})
+    return intent, response
 
 
 class MetadataAI:
@@ -328,8 +343,9 @@ def prepared_folder(client, store, token, core_system, worker, *, adopt=True):
 
 def confirmed(client, token, task, quote_id):
     confirm = {"task_id": task, "quote_id": quote_id, "request_id": str(uuid4())}
-    page = approve(client, call(client, token, "confirm_audit", **confirm))
-    return confirm, page, call(client, token, "confirm_audit", **confirm)
+    intent, response = complete(client, call(client, token, "confirm_audit", **confirm))
+    assert response.is_success, response.status_code
+    return confirm, intent, call(client, token, "confirm_audit", **confirm)
 
 
 def audited_folder(client, store, token, core_system):
@@ -376,10 +392,9 @@ def test_a_feishu_folder_is_prepared_confirmed_and_audited_and_an_interruption_c
         again = call(client, token, "get_task", task_id=task)
         assert again["result"]["phase"] == "ready_to_confirm" and again["result"]["quote"] == quote
         assert call(client, token, "confirm_audit", task_id=task, quote_id="an-older-quote", request_id=str(uuid4()))["next"]["reason"] == "quote_changed"
-        confirm, page, started = confirmed(client, token, task, quote["quote_id"])
-        # The person approves what will happen in their words, not a tool name, internal IDs or the raw request.
-        assert "开始审核" in page and "control-plan.xlsx" in page
-        assert "confirm_audit" not in page and task not in page and "expected_revision" not in page
+        confirm, intent, started = confirmed(client, token, task, quote["quote_id"])
+        # The client proposed; the person started it on the task page, which shows the current files and price (#348).
+        assert intent["page"] == f"/tasks/{task}" and intent["client_name"] and intent["outcome"]["state"] == "proposed"
         assert started["result"]["phase"] == "auditing" and started["next"]["kind"] == "wait", started
         assert call(client, token, "confirm_audit", **confirm)["result"]["phase"] == "auditing"
         job = worker.claim_job("mcp-audit")
@@ -437,9 +452,9 @@ def test_review_receipt_commits_with_effect_even_when_transport_loses_reply(mcp_
         assert [row["rationale"] for row in history] == ["第二次核对", "网页复核已修订", "已核对原件"]
 
 
-@pytest.mark.parametrize("edit_at", ["before_capture", "after_capture"])
-def test_a_published_report_carries_what_the_user_approved(mcp_app, core_system, monkeypatch, edit_at):
-    """The gateway check alone cannot close a concurrent Web-edit race."""
+@pytest.mark.parametrize("edit_at", ["after_reading", "after_capture"])
+def test_a_published_report_is_the_document_the_person_saw(mcp_app, core_system, monkeypatch, edit_at):
+    """The Web sends the content fingerprint it showed; a document that changed since is shown again, not sent (#348)."""
     _, store = mcp_app
     drive = Drive()
     with folder_client(store, drive) as (app, client, token, _):
@@ -450,25 +465,28 @@ def test_a_published_report_carries_what_the_user_approved(mcp_app, core_system,
         assert client.put(f"/rounds/{round_id}/reviews", json=review).status_code == 200
         arguments = {"task_id": task, "request_id": str(uuid4())}
         asked = call(client, token, "publish_report", **arguments)
-        edits = []
+        ident = intent_of(asked)
+        path = f"/integrations/feishu/rounds/{round_id}/report"
+        seen = client.get(path).json()["content_fingerprint"]
 
         def edit():
-            if not edits:
-                saved = client.put(f"/rounds/{round_id}/reviews", json={**review, "version": 1, "rationale": "并发网页修改"})
-                assert saved.status_code == 200, saved.text
-                edits.append(saved.json())
+            saved = client.put(f"/rounds/{round_id}/reviews", json={**review, "version": 1, "rationale": "并发网页修改"})
+            assert saved.status_code == 200, saved.text
 
-        if edit_at == "before_capture":
-            original = app.state.mcp_gateway.request
-
-            async def edit_after_gateway_check(*args, **kwargs):
-                if kwargs.get("operation_id") and args[1] == "POST":
-                    await asyncio.to_thread(edit)
-                return await original(*args, **kwargs)
-
-            monkeypatch.setattr(app.state.mcp_gateway, "request", edit_after_gateway_check)
+        if edit_at == "after_reading":
+            edit()
+            refused = client.post(path, json={"if_match": seen}, headers={"X-PPAP-Intent": ident})
+            assert refused.status_code == 409 and refused.json()["error"] == "content_changed"
+            assert drive.written == []
+            # Not done, and the client says so; the same link still completes it with what the page shows now.
+            again = call(client, token, "publish_report", **arguments)
+            assert again["next"]["url"] == asked["next"]["url"] and again["next"]["reason"] == "content_changed", again
+            _, done = complete(client, asked)
+            assert done.status_code == 200, done.text
+            sent = json.dumps(drive.written, ensure_ascii=False)
+            assert "并发网页修改" in sent and "原批准复核" not in sent
         else:
-            # Once the document is fixed and checked during execution, a later edit changes nothing that is sent.
+            # Once the document is fixed during execution, a later edit changes nothing that is sent.
             original_claim = store.claim_report
 
             def edit_after_materialization(*args, **kwargs):
@@ -476,30 +494,17 @@ def test_a_published_report_carries_what_the_user_approved(mcp_app, core_system,
                 return original_claim(*args, **kwargs)
 
             monkeypatch.setattr(store, "claim_report", edit_after_materialization)
-
-        approve(client, asked)
-        result = call(client, token, "publish_report", **arguments)
-        assert len(edits) == 1
-        current = client.get(f"/rounds/{round_id}").json()["findings"][0]["review"]
-        assert current["version"] == 2 and current["rationale"] == "并发网页修改"
-        if edit_at == "before_capture":
-            # Nothing was sent. The same request comes back to the person with what it would send now (#348).
-            assert drive.written == []
-            assert result["next"]["kind"] == "user_action" and result["next"]["url"] == asked["next"]["url"], result
-            assert "要交付的内容有变化" in client.get(asked["next"]["url"], params={"changed": "1"}).text
-            approve(client, result)
-            result = call(client, token, "publish_report", **arguments)
-            assert result["next"]["kind"] == "done", result
-            sent = json.dumps(drive.written, ensure_ascii=False)
-            assert "并发网页修改" in sent and "原批准复核" not in sent
-        else:
-            assert result["next"]["kind"] == "done" and result["result"]["delivery"]["report"]["status"] == "ready", result
+            done = client.post(path, json={"if_match": seen}, headers={"X-PPAP-Intent": ident})
+            assert done.status_code == 200, done.text
             sent = json.dumps(drive.written, ensure_ascii=False)
             assert len(drive.written) == 2 and "原批准复核" in sent and "并发网页修改" not in sent
-        # A settled receipt is read and replayed despite later edits, and nothing is sent again.
+        result = call(client, token, "publish_report", **arguments)
+        assert result["next"]["kind"] == "done" and result["result"]["delivered"], result
+        # What was sent is the current document only when nothing changed after it was written.
+        assert (result["result"]["delivery"] or {}).get("status") == ("ready" if edit_at == "after_reading" else None)
+        # Reading it again sends nothing again.
         count = len(drive.written)
-        state = call(client, token, "get_operation", request_id=arguments["request_id"])["result"]["state"]
-        assert state == "succeeded"
+        assert call(client, token, "get_operation", request_id=arguments["request_id"])["next"]["kind"] == "done"
         assert call(client, token, "publish_report", **arguments)["next"] == result["next"]
         assert len(drive.written) == count
 
@@ -516,9 +521,10 @@ def test_a_report_on_a_round_with_review_hints_is_published(mcp_app, core_system
         monkeypatch.setattr(review_hints, "read_hints", lambda store, conn, principal, body: [{"item_key": body["findings"][0]["item_key"], "reason": "differs"}])
         assert "review_hint" in client.get(f"/rounds/{round_id}").json()["findings"][0]
         arguments = {"task_id": task, "request_id": str(uuid4())}
-        approve(client, call(client, token, "publish_report", **arguments))
+        _, done = complete(client, call(client, token, "publish_report", **arguments))
+        assert done.status_code == 200, done.text
         result = call(client, token, "publish_report", **arguments)
-        assert result["next"]["kind"] == "done" and result["result"]["delivery"]["report"]["status"] == "ready", result
+        assert result["next"]["kind"] == "done" and result["result"]["delivery"]["status"] == "ready", result
         assert len(drive.written) == 2
         # Saving a review answers with that same projection, so the Web's comparison after saving holds.
         key = client.get(f"/rounds/{round_id}").json()["findings"][0]["item_key"]
@@ -526,35 +532,48 @@ def test_a_report_on_a_round_with_review_hints_is_published(mcp_app, core_system
         assert saved.status_code == 200 and "review_hint" in saved.json()["findings"][0]
 
 
-def test_the_confirm_click_takes_effect_and_a_refusal_carries_its_reason(mcp_app, core_system):
-    """Confirming is the decision: the write happens on the click, the page says what happened, the client only reads it (#348)."""
+def test_signing_is_proposed_by_the_client_and_completed_or_declined_by_the_person(mcp_app, core_system):
+    """MCP only proposes a signing action; the person completes or declines it in the Web, and the client reads which (#348, #355)."""
     _, store = mcp_app
     drive = Drive()
     with folder_client(store, drive) as (app, client, token, _):
         task, _ = audited_folder(client, store, token, core_system)
+        round_id = client.get(f"/audit-tasks/{task}").json()["round_id"]
+        path = f"/integrations/feishu/rounds/{round_id}/report"
         arguments = {"task_id": task, "request_id": str(uuid4())}
         asked = call(client, token, "publish_report", **arguments)
-        page = client.get(asked["next"]["url"])
-        assert "点确认就会执行" in page.text
-        csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
-        done = client.post(asked["next"]["url"], data={"csrf": csrf, "decision": "approve"})
-        assert done.status_code == 200 and "已完成" in done.text
-        # Effect before the client calls again; calling again reads it and sends nothing twice.
-        assert len(drive.written) == 2
-        assert call(client, token, "get_operation", request_id=arguments["request_id"])["result"]["state"] == "succeeded"
+        ident = intent_of(asked)
+        web = store.settings.canonical_web_url().rstrip("/")
+        assert asked["next"]["url"] == web + "/enter-current?" + urlencode({"return_to": f"{web}/tasks/{task}?intent={ident}"})
+        assert call(client, token, "publish_report", **arguments)["next"]["url"] == asked["next"]["url"]
+        # The same request_id is one proposal: other input under it is refused.
+        other = call(client, token, "publish_report", task_id=str(uuid4()), request_id=arguments["request_id"])
+        assert other["next"]["kind"] == "blocked", other
+        # The proposal names one call; it cannot be spent on another.
+        assert client.post(f"/audit-tasks/{task}/confirm", json={}, headers={"X-PPAP-Intent": ident}).json()["error"] == "intent_mismatch"
+        # Completing a client's proposal needs a recent sign-in; the person's own Web action does not.
+        with store._conn() as conn:
+            conn.execute("UPDATE product.sessions SET created_at = now() - interval '1 hour'")
+        stale = client.post(path, json={"if_match": client.get(path).json()["content_fingerprint"]}, headers={"X-PPAP-Intent": ident})
+        assert stale.status_code == 401 and stale.json()["error"] == "reauthentication_required" and drive.written == []
+        assert call(client, token, "get_operation", request_id=arguments["request_id"])["next"]["kind"] == "user_action"
+        with store._conn() as conn:
+            conn.execute("UPDATE product.sessions SET created_at = now()")
+        intent, done = complete(client, asked)
+        assert done.status_code == 200 and len(drive.written) == 2, done.text
+        assert client.get(f"/intents/{ident}").json()["outcome"]["state"] == "succeeded"
         assert call(client, token, "publish_report", **arguments)["next"]["kind"] == "done" and len(drive.written) == 2
+        # A settled proposal cannot be completed or declined again.
+        assert client.post(f"/intents/{ident}/decline", json={}, headers={"X-PPAP-Intent": ident}).status_code == 409
 
-        refused = {"task_id": task, "request_id": str(uuid4())}
-        asked = call(client, token, "publish_report", **refused)
-        page = client.get(asked["next"]["url"])
-        csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
-        said = client.post(asked["next"]["url"], data={"csrf": csrf, "decision": "deny"})
-        target = re.search(r'<form method="post" action="([^"]+)"', said.text)[1]
-        reason_csrf = re.search(r'name="csrf" value="([^"]+)"', said.text)[1]
-        assert client.post(target, data={"csrf": "forged", "reason": "x"}).status_code == 403
-        assert "原因已交给客户端" in client.post(target, data={"csrf": reason_csrf, "reason": "先等供应商补件"}).text
-        answer = call(client, token, "publish_report", **refused)
-        assert answer["next"]["kind"] == "user_action" and answer["next"]["reason"] == "先等供应商补件", answer
+        declined = {"task_id": task, "request_id": str(uuid4())}
+        asked = call(client, token, "publish_report", **declined)
+        ident = intent_of(asked)
+        said = client.post(f"/intents/{ident}/decline", json={"reason": "先等供应商补件"}, headers={"X-PPAP-Intent": ident})
+        assert said.status_code == 200 and said.json() == {"state": "declined", "reason": "先等供应商补件"}
+        answer = call(client, token, "publish_report", **declined)
+        assert answer["next"]["action_id"] == "denied_by_user" and answer["next"]["reason"] == "先等供应商补件", answer
+        assert client.post(path, json={}, headers={"X-PPAP-Intent": ident}).json()["error"] == "intent_unavailable"
         assert len(drive.written) == 2
 
 
@@ -569,12 +588,13 @@ def test_every_write_by_a_person_is_recorded_once_with_channel_and_result(mcp_ap
         review = {"item_key": key, "judgment": "confirm", "rationale": "核对", "next_step": "", "version": 0}
         assert client.put(f"/rounds/{round_id}/reviews", json=review).status_code == 200
         assert client.put(f"/rounds/{round_id}/reviews", json=review).status_code == 409
-        approve(client, call(client, token, "publish_report", task_id=task, request_id=str(uuid4())))
+        asked = call(client, token, "publish_report", task_id=task, request_id=str(uuid4()))
+        complete(client, asked)
 
         def rows(route):
             with store._conn() as conn:
                 return conn.execute(
-                    "SELECT channel, grant_id IS NOT NULL, params, outcome, status_code, error FROM product.actions WHERE route=%s ORDER BY at",
+                    "SELECT channel, grant_id IS NOT NULL, params, outcome, status_code, error, intent_id::text FROM product.actions WHERE route=%s ORDER BY at",
                     (route,),
                 ).fetchall()
 
@@ -583,7 +603,8 @@ def test_every_write_by_a_person_is_recorded_once_with_channel_and_result(mcp_ap
             ("web", False, key, "succeeded", 200, None),
             ("web", False, key, "failed", 409, "review_conflict"),
         ]
-        assert [(r[0], r[1], r[3]) for r in rows("/integrations/feishu/rounds/{round_id}/report")] == [("mcp", True, "succeeded")]
+        # The person completed the client's proposal in the Web: their action, linked to the proposal.
+        assert [(r[0], r[1], r[3], r[6]) for r in rows("/integrations/feishu/rounds/{round_id}/report")] == [("web", False, "succeeded", intent_of(asked))]
         # Reads are not actions; nothing without a known person is recorded.
         with store._conn() as conn:
             assert conn.execute("SELECT count(*) FROM product.actions WHERE method NOT IN ('POST','PUT','PATCH','DELETE')").fetchone()[0] == 0

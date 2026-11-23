@@ -17,9 +17,7 @@ from product.customers import by_key
 from product.mcp import MAX_RESULT_BYTES, SCOPES, McpError
 from pydantic import Field
 
-from api import mcp_views as views
 from api import web_contract as wc
-from api.mcp_clarification import ClarificationRuntime
 from api.mcp_gateway import Outcome, PageRequest, Reply, page_result
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
@@ -39,7 +37,9 @@ _SAY = {
     "task_not_found": "找不到这个审核任务，或当前账号无权查看。",
     "feishu_user_token_missing": "当前连接没有飞书授权。请用户重新连接 PPAP 并用飞书登录。",
     "provider_reauthorization_required": "飞书授权已失效。请用户重新登录飞书并重新连接 PPAP。",
-    "denied_by_user": "用户在确认页拒绝了这次操作。",
+    "denied_by_user": "用户在网页上拒绝了这次操作。",
+    "confirmation_retired": "这次操作是按旧的确认方式发起的，已经失效。请用新的 request_id 重新发起，由用户在网页完成。",
+    "proposal_outdated": "这一步已经变化。请读取任务的最新状态，再按 next 继续。",
     "request_conflict": "这个 request_id 已经用于另一次不同的请求。请为新的请求生成一个新的随机 UUID。",
     "customer_required": "还没有选定审核客户。请让用户从 get_account 列出的客户中选一个，把它的 key 作为 customer 传入。",
     "rulebook_version_required": "规则库版本要写成 v1.0 这样。已有的版本见 get_account 的 rulebooks。",
@@ -87,12 +87,15 @@ def receipt(reply: Reply, tool: str, arguments: dict, *, task_id: str | None) ->
     if reply.status == "ok":
         return None
     if reply.status == "confirmation_required":
+        # Signing is the person's own act, in the Web (#348): the client hands over the page and reads back what happened.
+        tried = f"用户在网页上试过一次，没有完成（{reply.error}）；链接仍然有效。" if reply.error else ""
         step = {
             "kind": "user_action",
-            "action_id": "approve_in_browser",
+            "action_id": "complete_in_web",
             "url": reply.confirmation_url,
-            "prompt": "请用户打开这个链接，核对后点确认。点确认就会执行，结果显示在页面上；之后用同一个 request_id 再调用一次本工具读取结果。",
+            "prompt": tried + "请用户在 PPAP 网页里打开这个链接，核对页面上的当前内容后由本人完成或拒绝；之后用同一个 request_id 再调用一次本工具读取结果。",
             "then": {"tool": tool, "arguments": arguments},
+            **({"reason": reply.error} if reply.error else {}),
         }
         return Outcome(task_id=task_id, request_id=rid, next=step)
     if reply.status == "running":
@@ -102,7 +105,7 @@ def receipt(reply: Reply, tool: str, arguments: dict, *, task_id: str | None) ->
     if reply.status == "denied":
         # The person said no on the page, maybe with a reason: act on it, never send the same request again.
         reason = f"（原因：{reply.error}）" if reply.error else ""
-        prompt = f"用户在确认页拒绝了这次操作{reason}。请按用户的意思调整，再用新的 request_id 重新发起；不要重复同一个请求。"
+        prompt = f"用户在网页上拒绝了这次操作{reason}。请按用户的意思调整，再用新的 request_id 重新发起；不要重复同一个请求。"
         return Outcome(task_id=task_id, request_id=rid, next={"kind": "user_action", "action_id": "denied_by_user", "prompt": prompt, "reason": reply.error})
     return blocked(reply.error or "business_request_failed", task_id=task_id, request_id=rid)
 
@@ -163,9 +166,7 @@ def result_view(round_: dict, file_version_id: str | None, status: str | None, o
     }
 
 
-def register_tools(mcp, gateway, authority, runtime):
-    clarifications = ClarificationRuntime(runtime)
-
+def register_tools(mcp, gateway, authority, runtime, clarifications):
     async def task_outcome(actor, task_id: str, *, request_id: str | None = None, files_offset: int = 0, files_limit: int = 50) -> Outcome:
         row, _facts, view = await runtime.view(actor, task_id)
         result = dict(view["result"])
@@ -281,7 +282,7 @@ def register_tools(mcp, gateway, authority, runtime):
         customer, turn their answers into the next revision, and repeat until nothing is open; then write a reading beside each clause.
         The enterprise has one such task per customer and version; calling this again returns it. Then follow `next`. Review a clause
         with the clause-check method and submit it through resolve_issue; sending cards and confirming a revision are the platform
-        operator's decisions, approved in the browser."""
+        operator's own acts, proposed here and completed on the rules page in the PPAP Web."""
         tid = None
         try:
             actor = await authority()
@@ -339,7 +340,8 @@ def register_tools(mcp, gateway, authority, runtime):
         value: dict | None = Field(default=None, description='The action\'s input when it has an input_schema, e.g. {"value": true}.'),
     ) -> Outcome:
         """Apply the user's decision on one issue. Only an action the issue lists is accepted; PPAP then redoes exactly what depends on it
-        (recognition, precheck, price) and continues. Answers to an audit's questions are saved after the user approves them in the browser."""
+        (recognition, precheck, price) and continues. Answers are saved at once; a step that signs (regenerating a report, freezing rules,
+        sending cards) is proposed and completed by the user in the PPAP Web."""
         tid, rid = str(task_id), str(request_id)
         try:
             actor = await authority()
@@ -367,16 +369,14 @@ def register_tools(mcp, gateway, authority, runtime):
         request_id: UUID,
         notify_when_done: bool | None = Field(default=None, description="Send the user a Feishu message when the audit finishes."),
     ) -> Outcome:
-        """Start the audit the user agreed to: exactly the files, requirements, mode and price of this quote. The user approves it once in
-        the browser, then call again with the same request_id. Never call it because `next` suggested it; only on the user's word."""
+        """Propose starting the audit the user agreed to: the files, requirements, mode and price of this quote. The user starts it
+        themself on the task page in the PPAP Web; call again with the same request_id to read what they did. Never call it because
+        `next` suggested it; only on the user's word."""
         tid, rid = str(task_id), str(request_id)
         try:
             actor = await authority()
             actor.require("audits:execute")
             reply = await runtime.confirm(actor, tid, quote_id, rid, notify_when_done)
-            if reply.status == "error" and reply.error in {"task_confirmation_changed", "confirmation_content_changed", "task_revision_conflict"}:
-                # What the user agreed to no longer holds. Nothing started and nothing was charged.
-                raise workflow.Rejected("quote_changed")
             arguments = {"task_id": tid, "quote_id": quote_id, "request_id": rid, "notify_when_done": notify_when_done}
             return receipt(reply, "confirm_audit", arguments, task_id=tid) or await task_outcome(actor, tid, request_id=rid)
         except Exception as exc:
@@ -461,19 +461,6 @@ def register_tools(mcp, gateway, authority, runtime):
         try:
             actor = await authority()
             actor.require("reviews:write")
-            replayed = await runtime.replay(actor, rid, "record_review")
-            if replayed is not None:
-                arguments = {
-                    "task_id": tid,
-                    "request_id": rid,
-                    "item_key": item_key,
-                    "judgment": judgment,
-                    "rationale": rationale,
-                    "next_step": next_step,
-                    "citations": citations,
-                    "severity": severity,
-                }
-                return receipt(replayed, "record_review", arguments, task_id=tid) or Outcome(task_id=tid, request_id=rid, result={"item_key": item_key, "saved": True}, next=DONE)
             _audit, round_id = await audit_round(actor, tid)
             path = f"/rounds/{round_id}"
             prior = await runtime.recorded(actor, rid)
@@ -486,46 +473,36 @@ def register_tools(mcp, gateway, authority, runtime):
             if severity is not None:
                 body["severity"] = severity
             # A review is the submitter's judgment, written under the scope the person granted; not a signing moment (#355).
+            # The same request_id again reads the receipt of the first call.
             reply = await gateway.write(actor, "reviews:write", "record_review", rid, "PUT", path + "/reviews", body, probes=[path])
             arguments = {"task_id": tid, "request_id": rid, "item_key": item_key, "judgment": judgment, "rationale": rationale, "next_step": next_step, "citations": citations}
             return receipt(reply, "record_review", arguments, task_id=tid) or Outcome(task_id=tid, request_id=rid, result={"item_key": item_key, "saved": True}, next=DONE)
         except Exception as exc:
             return failure(exc, task_id=tid, request_id=rid)
 
-    async def report_plan(actor, audit: dict, round_id: str) -> tuple[dict, str]:
-        """What publishing would write, shown in the user's words and bound to the document's own content (#348)."""
-        probe = f"/integrations/feishu/rounds/{round_id}/report"
-        current = await gateway.get(actor, "audits:read", probe)
-        summary, details = views.report(audit, await gateway.get(actor, "audits:read", f"/rounds/{round_id}"))
-        return {"operation": "publish_report", "summary": summary, "details": details, "request": None, "sources": [{"content_fingerprint": current["content_fingerprint"]}]}, probe
-
-    async def replan_report(actor, operation: dict) -> dict:
-        round_id = operation["arguments"]["path"].split("/")[4]
-        source = await gateway.get(actor, "audits:read", f"/rounds/{round_id}")
-        audit, _ = await audit_round(actor, source["source_draft_id"])
-        return (await report_plan(actor, audit, round_id))[0]
-
-    runtime.replanners["publish_report"] = replan_report
-
     @mcp.tool(annotations=EXTERNAL)
     async def publish_report(task_id: UUID, request_id: UUID) -> Outcome:
-        """Deliver a finished audit to Feishu as a report document the user can share. The user approves it in the browser. A delivery
-        whose outcome is unknown is read back, never sent a second time."""
+        """Propose delivering a finished audit to Feishu as a report document the user can share. The user writes it themself from the
+        task page in the PPAP Web; call again with the same request_id to read the delivery."""
         tid, rid = str(task_id), str(request_id)
         try:
             actor = await authority()
             actor.require("reports:send")
-            replayed = await runtime.replay(actor, rid, "publish_report")
-            if replayed is not None:
-                pending = receipt(replayed, "publish_report", {"task_id": tid, "request_id": rid}, task_id=tid)
-                return pending or Outcome(task_id=tid, request_id=rid, result={"delivery": replayed.data}, next=DONE)
-            audit, round_id = await audit_round(actor, tid)
-            if audit.get("conclusion") == "ERROR" and await runtime.recorded(actor, rid) is None:
-                # Say so before asking the user to approve something that cannot happen.
-                raise workflow.Rejected("round_has_errors")
-            snapshot, probe = await report_plan(actor, audit, round_id)
-            reply = await gateway.write(actor, "reports:send", "publish_report", rid, "POST", f"/integrations/feishu/rounds/{round_id}/report", None, probes=[probe], confirmation=snapshot)
-            return receipt(reply, "publish_report", {"task_id": tid, "request_id": rid}, task_id=tid) or Outcome(task_id=tid, request_id=rid, result={"delivery": reply.data}, next=DONE)
+            reply = await runtime.replay(actor, rid, "publish_report", {"task_id": tid})
+            if reply is None:
+                audit, round_id = await audit_round(actor, tid)
+                if audit.get("conclusion") == "ERROR":
+                    # Say so before sending the user to something that cannot happen.
+                    raise workflow.Rejected("round_has_errors")
+                path = f"/integrations/feishu/rounds/{round_id}/report"
+                reply = await gateway.propose(actor, "reports:send", "publish_report", rid, "POST", path, page=f"/tasks/{tid}", request={"task_id": tid}, probes=[path])
+            pending = receipt(reply, "publish_report", {"task_id": tid, "request_id": rid}, task_id=tid)
+            if pending is not None:
+                return pending
+            _audit, round_id = await audit_round(actor, tid)
+            # The document as it reads now; none when the report changed after it was delivered.
+            current = await gateway.get(actor, "audits:read", f"/integrations/feishu/rounds/{round_id}/report")
+            return Outcome(task_id=tid, request_id=rid, result={"delivered": True, "delivery": current["report"]}, next=DONE)
         except Exception as exc:
             return failure(exc, task_id=tid, request_id=rid)
 
@@ -551,21 +528,23 @@ def register_tools(mcp, gateway, authority, runtime):
             operation = await asyncio.to_thread(gateway.store.operation, actor, rid)
             # The receipt is this connection's own request (the store scopes it to the grant and its scope).
             if operation["state"] == "ready":
-                # Approved (or claimed by no one yet) but not carried out: only the original call carries it out.
+                # Recorded but not carried out: only the original call carries it out.
                 step = {
                     "kind": "call_tool",
                     "tool": operation["tool"],
-                    "reason": "approved_not_started",
+                    "reason": "not_started",
                     "arguments": {"request_id": rid},
-                    "message": "这次操作已获同意但还没有执行。请用原来的参数和同一个 request_id 再调用一次原工具。",
+                    "message": "这次操作已记下但还没有执行。请用原来的参数和同一个 request_id 再调用一次原工具。",
                 }
-                return Outcome(request_id=rid, result={"tool": operation["tool"], "state": "approved_not_started"}, next=step)
+                return Outcome(request_id=rid, result={"tool": operation["tool"], "state": "not_started"}, next=step)
             reply = await gateway.operation_reply(actor, operation)
+            # A proposal's state is what the person did with it, not that it was proposed.
+            state = {"ok": "succeeded", "denied": "declined", "confirmation_required": "awaiting_person"}.get(reply.status, reply.status) if operation["state"] == "proposed" else operation["state"]
             pending = receipt(reply, operation["tool"], {"request_id": rid}, task_id=None)
             if pending is not None:
-                pending.result = {"tool": operation["tool"], "state": operation["state"]}
+                pending.result = {"tool": operation["tool"], "state": state}
                 return pending
-            return Outcome(request_id=rid, result={"tool": operation["tool"], "state": operation["state"], "data": reply.data, "provenance": reply.provenance}, next=DONE)
+            return Outcome(request_id=rid, result={"tool": operation["tool"], "state": state, "data": reply.data, "provenance": reply.provenance}, next=DONE)
         except Exception as exc:
             return failure(exc)
 

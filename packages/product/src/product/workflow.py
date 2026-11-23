@@ -878,7 +878,8 @@ def next_action(task_id: str, phase: str, found: list[dict], price: dict | None,
         return {
             "kind": "user_action",
             "action_id": "approve_quote",
-            "prompt": "把 result.summary 告诉用户。用户说开始后调用 confirm_audit：它返回一个确认页链接，用户在页面上看到范围和费用并点确认后，审核才开始、才扣点。用户没有说开始前不要调用。",
+            "prompt": "把 result.summary 告诉用户。用户说开始后调用 confirm_audit：它返回一个 PPAP 网页链接，"
+            "用户在任务页上看到范围和费用并点「开始审核」后，审核才开始、才扣点。用户没有说开始前不要调用。",
             "then": {"tool": "confirm_audit", "arguments": {"task_id": task_id, "quote_id": price["quote_id"]}},
         }
     if phase == "auditing":

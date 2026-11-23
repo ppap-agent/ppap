@@ -16,7 +16,6 @@ from typing import Any
 from product import workflow
 from product.mcp import Delegation, McpError
 
-from api import mcp_views as views
 from api.mcp_gateway import Reply
 
 log = logging.getLogger(__name__)
@@ -45,7 +44,6 @@ class TaskRuntime:
         self.gateway, self.store = gateway, workflows
         self.drivers: dict[str, asyncio.Task] = {}
         # Tools whose request pins no version: what they would do now, for showing again on the page when it changed (#348).
-        self.replanners: dict[str, Any] = {}
 
     # ---- reading ---------------------------------------------------------------------------------
 
@@ -269,19 +267,15 @@ class TaskRuntime:
                 raise
             return None
 
-    async def replay(self, actor: Delegation, request_id: str, tool: str) -> Reply | None:
-        """An approval-bound write called again carries what the person approved, as it was recorded. Values the
-        tool reads (a task, a round, a revision) move on their own; re-reading them would void every approval.
-        Whether the approved content still holds is checked where it takes effect: the quote by the audit task,
-        reviews, answers and reports against their approved sources. One that already ran returns what it did.
-        None: nothing recorded to replay."""
+    async def replay(self, actor: Delegation, request_id: str, tool: str, request: dict) -> Reply | None:
+        """A proposal called again under its request_id reads what the person did with it; it is never proposed twice, and
+        the same request_id with other input is refused. None: nothing proposed under this request_id."""
         prior = await self.recorded(actor, request_id)
-        if prior is None or prior["tool"] != tool or prior["confirmation"] is None:
+        if prior is None or prior["state"] != "proposed":
             return None
-        if prior["state"] not in {"confirmation_required", "ready"}:
-            return await self.gateway.operation_reply(actor, prior)
-        a = prior["arguments"]
-        return await self.gateway.write(actor, prior["required_scope"], tool, request_id, a["method"], a["path"], a["body"], probes=a["probes"], confirmation=prior["confirmation"])
+        if prior["tool"] != tool or prior["arguments"]["request"] != request:
+            raise McpError("request_conflict", 409)
+        return await self.gateway.operation_reply(actor, prior)
 
     async def source_changed(self, actor: Delegation, task_id: str, state: dict) -> bool:
         """The folder as it is now against the folder as prepared. A difference is the user's decision, not ours."""
@@ -297,27 +291,24 @@ class TaskRuntime:
         return True
 
     async def confirm(self, actor: Delegation, task_id: str, quote_id: str, request_id: str, notify_when_done: bool | None) -> Reply:
-        path = f"/audit-tasks/{task_id}"
-        replayed = await self.replay(actor, request_id, "confirm_audit")
+        """Propose starting the audit (#348). The person starts it on the task page, which shows the current files, rules and
+        price; the quote is checked here only to say early that it moved."""
+        request = {"task_id": task_id, "quote_id": quote_id}
+        replayed = await self.replay(actor, request_id, "confirm_audit", request)
         if replayed is not None:
             return replayed
-        else:
-            row, facts, view = await self.view(actor, task_id)
-            if view["phase"] != "ready_to_confirm":
-                raise workflow.Rejected("not_ready_to_confirm")
-            if await self.source_changed(actor, task_id, row["state"]):
-                raise workflow.Rejected("source_changed")
-            if view["result"]["quote"]["quote_id"] != quote_id:
-                raise workflow.Rejected("quote_changed")
-            audit = facts["audit"]
-            if notify_when_done is not None and notify_when_done != audit.get("notification_enabled"):
-                await self.api(actor, "PUT", path + "/notification", {"enabled": notify_when_done, "expected_revision": audit.get("notification_revision", 0)})
-            body = {"request_id": request_id, "expected_revision": audit.get("input_revision", 0), "expected_confirmation_basis_digest": quote_id}
-        task = await self.gateway.get(actor, "audits:read", path)
-        folders = {entry["version"]["id"]: entry.get("folder") for entry in row["state"]["files"].values() if entry.get("version")}
-        summary, details = views.audit_start(task, facts.get("precheck"), folders)
-        snapshot = {"operation": "confirm_audit", "summary": summary, "details": details, "request": body, "sources": [task]}
-        return await self.gateway.write(actor, "audits:execute", "confirm_audit", request_id, "POST", path + "/confirm", body, probes=[path], confirmation=snapshot)
+        path = f"/audit-tasks/{task_id}"
+        row, facts, view = await self.view(actor, task_id)
+        if view["phase"] != "ready_to_confirm":
+            raise workflow.Rejected("not_ready_to_confirm")
+        if await self.source_changed(actor, task_id, row["state"]):
+            raise workflow.Rejected("source_changed")
+        if view["result"]["quote"]["quote_id"] != quote_id:
+            raise workflow.Rejected("quote_changed")
+        audit = facts["audit"]
+        if notify_when_done is not None and notify_when_done != audit.get("notification_enabled"):
+            await self.api(actor, "PUT", path + "/notification", {"enabled": notify_when_done, "expected_revision": audit.get("notification_revision", 0)})
+        return await self.gateway.propose(actor, "audits:execute", "confirm_audit", request_id, "POST", path + "/confirm", page=f"/tasks/{task_id}", request=request, probes=[path])
 
     async def resolve(self, actor: Delegation, task_id: str, issue_id: str, action_id: str, expected_revision: int, request_id: str, value: Any) -> Reply | None:
         """Apply one of the actions an open issue offers. None: the task itself changed; a Reply: the audit's own
@@ -328,12 +319,12 @@ class TaskRuntime:
             if state["decisions"][request_id] != [issue_id, action_id]:
                 raise workflow.Rejected("request_conflict")
             return None
-        prior = await self.recorded(actor, request_id)
-        if prior is not None and prior["state"] not in {"confirmation_required", "ready"}:
-            return await self.gateway.operation_reply(actor, prior)
-        replayed = await self.replay(actor, request_id, "resolve_issue")
+        replayed = await self.replay(actor, request_id, "resolve_issue", {"task_id": task_id, "issue_id": issue_id, "action_id": action_id})
         if replayed is not None:
             return replayed
+        prior = await self.recorded(actor, request_id)
+        if prior is not None and prior["state"] != "ready":
+            return await self.gateway.operation_reply(actor, prior)
         if not row["mine"]:
             raise McpError("access_denied", 403)
         if expected_revision != row["revision"]:
@@ -350,14 +341,9 @@ class TaskRuntime:
             return await self.gateway.write(actor, "audits:write", "resolve_issue", request_id, "PUT", f"/rounds/{round_id}/review-hints", body, probes=[f"/rounds/{round_id}"])
         if action_id == "regenerate":
             line = next(r for r in audit["files"] if r["file"]["id"] == issue["subject"]["key"] or r["file"]["original_filename"] == issue["subject"]["filename"])
-            review = line["audit"]
-            reference = {"task_id": task_id, "round_id": round_id, "file_version_id": line["file"]["id"], "result_attempt": review.get("result_attempt"), "report_id": review["report"]["report_id"]}
-            path = f"/audit-tasks/{task_id}/reports/{reference['report_id']}/regenerations"
-            task = await self.gateway.get(actor, "audits:read", f"/audit-tasks/{task_id}")
-            snapshot = {"operation": "resolve_issue", "summary": [f"重新生成「{line['file']['original_filename']}」的审核报告。"], "request": reference, "sources": [task]}
-            return await self.gateway.write(
-                actor, "reports:write", "resolve_issue", request_id, "POST", path, {"request_id": request_id, "reference": reference}, probes=[f"/audit-tasks/{task_id}"], confirmation=snapshot
-            )
+            path = f"/audit-tasks/{task_id}/reports/{line['audit']['report']['report_id']}/regenerations"
+            request = {"task_id": task_id, "issue_id": issue_id, "action_id": action_id}
+            return await self.gateway.propose(actor, "reports:write", "resolve_issue", request_id, "POST", path, page=f"/tasks/{task_id}", request=request, probes=[f"/audit-tasks/{task_id}"])
         subject = issue["subject"].get("key") if issue["subject"]["kind"] == "file" else None
         await self.commit(actor, task_id, [{"type": "decided", "request_id": request_id, "issue_id": issue_id, "action_id": action_id, "subject": subject if subject in state["files"] else None}])
         if action_id == "close" and audit.get("state") == "pending_confirm":

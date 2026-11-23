@@ -12,6 +12,8 @@ import uuid
 from psycopg.types.json import Jsonb
 
 MAX_PARAMS = 64 * 1024
+# The person's no to a client's proposal (#348): an action like any other, with the reason as its parameter.
+DECLINE_ROUTE = "/intents/{intent_id}/decline"
 
 
 def parameters(body: bytes, content_type: str) -> dict:

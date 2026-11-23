@@ -12,7 +12,7 @@ def _text(card):
     return unescape(card["body"]["elements"][0]["content"])
 
 
-def test_confirmation_card_shows_the_frozen_choices_before_offering_an_explicit_confirmation() -> None:
+def test_confirmation_card_shows_the_frozen_choices_and_links_to_the_task() -> None:
     task = {
         "id": "task-a",
         "number": "001",
@@ -26,21 +26,18 @@ def test_confirmation_card_shows_the_frozen_choices_before_offering_an_explicit_
             {"selection": "selected", "file": {"id": "version-1", "original_filename": "未匹配.pdf"}, "match": {"state": "unmatched", "rule": None, "gaps": []}},
         ],
     }
-    card = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
+    card = task_notification_card(task, "confirmation", "https://ppap.example.test")
     text = _text(card)
     assert card["schema"] == "2.0" and "elements" not in card
     assert all(value in text for value in ("控制计划.xlsx", "海岸线控制计划要求", "缺少过程流程图", "未匹配.pdf", "不纳入审核", "预计点数：500"))
     assert "metadata_uses_excerpt" not in text
-    confirm, opened = card["body"]["elements"][1:]
-    assert confirm["behaviors"] == [{"type": "callback", "value": {"action": "confirm_audit_task", "notification_id": "intent-a"}}]
-    assert confirm["confirm"]["title"]["content"] == "开始本次审核？"
-    assert "预计点数：500" in confirm["confirm"]["text"]["content"]
-    assert opened["behaviors"][0]["type"] == "open_url"
+    # Starting is signed in the Web (#355): the card's only action opens the task.
+    (opened,) = card["body"]["elements"][1:]
+    assert opened["behaviors"][0]["type"] == "open_url" and opened["type"] == "primary_filled"
     task["files"][0]["file"]["original_filename"] = "很长的名称" * 6000
-    bounded = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
+    bounded = task_notification_card(task, "confirmation", "https://ppap.example.test")
     assert len(json.dumps(bounded, ensure_ascii=False).encode()) <= 26000
     assert [button["behaviors"][0]["type"] for button in bounded["body"]["elements"][1:]] == ["open_url"]
-    assert bounded["body"]["elements"][1]["type"] == "primary_filled"
     assert "完整文件与原因请打开审核查看。" in _text(bounded)
 
 
@@ -76,7 +73,7 @@ def test_confirmation_without_a_rule_or_selection_does_not_offer_a_blind_accepta
             {"selection": "unselected", "file": {"id": "version-3", "original_filename": "未选择.xlsx"}, "match": None},
         ],
     }
-    card = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
+    card = task_notification_card(task, "confirmation", "https://ppap.example.test")
     assert [button["behaviors"][0]["type"] for button in card["body"]["elements"][1:]] == ["open_url"]
     assert "**未选择.xlsx**<br>不纳入审核；未选择此文件" in _text(card)
 
@@ -155,7 +152,7 @@ def test_recall_card_separates_comparison_material_from_audited_files(stage) -> 
             {"selection": "selected", "file": {"id": "version-4", "original_filename": "特殊特性清单.xlsx"}, "match": {"state": "reference"}, "audit": None},
         ],
     }
-    card = task_notification_card(task, stage, "https://ppap.example.test", confirmation_id="intent-a")
+    card = task_notification_card(task, stage, "https://ppap.example.test")
     body = _text(card)
     assert "**比对资料**<br>特殊特性清单.xlsx<br><font color='grey'>已固定版本，不单独审核。</font>" in body
     assert "审核：特殊特性清单.xlsx" not in body
@@ -163,7 +160,7 @@ def test_recall_card_separates_comparison_material_from_audited_files(stage) -> 
     if stage == "confirmation":
         assert "已匹配 **1 份**，共 1 份" in body
         assert "匹配尚未确认" not in body
-        assert card["body"]["elements"][1]["behaviors"][0]["value"]["notification_id"] == "intent-a"
+        assert card["body"]["elements"][1]["behaviors"][0]["type"] == "open_url"
     elif stage == "started":
         assert "本次审核 **1 份文件**" in body
     else:
@@ -302,14 +299,14 @@ def test_confirmation_card_displays_only_server_admission_scope_and_exclusion_re
     }
     if not all_blocked:
         task["files"].append({"file": {"id": "good", "original_filename": "可审目标.xlsx"}, "selection": "selected", "match": {"state": "matched", "rule": {"title": "目标规则"}}})
-    card = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
+    card = task_notification_card(task, "confirmation", "https://ppap.example.test")
     text = _text(card)
     assert "阻断目标.xlsx**<br>不纳入审核；已认证的阻断问题，请修正原件" in text
     assert "**比对资料**<br>比对资料.xlsx" in text
     assert f"已匹配 **{0 if all_blocked else 1} 份**" in text
     assert f"预计点数：{0 if all_blocked else 500}" in text
     callbacks = [element for element in card["body"]["elements"] if any(behavior["type"] == "callback" for behavior in element.get("behaviors", []))]
-    assert len(callbacks) == (0 if all_blocked else 1)
+    assert callbacks == []
 
 
 def test_card_body_names_the_chosen_rule_set_by_its_registered_name() -> None:

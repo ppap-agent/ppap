@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS product.rule_clause_readings (
 );
 
 GRANT SELECT, INSERT ON product.rulebook_revisions, product.rule_clause_readings TO ppap_api;
-GRANT UPDATE (clarified_by, clarified_at) ON product.rulebook_revisions TO ppap_api;
+-- Who marked it clarified is the action that did (0093); the revision keeps only when.
+GRANT UPDATE (clarified_at) ON product.rulebook_revisions TO ppap_api;
 REVOKE ALL ON product.rulebook_revisions, product.rule_clause_readings FROM ppap_worker;
 
 -- The clarification loop sends cards to an open questionnaire and closes the questionnaire of a superseded revision.

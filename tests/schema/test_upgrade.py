@@ -220,6 +220,78 @@ class SchemaUpgradeTests(unittest.TestCase):
                     f"DROP DATABASE IF EXISTS {name} WITH (FORCE)",
                 )
 
+    def test_who_signed_moves_into_actions_and_the_duplicate_columns_go(self):
+        """0093 (#348, #362): confirmations, refusals and rulebook confirmers become actions, then their columns are dropped;
+        running every migration again changes nothing."""
+        self.schema.require_postgres()
+        database = "ppap_schema_signing_" + uuid.uuid4().hex[:8]
+        migrator = (self.schema.migrator_user(), self.schema.migrator_password(), database)
+
+        def sql(statement: str, what: str) -> bytes:
+            done = self.schema.psql(*migrator, "-Atc", statement)
+            self.schema.require(done, what)
+            return (done.stdout or b"").strip()
+
+        try:
+            self.schema.require(
+                self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {database} OWNER {self.schema.migrator_user()}"),
+                "create database",
+            )
+            for path in self.schema.migration_files():
+                if path.name < "0093":
+                    self.schema.require(self.schema.psql(*migrator, "-f", str(path)), f"apply {path.name}")
+            tenant, user, grant = (str(uuid.uuid4()) for _ in range(3))
+            sql(
+                f"INSERT INTO product.tenants (id, provider, external_key, display_name) VALUES ('{tenant}', 'feishu', 'signing', 'Signing');"
+                f"INSERT INTO product.users (id) VALUES ('{user}');"
+                "INSERT INTO product.mcp_clients (id, metadata) VALUES ('client', '{\"client_name\": \"Pi\"}');"
+                "INSERT INTO product.mcp_grants (id, client_id, user_id, tenant_id, provider, app_id, subject, scopes, resource, expires_at, revoked_at) "
+                f"VALUES ('{grant}', 'client', '{user}', '{tenant}', 'feishu', 'app', 'ou', ARRAY['reports:send'], 'https://ppap.example/mcp', now() + interval '1 day', now());"
+                "INSERT INTO product.mcp_operations (grant_id, request_id, tool, arguments, fingerprint, required_scope, state, confirmation, confirmed_by, confirmed_at, result) VALUES "
+                f'(\'{grant}\', gen_random_uuid(), \'publish_report\', \'{{"method": "POST", "path": "/integrations/feishu/rounds/r/report", "body": null}}\', '
+                f"'a', 'reports:send', 'succeeded', '{{}}', '{user}', now(), "
+                '\'{"data": {}, "http_status": 200, "probes": []}\'),'
+                f"('{grant}', gen_random_uuid(), 'publish_report', '{{\"method\": \"POST\", \"path\": \"/x\"}}', 'b', 'reports:send', 'denied', '{{}}', '{user}', now(), "
+                '\'{"denied_reason": "先等补件"}\'),'
+                f"('{grant}', gen_random_uuid(), 'confirm_audit', '{{\"method\": \"POST\", \"path\": \"/y\"}}', 'c', 'audits:execute', 'confirmation_required', '{{}}', NULL, NULL, NULL);"
+                "INSERT INTO product.rulebook_revisions (id, tenant_id, customer_id, version, revision, origin, digest, clarified_by, clarified_at) "
+                f"VALUES ('{grant}', '{tenant}', 'uaes', 'v9.0', 0, 'clarification', repeat('a', 64), '{user}', now());"
+                f"INSERT INTO product.rule_clause_readings (revision_id, clause_id, reading, confirmed_by) VALUES ('{grant}', 'A:1', '{{}}', '{user}'), ('{grant}', 'A:2', '{{}}', '{user}');",
+                "save signing history in the old columns",
+            )
+            for attempt in ("first", "again"):
+                self.schema.require(self.schema.apply(database), f"apply every migration ({attempt})")
+                actions = sql(
+                    "SELECT string_agg(channel || ' ' || method || ' ' || route || ' ' || outcome || ' ' || COALESCE(params->>'reason', ''), '|' ORDER BY route) "
+                    f"FROM product.actions WHERE user_id = '{user}'",
+                    "read actions",
+                ).decode()
+                self.assertEqual(
+                    [row.strip() for row in actions.split("|")],
+                    [
+                        "mcp POST /integrations/feishu/rounds/r/report succeeded",
+                        "web POST /intents/{intent_id}/decline succeeded 先等补件",
+                        "mcp POST /rulebooks/{customer_id}/{version}/{revision}/clarified succeeded",
+                        "mcp PUT /rulebooks/{customer_id}/{version}/{revision}/readings succeeded",
+                    ],
+                    attempt,
+                )
+                states = sql(
+                    f"SELECT string_agg(state || ' ' || COALESCE(result->'data'->>'error', ''), '|' ORDER BY fingerprint) FROM product.mcp_operations WHERE grant_id = '{grant}'",
+                    "read operations",
+                )
+                self.assertEqual([row.strip() for row in states.decode().split("|")], ["succeeded", "failed denied_by_user", "failed confirmation_retired"], attempt)
+                left = sql(
+                    "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'product' AND (table_name, column_name) IN "
+                    "(('mcp_operations', 'confirmation'), ('mcp_operations', 'confirmed_by'), ('mcp_operations', 'csrf_hash'), "
+                    "('rulebook_revisions', 'clarified_by'), ('rule_clause_readings', 'confirmed_by'))",
+                    "read retired columns",
+                )
+                self.assertEqual(left, b"0", attempt)
+                self.assertEqual(sql(f"SELECT clarified_at IS NOT NULL FROM product.rulebook_revisions WHERE id = '{grant}'", "read clarified"), b"t")
+        finally:
+            self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE IF EXISTS {database} WITH (FORCE)")
+
     def test_native_runner_stops_at_the_first_failed_migration(self):
         self.schema.require_postgres()
         database = "ppap_schema_fail_" + uuid.uuid4().hex[:8]

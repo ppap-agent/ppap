@@ -16,6 +16,7 @@ import {ReportPackage, LinkedReportPackage, reportPackageAddress} from './report
 import {ReportPreview} from './report-preview'
 import {ReportShareDialog} from './report-share'
 import {useShareActions} from './share-actions'
+import {FeishuReportDocument} from './feishu-report'
 import {conclusionLabel, reportShortLabel as labels, resultTone} from './status-labels'
 import {useDocumentTypeLabel} from './review-content'
 import type {AuditSharingAdapter} from './sharing-contract'
@@ -106,7 +107,7 @@ export function AuditReports({task, initialFile, onChoose, onRead, busy, readErr
   const batch = count > 0 ? <div role="group" aria-label="所选报告操作" className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">已选 {count} 份</span><Button size="sm" disabled={!sharingAdapter} onClick={event => openShare(event.currentTarget, selectedReferences)}><Icon icon={iconShareNodes}/>分享<span className="sr-only">所选</span></Button>{download}<Button variant="ghost" size="xs" onClick={() => setChecked([])}>清空选择</Button></div>
     : <p className="px-1 text-xs text-muted-foreground">勾选报告后可批量下载或分享。</p>
   const files = <div className="space-y-3"><h1 className="sr-only">审核报告</h1>{batch}{!packageRequest && packages}{list}</div>
-  const controls = <div className="flex items-center gap-2"><Button variant="ghost" size="icon-sm" aria-label="读取报告状态" title="刷新报告状态" disabled={busy} onClick={onRead}><Icon icon={iconArrowsRotate} className={busy ? 'animate-spin motion-reduce:animate-none' : ''}/></Button></div>
+  const controls = <div className="flex items-center gap-2">{task.round_id && rows.some(row => reportReady(task, row)) && <FeishuReportDocument roundId={task.round_id}/>}<Button variant="ghost" size="icon-sm" aria-label="读取报告状态" title="刷新报告状态" disabled={busy} onClick={onRead}><Icon icon={iconArrowsRotate} className={busy ? 'animate-spin motion-reduce:animate-none' : ''}/></Button></div>
   return <section className="space-y-4" aria-label="逐文件审核报告">{headerActions ? createPortal(controls, headerActions) : controls}
     {packageRequest && packages}
     {readError && <Alert variant="destructive"><AlertTitle>报告状态暂时无法读取</AlertTitle><AlertDescription><p>{readError}</p><Button variant="outline" size="sm" onClick={onReadSupport}>联系支持</Button></AlertDescription></Alert>}

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from product import build_product_store
@@ -79,7 +79,7 @@ from api import web_contract as wc
 from api.access import object_denied
 from api.audit_routes import register_audit_routes
 from api.feishu_jsapi_routes import register_feishu_jsapi_routes
-from api.mcp_confirmation import require_approved_source
+from api.intents import register_intent_routes
 from api.meego_routes import register_meego_routes
 from api.notifications import run_task_notifications
 from api.office_routes import register_office_routes
@@ -87,6 +87,8 @@ from api.precheck_routes import register_precheck_routes
 from api.report_routes import register_report_routes
 from api.rule_routes import register_rule_routes
 from api.sharing_routes import register_sharing_routes
+from api.signing import SigningRefused, signing
+from api.signing import refused as signing_refused
 from api.suite_routes import register_suite_routes
 from api.support_routes import register_support_routes
 from api.task_events import register_task_event_routes
@@ -195,7 +197,7 @@ def create_app(
         allow_origins=settings.web_origins() + (settings.meego_plugin_origins if settings.meego_enabled() else []),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Accept", "Content-Type", "Authorization"],
+        allow_headers=["Accept", "Content-Type", "Authorization", "X-PPAP-Intent"],
         expose_headers=["Content-Disposition", "X-Content-SHA256", "X-Request-ID"],
     )
     configure_logs(settings)
@@ -264,13 +266,15 @@ def create_app(
             if request.method in WRITE_METHODS and getattr(request.state, "action_id", None) is None:
                 # What this person does now is recorded before it takes effect (#362).
                 route = request.scope.get("route")
-                intent = request.headers.get("x-ppap-intent", "").strip()
+                # A proposal named by the request is linked only when it is this person's own (#348).
+                named = request.headers.get("x-ppap-intent", "").strip()
+                request.state.intent = app.state.mcp_store.intent(session.principal, named) if _is_uuid(named) and hasattr(app.state, "mcp_store") else None
                 request.state.action_id = actions.start(
                     store,
                     session.principal,
                     channel=request.scope.get("ppap.channel") or ("mcp" if isinstance(delegated, Delegation) else "meego" if host_token else channel),
                     grant_id=delegated.id if isinstance(delegated, Delegation) else None,
-                    intent_id=intent if _is_uuid(intent) else None,
+                    intent_id=request.state.intent["id"] if request.state.intent else None,
                     method=request.method,
                     route=getattr(route, "path", request.url.path),
                     path=request.url.path,
@@ -281,6 +285,9 @@ def create_app(
     def principal_of(request: Request):
         session = session_of(request)
         return session.principal if session else None
+
+    app.state.session_of = session_of
+    app.add_exception_handler(SigningRefused, signing_refused)
 
     @app.middleware("http")
     async def observe_request(request: Request, call_next):
@@ -387,43 +394,8 @@ def create_app(
             emit("feishu_app_ticket_received", updated=updated)
             return JSONResponse({"ok": True})
         if isinstance(parsed, CardAction):
-            try:
-                receipt = store.enqueue_task_confirmation(parsed)
-                if (
-                    not isinstance(receipt, dict)
-                    or not isinstance(receipt.get("request_id"), str)
-                    or not receipt["request_id"].strip()
-                    or receipt.get("state") not in {"pending", "accepted", "rejected"}
-                ):
-                    raise RuntimeError("invalid_confirmation_receipt")
-            except KeyError:
-                return JSONResponse({"toast": {"type": "error", "content": "无法确认此卡片。请由任务创建人打开页面核对。"}})
-            except ValueError as error:
-                message = {
-                    "rule_candidate_expired": "规则已更新，本次未受理。请打开页面重新识别并核对。",
-                    "task_revision_conflict": "文件或客户选择已变化，本次未受理。请打开页面核对。",
-                    "usage_quota_unavailable": "当前无法确认用量，未开始审核。请打开页面查看。",
-                    "usage_ai_disabled": "飞书AI包开关已关闭，未开始审核。请联系管理员。",
-                    "usage_balance_empty": "当前没有可用额度，未开始审核。请联系管理员。",
-                }.get(str(error), "本次未受理，请打开页面核对当前任务。")
-                return JSONResponse({"toast": {"type": "warning", "content": message}})
-            except Exception:
-                emit("card_confirmation_unavailable", level=logging.WARNING)
-                return JSONResponse({"toast": {"type": "warning", "content": "受理结果尚未确认。请打开页面读取任务，不要重复新建审核。"}})
-            if receipt["state"] == "pending":
-                return JSONResponse({"toast": {"type": "info", "content": "已收到确认，正在核对。请打开审核查看结果。"}})
-            if receipt["state"] == "rejected":
-                reason = receipt.get("reason")
-                safe_reasons = (
-                    "规则已更新，请打开页面重新识别并核对。",
-                    "文件或客户选择已变化，请打开页面核对。",
-                    "当前无法确认用量，请打开页面核对后重新确认。",
-                    "飞书AI包开关已关闭，请联系管理员。",
-                    "当前没有可用额度，请联系管理员。",
-                    "本次未受理，请由任务创建人打开页面核对权限和当前任务。",
-                )
-                return JSONResponse({"toast": {"type": "warning", "content": reason if reason in safe_reasons else "本次未受理，请打开页面核对当前任务。"}})
-            return JSONResponse({"toast": {"type": "success", "content": "本任务已受理，请打开审核查看进度。"}})
+            # Cards sent before signing moved to the Web still carry a start button (#355): send the person to the page.
+            return JSONResponse({"toast": {"type": "info", "content": "请点「查看并核对规则」，在页面上核对后开始审核。"}})
         if isinstance(parsed, UnauthenticatedEvent):
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         if isinstance(parsed, AppMismatch):
@@ -944,7 +916,7 @@ def create_app(
     register_report_routes(app, store, session_of, http, settings)
     register_office_routes(app, store, principal_of, settings)
 
-    @app.post("/integrations/feishu/rounds/{round_id}/writeback", response_model=wc.WritebackResponse)
+    @app.post("/integrations/feishu/rounds/{round_id}/writeback", dependencies=[Depends(signing)], response_model=wc.WritebackResponse)
     def feishu_round_writeback(round_id: str, request: Request) -> JSONResponse:
         session = session_of(request)
         if not session:
@@ -962,7 +934,6 @@ def create_app(
             return JSONResponse({"error": "writeback_target_missing"}, status_code=409)
         return_url = round_return_url(settings.canonical_web_url(), round_body)
         try:
-            require_approved_source(request, f"/rounds/{round_id}", round_body)
             result = write_round_history(http, session.access_token, file_token, round_body, return_url)
         except McpError as exc:
             return JSONResponse({"error": exc.code}, status_code=exc.status)
@@ -1029,6 +1000,7 @@ def create_app(
     register_meego_routes(app, store, meego_store, session_of, http, settings)
     register_sharing_routes(app, store, session_of, http, settings)
     register_feishu_jsapi_routes(app, store, session_of, http, settings)
+    register_intent_routes(app, session_of)
     wc.add_ui_contract(app)
     if settings.mcp_enabled:
         from api.mcp_server import install_mcp

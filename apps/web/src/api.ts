@@ -61,6 +61,20 @@ const messages: Record<string,string> = {
   answer_revision_conflict: '你的答复已在别处更新过，已重新读取，请核对后再保存。',
   answer_required: '请选择一项，或写下你的答案。',
   invalid_answer_request: '答复不完整，请重新选择后再保存。',
+  reauthentication_required: '为确认是你本人在操作，请重新登录后再完成。',
+  intent_unavailable: '这个请求已经处理过，或不再有效。',
+  intent_mismatch: '这个请求不能用于当前操作。',
+  content_changed: '报告内容刚刚有更新，已显示最新内容，请再确认一次。',
+  feishu_user_token_missing: '请重新用飞书登录后再生成报告文档。',
+  proposal_outdated: '这一步已经变化，请回到客户端按最新状态重新发起。',
+}
+
+/** A signing action an external client proposed (#348): the request that completes it names it, and only that one. */
+let activeIntent: {id: string; method: string; path: string} | null = null
+export function setActiveIntent(intent: typeof activeIntent) {activeIntent = intent}
+const intentHeader = (path: string, method: string): Record<string, string> => {
+  const bare = path.split('?')[0]
+  return activeIntent && (activeIntent.method === method && activeIntent.path === bare || method === 'POST' && bare === `/intents/${activeIntent.id}/decline`) ? {'X-PPAP-Intent': activeIntent.id} : {}
 }
 const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined
 export const requestTrace = (cause: unknown) => safeRequestTrace(cause instanceof Error && 'traceId' in cause ? cause.traceId : undefined)
@@ -71,7 +85,10 @@ export function withResponseTrace<T extends Error>(error: T, response: Response)
 }
 export async function request<T, B = unknown>(path: string, method = 'GET', body?: B, signal?: AbortSignal): Promise<T> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) throw new Error('当前处于离线状态，请联网后重试。')
-  const response = await fetch(apiUrl + path, {method, signal, credentials: 'include', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)})
+  const named = intentHeader(path, method)
+  const response = await fetch(apiUrl + path, {method, signal, credentials: 'include', headers: {'Content-Type': 'application/json', ...named}, body: body === undefined ? undefined : JSON.stringify(body)})
+  // Whatever became of a client's proposal, the banner reads it again.
+  if (named['X-PPAP-Intent'] && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('ppap-intent-changed', {detail: response.ok ? 'done' : ''}))
   const result = await response.json().catch(error => {
     if (signal?.aborted) throw error
     if (response.ok) throw withResponseTrace(new TypeError('服务器响应读取失败，请稍后重试。'), response)
@@ -80,6 +97,7 @@ export async function request<T, B = unknown>(path: string, method = 'GET', body
   if (!response.ok) {
     const code = result && typeof result.error === 'string' ? result.error : undefined
     if (response.status === 401 && code === 'unauthenticated' && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+    if (code === 'reauthentication_required' && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('ppap-intent-changed', {detail: code}))
     // An unlisted code stays on the error for support; the person sees what happened and what to do.
     const error = new Error(code && messages[code] || (response.status >= 500 ? '审核服务暂时不可用，请稍后重试。' : '请求未完成，请稍后重试。'))
     Object.assign(error, {code, status: response.status})

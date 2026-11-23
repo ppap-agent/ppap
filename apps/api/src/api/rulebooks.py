@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import Body, FastAPI, Request
+from fastapi import Body, Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from product.mcp import McpError
 from product.store import rulebook_revisions as revisions
@@ -13,7 +13,7 @@ from product.template_library import template_root
 from pydantic import BaseModel
 
 from api import web_contract as wc
-from api.mcp_confirmation import approval_for
+from api.signing import signing
 
 HEADERS = {"Cache-Control": "private, no-store"}
 
@@ -106,7 +106,6 @@ def register_rulebook_routes(app: FastAPI, store, principal_of, settings) -> Non
             if write:
                 if not settings.platform_operator(principal.tenant_key, principal.subject):
                     return JSONResponse({"error": "platform_operator_required"}, status_code=403, headers=HEADERS)
-                approval_for(request)
             found = operation(principal)
         except McpError as exc:
             return JSONResponse({"error": exc.code}, status_code=exc.status, headers=HEADERS)
@@ -129,14 +128,14 @@ def register_rulebook_routes(app: FastAPI, store, principal_of, settings) -> Non
     def read_rulebook_revision(customer_id: str, version: str, revision: int, request: Request):
         return call(request, lambda principal: revisions.read_revision(store, principal, customer_id, version, revision, root))
 
-    @app.post("/rulebooks/{customer_id}/revisions", response_model=RulebookRevisionView, openapi_extra=wc.openapi_body(RulebookRevisionRequest))
+    @app.post("/rulebooks/{customer_id}/revisions", dependencies=[Depends(signing)], response_model=RulebookRevisionView, openapi_extra=wc.openapi_body(RulebookRevisionRequest))
     def create_rulebook_revision(customer_id: str, request: Request, body: Any = Body(...)):
         return call(request, lambda principal: revisions.create_revision(store, principal, customer_id, body, root), write=True)
 
-    @app.post("/rulebooks/{customer_id}/{version}/{revision}/clarified", response_model=RulebookRevisionView)
+    @app.post("/rulebooks/{customer_id}/{version}/{revision}/clarified", dependencies=[Depends(signing)], response_model=RulebookRevisionView)
     def clarify_rulebook_revision(customer_id: str, version: str, revision: int, request: Request):
         return call(request, lambda principal: revisions.clarify(store, principal, customer_id, version, revision, root), write=True)
 
-    @app.put("/rulebooks/{customer_id}/{version}/{revision}/readings", response_model=RulebookRevisionView, openapi_extra=wc.openapi_body(RulebookReadingsRequest))
+    @app.put("/rulebooks/{customer_id}/{version}/{revision}/readings", dependencies=[Depends(signing)], response_model=RulebookRevisionView, openapi_extra=wc.openapi_body(RulebookReadingsRequest))
     def save_rulebook_readings(customer_id: str, version: str, revision: int, request: Request, body: Any = Body(...)):
         return call(request, lambda principal: revisions.save_readings(store, principal, customer_id, version, revision, body, root), write=True)

@@ -181,7 +181,7 @@ def clarify(store, principal, customer_id: str, version: str, revision: int, roo
         head = _head(conn, principal.tenant_id, customer_id, version, revision)
         if head is None:
             raise KeyError("missing")
-        conn.execute("UPDATE product.rulebook_revisions SET clarified_by=%s, clarified_at=now() WHERE id=%s AND clarified_at IS NULL", (principal.user_id, head[0]))
+        conn.execute("UPDATE product.rulebook_revisions SET clarified_at=now() WHERE id=%s AND clarified_at IS NULL", (head[0],))
     found = read_revision(store, principal, customer_id, version, revision, root)
     assert found is not None
     return found
@@ -211,7 +211,7 @@ def save_readings(store, principal, customer_id: str, version: str, revision: in
                 if existing[clause] != reading:
                     raise ValueError("clause_reading_exists")
                 continue
-            conn.execute("INSERT INTO product.rule_clause_readings(revision_id, clause_id, reading, confirmed_by) VALUES (%s,%s,%s,%s)", (head[0], clause, Jsonb(reading), principal.user_id))
+            conn.execute("INSERT INTO product.rule_clause_readings(revision_id, clause_id, reading) VALUES (%s,%s,%s)", (head[0], clause, Jsonb(reading)))
     found = read_revision(store, principal, customer_id, version, revision, root)
     assert found is not None
     return found

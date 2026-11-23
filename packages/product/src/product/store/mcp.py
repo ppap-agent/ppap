@@ -13,6 +13,7 @@ from psycopg.types.json import Jsonb
 
 from product.identity import Principal, ProviderAuthError, Session, new_token, token_hash
 from product.mcp import Delegation, McpError, fingerprint, parse_scopes, pkce_challenge, valid_redirect
+from product.store.actions import DECLINE_ROUTE
 
 
 def now():
@@ -289,30 +290,62 @@ class McpStore:
         with self.connection() as conn:
             conn.execute("UPDATE product.mcp_grants SET revoked_at=now() WHERE id=%s AND user_id=%s AND tenant_id=%s", (grant_id, principal.user_id, principal.tenant_id))
 
-    def prepare_operation(self, delegation: Delegation, request_id: str, tool: str, arguments: dict, scope: str, confirmation: dict | None) -> dict:
+    def prepare_operation(self, delegation: Delegation, request_id: str, tool: str, arguments: dict, scope: str) -> dict:
+        """A write the client makes under its grant, carried out by the gateway."""
+        return self._record(delegation, request_id, tool, arguments, scope, "ready")
+
+    def propose(self, delegation: Delegation, request_id: str, tool: str, arguments: dict, scope: str) -> dict:
+        """A signing action the client proposes: only the person completes it, in the Web (#348). What became of it is read
+        from what the person did (`intent_outcome`); this row never changes."""
+        return self._record(delegation, request_id, tool, arguments, scope, "proposed")
+
+    def _record(self, delegation: Delegation, request_id: str, tool: str, arguments: dict, scope: str, state: str) -> dict:
         ident = str(uuid.UUID(request_id))
         digest = fingerprint({"tool": tool, "arguments": arguments})
         with self.connection() as conn:
             current = self._delegation(conn, delegation.id)
             current.require(scope)
             conn.execute(
-                """INSERT INTO product.mcp_operations(grant_id,request_id,tool,arguments,fingerprint,required_scope,state,confirmation)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(grant_id,request_id) DO NOTHING""",
-                (
-                    delegation.id,
-                    ident,
-                    tool,
-                    Jsonb(arguments),
-                    digest,
-                    scope,
-                    "confirmation_required" if confirmation is not None else "ready",
-                    Jsonb(confirmation) if confirmation is not None else None,
-                ),
+                """INSERT INTO product.mcp_operations(grant_id,request_id,tool,arguments,fingerprint,required_scope,state)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(grant_id,request_id) DO NOTHING""",
+                (delegation.id, ident, tool, Jsonb(arguments), digest, scope, state),
             )
             row = conn.execute("SELECT * FROM product.mcp_operations WHERE grant_id=%s AND request_id=%s", (delegation.id, ident)).fetchone()
             if row["fingerprint"] != digest:
                 raise McpError("request_conflict", 409)
         return self.operation_public(row)
+
+    def intent(self, principal: Principal, operation_id: str) -> dict | None:
+        """A proposal as its person sees it: theirs only, with the client that made it and what became of it."""
+        try:
+            ident = str(uuid.UUID(operation_id))
+        except ValueError:
+            return None
+        with self.connection() as conn:
+            row = conn.execute(
+                """SELECT o.*, c.metadata->>'client_name' AS client_name FROM product.mcp_operations o
+                   JOIN product.mcp_grants g ON g.id=o.grant_id JOIN product.mcp_clients c ON c.id=g.client_id
+                   WHERE o.id=%s AND o.state='proposed' AND g.user_id=%s AND g.tenant_id=%s""",
+                (ident, principal.user_id, principal.tenant_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return {**self.operation_public(row), "grant_id": str(row["grant_id"]), "client_name": row["client_name"] or "MCP 客户端", "outcome": self.intent_outcome(ident)}
+
+    def intent_outcome(self, operation_id: str) -> dict:
+        """What became of a proposal, from what the person did (#362): the latest action that named it."""
+        with self.connection() as conn:
+            row = conn.execute(
+                """SELECT a.route, a.outcome, a.error, a.params, a.at FROM product.actions a
+                   JOIN product.mcp_operations o ON o.id=a.intent_id JOIN product.mcp_grants g ON g.id=o.grant_id
+                   WHERE a.intent_id=%s AND a.user_id=g.user_id AND a.tenant_id=g.tenant_id ORDER BY a.at DESC LIMIT 1""",
+                (operation_id,),
+            ).fetchone()
+        if row is None:
+            return {"state": "proposed"}
+        if row["route"] == DECLINE_ROUTE and row["outcome"] == "succeeded":
+            return {"state": "declined", "reason": (row["params"] or {}).get("reason") or None, "at": row["at"].isoformat()}
+        return {"state": row["outcome"], "error": row["error"], "at": row["at"].isoformat()}
 
     @staticmethod
     def operation_public(row: dict) -> dict:
@@ -325,10 +358,7 @@ class McpStore:
             "tool": row["tool"],
             "state": state,
             "arguments": row["arguments"],
-            "confirmation": row["confirmation"],
             "result": row["result"],
-            "confirmed_by": str(row["confirmed_by"]) if row["confirmed_by"] else None,
-            "confirmed_at": row["confirmed_at"].isoformat() if row["confirmed_at"] else None,
             "required_scope": row["required_scope"],
             "created_at": row["created_at"].isoformat(),
             "updated_at": row["updated_at"].isoformat(),
@@ -354,8 +384,6 @@ class McpStore:
             current.require(row["required_scope"])
             if row["state"] != "ready":
                 return False
-            if row["confirmation"] is not None and (not row["confirmed_at"] or now() - row["confirmed_at"] > timedelta(minutes=15)):
-                raise McpError("confirmation_expired", 409)
             conn.execute("UPDATE product.mcp_operations SET state='running',updated_at=now() WHERE id=%s", (operation_id,))
         return True
 
@@ -364,64 +392,3 @@ class McpStore:
             raise ValueError("invalid_operation_state")
         with self.connection() as conn:
             conn.execute("UPDATE product.mcp_operations SET state=%s,result=%s,updated_at=now() WHERE id=%s AND state='running'", (state, Jsonb(result), operation_id))
-
-    def confirmation_view(self, principal: Principal, operation_id: str, browser: str) -> dict:
-        csrf = new_token()
-        with self.connection() as conn:
-            row = conn.execute(
-                """UPDATE product.mcp_operations o SET csrf_hash=%s,browser_hash=%s FROM product.mcp_grants g
-                                  WHERE o.id=%s AND o.grant_id=g.id AND g.user_id=%s AND g.tenant_id=%s
-                                  AND g.revoked_at IS NULL AND g.expires_at>now() AND o.state='confirmation_required'
-                                  RETURNING o.*""",
-                (token_hash(csrf), token_hash(browser), operation_id, principal.user_id, principal.tenant_id),
-            ).fetchone()
-            if not row:
-                raise McpError("confirmation_unavailable", 404)
-            self._delegation(conn, row["grant_id"]).require(row["required_scope"])
-        return {"tool": row["tool"], "grant_id": str(row["grant_id"]), "arguments": row["arguments"], "confirmation": row["confirmation"], "csrf": csrf}
-
-    def confirm_operation(self, principal: Principal, operation_id: str, browser: str, csrf: str, approve: bool) -> dict:
-        """Record the person's decision on the page; the approved operation is returned so it can take effect at once."""
-        with self.connection() as conn:
-            row = conn.execute("SELECT * FROM product.mcp_operations WHERE id=%s FOR UPDATE", (operation_id,)).fetchone()
-            if not row:
-                raise McpError("confirmation_unavailable", 404)
-            current = self._delegation(conn, row["grant_id"])
-            current.require(row["required_scope"])
-            if (
-                current.session.principal.user_id != principal.user_id
-                or current.session.principal.tenant_id != principal.tenant_id
-                or row["state"] != "confirmation_required"
-                or now() - row["created_at"] > timedelta(hours=1)
-                or not hmac.compare_digest(row["csrf_hash"] or "", token_hash(csrf))
-                or not hmac.compare_digest(row["browser_hash"] or "", token_hash(browser))
-            ):
-                raise McpError("invalid_confirmation", 403)
-            updated = conn.execute(
-                "UPDATE product.mcp_operations SET state=%s,confirmed_by=%s,confirmed_at=now(),updated_at=now() WHERE id=%s RETURNING *",
-                ("ready" if approve else "denied", principal.user_id, operation_id),
-            ).fetchone()
-        return {"grant_id": str(updated["grant_id"]), **self.operation_public(updated)}
-
-    def replan_operation(self, principal: Principal, operation_id: str, confirmation: dict) -> bool:
-        """An approved request that did nothing because its content changed meanwhile goes back to the person, same request,
-        with what it would do now. Only one the business refused before any effect is reopened."""
-        with self.connection() as conn:
-            row = conn.execute(
-                """UPDATE product.mcp_operations o SET state='confirmation_required', confirmation=%s, result=NULL, confirmed_by=NULL,
-                       confirmed_at=NULL, csrf_hash=NULL, browser_hash=NULL, updated_at=now()
-                   FROM product.mcp_grants g WHERE o.id=%s AND o.grant_id=g.id AND g.user_id=%s AND g.tenant_id=%s
-                   AND o.state='failed' AND o.result->'data'->>'error'='confirmation_content_changed' RETURNING o.id""",
-                (Jsonb(confirmation), operation_id, principal.user_id, principal.tenant_id),
-            ).fetchone()
-        return row is not None
-
-    def record_denial_reason(self, principal: Principal, operation_id: str, reason: str) -> None:
-        """Why the person said no, given after the fact; kept once, for the client to act on."""
-        with self.connection() as conn:
-            conn.execute(
-                """UPDATE product.mcp_operations o SET result=jsonb_build_object('denied_reason', %s::text), updated_at=now()
-                   FROM product.mcp_grants g WHERE o.id=%s AND o.grant_id=g.id AND g.user_id=%s AND g.tenant_id=%s
-                   AND o.state='denied' AND o.result IS NULL""",
-                (reason[:500], operation_id, principal.user_id, principal.tenant_id),
-            )

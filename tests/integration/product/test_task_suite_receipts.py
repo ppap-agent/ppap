@@ -353,42 +353,6 @@ def test_concurrent_same_stale_request_replays_one_definite_rejection(system, co
         assert conn.execute("SELECT count(*) FROM engine.jobs WHERE id=%s AND kind='task_confirmation' AND result->>'state'='rejected'", (command["request_id"],)).fetchone()[0] == 1
 
 
-def prepare_card(system, path):
-    from product.feishu import CardAction
-
-    client, _, admin, principal = system
-    admin.settings.feishu_verification_token = "controlled-card-verification"
-    task = client.get(path).json()
-    claimed, actor = admin.claim_task_notification("notification", task_id=task["id"])
-    delivery = admin.start_task_notification(claimed, "notification", actor)
-    callback = delivery["card"]["body"]["elements"][1]["behaviors"][0]["value"]
-    assert callback == {"action": "confirm_audit_task", "notification_id": claimed.id}
-    assert admin.finish_task_notification(claimed, "notification", {"state": "sent", "reason": None, "message_id": "controlled-message"})
-    with admin._conn() as conn:
-        stored = conn.execute("SELECT payload->'confirmation' FROM engine.jobs WHERE id=%s", (claimed.id,)).fetchone()[0]
-    assert stored["expected_confirmation_basis_digest"] == task["confirmation_basis_digest"]
-    return CardAction(principal.tenant_key, principal.subject, claimed.id, "controlled-message"), stored
-
-
-def test_sent_card_cannot_confirm_new_suite_or_replace_its_operation_basis_via_http(system, core_system):
-    client, _, admin, _ = system
-    path, _ = prepare(system, core_system, "UAES", "U12")
-    action, command = prepare_card(system, path)
-    pending = admin.enqueue_task_confirmation(action)
-    assert pending["state"] == "pending"
-    publish_edit(system, "UAES:U12")
-    current = client.get(path).json()
-    replaced = client.post(path + "/confirm", json={**command, "expected_confirmation_basis_digest": current["confirmation_basis_digest"]})
-    assert replaced.status_code == 409 and replaced.json()["error"] == "idempotency_conflict"
-    assert_no_admission(system)
-    claimed = admin.claim_task_confirmation("card")
-    receipt = admin.process_task_confirmation(claimed, "card", usage_policy=lambda _actor: pytest.fail("Stale confirmation must not query quota"))
-    assert receipt["state"] == "rejected" and "审核依据已更新" in receipt["reason"]
-    assert admin.enqueue_task_confirmation(action) == receipt
-    assert client.get(path, params={"request_id": command["request_id"]}).json()["acceptance"] == receipt
-    assert_no_admission(system)
-
-
 def test_runtime_code_change_requires_new_basis_even_with_same_suite(system, core_system):
     client, _, admin, _ = system
     path, _ = prepare(system, core_system, "UAES", "U12")
@@ -441,78 +405,6 @@ def test_confirmation_holds_publication_lock_until_frozen_round_commits(system, 
     assert replay.status_code == 201
     for key in ("round_id", "files", "acceptance", "confirmation_scope"):
         assert replay.json()[key] == accepted[key]
-
-
-def test_http_acceptance_and_card_enqueue_serialize_one_original_intent(system, core_system, monkeypatch):
-    from concurrent.futures import ThreadPoolExecutor
-    from threading import Event
-
-    from psycopg.errors import LockNotAvailable
-
-    client, _, admin, _ = system
-    path, _ = prepare(system, core_system, "UAES", "U12")
-    action, command = prepare_card(system, path)
-    # The API app closes over this instance; patch its class boundary so the
-    # real HTTP route is paused only after its locks and basis comparison.
-    entered, resume = Event(), Event()
-    cls = type(admin)
-    original = cls._check_usage_policy
-
-    def pause(self, *args, **kwargs):
-        entered.set()
-        assert resume.wait(timeout=10)
-        return original(self, *args, **kwargs)
-
-    monkeypatch.setattr(cls, "_check_usage_policy", pause)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        submitted = pool.submit(client.post, path + "/confirm", json=command)
-        try:
-            assert entered.wait(timeout=10)
-            with pytest.raises(LockNotAvailable):
-                admin.enqueue_task_confirmation(action)
-        finally:
-            resume.set()
-        response = submitted.result(timeout=10)
-    assert response.status_code == 201, response.text
-    accepted = response.json()
-    assert admin.enqueue_task_confirmation(action) == accepted["acceptance"]
-    assert client.post(path + "/confirm", json=command).json()["round_id"] == accepted["round_id"]
-    with admin._conn() as conn:
-        assert conn.execute("SELECT count(*) FROM product.audit_rounds").fetchone()[0] == 1
-        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='audit'").fetchone()[0] == 1
-        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE id=%s AND kind='task_confirmation'", (command["request_id"],)).fetchone()[0] == 1
-    assert usage_of(system) == []
-
-
-def test_sent_card_intent_is_immutable_even_before_callback_is_enqueued(system, core_system):
-    from concurrent.futures import ThreadPoolExecutor
-    from threading import Barrier
-
-    client, _, admin, _ = system
-    path, _ = prepare(system, core_system, "UAES", "U12")
-    action, command = prepare_card(system, path)
-    publish_edit(system, "UAES:U12")
-    current = client.get(path).json()
-    barrier = Barrier(2)
-
-    def confirm_changed():
-        barrier.wait(timeout=5)
-        return client.post(path + "/confirm", json={**command, "expected_confirmation_basis_digest": current["confirmation_basis_digest"]})
-
-    def enqueue_original():
-        barrier.wait(timeout=5)
-        return admin.enqueue_task_confirmation(action)
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        request = pool.submit(confirm_changed)
-        queued = pool.submit(enqueue_original)
-        refused, receipt = request.result(timeout=10), queued.result(timeout=10)
-    assert refused.status_code == 409 and refused.json()["error"] == "idempotency_conflict"
-    assert receipt["state"] == "pending"
-    assert_no_admission(system)
-    rejected = admin.process_task_confirmation(admin.claim_task_confirmation("card"), "card")
-    assert rejected["state"] == "rejected" and "审核依据已更新" in rejected["reason"]
-    assert_no_admission(system)
 
 
 def test_legacy_accepted_operation_without_receipt_job_replays_without_new_writes(system, core_system):

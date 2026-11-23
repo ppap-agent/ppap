@@ -8,14 +8,13 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import Body, FastAPI, Request
+from fastapi import Body, Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
-from product.mcp import McpError
 from product.store import rule_questionnaires as questionnaires
 from pydantic import BaseModel
 
 from api import web_contract as wc
-from api.mcp_confirmation import approval_for
+from api.signing import signing
 
 HEADERS = {"Cache-Control": "private, no-store"}
 CONFLICTS = {"idempotency_conflict", "questionnaire_closed", "answer_revision_conflict", "question_exists"}
@@ -155,16 +154,12 @@ def register_rule_questionnaire_routes(app: FastAPI, store, principal_of) -> Non
     def list_rule_questionnaires(request: Request):
         return call(request, lambda principal: questionnaires.list_questionnaires(store, principal))
 
-    @app.post("/rule-questionnaires/cards", response_model=RuleCardsReceipt, openapi_extra=wc.openapi_body(RuleCardsRequest))
+    @app.post("/rule-questionnaires/cards", dependencies=[Depends(signing)], response_model=RuleCardsReceipt, openapi_extra=wc.openapi_body(RuleCardsRequest))
     def send_rule_cards(request: Request, body: Any = Body(...)):
-        """Putting cards before the customer is a platform operator's decision; through MCP, one they approved."""
+        """Putting cards before the customer is a platform operator's decision, made by them in person (a signing moment)."""
         principal = principal_of(request)
         if principal is not None and not store.settings.platform_operator(principal.tenant_key, principal.subject):
             return JSONResponse({"error": "platform_operator_required"}, status_code=403, headers=HEADERS)
-        try:
-            approval_for(request)
-        except McpError as exc:
-            return JSONResponse({"error": exc.code}, status_code=exc.status, headers=HEADERS)
         return call(request, lambda principal: questionnaires.send_cards(store, principal, body))
 
     @app.get("/rule-questionnaires/{questionnaire_id}", response_model=RuleQuestionnaireView)

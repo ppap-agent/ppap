@@ -20,7 +20,7 @@ def _counts_text(counts: dict) -> str:
     return " · ".join(f"{label} {counts[key]} 项" for key, label in labels.items() if key in counts and (key in {"pass_count", "ng_count"} or counts[key]))
 
 
-def task_notification_card(task: dict, stage: str, web_url: str, report_package: dict | None = None, *, confirmation_id: str | None = None) -> dict:
+def task_notification_card(task: dict, stage: str, web_url: str, report_package: dict | None = None) -> dict:
     files = task["files"]
     references = [row for row in files if row["selection"] == "selected" and (row.get("match") or {}).get("state") == "reference"]
     targets = [row for row in files if row["selection"] == "selected" and (row.get("match") or {}).get("state") != "reference"]
@@ -129,33 +129,8 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
         },
         "body": {"direction": "vertical", "padding": "16px", "vertical_spacing": "12px", "elements": [body, opened]},
     }
+    # Starting an audit is signed by the person in the Web (#348, #355): the card links to the task, it does not start it.
     elements = card["body"]["elements"]
-    if (
-        stage == "confirmation"
-        and confirmation_id
-        and matched
-        and type(task.get("estimated_points")) is int
-        and all((row.get("match") or {}).get("state") == "unmatched" or (row.get("match") or {}).get("state") == "matched" and (row.get("match") or {}).get("rule") for row in targets)
-    ):
-        elements.insert(
-            1,
-            {
-                "tag": "button",
-                "type": "primary_filled",
-                "size": "large",
-                "width": "fill",
-                "text": {"tag": "plain_text", "content": "确认规则并开始审核"},
-                "behaviors": [{"type": "callback", "value": {"action": "confirm_audit_task", "notification_id": confirmation_id}}],
-                "confirm": {
-                    "title": {"tag": "plain_text", "content": "开始本次审核？"},
-                    "text": {
-                        "tag": "plain_text",
-                        "content": f"按卡片所列规则{'以深度模式' if task.get('deep_mode') else ''}审核 {matched} 份文件。未匹配文件不纳入审核。预计点数：{task['estimated_points']}。",
-                    },
-                },
-            },
-        )
-        opened["type"] = "default"
     while blocks and len(json.dumps(card, ensure_ascii=False).encode()) > 26000:
         elements[1:] = [opened]
         opened["type"] = "primary_filled"

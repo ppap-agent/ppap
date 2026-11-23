@@ -2,8 +2,9 @@
 
 import hashlib
 import json
+from typing import Any
 
-from fastapi import Request
+from fastapi import Body, Depends, Request
 from fastapi.responses import JSONResponse
 from product.feishu_writeback import (
     FeishuWritebackError,
@@ -16,7 +17,7 @@ from product.mcp import McpError
 
 from api import web_contract as wc
 from api.access import object_denied
-from api.mcp_confirmation import require_approved_source
+from api.signing import signing
 
 
 def register_report_routes(app, store, session_of, http, settings):
@@ -34,9 +35,6 @@ def register_report_routes(app, store, session_of, http, settings):
         try:
             blocks = report_blocks(body, round_return_url(settings.canonical_web_url(), body))
             fingerprint = hashlib.sha256(json.dumps(blocks, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-            if request.method == "POST":
-                # What was approved is the document itself: its content, not every field of the round (#348).
-                require_approved_source(request, f"/integrations/feishu/rounds/{round_id}/report", {"content_fingerprint": fingerprint})
         except McpError as exc:
             return None, None, None, JSONResponse({"error": exc.code}, status_code=exc.status)
         except FeishuWritebackError as exc:
@@ -50,11 +48,20 @@ def register_report_routes(app, store, session_of, http, settings):
             return denied
         return {"report": store.get_report(session.principal, round_id, fingerprint), "content_fingerprint": fingerprint}
 
-    @app.post("/integrations/feishu/rounds/{round_id}/report", response_model=wc.ReportEnvelope)
-    def create_report(round_id: str, request: Request):
+    @app.post(
+        "/integrations/feishu/rounds/{round_id}/report",
+        dependencies=[Depends(signing)],
+        response_model=wc.ReportEnvelope,
+        openapi_extra=wc.openapi_body(wc.ReportRequest),
+    )
+    def create_report(round_id: str, request: Request, body: Any = Body(None)):
         session, blocks, fingerprint, denied = prepare(round_id, request)
         if denied is not None:
             return denied
+        # The document the person saw is the one written: a changed one is shown to them again, not sent (#348).
+        expected = body.get("if_match") if isinstance(body, dict) else None
+        if expected is not None and expected != fingerprint:
+            return JSONResponse({"error": "content_changed"}, status_code=409)
         if not session.access_token:
             return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
         principal = session.principal

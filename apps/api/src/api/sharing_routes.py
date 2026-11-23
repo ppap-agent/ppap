@@ -6,7 +6,7 @@ import uuid
 from typing import Literal
 from urllib.parse import urlencode
 
-from fastapi import Query, Request
+from fastapi import Depends, Query, Request
 from fastapi.responses import JSONResponse, Response
 from product.feishu_usage import FeishuUsageError, tenant_access_token
 from product.files import ObjectMissing, attachment_content_disposition
@@ -26,7 +26,7 @@ from product.store.share_delivery import new_share_attempt, target_key
 from pydantic import TypeAdapter, ValidationError
 
 from api import web_contract as wc
-from api.mcp_confirmation import approval_for, require_approved_source
+from api.signing import signing
 
 HEADERS = {"Cache-Control": "private, no-store"}
 
@@ -145,7 +145,7 @@ def register_sharing_routes(app, store, session_of, http, settings):
             attempt.update(send_report_message(http, token, attempt["target"], attempt["provider_uuid"], message_type, message))
             shares.save(guard, row)
 
-    @app.post("/audit-report-shares", response_model=wc.AuditReportShare, openapi_extra=wc.openapi_body(wc.AuditReportShareRequest))
+    @app.post("/audit-report-shares", dependencies=[Depends(signing)], response_model=wc.AuditReportShare, openapi_extra=wc.openapi_body(wc.AuditReportShareRequest))
     def send(body: dict, request: Request):
         try:
             command = TypeAdapter(wc.AuditReportShareRequest).validate_python(body, strict=True)
@@ -177,7 +177,7 @@ def register_sharing_routes(app, store, session_of, http, settings):
                 selected = [target_for(session.principal, _profile, token, target) for target in command["targets"]]
                 if any(target["eligibility"] != "eligible" for target in selected):
                     raise ValueError("share_target_unverified")
-                row = shares.accept(guard, session.principal, command, selected, approval=approval_for(request))
+                row = shares.accept(guard, session.principal, command, selected)
                 dispatch(guard, row, session, token, list(row["result"]["attempts"]))
                 return JSONResponse(shares.public(row), headers=HEADERS)
         except (KeyError, ValueError, ReportSharingError, FeishuUsageError, ObjectMissing) as error:
@@ -236,7 +236,6 @@ def register_sharing_routes(app, store, session_of, http, settings):
                 if guard is None:
                     raise ValueError("share_request_pending")
                 shares.recover(guard, row)
-                require_approved_source(request, f"/audit-report-shares/{request_id}", shares.public(row))
                 if (
                     history[-1]["phase"] != "failed"
                     or command["attempt_id"] == request_id

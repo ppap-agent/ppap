@@ -96,6 +96,8 @@ class Session:
     access_expires_at: datetime | None = None
     refresh_expires_at: datetime | None = None
     provider_authorization_id: str = ""
+    # When the person last signed in on this session; signing moments proposed from outside need it recent (#355).
+    signed_in_at: datetime | None = None
 
     def needs_refresh(self, at: datetime) -> bool:
         if self.access_expires_at is None:

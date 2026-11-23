@@ -750,10 +750,61 @@ class ReportExport(TypedDict):
     error_code: NotRequired[str | None]
 
 
+class ReportRequest(TypedDict, total=False):
+    # The content fingerprint the person saw (from GET); a different current document is refused, not sent.
+    if_match: str
+
+
 class ReportEnvelope(TypedDict):
     report: ReportExport | None
     # The document's content, as it would be written now; an approval to send it binds to this.
     content_fingerprint: NotRequired[str]
+
+
+class IntentOutcome(TypedDict):
+    # proposed: not acted on yet; declined: the person said no; otherwise the result of the person's latest attempt.
+    state: Literal["proposed", "declined", "pending", "succeeded", "failed", "unknown"]
+    reason: NotRequired[str | None]
+    error: NotRequired[str | None]
+    at: NotRequired[str]
+
+
+class IntentDetail(TypedDict):
+    kind: Literal["facts", "table", "text", "note"]
+    title: NotRequired[str]
+    rows: NotRequired[list[list[Any]]]
+    head: NotRequired[list[str]]
+    more: NotRequired[int]
+    text: NotRequired[str]
+
+
+class IntentStep(TypedDict):
+    # A step with no page of its own (rule clarification), as it stands now; confirming makes exactly this call.
+    method: Literal["POST", "PUT"]
+    path: str
+    body: Any
+    summary: list[str]
+    details: list[IntentDetail]
+
+
+class Intent(TypedDict):
+    """A signing action an external client proposed (#348). The person completes it on `page`, or declines it."""
+
+    id: str
+    tool: str
+    client_name: str
+    created_at: str
+    method: str
+    path: str
+    page: str
+    outcome: IntentOutcome
+    step: NotRequired[IntentStep | None]
+    # Why a step can no longer be shown as proposed (the task moved on, the connection was revoked).
+    unavailable: NotRequired[str]
+
+
+class IntentDecline(TypedDict, total=False):
+    reason: str
 
 
 class WritebackResponse(TypedDict, total=False):
