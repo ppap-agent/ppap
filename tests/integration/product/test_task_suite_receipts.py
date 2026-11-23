@@ -657,6 +657,9 @@ def test_a_card_button_starts_the_audit_through_the_web_route_as_the_person(syst
     assert '"callback"' not in json.dumps(card)
     # The same card clicked again is the same request: still one round.
     assert click()["type"] == "success" and len(rounds_of(system)) == 1
+    # A start made elsewhere first (another request for the same task) is said plainly, and starts nothing more.
+    value = {"call": {**value["call"], "body": {**value["call"]["body"], "request_id": str(uuid.uuid4())}}}
+    assert click()["content"] == "这次审核已经开始过，不用再点。打开审核可以查看进度。" and len(rounds_of(system)) == 1
     with admin._conn() as conn:
         rows = conn.execute("SELECT channel, outcome FROM product.actions WHERE route = '/audit-tasks/{task_id}/confirm' ORDER BY at").fetchall()
-    assert [tuple(row) for row in rows] == [("feishu_card", "failed"), ("feishu_card", "succeeded"), ("feishu_card", "succeeded")]
+    assert [tuple(row) for row in rows] == [("feishu_card", "failed"), ("feishu_card", "succeeded"), ("feishu_card", "succeeded"), ("feishu_card", "failed")]

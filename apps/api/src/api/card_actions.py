@@ -29,6 +29,8 @@ SAY = {
     "usage_ai_disabled": "飞书AI包开关已关闭，没有开始审核。请联系管理员。",
     "usage_balance_empty": "当前没有可用额度，没有开始审核。请联系管理员。",
     "access_denied": "只有这次审核的创建人能开始它。",
+    # Started already (in the Web, or from another card): nothing was started twice.
+    "draft_already_accepted": "这次审核已经开始过，不用再点。打开审核可以查看进度。",
 }
 _running: set[asyncio.Task] = set()
 
