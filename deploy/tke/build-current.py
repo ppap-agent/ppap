@@ -348,8 +348,8 @@ def build(sha: str, attempt: Path, run_id: int | None) -> None:
     require(count == 1, "expected one application source pin")
     for component, ref in pins.items():
         text, count = re.subn(r"(?m)^([ ]+image: )(?:\S+/)?(?:ppap-|current-)?" + component + r"(?:@|:).+$", lambda m: m[1] + ref, text)
-        # The app image runs the API, the Worker and the legacy ticket sync CronJob; all move together.
-        require(count == (3 if component == "app" else 1), "unexpected image pin count for " + component)
+        # The app image runs the API, the Worker, the legacy ticket sync CronJob and the Suite seed Job; all move together.
+        require(count == (4 if component == "app" else 1), "unexpected image pin count for " + component)
     with (HERE / ".build.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         require(config.read_text() == original, "current.yaml changed during build; image pins are not applied")

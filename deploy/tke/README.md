@@ -73,7 +73,7 @@ is needed. Only preview caches are ephemeral; originals remain in PPAP storage.
 
 - **推送前**：在本机跑受影响范围的 CI 等效测试，通过再推：`python3 -m scripts.ci_shards integration`（需要 Docker），`distributions --shard <n>`，以及相关单元测试。本地 API 测试用的开发数据库要先起来。
 - **构建**：`deploy/tke/build-current.py <完整 SHA>` 在云效流水线构建，本机只是发起和等待（细节见下文「构建镜像」）。并发由云效自己排队；中断后用 `--run-id` 续读原运行，不盲目重发。构建期间不改 `deploy/tke/current.yaml`。改 `pyproject.toml` 或 `uv.lock` 会让依赖基础层失效、要求先重建基础层，非依赖改动不要碰这两个文件。
-- **部署**（ppap-test，整套一起）：有新迁移时先更新 ConfigMap `ppap-current-migrations` 并重跑 Job `ppap-current-init-db`，读回 `product.schema_migrations`；再按下文「更新镜像或应用清单」应用 ConfigMap、Deployment 和 CronJob，等滚动更新完成；提交 `current.yaml` 的镜像版本。个人标识和密钥只放根目录 `.env` 与 Secret `ppap-current`，容器只按 key 引用，不进 git。
+- **部署**（ppap-test，整套一起）：有新迁移时先更新 ConfigMap `ppap-current-migrations` 并重跑 Job `ppap-current-init-db`，读回 `product.schema_migrations`；再按下文「更新镜像或应用清单」应用 ConfigMap、Deployment 和 CronJob，等滚动更新完成，再运行 Job `ppap-current-seed-suites` 把本次的检查程序叶子写入 Suite（见下文）；提交 `current.yaml` 的镜像版本。个人标识和密钥只放根目录 `.env` 与 Secret `ppap-current`，容器只按 key 引用，不进 git。
 - **线上验证**：用真实客户端走真实路径，读回页面上看得到的结果；授权页和签字类提议的网页在内置浏览器里点。会改动真实客户数据、且无法撤回的步骤（如关闭真实问卷、往里加卡片），改在单独的测试版本上验证，并告诉产品负责人留下了哪些测试数据。扣点数的操作先说明点数。
 
 ## Authoritative release procedure
@@ -155,6 +155,15 @@ kubectl -n ppap-test rollout status deployment/ppap-current-web --timeout=180s
 
 API／Web readiness 和 Deep 本地通信探针由 Kubernetes 持续执行，不在发布命令中重复实现。Worker 当前没有独立 readinessProbe；Pod Ready 不等于已验证队列消费。仅在本次修改涉及消费链路或出现异常时检查 Worker 心跳。普通发布不调用真实模型或通知接口。
 
+
+滚动完成后写入本次的检查程序。新轮次执行的是数据库里的 Suite，不是镜像里的文件：Job `ppap-current-seed-suites` 用本次 app 镜像运行 `product.seed_standard_suites --apply --publish-defaults`，把各目录叶子（`rules.json`、`checker.py`、`resources.py`）存为不可变修订，并在官方指针仍是仓库默认时指向它；经语料证明发布的官方版本、企业固定的版本不被替换，已冻结的轮次不受影响。内容没变的叶子不产生新修订。Job 不可修改，每次部署先删再建：
+
+```sh
+kubectl -n ppap-test delete job ppap-current-seed-suites --ignore-not-found
+kubectl kustomize deploy/tke | yq 'select(.kind == "Job" and .metadata.name == "ppap-current-seed-suites")' | kubectl -n ppap-test apply -f -
+kubectl -n ppap-test wait --for=condition=complete job/ppap-current-seed-suites --timeout=300s
+kubectl -n ppap-test logs job/ppap-current-seed-suites | tail -c 2000
+```
 
 此 apply 命令只更新应用的 ConfigMap 与 Deployment；Secret 已按前述步骤单独同步。不运行初始化 Job、数据库迁移，也不修改旧版入口、Office 或存储卷。变更 Worker 协议或数据库结构时，按该变更的兼容要求安排更新顺序。
 

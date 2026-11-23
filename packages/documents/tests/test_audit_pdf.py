@@ -411,9 +411,10 @@ def test_every_check_is_listed_and_remediation_holds_only_failed_items_merged_by
         for number in range(1, 49):
             assert f"R{number}·" in appendix
         remediation = _chapter(text, "七、整改建议汇总")
-        # Two problems at one location merge into one point; the action names the location and the clause it must meet.
-        assert "①改值：使「尺寸检验报告.xlsx·工作表「检验」A2」满足审核项「类别3」（现状：第3项缺值）" in remediation
-        assert "②改值：使「尺寸检验报告.xlsx·工作表「检验」A2」满足审核项「类别7」（现状：第7项缺值）" in remediation
+        # Two problems at one location merge into one point; with no correct value in the result, the action is 增补 at the place.
+        assert "①增补：在「尺寸检验报告.xlsx·工作表「检验」A2」补齐审核项「类别3」要求的内容（现状：第3项缺值）" in remediation
+        assert "②增补：在「尺寸检验报告.xlsx·工作表「检验」A2」补齐审核项「类别7」要求的内容（现状：第7项缺值）" in remediation
+        assert "改值：使" not in remediation
         assert "已核实" not in remediation
         assert "增补零件号P1的《图纸》" in remediation and "增补零件号P1的《材料证明》，删除本批零件号不一致的《材料证明》" in remediation
         assert "建议截止日" in remediation and "整改益处" in remediation and "修订后自查要点" in remediation
@@ -600,3 +601,27 @@ def test_a_row_taller_than_a_page_runs_on_over_pages_without_losing_evidence():
     assert "逐条核对的说明。" in text
     if check["evidence"]:
         assert all(f"证据片段{number}" in text for number in (1, 40))
+
+
+def test_one_action_is_one_point_and_a_precheck_request_joins_the_ng_that_asks_for_the_same_file():
+    source = report_source()
+    base = source["audit"]["checks"][0]
+    checks = []
+    for number, (level, document) in enumerate((("B", "图纸"), ("A", "图纸"), ("A", "过程流程图")), 1):
+        check = deepcopy(base)
+        check["rule_item"].update(id=f"R{number}", category=f"类别{number}")
+        check["evidence"] = []
+        check["finding"] = {"status": "NG", "suggestions": f"缺少{document}。", "locator": {"semantic": {"severity": level, "supply": {"kind": "missing", "document": document}}}}
+        checks.append(check)
+    source["audit"]["checks"] = checks
+    source["audit"]["counts"] = {"pass_count": 0, "ng_count": 3, "unknown_count": 0}
+    source["precheck_warnings"] = [{**_warning("W01", "缺少同零件的《过程流程图》。"), "location": "尺寸检验报告.xlsx"}]
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        remediation = _chapter("".join(_pages(document)), "七、整改建议汇总")
+    overview = remediation.split("P1立即整改")[0]
+    # Two clauses asking for the drawing are one point at the more urgent level; each keeps its basis.
+    assert overview.count("增补《图纸》") == 1 and overview.count("增补《过程流程图》") == 1
+    assert "依据：第1项·审核项R1（类别1）" in remediation and "依据：第2项·审核项R2（类别2）" in remediation
+    # The precheck asks for the same flow chart: no second point, its basis joins the NG.
+    assert "增补同零件的《过程流程图》" not in remediation and "依据：预检W01" in remediation
+    assert "本次无P2项" in remediation

@@ -7,7 +7,7 @@
 | 是什么 | 权威 | 谁改、怎么改 |
 |---|---|---|
 | 审核用的规则（受理时冻结进轮次） | 检查程序目录叶子的 `packages/audit/src/audit/checkers/<公司>/<叶子>/rules.json` → `scripts/compile_v4_presets.py` 编译成 `packages/audit/src/audit/preset_rules.json`（CI 用 `--check` 防漂移）→ 企业成员登录时装进 `product.rule_versions` | 线下改叶子并编译，随发布生效；产品内没有入口 |
-| 检查程序 | 目录叶子的 `checker.py`/`resources.py`，按客户成组；官方版本经 `product.seed_standard_suites` 与 `python -m scripts.official_suites` 验证、发布（见 [tests/README](../tests/README.md#官方-suite-验证与发布)） | 线下，平台运营；企业采用版本经 `PUT /suites/{key}/active`（只给平台运营，无网页入口；成员可用 `GET` 读当前版本；无指针时返回 `candidate_only`，未验证候选须确认风险；发布回执未知只读回） |
+| 检查程序 | 目录叶子的 `checker.py`/`resources.py`，按客户成组；官方版本经 `product.seed_standard_suites` 与 `python -m scripts.official_suites` 验证、发布（见 [tests/README](../tests/README.md#官方-suite-验证与发布)） | 线下改叶子，每次部署由 Job `ppap-current-seed-suites` 写入（仓库默认的官方指针随之更新，经语料证明发布的不被替换）；企业采用版本经 `PUT /suites/{key}/active`（只给平台运营，无网页入口；成员可用 `GET` 读当前版本；无指针时返回 `candidate_only`，未验证候选须确认风险；发布回执未知只读回） |
 | 规则库修订（澄清中的客户规则） | `product.rulebook_revisions`（每个企业一份；条款存在 `rule_versions`，带 `rulebook_revision_id`，不进入审核匹配） | 规则澄清循环（MCP）或导入命令；写入后冻结 |
 
 另外两条独立路径：企业自定义规则经 `POST /rules`、`/rules/parse`（只给平台运营，无网页入口；发布为企业自己的不可变 Suite，条款先全部为未检查，检查程序由平台线下准备后作为新修订提供；同一前置规则已有后继时返回 `suite_head_conflict`），数据标准化预检（`product.precheck*`）不读规则、不调检查程序。网页规则页对这些都只读，唯一的写是客户成员作答问卷。MCP 的审核流程只按客户 key 选规则组，不改规则。

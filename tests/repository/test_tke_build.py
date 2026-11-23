@@ -122,8 +122,8 @@ def test_build_updates_only_source_and_image_pins_after_verification(tmp_path):
         operation(SHA, tmp_path, 2)
     text = config.read_text()
     changed = [(a, b) for a, b in zip(original.splitlines(), text.splitlines(), strict=True) if a != b]
-    # Source, the app image (API, Worker, ticket sync CronJob), Web and Deep.
-    assert len(changed) == 6 and calls == ["verified"]
+    # Source, the app image (API, Worker, ticket sync CronJob, Suite seed Job), Web and Deep.
+    assert len(changed) == 7 and calls == ["verified"]
     assert "PPAP_BUILD_SHA: " + SHA in text
     assert all(ref in text for ref in IMAGES.values())
 

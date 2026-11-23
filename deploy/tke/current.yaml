@@ -895,3 +895,55 @@ spec:
             - name: script
               configMap:
                 name: legacy-ticket-sync
+---
+# The checkers new rounds run are the Suite rows in the database, not the image's files. Each deploy loads
+# the release's checker leaves (rules.json, checker.py, resources.py) and makes them the official default
+# where the head is a repository default; a head published with a corpus proof, or a tenant's pinned
+# revision, is never replaced. Frozen rounds keep their revisions. Re-run per deploy (README 发布 SOP).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ppap-current-seed-suites
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        k8s-app: ppap-current-seed-suites
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: seed-suites
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:1a77e79f4d4c812898075223eeaf0081a4110e82b86932a98e498d33e7d9b7c9
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "product.seed_standard_suites", "--apply", "--publish-defaults"]
+          envFrom:
+            - configMapRef:
+                name: ppap-current
+          env:
+            - name: PPAP_PG_MIGRATOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_PG_MIGRATOR_PASSWORD
+            - name: PPAP_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_ACCESS_KEY
+            - name: PPAP_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_SECRET_KEY
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

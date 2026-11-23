@@ -75,11 +75,11 @@ class TkeCurrentDeployTests(unittest.TestCase):
         self.assertEqual(config["metadata"]["namespace"], "ppap-test")
         self.assertEqual(config["data"]["PPAP_USAGE_CHARGE_ENABLED"], "false")
         images = [container["image"] for doc in docs for container in _containers(doc) if container.get("image")]
-        app_containers = [container for doc in docs for container in _containers(doc) if container.get("name") in {"api", "worker", "deep", "web"}]
+        app_containers = [container for doc in docs for container in _containers(doc) if container.get("name") in {"api", "worker", "deep", "web", "seed-suites"}]
         self.assertRegex(config["data"]["PPAP_BUILD_SHA"], r"^[0-9a-f]{40}$")
         for container in app_containers:
-            # API and Worker run the one app image; each selects its process with PPAP_SERVICE.
-            repository = "app" if container["name"] in {"api", "worker"} else container["name"]
+            # API, Worker and the Suite seed Job run the one app image; API and Worker select their process with PPAP_SERVICE.
+            repository = "app" if container["name"] in {"api", "worker", "seed-suites"} else container["name"]
             self.assertRegex(container["image"], REGISTRY + repository + r"@sha256:[0-9a-f]{64}$")
             self.assertEqual(container["imagePullPolicy"], "IfNotPresent")
         self.assertTrue(any("postgres:" in image for image in images))
@@ -88,16 +88,19 @@ class TkeCurrentDeployTests(unittest.TestCase):
         for doc in docs:
             for container in _containers(doc):
                 name = container.get("name")
-                if name not in {"api", "worker", "deep", "init-bucket"}:
+                if name not in {"api", "worker", "deep", "init-bucket", "seed-suites"}:
                     continue
                 self.assertFalse(any("secretRef" in entry for entry in container.get("envFrom", [])), name)
                 keys = {entry.get("valueFrom", {}).get("secretKeyRef", {}).get("key") for entry in container.get("env", [])}
-                expected = {"PPAP_PG_API_PASSWORD"} if name == "api" else {"PPAP_PG_WORKER_PASSWORD"} if name in {"worker", "deep"} else set()
+                expected = {"api": {"PPAP_PG_API_PASSWORD"}, "worker": {"PPAP_PG_WORKER_PASSWORD"}, "deep": {"PPAP_PG_WORKER_PASSWORD"}, "seed-suites": {"PPAP_PG_MIGRATOR_PASSWORD"}}.get(name, set())
                 self.assertEqual(keys & database_keys, expected, name)
         worker = next(container for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-worker" for container in _containers(doc) if container.get("name") == "worker")
         init_db = next(container for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-init-db" for container in _containers(doc) if container.get("name") == "init-db")
         init_command = "\n".join(init_db.get("args") or [])
         self.assertIn("sh /migrations/apply.sh", init_command)
+        # Every deploy loads the release's checker leaves into the official Suite rows new rounds run.
+        seed = next(container for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-seed-suites" for container in _containers(doc) if container.get("name") == "seed-suites")
+        self.assertEqual(seed["command"], ["python", "-m", "product.seed_standard_suites", "--apply", "--publish-defaults"])
 
         command = "\n".join(worker.get("args") or [])
         self.assertIn('until [ -S "$PPAP_DEEP_CONTROLLER_SOCKET" ]', command)

@@ -294,8 +294,8 @@ def _plain(value: str) -> str:
 
 
 def _ng_action(source: dict, check: dict) -> str:
-    """The action for one NG: 增补 a file named by the evidence, or 改值 at its location to meet the clause.
-    A correct value the evidence does not give is never invented."""
+    """The action for one NG: 增补 a file named by the evidence, or 增补 at its location what the clause requires.
+    A frozen result never carries the correct value, so the action is never 改值 with an invented value (#338 五)."""
     if supply := _supply(check):
         document, part = supply["document"], supply.get("part_number")
         if supply["kind"] == "missing":
@@ -306,7 +306,7 @@ def _ng_action(source: dict, check: dict) -> str:
     rule = check["rule_item"]
     current = _plain((check.get("finding") or {}).get("suggestions") or "")
     # One executable sentence (PRD §2.11 六): the 审核项 names the requirement; its full clause text stays in 依据 and chapter 九.
-    return f"改值：使「{_first_location(source, check)}」满足审核项「{rule.get('category') or rule['id']}」" + (f"（现状：{current.rstrip('。')}）" if current else "")
+    return f"增补：在「{_first_location(source, check)}」补齐审核项「{rule.get('category') or rule['id']}」要求的内容" + (f"（现状：{current.rstrip('。')}）" if current else "")
 
 
 def _warning_action(warning: dict) -> str:
@@ -322,29 +322,36 @@ def _warning_action(warning: dict) -> str:
 
 
 def _remediation_items(source: dict) -> list[dict]:
-    """Every problem as a remediation point, ordered by priority and then by the clause order of the file."""
-    items = []
+    """Every problem as a remediation point, ordered by priority and then by the clause order of the file.
+
+    One action is one point: problems that call for the same action at the same place share it and list
+    every basis. A precheck request for a file an NG already asks to supply joins that NG's point."""
+    items: list[dict] = []
+    by_action: dict[tuple[str, str], dict] = {}
+
+    def add(level, location: str, action: str, basis: str, self_check: str) -> None:
+        if (found := by_action.get((location, action))) is None:
+            found = by_action[(location, action)] = {"level": level, "location": location, "action": action, "basis": [], "self_check": []}
+            items.append(found)
+        elif (*LEVELS, None).index(level) < (*LEVELS, None).index(found["level"]):
+            found["level"] = level  # The shared point takes the most urgent level among its problems.
+        found["basis"].append(basis)
+        found["self_check"].append(self_check)
+
     for number, check in _failed(source["audit"]):
         rule = check["rule_item"]
-        items.append(
-            {
-                "level": _level(check),
-                "location": _first_location(source, check),
-                "action": _ng_action(source, check),
-                "basis": f"第 {number} 项 · 审核项 {rule['id']}（{rule['category']}）",
-                "self_check": f"第 {number} 项 · 审核项 {rule['id']}（{rule['category']}）已满足",
-            }
-        )
+        label = f"第 {number} 项 · 审核项 {rule['id']}（{rule['category']}）"
+        add(_level(check), _first_location(source, check), _ng_action(source, check), label, label + "已满足")
+    supplied = [item for item in items if item["action"].startswith("增补") and "《" in item["action"]]
     for warning in _warnings(source):
-        items.append(
-            {
-                "level": "C",
-                "location": warning["location"],
-                "action": _warning_action(warning),
-                "basis": f"预检 {warning['code']} {warning['title']}",
-                "self_check": f"预检 {warning['code']}「{warning['title']}」不再出现",
-            }
-        )
+        basis, self_check = f"预检 {warning['code']} {warning['title']}", f"预检 {warning['code']}「{warning['title']}」不再出现"
+        action = _warning_action(warning)
+        documents = re.findall(r"《(.+?)》", action) if warning["code"] == "W01" else []
+        if documents and (owner := next((item for item in supplied if all(f"《{name}》" in item["action"] for name in documents)), None)):
+            owner["basis"].append(basis)
+            owner["self_check"].append(self_check)
+            continue
+        add("C", warning["location"], action, basis, self_check)
     order = (*LEVELS, None)
     return sorted(items, key=lambda item: order.index(item["level"]))
 
@@ -382,11 +389,13 @@ def _remediation(source: dict) -> list:
             lines = [f"<h3>整改要点 {index}</h3>"]
             lines += [f"<p>整改要点：{text(point)}</p>" for point in points(entries)]
             lines.append(f"<p>位置：{text(location)}</p>")
-            lines += [f"<p class='meta'>依据：{text(entry['basis'])}</p>" for entry in entries]
+            lines += [f"<p class='meta'>依据：{text(basis)}</p>" for entry in entries for basis in entry["basis"]]
             lines.append(f"<p>建议截止日：{DEADLINE[level]}</p>")
             lines.append(f"<p>整改益处：{BENEFIT[level]}</p>")
             parts.append("".join(lines))
-    checks = [f"<p>□ {number}. {text(location)}：" + "；".join(text(entry["self_check"]) for entry in entries) + "</p>" for number, (_level, location, entries) in enumerate(groups, 1)]
+    checks = [
+        f"<p>□ {number}. {text(location)}：" + "；".join(text(check) for entry in entries for check in entry["self_check"]) + "</p>" for number, (_level, location, entries) in enumerate(groups, 1)
+    ]
     parts.append("<h2>修订后自查要点</h2>" + "".join(checks))
     return parts
 
