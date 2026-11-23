@@ -185,7 +185,7 @@ def rulebook_revision(revision: dict, proposals: dict[str, dict]) -> tuple[list[
     summary = [f"把 {len(proposals)} 条条款的新写法确认为 {_revision_name(revision, revision['revision'] + 1)}。"]
     details: list[dict] = []
     for clause, row in proposals.items():
-        grounds = "；".join(f"卡片 {source['question_key']}（{'、'.join(source['answerers'])}）" for source in row["sources"])
+        grounds = "；".join(f"卡片 {source['question_key']}（{'、'.join(source['answerers'])}）" if "question_key" in source else f"平台裁定：{source['ruling']}" for source in row["sources"])
         details.append({"kind": "facts", "title": clause, "rows": [("改动", CHANGE[row["kind"]]), ("说明", row["note"]), ("依据", grounds), ("提出人", row["by"])]})
         details.append({"kind": "text", "title": "原来", "text": before[clause]})
         details.append({"kind": "text", "title": "改为", "text": row["text"]})

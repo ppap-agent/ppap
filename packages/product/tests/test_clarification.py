@@ -263,3 +263,25 @@ def test_a_questionnaire_answered_before_every_clause_was_reviewed_keeps_its_key
     assert state["reviews"]["A:2"]["revision"] == 0
     assert [card["key"] for card in c._standing(state, found, r0)["answered"]] == ["A:1#1", "A:2#1"]
     assert {i["code"] for i in c.issues(TASK, state, found)} == {"CLAUSE_ANSWERED"}
+
+
+def test_a_clause_is_reworded_on_a_platform_ruling_and_reviewed_before_it_is_frozen():
+    """A clause that leans on a confirmed platform ruling takes it into its own words; the ruling is the ground shown."""
+    state, r0 = c.new_state("uaes", "v9.0"), revision(0, {"A:1": "须已签名", "A:2": "须盖章"})
+    stamp = {"quote": "须盖章", "role": "necessary", "scope": "盖章", "meaning": "要盖章。"}
+    found = facts(r0, [answered("A:1#1", 0)])  # a card on A:1 still waits for its answer
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", review([AMBIGUITY]), "A:1")
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", {**review(), "requirements": [stamp]}, "A:2")
+    ruling = "签署区有一处有效印章即可，不要求每栏都盖。"
+    # Nothing to ask: only the reword is offered beside the confirmation, and it needs a ground.
+    with pytest.raises(c.Invalid):
+        act(state, found, "CLAUSE_REWORD", "propose_text", {"clause": "A:2", "text": "须盖章，一处有效印章即可", "kind": "same", "note": "写明印章口径"})
+    state = act(state, found, "CLAUSE_REWORD", "propose_text", {"clause": "A:2", "text": "须盖章，签署区有一处有效印章即可", "kind": "same", "note": "写明印章口径", "rulings": [ruling]})
+    assert state["proposals"]["A:2"]["sources"] == [{"ruling": ruling}]
+    # The new wording is reviewed before revision 1 freezes; the reword waits until it is.
+    view = c.project(TASK, state, found)
+    assert view["phase"] == "reviewing" and [i["subject"]["key"] for i in view["issues"]] == ["A:2"]
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", {**review(), "requirements": [{**stamp, "quote": "须盖章，签署区有一处有效印章即可"}]}, "A:2")
+    body = plan_of(state, found)[0]["body"]
+    assert body["changes"]["A:2"] == {"kind": "same", "note": "写明印章口径", "sources": [{"ruling": ruling}]}
+    assert rulebooks.revision_problems(body["documents"], body["changes"], r0["documents"]) == []

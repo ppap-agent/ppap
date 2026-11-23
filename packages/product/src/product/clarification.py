@@ -156,16 +156,24 @@ def decide(state: dict, facts: dict, issue: dict, action_id: str, value: Any, by
             raise Invalid("reading_rejected", problems)
         return {"type": "read", "clause": clause["id"], "digest": clause["digest"], "reading": reading, "by": by}
     assert revision is not None
-    clause = next(row for row in clauses(revision) if row["id"] == issue["subject"]["key"])
+    key = issue["subject"]["key"] if issue["subject"]["kind"] == "clause" else value.get("clause")
+    found = [row for row in clauses(revision) if row["id"] == key]
+    if not found:
+        raise Invalid("proposal_rejected", ["clause 要是当前修订里的一条条款"])
+    clause = found[0]
     answered = {card["key"]: card for card in _standing(state, facts, revision)["answered"] if card["items"][0].split("#", 1)[0] == clause["id"]}
     if action_id == "keep_text":
         return {"type": "kept", "clause": clause["id"], "cards": sorted(answered), "reason": _words(value.get("reason"), 2000), "by": by}
     if action_id == "propose_text":
-        cited = value.get("cards")
+        cited, rulings = value.get("cards") or [], value.get("rulings") or []
         text, kind = _words(value.get("text"), rulebooks.MAX_CLAUSE), value.get("kind")
         problems = []
-        if not isinstance(cited, list) or not cited or not set(cited) <= set(answered):
-            problems.append("cards 要列出这条条款已答复的卡片")
+        if not isinstance(cited, list) or not set(cited) <= set(answered):
+            problems.append("cards 只能列出这条条款已答复的卡片")
+        if not isinstance(rulings, list) or not all(isinstance(r, str) and 0 < len(r.strip()) <= 2000 for r in rulings):
+            problems.append("rulings 的每一项要是一段平台裁定的原文")
+        elif not cited and not rulings:
+            problems.append("新写法要有依据：已答复的卡片，或平台裁定的原文")
         if kind not in {"same", "changed"}:
             problems.append("kind 只能是 same 或 changed")
         if text == clause["text"]:
@@ -173,6 +181,7 @@ def decide(state: dict, facts: dict, issue: dict, action_id: str, value: Any, by
         if problems:
             raise Invalid("proposal_rejected", problems)
         sources = [{"question_key": answered[key]["asked_as"], "answerers": sorted({answer["answerer"] for answer in answered[key]["answers"]})} for key in sorted(set(cited))]
+        sources += [{"ruling": ruling.strip()} for ruling in rulings]
         return {
             "type": "proposed",
             "clause": clause["id"],
@@ -380,7 +389,7 @@ REVIEW_INPUT = {
     "and, for an ambiguity, readings: [{label, meaning, basis, verdict: 通过|不通过|原文未定}] whose verdicts differ on the example.",
     "required": ["schema", "requirements", "findings"],
 }
-PROPOSAL_INPUT = {
+PROPOSAL_INPUT: dict[str, Any] = {
     "type": "object",
     "description": "The clause's new wording and what it rests on.",
     "properties": {
@@ -388,8 +397,16 @@ PROPOSAL_INPUT = {
         "kind": {"enum": ["same", "changed"], "description": "same: the verdict on no document changes; changed: it does."},
         "note": {"type": "string", "description": "What changed, in one or two sentences."},
         "cards": {"type": "array", "items": {"type": "string"}, "description": "Keys of this clause's answered cards the wording rests on."},
+        "rulings": {"type": "array", "items": {"type": "string"}, "description": "Platform rulings the wording rests on, each in its original words."},
     },
-    "required": ["text", "kind", "note", "cards"],
+    "required": ["text", "kind", "note"],
+}
+# A clause reworded on a platform ruling rather than on an answer: which clause it is, and at least one ruling.
+REWORD_INPUT = {
+    **PROPOSAL_INPUT,
+    "description": "A clause's new wording resting on platform rulings already confirmed, not on a customer's answer.",
+    "properties": {"clause": {"type": "string", "description": "The clause, e.g. MSA:1."}, **PROPOSAL_INPUT["properties"]},
+    "required": ["clause", "text", "kind", "note", "rulings"],
 }
 KEEP_INPUT = {"type": "object", "properties": {"reason": {"type": "string", "description": "Why the answers need no change to the clause."}}, "required": ["reason"]}
 FOLLOW_UP_INPUT = {
@@ -437,6 +454,28 @@ def _differ(answers: list[dict]) -> bool:
 
 
 def issues(task_id: str, state: dict, facts: dict) -> list[dict]:
+    """What is open; and, when only readings or a confirmation wait, the reword a platform ruling grounds. The reword is not
+    blocking and moves no phase: it is there for whoever prepares the next revision, one clause and its review at a time."""
+    found = _issues(task_id, state, facts)
+    revision = current(state, facts)
+    roles = facts.get("roles") or {}
+    if revision is not None and not revision["clarified"] and roles.get("prepare") and all(issue["code"] in {"CLAUSE_READING", "PLAN_READY"} for issue in found):
+        found.append(
+            _issue(
+                task_id,
+                "CLAUSE_REWORD",
+                "review",
+                "info",
+                "revise",
+                "可以按平台已确认的裁定改写条款的写法。",
+                "把条款依赖、但原文没有写进去的口径写进条文；依据写平台裁定的原文。改写后的条款要重新审查。",
+                [_act("propose_text", "按平台裁定改写一条", input_schema=REWORD_INPUT)],
+            )
+        )
+    return found
+
+
+def _issues(task_id: str, state: dict, facts: dict) -> list[dict]:
     """What is open, prepared work first. Everything that needs no person is prepared on the target before one
     confirmation covers it all (#351): reviews, and when nothing is left to ask, readings."""
     roles = facts.get("roles") or {}
