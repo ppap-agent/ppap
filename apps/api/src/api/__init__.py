@@ -897,7 +897,7 @@ def create_app(
             return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
         if denied := object_denied(store, session.principal, round_id, modify=True):
             return denied
-        round_body = store.get_round(round_id)
+        round_body = store.get_round(round_id, principal=session.principal)
         if round_body is None:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         stored = store.round_writeback(round_id) or {}

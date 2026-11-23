@@ -26,7 +26,8 @@ def register_report_routes(app, store, session_of, http, settings):
             return None, None, None, JSONResponse({"error": "unauthenticated"}, status_code=401)
         if denied := object_denied(store, session.principal, round_id):
             return None, None, None, denied
-        body = store.get_round(round_id)
+        # The same projection as GET /rounds/{id}, which the confirmation captured.
+        body = store.get_round(round_id, principal=session.principal)
         if body is None:
             # The id names a draft or file of the enterprise, not a round.
             return None, None, None, JSONResponse({"error": "access_denied"}, status_code=403)

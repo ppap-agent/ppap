@@ -499,6 +499,24 @@ def test_a_published_report_carries_what_the_user_approved(mcp_app, core_system,
         assert len(drive.written) == count
 
 
+def test_a_report_on_a_round_with_review_hints_is_published(mcp_app, core_system, monkeypatch):
+    """GET /rounds/{id} adds the reader's review hints; the report entry must read the same projection (#347)."""
+    from product.store import review_hints
+
+    _, store = mcp_app
+    drive = Drive()
+    with folder_client(store, drive) as (app, client, token, _):
+        task, _ = audited_folder(client, store, token, core_system)
+        round_id = client.get(f"/audit-tasks/{task}").json()["round_id"]
+        monkeypatch.setattr(review_hints, "read_hints", lambda store, conn, principal, body: [{"item_key": body["findings"][0]["item_key"], "reason": "differs"}])
+        assert "review_hint" in client.get(f"/rounds/{round_id}").json()["findings"][0]
+        arguments = {"task_id": task, "request_id": str(uuid4())}
+        approve(client, call(client, token, "publish_report", **arguments))
+        result = call(client, token, "publish_report", **arguments)
+        assert result["next"]["kind"] == "done" and result["result"]["delivery"]["report"]["status"] == "ready", result
+        assert len(drive.written) == 2
+
+
 def test_registry_annotations_and_browser_revoke(mcp_app):
     app, store = mcp_app
     with TestClient(app, base_url="http://127.0.0.1:8080") as client:
