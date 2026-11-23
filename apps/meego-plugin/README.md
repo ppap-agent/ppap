@@ -39,7 +39,11 @@ API 进程需要以下配置（见 `.env.example`）：
 ```sh
 cp plugin.config.example.json plugin.config.json   # 填入插件 ID、Secret 和详情页 resourceId；该文件不入库
 npx -p @lark-project/cli@2.8.6 lpm start          # 本地调试，需要信任 CLI 生成的本地根证书，并允许浏览器访问本地网络
+npx -p @lark-project/cli@2.8.6 lpm login --site-domain https://project.feishu.cn   # 首次发布前登录一次（浏览器授权），凭据存在 ~/.lpm
 npx -p @lark-project/cli@2.8.6 lpm release --source-type remote   # 构建并上传产物，输出产物版本
+npx -p @lark-project/cli@2.8.6 lpm publish --artifact-version <产物版本> --release-notes "<中文说明>"   # 创建并上架新版本
 ```
 
-产物上传后，在开放平台“插件发布”中创建版本：使用范围选“指定空间”，不发布到插件商店。PPAP 后端地址在 `src/features/ppap_tab/config.ts`。
+`lpm publish` 不传 `--project-key` 时沿用上一版的使用范围（指定空间）和插件商店设置（不上架），版本号自动加一。配置里的 `app_type` 须为 `normal`。
+
+PPAP 后端地址在 `src/features/ppap_tab/config.ts`。
