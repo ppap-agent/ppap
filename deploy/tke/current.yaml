@@ -925,6 +925,17 @@ spec:
             - configMapRef:
                 name: ppap-current
           env:
+            # Production settings require the text model's identity; the seed calls no model and holds no key.
+            - name: PPAP_MODEL_TEXT_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_MODEL_GROK_4_7_BASE_URL
+            - name: PPAP_MODEL_TEXT_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_MODEL_GROK_4_7_MODEL
             - name: PPAP_PG_MIGRATOR_PASSWORD
               valueFrom:
                 secretKeyRef:
