@@ -79,7 +79,8 @@ def unreadable_source(kind: str, access: bool) -> str:
 
 def new_state(source: dict, options: dict) -> dict:
     return {
-        "source": source,
+        "source": source,  # the one the task was prepared from; it names the task among the user's sources
+        "sources": [source],
         "options": options,
         "manifest": None,
         "discover_error": None,
@@ -91,6 +92,20 @@ def new_state(source: dict, options: dict) -> dict:
         "source_change": None,
         "decisions": {},
     }
+
+
+def sources(state: dict) -> list[dict]:
+    """Every Feishu source the task reads (#349): the first, and any the user added or swapped in later."""
+    return state.get("sources") or [state["source"]]
+
+
+# What a person gives when a source is added or swapped: a link they copied, never one the client picked itself.
+SOURCE_INPUT = {
+    "type": "object",
+    "description": "须由用户提供：飞书文件夹或文件的链接。补来源、换来源会改变送审范围和费用。",
+    "properties": {"source": {"type": "string", "description": "飞书文件夹或文件的链接"}},
+    "required": ["source"],
+}
 
 
 def step_id(task_id: str, name: str) -> str:
@@ -129,6 +144,7 @@ def apply(state: dict, event: dict) -> dict:
         state.update(manifest=sorted(listed), discover_error=None, source_change=None, listing=listing_digest(event["files"]))
     elif kind == "discover_failed":
         state["discover_error"] = event["code"]
+        state["discover_source"] = event.get("source")
     elif kind == "imported":
         files[event["token"]].update(version=event["version"], error=None)
     elif kind == "import_failed":
@@ -176,6 +192,16 @@ def _decide(state: dict, event: dict) -> None:
         files[subject]["rule"] = action.split(":", 1)[1]
     elif action == "standard_mode":
         options["deep_mode"] = False
+    elif action in {"add_source", "replace_source"}:
+        # The user's own link: the task reads it with the others, or instead of the one it could not read (#349).
+        new, current = event["value"]["source"], sources(state)
+        if action == "replace_source":
+            failed = state.get("discover_source") or current[0]["token"]
+            current = [new if row["token"] == failed else row for row in current]
+        if all(row["token"] != new["token"] for row in current):
+            current = [*current, new]
+        state["sources"] = current
+        state.update(manifest=None, discover_error=None, discover_source=None, source_change=None)
     else:
         raise Rejected("action_not_allowed")
     state["decisions"][event["request_id"]] = [event["issue_id"], event["action_id"]]
@@ -349,8 +375,12 @@ def issues(task_id: str, state: dict, facts: dict) -> list[dict]:
 
     if state["closed"]:
         return []
+    # More material can be added until the audit starts; a task adopted from the Web has no Feishu source to extend.
+    extendable = not state.get("external") and (not state["audit"] or (facts.get("audit") or {}).get("state") in {"matching", "pending_confirm"})
+    add = [_act("add_source", "补一个用户给的文件或文件夹", input_schema=SOURCE_INPUT)] if extendable else []
     if state["discover_error"]:
         access = state["discover_error"] in _ACCESS_CODES
+        failed = next((row for row in sources(state) if row["token"] == state.get("discover_source")), sources(state)[0])
         found.append(
             _issue(
                 task_id,
@@ -358,14 +388,14 @@ def issues(task_id: str, state: dict, facts: dict) -> list[dict]:
                 "access",
                 "blocking",
                 "discover",
-                "文件夹里的文件超过 200 份，请分成几个文件夹分别审核。" if state["discover_error"] == "too_many_files" else unreadable_source(state["source"]["kind"], access),
-                "资料还没有开始导入。",
-                [_act("retry", "再读一次")],
+                "文件夹里的文件超过 200 份，请分成几个文件夹分别审核。" if state["discover_error"] == "too_many_files" else unreadable_source(failed["kind"], access),
+                "资料还没有开始导入。链接错了就换一个；临时读不到再读一次。",
+                [_act("replace_source", "换成用户给的另一个链接", input_schema=SOURCE_INPUT), _act("retry", "再读一次")],
             )
         )
     if state["manifest"] == [] and not state["discover_error"]:
         found.append(
-            _issue(task_id, "NO_FILES", "import", "blocking", "discover", "文件夹里没有可以审核的文件。", "没有可审的资料。", [_act("refresh", "重新读取文件夹"), _act("close", "结束这次审核")])
+            _issue(task_id, "NO_FILES", "import", "blocking", "discover", "文件夹里没有可以审核的文件。", "没有可审的资料。", [*add, _act("refresh", "重新读取文件夹"), _act("close", "结束这次审核")])
         )
     for row in state["skipped"]:
         if row["reason"] == "subfolder":
@@ -424,7 +454,7 @@ def issues(task_id: str, state: dict, facts: dict) -> list[dict]:
                     "ingest",
                     f"「{entry['name']}」读不出内容。" + reasons,
                     "这份文件不能审核。",
-                    [_EXCLUDE, _act("refresh", "已在飞书里更换文件，重新读取文件夹")],
+                    [_EXCLUDE, *add, _act("refresh", "已在飞书里更换文件，重新读取文件夹")],
                     subject=file_subject(token),
                     key=token,
                 )
@@ -461,11 +491,15 @@ def issues(task_id: str, state: dict, facts: dict) -> list[dict]:
         )
     audit = facts.get("audit")
     if audit:
-        found.extend(_audit_issues(task_id, state, facts))
+        found.extend(_audit_issues(task_id, state, facts, add))
+    if add and state["manifest"] is not None:
+        # Where more material can come from, any time before the audit starts.
+        count = len(sources(state))
+        found.append(_issue(task_id, "SOURCES", "sources", "info", "discover", f"这次审核读取 {count} 个飞书来源。", "补资料要由用户给出飞书文件或文件夹的链接；补了之后报价会重算。", add))
     return found
 
 
-def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
+def _audit_issues(task_id: str, state: dict, facts: dict, add: list[dict]) -> list[dict]:
     audit, found = facts["audit"], []
     by_version = {entry["version"]["id"]: token for token, entry in state["files"].items() if entry["version"]}
     selected = [row for row in audit.get("files", []) if row["selection"] == "selected"]
@@ -502,7 +536,7 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
                     "recognize",
                     "没有一份文件找到对应的审核要求。",
                     "这次没有可以审核的内容。",
-                    [_act("refresh", "补交文件后重新读取文件夹"), _act("close", "结束这次审核")] if editable else [],
+                    [*add, _act("refresh", "补交文件后重新读取文件夹"), _act("close", "结束这次审核")] if editable else [],
                 )
             )
         for row in selected:
@@ -571,9 +605,9 @@ def _audit_issues(task_id: str, state: dict, facts: dict) -> list[dict]:
             )
         precheck = facts.get("precheck") or {}
         for item in precheck.get("blocks") or []:
-            found.append(_precheck_issue(task_id, item, by_version, editable))
+            found.append(_precheck_issue(task_id, item, by_version, editable, add))
         for item in precheck.get("warnings") or []:
-            found.append(_precheck_issue(task_id, item, by_version, editable))
+            found.append(_precheck_issue(task_id, item, by_version, editable, add))
     if audited(audit):
         for row in audit.get("files", []):
             review = row.get("audit") or {}
@@ -657,17 +691,19 @@ def check_name(finding: dict) -> str:
     return name if len(name) <= 40 else name[:39] + "…"
 
 
-def _precheck_issue(task_id: str, item: dict, by_version: dict[str, str], editable: bool) -> dict:
+def _precheck_issue(task_id: str, item: dict, by_version: dict[str, str], editable: bool, add: list[dict]) -> dict:
     """A precheck finding as what it does to starting (the Web's rule): only a file-level block holds the start, until
     the file is left out; a content-level block goes to the formal audit; a warning holds nothing."""
     token = by_version.get(item.get("file_version_id") or "")
     holds = item.get("level") == "block" and item.get("scope") == "file"
+    # Missing or wrong material is answered with more material: a file or folder the user gives (#349).
+    more = add if editable else []
     if holds:
-        severity, impact, actions = "blocking", "这份文件不移除就不能开始审核。", [_EXCLUDE] if editable and token else []
+        severity, impact, actions = "blocking", "这份文件不移除就不能开始审核。", ([_EXCLUDE] if editable and token else []) + more
     elif item.get("level") == "block":
-        severity, impact, actions = "warning", "不阻止开始审核，正式审核会按规则核对这一点。", []
+        severity, impact, actions = "warning", "不阻止开始审核，正式审核会按规则核对这一点。", more
     else:
-        severity, impact, actions = "info", "不影响开始审核。", []
+        severity, impact, actions = "info", "不影响开始审核。", more
     return _issue(
         task_id,
         "PRECHECK_" + str(item.get("code", "")),
@@ -761,7 +797,7 @@ def project(task_id: str, state: dict, facts: dict) -> dict:
             _stage("precheck", "completed" if facts.get("precheck") else "pending", conclusion=(facts.get("precheck") or {}).get("conclusion")),
             _stage("quote", "completed" if price and not blocking else "waiting_input" if price else "pending"),
         ]
-    result: dict[str, Any] = {"phase": phase, "source": state["source"], "stages": stages, "files": _file_lines(state, facts)}
+    result: dict[str, Any] = {"phase": phase, "source": state["source"], "sources": sources(state), "stages": stages, "files": _file_lines(state, facts)}
     if audit:
         result["audit"] = {
             "number": audit.get("number"),
@@ -785,7 +821,7 @@ def summary(phase: str, result: dict, found: list[dict]) -> str:
     files = result["files"]
     kept = [line for line in files if line["state"] not in {"excluded", "duplicate"}]
     blocking = sum(1 for issue in found if issue["blocking"])
-    notes = sum(1 for issue in found if not issue["blocking"])
+    notes = sum(1 for issue in found if not issue["blocking"] and issue["category"] != "sources")
     tail = f"另有 {notes} 条提醒。" if notes else ""
     if phase == "closed":
         return "这次审核已结束，没有开始审核，也没有扣点。"

@@ -28,8 +28,6 @@ UPDATE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHin
 Limit = Annotated[int, Field(ge=1, le=50)]
 Offset = Annotated[int, Field(ge=0)]
 DONE = {"kind": "done", "goal_status": "achieved"}
-# The task moved on since the caller last read it: read it again and decide from what it says now.
-_READ_AGAIN = {"stale_revision", "issue_not_open", "action_not_allowed", "quote_changed", "source_changed", "not_ready_to_confirm", "results_not_ready"}
 _SAY = {
     "not_a_feishu_link": "这不是飞书文件夹或文件的链接。请让用户在飞书里复制文件夹链接。",
     "wiki_link_not_supported": "暂不支持知识库链接。请把资料放到飞书云盘的文件夹里，再给出文件夹链接。",
@@ -46,39 +44,72 @@ _SAY = {
     "rulebook_version_not_found": "这个客户没有这个版本的规则库。已有的版本见 get_account 的 rulebooks；新建版本要由平台负责人或受委托的审查方发起。",
     "platform_operator_required": "这一步只有平台负责人能确认。",
     "round_has_errors": "这次审核有检查项没有检查完，不能生成飞书报告。可以对同一份资料复审，结论确定后再交付。",
+    "access_denied": "当前账号没有权限做这件事；只有任务的创建人能修改它。",
+    "insufficient_scope": "这个连接没有所需的权限。请用户在 PPAP 的连接管理页撤销此连接后重新连接，并在授权页勾选该权限。",
+    "role_required": "这一步要由平台负责人或受委托的审查方来做。",
+    "signing_requires_person": "这一步要由用户本人在 PPAP 网页里完成，客户端只能提议。",
+    "source_required": "需要用户给出一个飞书文件夹或文件的链接。",
+    "not_a_folder": "这不是飞书文件夹的链接。请让用户给出要浏览的文件夹链接，或留空从云盘顶层开始。",
+}
+# The only dead ends: what PPAP must not do for this person (permission, role, policy). Everything else has a way on (#349).
+REFUSALS = frozenset({"access_denied", "insufficient_scope", "task_not_found", "platform_operator_required", "role_required", "round_has_errors", "signing_requires_person"})
+# What only the user can give: ask for it, then make the same call again with it.
+_ASK = {
+    "not_a_feishu_link": {"source": "飞书文件夹或文件的链接"},
+    "wiki_link_not_supported": {"source": "飞书云盘里文件夹或文件的链接（不是知识库链接）"},
+    "source_required": {"source": "飞书文件夹或文件的链接"},
+    "not_a_folder": {"folder": "飞书文件夹的链接"},
+    "customer_required": {"customer": "get_account 列出的一个客户 key"},
+    "rulebook_version_required": {"version": "规则库版本，例如 v1.0"},
+    "rulebook_version_not_found": {"version": "get_account 的 rulebooks 里已有的版本"},
+    "invalid_answer": {"value": "问题要求的答复（是或否，或一段文字）"},
 }
 
 
 def blocked(code: str, *, task_id: str | None = None, request_id: str | None = None, message: str | None = None) -> Outcome:
-    return Outcome(task_id=task_id, request_id=request_id, next={"kind": "blocked", "error_code": code, **({"message": message or _SAY[code]} if message or code in _SAY else {})})
+    """A refusal PPAP must not get around for this person, with what they themselves can do about it."""
+    return Outcome(task_id=task_id, request_id=request_id, next={"kind": "blocked", "error_code": code, "message": message or _SAY.get(code) or "这件事当前账号不能做。"})
 
 
-def failure(exc: Exception, *, task_id: str | None = None, request_id: str | None = None) -> Outcome:
-    """Why a call did nothing, as the next thing to do about it."""
+def failure(exc: Exception, *, task_id: str | None = None, request_id: str | None = None, then: dict | None = None) -> Outcome:
+    """Why a call did nothing, as the next thing to do about it (#349). `then` is the call to make again once the user has
+    given what is missing; without it the task is read again."""
+    again = {"tool": "get_task", "arguments": {"task_id": task_id}} if task_id else None
     if isinstance(exc, clarification.Invalid):
         # Prepared work that cannot be taken: everything wrong with it at once, to fix and submit again under a new request_id.
-        step = {"kind": "blocked", "error_code": str(exc), "message": "提交的内容不合格，改好后用新的 request_id 再提交：" + "；".join(exc.problems)[:3000], "problems": exc.problems[:50]}
+        message = "提交的内容不合格，改好后用新的 request_id 再提交：" + "；".join(exc.problems)[:3000]
+        step = {"kind": "call_tool", **(then or again or {"tool": "get_task"}), "reason": str(exc), "message": message, "problems": exc.problems[:50], "new_request_id": True}
         return Outcome(task_id=task_id, request_id=request_id, next=step)
-    if isinstance(exc, workflow.Rejected):
-        code = str(exc)
-        if code == "results_not_ready" and task_id:
-            # The audit is still running: wait on the task, don't keep asking for results.
-            return Outcome(task_id=task_id, request_id=request_id, next={"kind": "wait", "observe_with": "get_task", "arguments": {"task_id": task_id}, "check_after_ms": 15000, "reason": code})
-        if code in _READ_AGAIN and task_id:
-            return Outcome(task_id=task_id, request_id=request_id, next={"kind": "call_tool", "tool": "get_task", "arguments": {"task_id": task_id}, "reason": code})
+    code = exc.code if isinstance(exc, McpError) else str(exc) if isinstance(exc, workflow.Rejected) else None
+    if code is None:
+        if request_id:
+            # A write whose outcome is not known keeps its ID: the same call again reads what it did, and does nothing twice.
+            return Outcome(task_id=task_id, request_id=request_id, next={"kind": "recover", "strategy": "repeat_same_request", "check_after_ms": 5000, "reason": "outcome_unknown"})
+        return Outcome(task_id=task_id, next={"kind": "recover", "strategy": "repeat_same_request", "check_after_ms": 5000, "reason": "service_unavailable"})
+    if isinstance(exc, McpError) and exc.status in {429, 503}:
+        return Outcome(task_id=task_id, request_id=request_id, next={"kind": "recover", "strategy": "repeat_same_request", "check_after_ms": 5000, "reason": code})
+    if code == "insufficient_scope" and isinstance(exc, McpError):
+        missing = exc.missing_scope
+        what = f"「{SCOPES[missing]}」" if missing in SCOPES else "所需"
+        return blocked(code, task_id=task_id, request_id=request_id, message=f"这个连接没有{what}权限。请用户在 PPAP 的连接管理页撤销此连接后重新连接，并在授权页勾选该权限。")
+    if code in REFUSALS:
         return blocked(code, task_id=task_id, request_id=request_id)
-    if isinstance(exc, McpError):
-        if exc.status in {429, 503}:
-            return Outcome(task_id=task_id, request_id=request_id, next={"kind": "recover", "strategy": "repeat_same_request", "check_after_ms": 5000, "reason": exc.code})
-        if exc.code == "insufficient_scope":
-            missing = exc.missing_scope
-            what = f"「{SCOPES[missing]}」" if missing in SCOPES else "所需"
-            return blocked(exc.code, task_id=task_id, request_id=request_id, message=f"这个连接没有{what}权限。请用户在 PPAP 的连接管理页撤销此连接后重新连接，并在授权页勾选该权限。")
-        return blocked(exc.code, task_id=task_id, request_id=request_id)
-    if request_id:
-        # A write whose outcome is not known keeps its ID: the same call again reads what it did, and does nothing twice.
-        return Outcome(task_id=task_id, request_id=request_id, next={"kind": "recover", "strategy": "repeat_same_request", "check_after_ms": 5000, "reason": "outcome_unknown"})
-    return blocked("service_unavailable", task_id=task_id)
+    if code == "results_not_ready" and task_id:
+        # The audit is still running: wait on the task, don't keep asking for results.
+        return Outcome(task_id=task_id, request_id=request_id, next={"kind": "wait", "observe_with": "get_task", "arguments": {"task_id": task_id}, "check_after_ms": 15000, "reason": code})
+    if code == "request_conflict":
+        return Outcome(task_id=task_id, request_id=request_id, next={"kind": "recover", "strategy": "new_request_id", "reason": code, "message": _SAY[code]})
+    if code in _ASK:
+        step = {"kind": "user_action", "action_id": "provide_input", "reason": code, "prompt": _SAY.get(code, "需要用户补充信息。"), "ask": _ASK[code]}
+        if then or again:
+            step["then"] = then or again
+        return Outcome(task_id=task_id, request_id=request_id, next=step)
+    if again:
+        # The task moved on, or this call did not fit it: read it again and act on what it says now.
+        return Outcome(task_id=task_id, request_id=request_id, next={"kind": "call_tool", **again, "reason": code, **({"message": _SAY[code]} if code in _SAY else {})})
+    # Nothing to read again: say what happened in the user's words and let them decide what to change.
+    prompt = _SAY.get(code) or f"这次请求没有完成（{code}）。请把情况告诉用户，按用户的意思调整后再试。"
+    return Outcome(task_id=task_id, request_id=request_id, next={"kind": "user_action", "action_id": "tell_user", "reason": code, "prompt": prompt, **({"then": then} if then else {})})
 
 
 def receipt(reply: Reply, tool: str, arguments: dict, *, task_id: str | None) -> Outcome | None:
@@ -269,6 +300,10 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
             await runtime.settle(actor, tid)
             return await task_outcome(actor, tid, request_id=rid)
         except Exception as exc:
+            if isinstance(exc, workflow.Rejected) and str(exc) in _ASK:
+                # Nothing was created: ask the user, then prepare again with what they give, under a new request_id.
+                given = {"source": source, "customer": customer, "deep_mode": deep_mode, **({"follows_task_id": str(follows_task_id)} if follows_task_id else {})}
+                return failure(exc, request_id=rid, then={"tool": "prepare_audit", "arguments": given, "new_request_id": True})
             return failure(exc, task_id=tid, request_id=rid)
 
     @mcp.tool(annotations=UPDATE)
@@ -368,7 +403,9 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
             await runtime.settle(actor, tid)
             return await task_outcome(actor, tid, request_id=rid)
         except Exception as exc:
-            return failure(exc, task_id=tid, request_id=rid)
+            # Unfit input to an action: fix it and submit the same action again, under a new request_id.
+            retry = {"tool": "resolve_issue", "arguments": {"task_id": tid, "issue_id": issue_id, "action_id": action_id, "expected_revision": expected_revision}, "new_request_id": True}
+            return failure(exc, task_id=tid, request_id=rid, then=retry if isinstance(exc, clarification.Invalid) or str(exc) in _ASK else None)
 
     @mcp.tool(annotations=EXTERNAL)
     async def confirm_audit(

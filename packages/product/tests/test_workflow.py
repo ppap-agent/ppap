@@ -26,6 +26,11 @@ def prepared(*names, shas=None):
     return state
 
 
+def open_issues(state, facts):
+    """The issues, without the note on where material comes from (always there before the audit starts)."""
+    return [issue for issue in w.issues(TASK, state, facts) if issue["code"] != "SOURCES"]
+
+
 def checks(**states):
     return {"validations": {"c-" + name: {"state": state, "reasons": []} for name, state in states.items()}}
 
@@ -64,7 +69,9 @@ def test_a_new_task_first_reads_the_folder_then_imports_every_file_at_once():
     state = w.apply(state, {"type": "discovered", "files": listed("a.xlsx", "b.pdf", extra=[{"token": "sub", "name": "旧版", "type": "folder"}, {"token": "mm", "name": "脑图", "type": "mindnote"}])})
     assert [e["token"] for e in w.effects(state, {})] == ["t-a.xlsx", "t-b.pdf"]
     codes = {issue["code"]: issue for issue in w.issues(TASK, state, {})}
-    assert set(codes) == {"SUBFOLDER_NOT_READ", "UNSUPPORTED_FILE"} and not any(issue["blocking"] for issue in codes.values())
+    assert set(codes) == {"SUBFOLDER_NOT_READ", "UNSUPPORTED_FILE", "SOURCES"} and not any(issue["blocking"] for issue in codes.values())
+    # More material can be added from the start, only from a link the user gives.
+    assert [a["id"] for a in codes["SOURCES"]["allowed_actions"]] == ["add_source"] and codes["SOURCES"]["allowed_actions"][0]["input_schema"]["required"] == ["source"]
 
 
 def test_one_failed_file_keeps_the_others_and_every_failure_is_reported():
@@ -95,7 +102,7 @@ def test_an_unreadable_file_is_an_issue_and_the_readable_ones_go_on():
     state = prepared("a", "b")
     facts = checks(a="valid", b="invalid")
     assert [f["file_version_id"] for f in w.effects(state, facts)[0]["files"]] == ["v-a"]
-    (issue,) = w.issues(TASK, state, facts)
+    (issue,) = open_issues(state, facts)
     assert issue["code"] == "FILE_UNREADABLE" and issue["blocking"]
 
 
@@ -103,7 +110,7 @@ def test_the_same_content_twice_is_audited_once_and_said_so():
     state = prepared("a", "copy", shas={"a": "same", "copy": "same"})
     facts = checks(a="valid", copy="valid")
     assert [f["file_version_id"] for f in w.effects(state, facts)[0]["files"]] == ["v-a"]
-    (issue,) = w.issues(TASK, state, facts)
+    (issue,) = open_issues(state, facts)
     assert issue["code"] == "DUPLICATE_CONTENT" and not issue["blocking"]
 
 
@@ -150,7 +157,7 @@ def test_a_task_from_before_every_task_named_its_rule_set_is_asked_for_one_even_
     facts = {**checks(a="valid"), "audit": audit(audit_row("a"), customer_preference=None), "customers": {"customers": customers}}
     view = w.project(TASK, state, facts)
     assert view["phase"] == "awaiting_decision"
-    (issue,) = view["issues"]
+    (issue,) = [issue for issue in view["issues"] if issue["code"] != "SOURCES"]
     # The choice submits the rule set's key and reads as its registered name.
     assert issue["code"] == "CUSTOMER_REQUIRED"
     assert [(a["id"], a["label"]) for a in issue["allowed_actions"]] == [("set_customer:UAES", "按「联电科技/UAES」审"), ("set_customer:蔚来", "按「蔚来/Nio」审")]
@@ -190,12 +197,13 @@ def test_a_precheck_finding_holds_the_start_only_when_the_file_itself_is_blocked
     warning = {"code": "W01", "level": "warn", "scope": "file", "problem": "缺少同零件文件", "filename": "b", "file_version_id": "v-b", "number": "W-01"}
     facts = {**checks(a="valid", b="valid"), "audit": audit(audit_row("a"), audit_row("b"))}
     told = w.project(TASK, state, {**facts, "precheck": {"blocks": [content], "warnings": [warning]}})
-    # Neither holds the start, so neither is called a block or asks anything.
-    assert told["phase"] == "ready_to_confirm" and [(i["severity"], i["allowed_actions"]) for i in told["issues"]] == [("warning", []), ("info", [])]
-    assert "正式审核" in told["issues"][0]["impact"]
+    # Neither holds the start, so neither is called a block; each is answered with more material the user gives (#349).
+    shown = [i for i in told["issues"] if i["code"] != "SOURCES"]
+    assert told["phase"] == "ready_to_confirm" and [(i["severity"], [a["id"] for a in i["allowed_actions"]]) for i in shown] == [("warning", ["add_source"]), ("info", ["add_source"])]
+    assert "正式审核" in shown[0]["impact"]
     held = w.project(TASK, state, {**facts, "precheck": {"blocks": [{**content, "scope": "file"}], "warnings": []}})
-    (issue,) = held["issues"]
-    assert held["phase"] == "awaiting_decision" and issue["blocking"] and [a["id"] for a in issue["allowed_actions"]] == ["exclude"] and issue["subject"]["key"] == "t-a"
+    (issue,) = [i for i in held["issues"] if i["code"] != "SOURCES"]
+    assert held["phase"] == "awaiting_decision" and issue["blocking"] and [a["id"] for a in issue["allowed_actions"]] == ["exclude", "add_source"] and issue["subject"]["key"] == "t-a"
 
 
 def test_a_finished_audit_asks_its_open_questions_and_then_points_at_the_results():
@@ -300,3 +308,51 @@ def test_items_that_cannot_be_audited_have_no_source():
 def test_an_unreadable_folder_suggests_a_file_link():
     assert "如果这是一个文件，请用文件链接" in w.unreadable_source("folder", False)
     assert w.unreadable_source("file", False).startswith("读不到这个飞书文件。")
+
+
+FILE = {"kind": "file", "token": "t-b", "doc_type": "file"}
+
+
+def decide(state, action, value=None, request_id="r1"):
+    return w.apply(state, {"type": "decided", "request_id": request_id, "issue_id": "i", "action_id": action, "subject": None, **({"value": value} if value else {})})
+
+
+def test_a_source_that_cannot_be_read_is_replaced_in_the_same_task():
+    state = w.apply(w.new_state(FOLDER, {}), {"type": "discover_failed", "code": "feishu_folder_not_found", "source": "fld"})
+    (issue,) = w.issues(TASK, state, {})
+    assert issue["code"] == "SOURCE_UNREADABLE" and [a["id"] for a in issue["allowed_actions"]] == ["replace_source", "retry"]
+    assert issue["allowed_actions"][0]["input_schema"]["required"] == ["source"]
+    state = decide(state, "replace_source", {"source": FILE})
+    # The link the user gave is read instead; the unreadable one is gone with its issue.
+    assert w.sources(state) == [FILE] and w.effects(state, {}) == [{"type": "discover"}]
+    state = w.apply(state, {"type": "discovered", "files": listed("b")})
+    assert [i["code"] for i in w.issues(TASK, state, {})] == ["SOURCES"]
+
+
+def test_a_missing_file_is_added_to_the_same_task_and_the_price_follows():
+    state = w.apply(prepared("a"), {"type": "audit_created"})
+    warning = {"code": "W01", "level": "warn", "scope": "file", "problem": "缺少同零件的过程流程图", "filename": "a", "file_version_id": "v-a", "number": "W-01"}
+    facts = {**checks(a="valid"), "audit": audit(audit_row("a")), "precheck": {"blocks": [], "warnings": [warning]}}
+    before = w.project(TASK, state, facts)
+    (told,) = [i for i in before["issues"] if i["code"] == "PRECHECK_W01"]
+    assert "add_source" in [a["id"] for a in told["allowed_actions"]]
+    state = decide(state, "add_source", {"source": FILE})
+    assert w.sources(state) == [FOLDER, FILE] and w.effects(state, facts) == [{"type": "discover"}]
+    # Both sources are read again; the new file is imported, checked and added to the same audit task.
+    state = w.apply(state, {"type": "discovered", "files": listed("a", "b")})
+    state = w.apply(state, {"type": "imported", "token": "t-b", "version": version("b")})
+    state = w.apply(state, {"type": "check_scheduled", "token": "t-b", "validation_id": "c-b"})
+    (revise,) = w.effects(state, {**facts, **checks(a="valid", b="valid")})
+    assert revise["type"] == "revise_audit" and [f["file_version_id"] for f in revise["files"]] == ["v-a", "v-b"]
+    # The audit task, revised, answers with a new quote and without the warning.
+    revised = audit(audit_row("a"), audit_row("b"), confirmation_basis_digest="q2", input_revision=1)
+    after = w.project(TASK, state, {**checks(a="valid", b="valid"), "audit": revised, "precheck": {"blocks": [], "warnings": []}})
+    assert after["result"]["quote"]["quote_id"] == "q2" != before["result"]["quote"]["quote_id"]
+    assert not [i for i in after["issues"] if i["code"].startswith("PRECHECK_")]
+
+
+def test_independent_problems_are_all_shown_at_once():
+    state = prepared("a", "b", "c")
+    state = w.apply(state, {"type": "import_failed", "token": "t-c", "code": "feishu_download_failed"})
+    codes = sorted(i["code"] for i in open_issues(state, checks(a="valid", b="invalid")))
+    assert codes == ["FILE_UNREADABLE", "IMPORT_FAILED"]

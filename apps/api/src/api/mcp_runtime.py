@@ -171,10 +171,15 @@ class TaskRuntime:
         """Run one effect; the event it returns is the fact to remember. None: nothing new yet."""
         kind = effect["type"]
         if kind == "discover":
-            try:
-                return {"type": "discovered", "files": await self.listing(actor, state["source"])}
-            except McpError as exc:
-                return {"type": "discover_failed", "code": exc.code}
+            # Every source the task reads, as one listing; a file in two of them is one file (#349).
+            files: dict[str, dict] = {}
+            for source in workflow.sources(state):
+                try:
+                    listed = await self.listing(actor, source)
+                except McpError as exc:
+                    return {"type": "discover_failed", "code": exc.code, "source": source["token"]}
+                files.update((row["token"], row) for row in listed if row["token"] not in files)
+            return {"type": "discovered", "files": list(files.values())}
         if kind == "import":
             token = effect["token"]
             body = {"request_id": workflow.step_id(task_id, "import:" + token), "file_token": token, "doc_type": effect["doc_type"]}
@@ -279,9 +284,9 @@ class TaskRuntime:
 
     async def source_changed(self, actor: Delegation, task_id: str, state: dict) -> bool:
         """The folder as it is now against the folder as prepared. A difference is the user's decision, not ours."""
-        if state.get("external") or state["source"]["kind"] != "folder" or state["manifest"] is None:
+        if state.get("external") or all(source["kind"] != "folder" for source in workflow.sources(state)) or state["manifest"] is None:
             return False
-        files = await self.listing(actor, state["source"])
+        files = list({row["token"]: row for source in workflow.sources(state) for row in await self.listing(actor, source)}.values())
         digest = workflow.listing_digest(files)
         if digest == state.get("listing"):
             return False
@@ -344,8 +349,15 @@ class TaskRuntime:
             path = f"/audit-tasks/{task_id}/reports/{line['audit']['report']['report_id']}/regenerations"
             request = {"task_id": task_id, "issue_id": issue_id, "action_id": action_id}
             return await self.gateway.propose(actor, "reports:write", "resolve_issue", request_id, "POST", path, page=f"/tasks/{task_id}", request=request, probes=[f"/audit-tasks/{task_id}"])
-        subject = issue["subject"].get("key") if issue["subject"]["kind"] == "file" else None
-        await self.commit(actor, task_id, [{"type": "decided", "request_id": request_id, "issue_id": issue_id, "action_id": action_id, "subject": subject if subject in state["files"] else None}])
+        subject = issue["subject"].get("key") if issue["subject"] and issue["subject"]["kind"] == "file" else None
+        event = {"type": "decided", "request_id": request_id, "issue_id": issue_id, "action_id": action_id, "subject": subject if subject in state["files"] else None}
+        if action_id in {"add_source", "replace_source"}:
+            # Only a link the user gave; it changes what is audited and the price, so it is never picked by the client.
+            given = value.get("source") if isinstance(value, dict) else value
+            if not isinstance(given, str) or not given.strip():
+                raise workflow.Rejected("source_required")
+            event["value"] = {"source": workflow.parse_source(given)}
+        await self.commit(actor, task_id, [event])
         if action_id == "close" and audit.get("state") == "pending_confirm":
             await self.api(actor, "POST", f"/audit-tasks/{task_id}/end", {"expected_revision": audit.get("input_revision", 0)})
         return None
