@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ppap/reference-judgment-v1",
+  "title": "模型参考判定（一行）",
+  "description": "一个受审文件在一条条款上的模型参考判定。不是人工真值，只用来和候选检查程序的结果比对。文件格式为 JSON Lines，每行一个对象。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "batch", "file", "clause", "digest", "verdict", "unable", "reason", "evidence", "unclear", "model"],
+  "properties": {
+    "schema": {"const": "reference-judgment-v1"},
+    "batch": {"type": "string", "minLength": 1, "description": "零件目录名；缺陷批次为「零件目录/缺陷样本名」"},
+    "file": {"type": "string", "minLength": 1, "description": "受审文件的仓库相对路径"},
+    "clause": {"type": "string", "pattern": "^[A-Z][A-Z0-9]*:[0-9]+$", "description": "条款标识，如 CP:5"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "判定所依据的条款原文摘要；写法改了，这一行作废"},
+    "verdict": {"enum": ["PASS", "NG", "NA", "UNABLE"], "description": "通过、不通过、不适用、无法检查"},
+    "unable": {"enum": [null, "unclear", "unreadable"], "description": "无法检查的原因：原文没说清，或读不到内容"},
+    "reason": {"type": "string", "minLength": 1, "description": "中文：依据原文哪一句、看到了什么"},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "where", "quote"],
+        "properties": {
+          "file": {"type": "string", "minLength": 1},
+          "where": {"type": "string", "minLength": 1, "description": "工作表与单元格，或页码与位置"},
+          "quote": {"type": "string", "description": "逐字引用的取值"}
+        }
+      }
+    },
+    "unclear": {"type": "string", "description": "原文没说清时逐字引用卡住的原文句子，否则为空字符串"},
+    "model": {"type": "string", "minLength": 1, "description": "模型名与版本"}
+  },
+  "allOf": [
+    {"if": {"properties": {"verdict": {"const": "UNABLE"}}}, "then": {"properties": {"unable": {"enum": ["unclear", "unreadable"]}}}, "else": {"properties": {"unable": {"const": null}}}},
+    {"if": {"properties": {"verdict": {"enum": ["PASS", "NG"]}}}, "then": {"properties": {"evidence": {"minItems": 1}}}},
+    {"if": {"properties": {"unable": {"const": "unclear"}}}, "then": {"properties": {"unclear": {"minLength": 1}}}, "else": {"properties": {"unclear": {"const": ""}}}}
+  ]
+}
