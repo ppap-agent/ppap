@@ -21,6 +21,7 @@ from product.feishu_writeback import (
     pending_attachments,
     report_blocks,
     report_page_url,
+    report_title,
     round_return_url,
     writeback_state,
 )
@@ -105,7 +106,7 @@ def register_report_routes(app, store, session_of, http, settings):
         if ident is None:
             return {"report": store.get_report(principal, round_id, fingerprint)}
         try:
-            document_id = create_report_document(http, token, "PPAP 审核报告 · " + round_id)
+            document_id = create_report_document(http, token, report_title(store.round_task(principal, round_id)))
             store.settle_report(principal, ident, "writing", document_id)
             # Read-only for others before anything is in it; failing that, the document is still delivered and says so.
             store.save_report_step(principal, ident, ident, read_only=make_read_only(http, token, document_id))

@@ -16,6 +16,7 @@ class Routes(unittest.TestCase):
         self.store = Mock()
         self.store.claim_report.return_value = "claim"
         self.store.get_report.return_value = {"status": "ready", "document_id": "doc123"}
+        self.store.round_task.return_value = None
         self.store.get_round.return_value = BODY
         self.store.round_report_pdfs.return_value = PDFS
         self.store.report_export.return_value = {"id": "claim", "status": "ready", "document_id": "doc123"}

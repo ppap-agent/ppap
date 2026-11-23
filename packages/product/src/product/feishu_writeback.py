@@ -34,6 +34,20 @@ def _report_error(response, stage: str) -> FeishuWritebackError:
     return FeishuWritebackError(f"feishu_report_{stage}_{outcome}:{detail}")
 
 
+def report_title(task: dict | None) -> str:
+    """The document's name as people know the task: its number and the part named by its first selected file, as the task
+    list names it. Never an internal identifier."""
+    parts = ["PPAP 审核报告"]
+    if task:
+        if task.get("number"):
+            parts.append(str(task["number"]))
+        named = (((row.get("match") or {}).get("metadata") or {}).get("part") for row in task.get("files") or [] if row.get("selection") == "selected")
+        part = next((str(value).strip() for value in named if isinstance(value, str) and value.strip()), "")
+        if part:
+            parts.append(part)
+    return " · ".join(parts)
+
+
 def create_report_document(http, access_token: str, title: str) -> str:
     """One external attempt. Caller must persist its claim before this call."""
     try:

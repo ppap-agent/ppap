@@ -3085,6 +3085,20 @@ class AuthStore:
                     return self._round_public(conn, parsed, read_view=True, principal=principal)
             return self._round_public(conn, parsed, principal=principal)
 
+    def round_task(self, principal: Principal, round_id: str) -> dict | None:
+        """The task a round belongs to, as its page shows it; None for a round accepted without one."""
+        parsed = _as_uuid(round_id)
+        if not parsed:
+            return None
+        with self._conn() as conn:
+            row = conn.execute("SELECT source_draft_id FROM product.audit_rounds WHERE id = %s AND tenant_id = %s", (parsed, principal.tenant_id)).fetchone()
+        if not row or not row[0]:
+            return None
+        try:
+            return self.get_audit_task(principal, str(row[0]))
+        except (KeyError, ValueError):
+            return None
+
     def round_customer(self, round_id: str) -> str:
         """The customer whose rules the round's task chose (#361); a task's customer does not change once accepted."""
         parsed = _as_uuid(round_id)

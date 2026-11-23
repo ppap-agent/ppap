@@ -105,6 +105,17 @@ class ReportBlocksTests(unittest.TestCase):
         withdrawn = {**self.body(), "signoff": {"state": "unsigned", "signed_at": None, "signer": None}}
         self.assertEqual(opening(withdrawn)[1], "交付时未签发。")
 
+    def test_the_document_is_named_by_task_number_and_part_never_an_internal_id(self):
+        from product.feishu_writeback import report_title
+
+        def row(part, selection="selected"):
+            return {"selection": selection, "match": {"metadata": {"part": part}}}
+
+        task = {"id": "6b34b769-20ea-5f83-ae34-4788db23cbf2", "number": "PPAP-20261123-008", "files": [row("壳体", "unselected"), row(None), row("节气门壳体")]}
+        self.assertEqual(report_title(task), "PPAP 审核报告 · PPAP-20261123-008 · 节气门壳体")
+        self.assertEqual(report_title({**task, "files": []}), "PPAP 审核报告 · PPAP-20261123-008")
+        self.assertEqual(report_title(None), "PPAP 审核报告")
+
     def test_the_report_says_whose_rules_and_which_mode_beside_the_signoff(self):
         """#361: the document's top says what the round stands on, as the result page does."""
 
