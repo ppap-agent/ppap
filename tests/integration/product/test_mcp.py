@@ -569,6 +569,37 @@ def test_the_confirm_click_takes_effect_and_a_refusal_carries_its_reason(mcp_app
         assert len(drive.written) == 2
 
 
+def test_every_write_by_a_person_is_recorded_once_with_channel_and_result(mcp_app, core_system):
+    """Who did what, when, through what and with which result: one row per write request, any channel (#362)."""
+    _, store = mcp_app
+    drive = Drive()
+    with folder_client(store, drive) as (app, client, token, _):
+        task, _ = audited_folder(client, store, token, core_system)
+        round_id = client.get(f"/audit-tasks/{task}").json()["round_id"]
+        key = client.get(f"/rounds/{round_id}").json()["findings"][0]["item_key"]
+        review = {"item_key": key, "judgment": "confirm", "rationale": "核对", "next_step": "", "version": 0}
+        assert client.put(f"/rounds/{round_id}/reviews", json=review).status_code == 200
+        assert client.put(f"/rounds/{round_id}/reviews", json=review).status_code == 409
+        approve(client, call(client, token, "publish_report", task_id=task, request_id=str(uuid4())))
+
+        def rows(route):
+            with store._conn() as conn:
+                return conn.execute(
+                    "SELECT channel, grant_id IS NOT NULL, params, outcome, status_code, error FROM product.actions WHERE route=%s ORDER BY at",
+                    (route,),
+                ).fetchall()
+
+        reviews = rows("/rounds/{round_id}/reviews")
+        assert [(r[0], r[1], r[2]["item_key"], r[3], r[4], r[5]) for r in reviews] == [
+            ("web", False, key, "succeeded", 200, None),
+            ("web", False, key, "failed", 409, "review_conflict"),
+        ]
+        assert [(r[0], r[1], r[3]) for r in rows("/integrations/feishu/rounds/{round_id}/report")] == [("mcp", True, "succeeded")]
+        # Reads are not actions; nothing without a known person is recorded.
+        with store._conn() as conn:
+            assert conn.execute("SELECT count(*) FROM product.actions WHERE method NOT IN ('POST','PUT','PATCH','DELETE')").fetchone()[0] == 0
+
+
 def test_registry_annotations_and_browser_revoke(mcp_app):
     app, store = mcp_app
     with TestClient(app, base_url="http://127.0.0.1:8080") as client:

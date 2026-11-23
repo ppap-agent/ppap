@@ -5,6 +5,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -70,7 +71,7 @@ from product.logs import configure as configure_logs
 from product.mcp import McpError
 from product.settings import Settings, load_settings
 from product.storage import object_store_ready
-from product.store import AuthStore
+from product.store import AuthStore, actions
 from product.store.meego import MeegoStore
 from product.writeback_targets import public_target
 
@@ -120,6 +121,32 @@ def _edition_cookie_kwargs(settings: Settings) -> dict:
         "max_age": 31536000,
         "path": "/",
     }
+
+
+WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+async def _error_code(response):
+    """A refused request's own code, read from its small JSON body; the response is passed on unchanged."""
+    if response.status_code < 400 or not response.headers.get("content-type", "").startswith("application/json"):
+        return response, None
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    from starlette.responses import Response as Plain
+
+    rebuilt = Plain(content=body, status_code=response.status_code, headers=dict(response.headers), media_type=response.media_type)
+    try:
+        code = json.loads(body).get("error") if len(body) <= 4096 else None
+    except ValueError:
+        code = None
+    return rebuilt, code if isinstance(code, str) else None
 
 
 def create_app(
@@ -234,6 +261,21 @@ def create_app(
             session, request.state.meego_binding = reloaded
         if session:
             request.state.authenticated_principal = session.principal
+            if request.method in WRITE_METHODS and getattr(request.state, "action_id", None) is None:
+                # What this person does now is recorded before it takes effect (#362).
+                route = request.scope.get("route")
+                intent = request.headers.get("x-ppap-intent", "").strip()
+                request.state.action_id = actions.start(
+                    store,
+                    session.principal,
+                    channel=request.scope.get("ppap.channel") or ("mcp" if isinstance(delegated, Delegation) else "meego" if host_token else channel),
+                    grant_id=delegated.id if isinstance(delegated, Delegation) else None,
+                    intent_id=intent if _is_uuid(intent) else None,
+                    method=request.method,
+                    route=getattr(route, "path", request.url.path),
+                    path=request.url.path,
+                    params=getattr(request.state, "action_params", {}),
+                )
         return session
 
     def principal_of(request: Request):
@@ -246,8 +288,22 @@ def create_app(
         path = request.url.path
         tokens = bind(request_id=request_id, round_id=round_id_from_path(path))
         started = time.perf_counter()
+        if request.method in WRITE_METHODS:
+            content_type = request.headers.get("content-type", "")
+            if content_type.startswith("application/json"):
+                request.state.action_params = actions.parameters(await request.body(), content_type)
+            elif content_type:
+                request.state.action_params = {"content_type": content_type.split(";")[0], "bytes": int(request.headers.get("content-length") or 0)}
         try:
-            response = await call_next(request)
+            try:
+                response = await call_next(request)
+            except BaseException:
+                if getattr(request.state, "action_id", None):
+                    await asyncio.to_thread(actions.finish, store, request.state.action_id, 500)
+                raise
+            if getattr(request.state, "action_id", None):
+                response, error = await _error_code(response)
+                await asyncio.to_thread(actions.finish, store, request.state.action_id, response.status_code, error)
             principal = getattr(request.state, "authenticated_principal", None)
             if principal:
                 tokens.extend(bind(tenant_id=principal.tenant_id))
