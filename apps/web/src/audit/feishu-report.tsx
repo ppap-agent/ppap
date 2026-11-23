@@ -46,7 +46,8 @@ export function FeishuReportDocument({roundId}: {roundId: string}) {
   }
   function failed(cause: unknown, fallback: string) {
     setProblem(cause instanceof Error ? cause.message : fallback)
-    setSignIn((cause as {code?: string}).code === 'feishu_user_token_missing')
+    // No Feishu token, or a proposal completed after a while (#355): signing in for the report does both at once.
+    setSignIn(['feishu_user_token_missing', 'reauthentication_required'].includes((cause as {code?: string}).code ?? ''))
   }
   async function write() {
     if (!current?.content_fingerprint) return
