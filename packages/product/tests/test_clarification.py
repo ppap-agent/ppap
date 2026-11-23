@@ -250,3 +250,16 @@ def test_a_common_card_answers_each_clause_it_asks_about_and_a_general_card_deci
     assert [i["subject"]["key"] for i in c.issues(TASK, state, found) if i["code"] == "CLAUSE_ANSWERED"] == ["A:2"]
     state = act(state, found, "CLAUSE_ANSWERED", "keep_text", {"reason": "一枚章即可，原文已允许。"}, "A:2")
     assert not [i for i in c.issues(TASK, state, found) if i["code"] == "CLAUSE_ANSWERED"]
+
+
+def test_a_questionnaire_answered_before_every_clause_was_reviewed_keeps_its_keys():
+    """The rest of the revision is reviewed alongside the answers, so its findings meet the cards already answered."""
+    state, r0 = c.new_state("uaes", "v9.0"), revision(0, {"A:1": "须已签名", "A:2": "须盖章"})
+    stamp = {**AMBIGUITY, "quotes": ["须盖章"], "question": "一枚章够吗？"}
+    found = facts(r0, [answered("A:1#1", 0, ("张三", "A")), {**answered("A:2#1", 0, ("张三", "B")), "card": {"key": "A:2#1", "items": ["A:2#1"], "question": "q", "clauses": ["A 文件 A:2"]}}])
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", review([AMBIGUITY]), "A:1")
+    assert {(i["code"], i["subject"]["key"]) for i in c.issues(TASK, state, found)} == {("CLAUSE_ANSWERED", "A:1"), ("CLAUSE_REVIEW", "A:2")}
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", {**review([stamp]), "requirements": [{"quote": "须盖章", "role": "necessary", "scope": "盖章", "meaning": "要盖章。"}]}, "A:2")
+    assert state["reviews"]["A:2"]["revision"] == 0
+    assert [card["key"] for card in c._standing(state, found, r0)["answered"]] == ["A:1#1", "A:2#1"]
+    assert {i["code"] for i in c.issues(TASK, state, found)} == {"CLAUSE_ANSWERED"}

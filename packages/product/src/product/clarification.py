@@ -483,7 +483,9 @@ def issues(task_id: str, state: dict, facts: dict) -> list[dict]:
                 actions if prepare else [],
                 clause=clause,
             )
-        if found:
+        # A questionnaire loaded offline was answered before this task reviewed every clause of the revision. The rest are
+        # reviewed alongside the answers, on this revision, so their findings keep the keys the questionnaire asked under.
+        if found and all(reviewed(state, clause) is not None for clause in clauses(revision)):
             return found
 
     goal = target(state, facts)
