@@ -110,6 +110,7 @@ class ProductExperienceTests(unittest.TestCase):
                 "",
                 2,
                 [],
+                None,
             )
             for number in (1, 10, 11, 2, 6)
         ]
