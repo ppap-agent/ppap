@@ -262,3 +262,17 @@ def test_a_recheck_suggestion_names_the_check_not_its_whole_clause():
     first, second = w.project(TASK, state, {"audit": done, "hints": [named, unnamed]})["issues"]
     assert first["message"] == "「PFMEA.pdf」的检查项「S/O/D 评分是否合理」这次的结论与之前的结果不同，建议人工复核。"
     assert "超出范围" not in second["message"] and len(second["message"]) < 80
+
+
+@pytest.mark.parametrize(
+    ("states", "said"),
+    [
+        (["pending"], "报告生成中（已完成 0/1）。"),
+        (["ready", "generating"], "报告生成中（已完成 1/2）。"),
+        (["ready", "failed"], "1 份报告已生成，1 份生成失败。"),
+        (["ready", "ready"], "2 份报告已生成。"),
+        ([], ""),
+    ],
+)
+def test_reports_still_being_made_are_never_counted_as_none(states, said):
+    assert w._reports_text(states) == said

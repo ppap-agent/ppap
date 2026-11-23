@@ -781,9 +781,20 @@ def summary(phase: str, result: dict, found: list[dict]) -> str:
     progress = audit.get("progress") or {}
     if phase == "auditing":
         return f"正在审核：已完成 {progress.get('completed', 0)}/{progress.get('total', len(kept))} 份。"
-    reports = sum(1 for line in files if line.get("report") == "ready")
     conclusion = CONCLUSIONS.get(audit.get("conclusion") or "", "尚无结论")
-    return f"审核已结束，结论：{conclusion}。{reports} 份报告已生成。" + tail
+    return f"审核已结束，结论：{conclusion}。" + _reports_text([line["report"] for line in files if line.get("report")]) + tail
+
+
+def _reports_text(states: list[str]) -> str:
+    """What the reports are doing, never a 0 that only means "not yet"."""
+    ready, failed = states.count("ready"), states.count("failed")
+    if not states:
+        return ""
+    if ready + failed < len(states):
+        return f"报告生成中（已完成 {ready}/{len(states)}）。"
+    if failed:
+        return f"{ready} 份报告已生成，{failed} 份生成失败。"
+    return f"{ready} 份报告已生成。"
 
 
 def _file_lines(state: dict, facts: dict) -> list[dict]:
