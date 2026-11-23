@@ -227,3 +227,26 @@ def test_a_new_version_starts_from_submitted_clauses_and_only_an_operator_confir
     assert view["phase"] == "ready_to_confirm" and view["next"]["kind"] == "blocked"
     plan_issue = next(i for i in c.issues(TASK, state, {**nothing, "roles": OPERATOR}) if i["code"] == "PLAN_READY")
     assert "confirm_plan" in {a["id"] for a in plan_issue["allowed_actions"]}
+
+
+def test_a_common_card_answers_each_clause_it_asks_about_and_a_general_card_decides_none():
+    """A questionnaire loaded offline asks some findings once, on a common card, and some questions on no clause."""
+    state, r0 = c.new_state("uaes", "v9.0"), revision(0, {"A:1": "须已签名", "A:2": "须盖章"})
+    stamp = {**AMBIGUITY, "quotes": ["须盖章"], "question": "一枚章够吗？"}
+    state = act(state, facts(r0), "CLAUSE_REVIEW", "submit_review", review([AMBIGUITY]), "A:1")
+    state = act(state, facts(r0), "CLAUSE_REVIEW", "submit_review", {**review([stamp]), "requirements": [{"quote": "须盖章", "role": "necessary", "scope": "盖章", "meaning": "要盖章。"}]}, "A:2")
+    common = {"card": {"key": "common:签章", "group": "common", "items": ["A:1#1", "A:2#1"], "question": "q", "clauses": ["A 文件 A:1", "A 文件 A:2"]}, "revision": 0, "closed": False}
+    general = {"card": {"key": "general:1", "group": "general", "question": "附录与正文按哪处？"}, "revision": 0, "closed": False, "answers": [{"answerer": "张三", "choice": "A", "text": None}]}
+    # Asked but not answered: both findings wait on the common card; nothing is sent again.
+    waiting = c._standing(state, facts(r0, [{**common, "answers": []}, general]), r0)
+    assert (waiting["unsent"], [card["key"] for card in waiting["waiting"]]) == ([], ["A:1#1", "A:2#1"])
+    found = facts(r0, [{**common, "answers": [{"answerer": "张三", "choice": "A", "text": None}]}, general])
+    assert sorted(i["subject"]["key"] for i in c.issues(TASK, state, found) if i["code"] == "CLAUSE_ANSWERED") == ["A:1", "A:2"]
+    issue = next(i for i in c.issues(TASK, state, found) if i["subject"]["key"] == "A:2")
+    assert [card["key"] for card in c.issue_detail(issue, state, found)["detail"]["cards"]] == ["common:签章"]
+    # Each clause deals with the answer on its own; the change names the card that was answered.
+    state = act(state, found, "CLAUSE_ANSWERED", "propose_text", {"text": "须已签名，手写或电子均可", "kind": "changed", "note": "电子签名也算", "cards": ["A:1#1"]}, "A:1")
+    assert state["proposals"]["A:1"]["sources"] == [{"question_key": "common:签章", "answerers": ["张三"]}]
+    assert [i["subject"]["key"] for i in c.issues(TASK, state, found) if i["code"] == "CLAUSE_ANSWERED"] == ["A:2"]
+    state = act(state, found, "CLAUSE_ANSWERED", "keep_text", {"reason": "一枚章即可，原文已允许。"}, "A:2")
+    assert not [i for i in c.issues(TASK, state, found) if i["code"] == "CLAUSE_ANSWERED"]

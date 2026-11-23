@@ -172,7 +172,7 @@ def decide(state: dict, facts: dict, issue: dict, action_id: str, value: Any, by
             problems.append("新写法与原文相同；不需要改时用 keep_text")
         if problems:
             raise Invalid("proposal_rejected", problems)
-        sources = [{"question_key": key, "answerers": sorted({answer["answerer"] for answer in answered[key]["answers"]})} for key in sorted(set(cited))]
+        sources = [{"question_key": answered[key]["asked_as"], "answerers": sorted({answer["answerer"] for answer in answered[key]["answers"]})} for key in sorted(set(cited))]
         return {
             "type": "proposed",
             "clause": clause["id"],
@@ -247,9 +247,11 @@ def candidate_cards(state: dict, revision: dict) -> list[dict]:
 
 
 def asked(facts: dict) -> dict[str, dict]:
-    """Each card put before the customer on this version, as last asked: its questionnaire's revision, whether that
-    questionnaire is closed, and every answerer's answer."""
-    return {row["card"]["key"]: row for row in sorted(facts.get("cards", []), key=lambda row: row["revision"])}
+    """Each question put before the customer on this version, as last asked, by the finding it asks about: its
+    questionnaire's revision, whether that questionnaire is closed, and every answerer's answer. A clause card asks
+    about its own finding; a common card asks one question about several clauses' findings, so each of them is asked
+    by it. A card about no finding (one on the general notes) is answered on the rules page and decides no clause."""
+    return {item: row for row in sorted(facts.get("cards", []), key=lambda row: row["revision"]) for item in row["card"].get("items") or []}
 
 
 def _standing(state: dict, facts: dict, revision: dict) -> dict[str, list[dict]]:
@@ -265,7 +267,8 @@ def _standing(state: dict, facts: dict, revision: dict) -> dict[str, list[dict]]
         elif not row["answers"]:
             out["waiting"].append(card)
         else:
-            out["answered"].append({**card, "answers": row["answers"]})
+            # `asked_as`: the card the customer answered, which a common card's findings share.
+            out["answered"].append({**card, "answers": row["answers"], "asked_as": row["card"]["key"]})
     return out
 
 
@@ -546,7 +549,8 @@ def issue_detail(issue: dict, state: dict, facts: dict) -> dict:
         # Answers are on the frozen revision; reviews and readings on the wording the next confirmation freezes.
         source = revision if issue["code"] == "CLAUSE_ANSWERED" and revision is not None else goal
         clause = next(row for row in clauses(source) if row["id"] == issue["subject"]["key"])
-        cards = [row for row in facts.get("cards", []) if row["card"]["items"][0].split("#", 1)[0] == clause["id"]]
+        # A common card is about this clause when one of its findings is.
+        cards = [(row, mine) for row in facts.get("cards", []) if (mine := [item for item in row["card"].get("items") or [] if item.split("#", 1)[0] == clause["id"]])]
         detail["clause"] = {key: clause.get(key) for key in ("id", "document", "category", "text", "digest", "change", "reading")}
         detail["cards"] = [
             {
@@ -556,9 +560,9 @@ def issue_detail(issue: dict, state: dict, facts: dict) -> dict:
                 "why": row["card"].get("why"),
                 "options": row["card"].get("options"),
                 "answers": row["answers"],
-                "settled": state["settled"].get(row["card"]["key"]),
+                "settled": state["settled"].get(mine[0]),
             }
-            for row in cards
+            for row, mine in cards
         ]
         detail["proposal"] = proposals(state, revision).get(clause["id"]) if revision is not None else None
     elif issue["code"] == "PLAN_READY":
