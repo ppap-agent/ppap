@@ -23,7 +23,7 @@ from product.files import ObjectMissing
 from product.identity import SESSION_COOKIE, new_token
 from product.logs import emit
 from product.meego import MAX_DOWNLOAD_BYTES, MeegoClient, MeegoError, WorkItemRef, work_item
-from product.meego_writeback import CONCLUSION_LABEL, marker, report_names, summary, task_link
+from product.meego_writeback import CONCLUSION_LABEL, conclusion_option, marker, report_names, summary, task_link
 from product.store.meego import MeegoConnectError, MeegoStore
 from product.store.store import _as_uuid
 
@@ -639,10 +639,10 @@ def register_meego_routes(app: FastAPI, store, meego: MeegoStore, session_of, ht
             if found is None:
                 return "not_configured"
             field_key, options = found
-            label = CONCLUSION_LABEL[task["conclusion"]]
-            option = options.get(label)
-            if not option:
+            chosen = conclusion_option(options, task["conclusion"])
+            if not chosen:
                 return "not_configured"
+            label, option = chosen
             if client.field_option(user_key, item, field_key) == option:
                 return "unchanged"
             try:

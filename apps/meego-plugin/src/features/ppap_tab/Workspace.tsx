@@ -652,7 +652,7 @@ function DocStatus({ doc, onIssues, onReport, onDownload, onRegenerate }: { doc:
       const conclusion = audit!.confirmed_conclusion;
       return (
         <Space wrap>
-          <Tag color={bucketColor(conclusion)} type="light">{conclusion ? conclusionLabel[conclusion] : '尚有未确定项'}</Tag>
+          <Tag color={bucketColor(conclusion)} type="light">{conclusion ? conclusionLabel[conclusion] : '待审核'}</Tag>
           {waiting && <Text>{waiting}</Text>}
           {open > 0 && <Text link onClick={onIssues}>{open} 项待处理</Text>}
           {reportReady(row!) && (

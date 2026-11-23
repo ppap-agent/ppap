@@ -109,9 +109,9 @@ export type Precheck = { conclusion: 'pass' | 'fail' | 'not_run'; blocks: Preche
 
 export const resultLabel: Record<FindingStatus, string> = { PASS: '符合', NG: '不符合', UNABLE: '待审核', ERR: '技术错误', NA: '不适用' };
 export const uncoveredLabel = '未覆盖';
-export const conclusionLabel: Record<string, string> = { PASS: '符合', NG: '不符合', UNKNOWN: '尚有未确定项' };
+export const conclusionLabel: Record<string, string> = { PASS: '符合', NG: '不符合', UNKNOWN: '待审核' };
 /** A round's conclusion as this plugin says it, including no round yet; the one wording for every view. */
-export const verdictLabel = { PASS: '符合', NG: '不符合', UNKNOWN: '尚有未确定项', ERROR: '审核异常', NONE: '尚未审核' } as const;
+export const verdictLabel = { PASS: '符合', NG: '不符合', UNKNOWN: '待审核', ERROR: '审核异常', NONE: '尚未审核' } as const;
 export const matchLabel: Record<string, string> = { matched: '已匹配规则', reference: '作为参考资料', unmatched: '无适配规则', failed: '识别失败', pending: '识别中', matching: '识别中' };
 /** A re-audit file's rule options are the original audit's rule version, then a newer version when that rule has one (as in the web app's reaudit-intent). */
 export type RuleVersionChoice = 'newer' | 'original';

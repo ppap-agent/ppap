@@ -445,7 +445,7 @@ def test_writeback_sets_the_conclusion_field_only_for_the_latest_round_and_reads
         first = client.post(f"/integrations/meego/rounds/{latest}/writeback", headers=bearer).json()
         assert (first["state"], first["field"]) == ("written", "not_configured")
         assert "北京时间" in fake.comments[0]
-        fake.conclusion_options = {"符合": "opt_pass", "不符合": "opt_ng", "尚有未确定项": "opt_unknown"}
+        fake.conclusion_options = {"符合": "opt_pass", "不符合": "opt_ng", "待审核": "opt_unknown"}
         # The round's overall conclusion (NG) goes into the field; the comment is not repeated.
         again = client.post(f"/integrations/meego/rounds/{latest}/writeback", headers=bearer).json()
         assert (again["state"], again["field"]) == ("already_written", "written")
@@ -651,7 +651,7 @@ def test_writeback_completes_the_waiting_ai_node_only_for_a_conforming_latest_ro
 def test_the_round_creator_releases_a_non_conforming_latest_round_without_changing_its_conclusion(auth_store_factory, monkeypatch):
     tenant = "meego-feishu-" + uuid.uuid4().hex
     fake = FakeMeego()
-    fake.conclusion_options = {"符合": "opt_pass", "不符合": "opt_ng", "尚有未确定项": "opt_unknown"}
+    fake.conclusion_options = {"符合": "opt_pass", "不符合": "opt_ng", "待审核": "opt_unknown"}
     store = auth_store_factory(settings_for(tenant, fake.tenant, **AI_NODE), reset=False, role="api")
     principal, browser = feishu_login(store, tenant, "质量工程师")
     round_id, older = str(uuid.uuid4()), str(uuid.uuid4())

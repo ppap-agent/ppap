@@ -53,10 +53,10 @@ def test_comment_states_the_web_conclusions_and_counts():
 
 def test_unknown_is_never_reported_as_passed():
     lines = summary(task(audited("A.xlsx", "PASS", pass_count=3), audited("B.xlsx", "UNKNOWN", unknown_count=5)), "https://ppap.example")
-    assert "B.xlsx：尚有未确定项" in lines
+    assert "B.xlsx：待审核" in lines
     # A file label aggregated over its reviewed clauses names the 待审核 ones beside it.
     assert "C.xlsx：符合（另 2 项待审核）" in summary(task(audited("C.xlsx", "PASS", pass_count=3, unknown_count=2)), "https://ppap.example")
-    assert "总体：尚有未确定项；不符合 0 项，尚未确定 5 项" in lines
+    assert "总体：待审核；不符合 0 项，尚未确定 5 项" in lines
     assert summary(task(audited("A.xlsx", "PASS", pass_count=3)), "https://ppap.example")[-2] == "总体：符合；不符合 0 项，尚未确定 0 项"
 
 
@@ -65,7 +65,7 @@ def test_confirmed_original_facts_carry_the_comment_and_say_so():
     assert "PFMEA.xlsx：符合（依据人工确认的原件事实）" in lines
     assert "总体：符合；不符合 0 项，尚未确定 0 项" in lines
     # Without confirmation the same file stays open.
-    assert "PFMEA.xlsx：尚有未确定项" in summary(task(audited("PFMEA.xlsx", "UNKNOWN", pass_count=3, unknown_count=2)), "https://ppap.example")
+    assert "PFMEA.xlsx：待审核" in summary(task(audited("PFMEA.xlsx", "UNKNOWN", pass_count=3, unknown_count=2)), "https://ppap.example")
 
 
 def test_a_round_conclusion_never_turns_missing_or_unknown_into_pass():
@@ -134,3 +134,11 @@ def test_a_work_item_opens_at_its_feishu_project_address_by_space_key():
 
     settings = SimpleNamespace(meego_base_url="https://project.feishu.cn/")
     assert work_item_url(settings, work_item("6afa8c695111c30e59b3bd22", "story", "7170181153")) == "https://project.feishu.cn/6afa8c695111c30e59b3bd22/story/detail/7170181153"
+
+
+def test_an_unknown_conclusion_finds_the_new_option_or_a_space_s_older_option_name():
+    from product.meego_writeback import conclusion_option
+
+    assert conclusion_option({"符合": "a", "不符合": "b", "待审核": "c"}, "UNKNOWN") == ("待审核", "c")
+    assert conclusion_option({"符合": "a", "不符合": "b", "尚有未确定项": "old"}, "UNKNOWN") == ("尚有未确定项", "old")
+    assert conclusion_option({"尚有未确定项": "old"}, "NG") is None

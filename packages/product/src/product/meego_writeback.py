@@ -15,7 +15,17 @@ from urllib.parse import quote, urlencode
 from product.store.task_view import PENDING_OUTCOMES
 
 # One vocabulary with the PPAP web app (apps/web/src/audit/status-labels.ts).
-CONCLUSION_LABEL = {"PASS": "符合", "NG": "不符合", "UNKNOWN": "尚有未确定项"}
+CONCLUSION_LABEL = {"PASS": "符合", "NG": "不符合", "UNKNOWN": "待审核"}
+# Spaces that created their conclusion field before 2026-11-23 named this option 尚有未确定项.
+LEGACY_UNKNOWN_OPTION = "尚有未确定项"
+
+
+def conclusion_option(options: dict[str, str], conclusion: str) -> tuple[str, str] | None:
+    """The field option (label, id) for a conclusion, found by label; an UNKNOWN also finds the space's older option name."""
+    labels = [CONCLUSION_LABEL[conclusion], *([LEGACY_UNKNOWN_OPTION] if conclusion == "UNKNOWN" else [])]
+    return next(((label, options[label]) for label in labels if options.get(label)), None)
+
+
 REFERENCE_LABEL = "作为参考资料，未单独审核"
 
 
