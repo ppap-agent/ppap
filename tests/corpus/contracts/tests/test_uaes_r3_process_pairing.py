@@ -1,17 +1,18 @@
 """Revision 3 cross-file identity, using the candidate entry point and real source cells. Only image transcription is substituted."""
 
 import hashlib
-import importlib.util
 import json
-import sys
 from pathlib import Path
 
 import fitz
 import pytest
+from agent.execution.audit_runtime import _load_program, _restore_modules
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
+from audit.standard_suites import _load_leaf
 from openpyxl import Workbook, load_workbook
 
 UAES = Path(__file__).resolve().parents[4] / "assets/uaes"
+LEAVES = UAES / "rulebook/v1.0/candidates"
 V040 = next((UAES / "samples").glob("*V040*")) / "测试文件"
 
 
@@ -19,26 +20,27 @@ def original(folder, section):
     return next(f for f in folder.glob(f"{section}*/*") if f.is_file())
 
 
-def candidate(monkeypatch, kind, target, peers):
-    folder = UAES / "rulebook/v1.0/candidates/uaes" / kind
+@pytest.fixture
+def candidate(tmp_path):
+    loaded = []
 
-    def module(name):
-        spec = importlib.util.spec_from_file_location(name, folder / f"{name}.py")
-        loaded = importlib.util.module_from_spec(spec)
-        monkeypatch.setitem(sys.modules, name, loaded)
-        spec.loader.exec_module(loaded)
-        return loaded
+    def open_audit(kind, target, peers):
+        folder = LEAVES / "uaes" / kind
+        modules, saved = _load_program(_load_leaf(LEAVES, "uaes", folder).program_files, tmp_path / f"program-{len(loaded)}")
+        loaded.append(saved)
+        checker = modules["checker"]
 
-    module("resources")
-    checker = module("checker")
+        def file(path):
+            return AuditInput(audit_id=path.name, file_url=str(path), file_metadata={"file_version_id": path.name})
 
-    def file(path):
-        return AuditInput(audit_id=path.name, file_url=str(path), file_metadata={"file_version_id": path.name})
+        types = {kind: [file(path)] for kind, path in peers.items()}
+        group = GroupContextInput(by_doc_type=types, by_audit_id={f.audit_id: f for ff in types.values() for f in ff})
+        rule = RuleInput.of(json.loads((folder / "rules.json").read_text()), rule_id=kind)
+        return checker.create_audit(file(target), rule, group), checker
 
-    types = {kind: [file(path)] for kind, path in peers.items()}
-    group = GroupContextInput(by_doc_type=types, by_audit_id={f.audit_id: f for ff in types.values() for f in ff})
-    rule = RuleInput.of(json.loads((folder / "rules.json").read_text()), rule_id=kind)
-    return checker.create_audit(file(target), rule, group), checker
+    yield open_audit
+    for saved in reversed(loaded):
+        _restore_modules(saved)
 
 
 # Checked against the seven different dimension callouts cropped from the actual magnetic-cover originals.
@@ -73,8 +75,8 @@ def image_reader(files):
     return lambda image, *_: facts.get(pixels(fitz.Pixmap(image)), dict.fromkeys(("name", "nominal", "upper", "lower", "diameter", "envelope", "frame"), None) | {"readable": False})
 
 
-def test_magnetic_cover_quantitative_spec_is_not_no_dimensions(monkeypatch):
-    audit, _ = candidate(monkeypatch, "U08", original(V040, "10"), {})
+def test_magnetic_cover_quantitative_spec_is_not_no_dimensions(candidate):
+    audit, _ = candidate("U08", original(V040, "10"), {})
     try:
         r = audit.evaluate("CP:5")
         assert r.status == "UNABLE"
@@ -83,9 +85,9 @@ def test_magnetic_cover_quantitative_spec_is_not_no_dimensions(monkeypatch):
         audit.close()
 
 
-def test_list_dimensions_remain_distinct_from_names(monkeypatch):
+def test_list_dimensions_remain_distinct_from_names(candidate):
     f = original(V040, "11")
-    audit, _ = candidate(monkeypatch, "U07", original(V040, "09"), {"过程特殊特性清单": f})
+    audit, _ = candidate("U07", original(V040, "09"), {"过程特殊特性清单": f})
     try:
         audit._implementation().transcribe = image_reader([(f, {30: (0, 1), 31: (1, 1), 32: (2, 1), 33: (3, 2), 34: (4, 2), 35: (5, 1), 36: (6, 2)})])
         r = audit.evaluate("PFMEA:3")
@@ -95,9 +97,9 @@ def test_list_dimensions_remain_distinct_from_names(monkeypatch):
         audit.close()
 
 
-def test_control_plan_compares_a_mark_only_after_pairing_both_keys(monkeypatch):
+def test_control_plan_compares_a_mark_only_after_pairing_both_keys(candidate):
     flow, fmea = original(V040, "08"), original(V040, "09")
-    audit, _ = candidate(monkeypatch, "U08", original(V040, "10"), {"过程流程图": flow, "潜在过程失效模式及后果分析": fmea})
+    audit, _ = candidate("U08", original(V040, "10"), {"过程流程图": flow, "潜在过程失效模式及后果分析": fmea})
     try:
         audit._implementation().transcribe = image_reader(
             [
@@ -113,9 +115,9 @@ def test_control_plan_compares_a_mark_only_after_pairing_both_keys(monkeypatch):
 
 
 @pytest.mark.parametrize("part", ["776", "A40"])
-def test_process_analysis_retains_evidence_for_local_names(monkeypatch, part):
+def test_process_analysis_retains_evidence_for_local_names(candidate, part):
     folder = next((UAES / "samples").glob(f"*{part}*")) / "测试文件"
-    audit, _ = candidate(monkeypatch, "U07", original(folder, "09"), {"过程流程图": original(folder, "08")})
+    audit, _ = candidate("U07", original(folder, "09"), {"过程流程图": original(folder, "08")})
     try:
         r = audit.evaluate("PFMEA:5")
         assert r.status == "UNABLE", r.suggestions
@@ -124,7 +126,7 @@ def test_process_analysis_retains_evidence_for_local_names(monkeypatch, part):
         audit.close()
 
 
-def test_same_step_with_identified_stock_and_inspection_objects(monkeypatch, tmp_path):
+def test_same_step_with_identified_stock_and_inspection_objects(candidate, tmp_path):
     # A short flow containing the three operations, exactly as written in 776.
     folder = next((UAES / "samples").glob("*776*")) / "测试文件"
     source = load_workbook(original(folder, "08"), read_only=True, data_only=True)
@@ -139,7 +141,7 @@ def test_same_step_with_identified_stock_and_inspection_objects(monkeypatch, tmp
         source.close()
     flow = tmp_path / "flow.xlsx"
     book.save(flow)
-    audit, _ = candidate(monkeypatch, "U07", original(folder, "09"), {"过程流程图": flow})
+    audit, _ = candidate("U07", original(folder, "09"), {"过程流程图": flow})
     try:
         r = audit.evaluate("PFMEA:5")
         assert r.status == "PASS" and "全部3道" in r.suggestions, r.suggestions
@@ -148,8 +150,8 @@ def test_same_step_with_identified_stock_and_inspection_objects(monkeypatch, tmp
         audit.close()
 
 
-def test_wrapped_bilingual_operations_keep_the_same_chinese_name(monkeypatch):
-    audit, _ = candidate(monkeypatch, "U07", original(V040, "09"), {"过程流程图": original(V040, "08")})
+def test_wrapped_bilingual_operations_keep_the_same_chinese_name(candidate):
+    audit, _ = candidate("U07", original(V040, "09"), {"过程流程图": original(V040, "08")})
     try:
         result = audit.evaluate("PFMEA:5")
         assert result.status == "UNABLE" and "已确认7道主工序" in result.suggestions, result.suggestions

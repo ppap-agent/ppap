@@ -1,34 +1,29 @@
 """Revision-3 U12. Only the drawing transcription boundary is substituted."""
 
-import importlib.util
 import json
 import re
-import sys
 from pathlib import Path
 
 import fitz
 import pytest
+from agent.execution.audit_runtime import _load_program, _restore_modules
 from audit.checker_lib.uaes.special_characteristics import UaesSpecialCharacteristicsAgent
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
+from audit.standard_suites import _load_leaf
 from openpyxl import Workbook, load_workbook
 
 ROOT = Path(__file__).resolve().parents[4] / "assets/uaes"
-LEAF = ROOT / "rulebook/v1.0/candidates/uaes/U12"
+LEAVES = ROOT / "rulebook/v1.0/candidates"
+LEAF = LEAVES / "uaes/U12"
 BATCH = next((ROOT / "samples").glob("*776*"))
 PART = "F01R10Y776"
 
 
 @pytest.fixture
-def candidate(monkeypatch):
-    def load(name):
-        spec = importlib.util.spec_from_file_location(name, LEAF / (name + ".py"))
-        mod = importlib.util.module_from_spec(spec)
-        monkeypatch.setitem(sys.modules, name, mod)
-        spec.loader.exec_module(mod)
-        return mod
-
-    load("resources")
-    return load("checker")
+def candidate(tmp_path):
+    modules, saved = _load_program(_load_leaf(LEAVES, "uaes", LEAF).program_files, tmp_path / "program")
+    yield modules["checker"]
+    _restore_modules(saved)
 
 
 def workbook(tmp, rows):
