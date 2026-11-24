@@ -688,6 +688,47 @@ class InspectionR3(Reader):
     def approvals(self) -> list[Any]:
         return list({item.audit_id: item for item in [*self.batch_files(*APPROVAL_KINDS), *self.named_files(APPROVAL_NAMES)]}.values())
 
+    def release_part(self, item: Any) -> str | None:
+        """Read the *subject* cell of a native, single-page C Sample Release Report, never a name or a remark.
+        Other layouts, multiple subjects and scans cannot exclude coverage."""
+        import fitz
+
+        path = Path(str(item.file_url))
+        if path.suffix.lower() != ".pdf":
+            return None
+        metadata = getattr(item, "file_metadata", None) or {}
+        expected = metadata.get("source_sha256") or metadata.get("sha256")
+        if expected and hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise OSError("本轮冻结关联资料已变化，不能完成本项核对。")
+        with fitz.open(str(path)) as document:
+            if len(document) != 1 or self.unread_pages(str(path)):
+                return None
+            page = document[0]
+            if "csamplereleasereport" not in compact(page.get_text()):
+                return None
+            matches = []
+            for table in page.find_tables().tables:
+                rows = table.extract()
+                if not rows or not any("csamplereleasereport" in compact(value) for value in rows[0]):
+                    continue
+                for index, row in enumerate(rows):
+                    for col, label in enumerate(row[:-1]):
+                        if compact(label) != "零件号partno.":
+                            continue
+                        part = (row[col + 1] or "").strip()
+                        box = table.rows[index].cells[col + 1]
+                        if not box or not re.fullmatch(r"F[0-9A-Z]{9,}", part):
+                            return None
+                        matches.append((part, box))
+            if len(matches) != 1:
+                return None
+            part, box = matches[0]
+            # Don't exclude a document that also names another potential subject.
+            if set(re.findall(r"(?<![A-Za-z0-9])F[0-9A-Z]{9,}(?![A-Za-z0-9])", page.get_text())) != {part}:
+                return None
+            self.witness({"kind": "pdf_region", "page": 1, "bbox": list(box)}, part, version_of(item))
+            return part
+
     # ---- IR:1 ----------------------------------------------------------------------------------
 
     @rule("尺寸报告实测值列数与超差")
@@ -725,6 +766,20 @@ class InspectionR3(Reader):
             if not approvals:
                 self.need("顾客工程批准或偏差许可")
                 return "NG", f"{listed}；同批次没有顾客工程批准或偏差许可，按超差判不通过。"
+            part, _ = self.identity(ctx)
+            for ws in ctx.workbook.worksheets:
+                if "cover" not in compact(ws.title) and "封面" not in ws.title:
+                    continue
+                for cell in self.cells(Sheet(ctx, ws), row_max=40):
+                    match = re.fullmatch(r"\s*零件号\s*/\s*Subject Number\s*[:：]\s*(.+?)\s*", str(cell.value() or ""), re.I)
+                    if match and match[1].strip() and match[1].strip() != part:
+                        part = ""  # inconsistent cover and inspection headers cannot exclude a permission
+            if re.fullmatch(r"F[0-9A-Z]{9,}", part):
+                considered = [(item, self.release_part(item)) for item in approvals]
+                if all(other and other != part for _item, other in considered):
+                    names = "、".join(f"《{original_name(item)}》第1页零件号{other}" for item, other in considered)
+                    self.need("覆盖该超差项的顾客工程批准或偏差许可", part=part, found="、".join(dict.fromkeys(other for _item, other in considered)))
+                    return "NG", f"{listed}；检验报告零件号{part}，同批批准件{names}，均为不同零件，不能覆盖该超差项。"
             raise unable(f"{listed}；同批次有{'、'.join(original_name(item) for item in approvals)}，检查程序未能核对其是否覆盖这些超差项，需人工复核。")
         if unknown:
             raise unable("；".join(notes) + "；检查程序未能确认：" + "；".join(map(self.named, unknown[:8])) + ("等" if len(unknown) > 8 else "") + "，需人工复核是否超差。")
@@ -888,6 +943,7 @@ class InspectionR3(Reader):
                     match = re.match(r"\s*(.+?)\s*[:：]\s*(.+)", self.raw(cell), re.S)
                     if match and compact(match.group(1)) == compact("Part Number/零件号"):
                         parts.add(match.group(2).strip())
+                        self.cite(sheet, cell.row_index, cell.col_index)
                     if match and compact(match.group(1)) == compact("Part Name/零件名称"):
                         names.add(match.group(2).strip())
         return "、".join(sorted(parts)) or "未写", "、".join(sorted(names)) or "未写"

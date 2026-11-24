@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import sys
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -151,6 +152,26 @@ def gauge_kind(name: str) -> str:
     return "counting" if counting else "variable" if variable else "unknown"
 
 
+def _dimension(text: str) -> tuple[bool, Decimal, str] | None:
+    # A single engineering value only. Geometric tolerance frames, callout IDs, lists,
+    # and different units need their own readings, not a first-number comparison.
+    m = re.fullmatch(r"(?:粗糙度)?(rzmax|[φ⌀ø]?)(\d+(?:\.\d+)?)(mm|[μu]m)?(±\d+(?:\.\d+)?|h\d+)?", text)
+    if not m:
+        return None
+    roughness = m[1] == "rzmax"
+    if (roughness and m[3] == "mm") or (not roughness and m[3] in ("um", "μm")):
+        return None
+    return roughness, Decimal(m[2]), m[4] or ""
+
+
+def _spec_identity(value: str):
+    # The same nominal (e.g. Ø34.22 and Φ34.220) can occur on distinct features.
+    # Don't grant coverage twice just because two source cells spell it differently.
+    text = _c(value)
+    parsed = _dimension(text)
+    return parsed[:2] if parsed else text
+
+
 def _same_gauge(left: str, right: str) -> bool:
     a, b = _c(left), _c(right)
     if not a or not b:
@@ -172,6 +193,10 @@ class Report:
     names: list[str] = field(default_factory=list)
     numbers: list[str] = field(default_factory=list)
     characteristic: str = ""
+    studied: tuple[str, ...] = ()
+    limits: tuple[str, ...] = ()
+    subject_codes: frozenset[str] = frozenset()
+    study_cells: tuple = ()
     text: str = ""
     title: str = ""
     conclusions: list[str] = field(default_factory=list)
@@ -234,20 +259,24 @@ class MsaClauses:
         return found
 
     @staticmethod
-    def glabel(grid: dict, aliases: tuple[str, ...]) -> list[str]:
+    def label_cells(grid: dict, aliases: tuple[str, ...]) -> list[tuple[int, int, str]]:
         """Values written right of each label cell, or after "label:" in the same cell (the reader's rule, on raw text)."""
         wanted = {compact(alias) for alias in aliases}
         values = []
         for (row, column), text in sorted(grid.items()):
             if compact(text) in wanted:
-                found = next((grid[(row, c)] for c in range(column + 1, column + 9) if grid.get((row, c))), None)
+                found = next((c for c in range(column + 1, column + 9) if grid.get((row, c))), None)
                 if found is not None:
-                    values.append(found)
+                    values.append((row, found, grid[(row, found)]))
                 continue
             match = re.match(r"\s*(.+?)\s*[:：]\s*(.+)", text, re.S)
             if match and compact(match.group(1)) in wanted:
-                values.append(match.group(2).strip())
+                values.append((row, column, match.group(2).strip()))
         return values
+
+    @classmethod
+    def glabel(cls, grid: dict, aliases: tuple[str, ...]) -> list[str]:
+        return [value for _, _, value in cls.label_cells(grid, aliases)]
 
     @staticmethod
     def right(grid: dict, row: int, column: int, gap: int = 3) -> list[tuple[int, str]]:
@@ -384,7 +413,15 @@ class MsaClauses:
         report.parts = set(_PART.findall(unicodedata.normalize("NFKC", text).upper()))
         report.names = [value for value in self.glabel(grid, (*self.READER.resources.GAUGE_NAME, "名称 Object", "测量工具名称")) if _c(value) not in _PLACEHOLDERS]
         report.numbers = [value for value in self.glabel(grid, (*self.READER.resources.GAUGE_NUMBER, "编号")) if _c(value) not in _PLACEHOLDERS]
-        characteristic = self.glabel(grid, ("测量参数", "Measure parameter", "Measuring parameter", "特性", "特 性", "Denote Requirement", "标注要求", "参数规格", "Parameter specification"))
+        parameter_cells = self.label_cells(grid, ("测量参数", "Measure parameter", "Measuring parameter", "特性", "特 性", "Denote Requirement", "标注要求"))
+        characteristic = [value for _, _, value in parameter_cells]
+        report.study_cells = tuple((ws, r, c) for r, c, _ in parameter_cells)
+        report.studied = tuple(v for v in characteristic if _c(v) not in _PLACEHOLDERS)
+        limits = self.glabel(grid, ("参数规格", "Parameter specification"))
+        report.limits = tuple(v for v in limits if _c(v) not in _PLACEHOLDERS)
+        characteristic += limits
+        subjects = self.glabel(grid, ("零件号", "零件名称", "零件编号", "Part No.", "Part Number", "Part Name", "Product number", "测量对象: Measurement object"))
+        report.subject_codes = frozenset(v.strip() for v in subjects if re.fullmatch(r"F[0-9A-Z]{9,}", v.strip()))
         report.characteristic = " ".join(value for value in characteristic if _c(value) not in _PLACEHOLDERS)
         people = self.glabel(grid, ("测量人员", "评价人员", "Analysing staff", "Measure staff", "测量日期", "分析日期", "Analysing date", "Measuring date", "日期", "Date"))
         report.signature = (kind, tuple(sorted(_c(n) for n in report.numbers)), tuple(_c(p) for p in people), _c(report.characteristic), tuple(sorted(_c(n) for n in report.names)))
@@ -431,8 +468,9 @@ class MsaClauses:
 
         found: list[Report] = []
         records: dict[str, Report] = {}
+        scanned = set(self.scanned(item))
         with fitz.open(str(item.file_url)) as document:
-            pages = [(page.number + 1, [line.strip() for line in page.get_text().splitlines() if line.strip()]) for page in document]
+            pages = [(page.number + 1, [line.strip() for line in page.get_text().splitlines() if line.strip()]) for page in document if page.number + 1 not in scanned]
         for number, lines in pages:
             if not lines:
                 continue
@@ -449,6 +487,7 @@ class MsaClauses:
                 report.names = [after("量具名称")] if after("量具名称") else []
                 report.numbers = [after("量具编号")] if after("量具编号") else []
                 report.characteristic = after("特 性") or after("特性")
+                report.studied = (report.characteristic,) if report.characteristic else ()
                 report.conclusions = [after("结论")] if after("结论") else []
                 for index, line in enumerate(lines):
                     if _c(line) in ("%r&r=", "%grr=") and index + 1 < len(lines) and re.fullmatch(r"\d+(\.\d+)?%", _c(lines[index + 1])):
@@ -468,6 +507,7 @@ class MsaClauses:
                     gauge_number = after("Gage Number", 3)
                     report.numbers = [gauge_number] if _c(gauge_number) not in _PLACEHOLDERS else []
                     report.characteristic = after("Denote Requirement", 5)
+                    report.studied = (report.characteristic,) if report.characteristic else ()
                     report.signature = ("Attr", key)
                     records[key] = report
                     found.append(report)
@@ -749,13 +789,13 @@ class MsaClauses:
 
     # ---- MSA:3 -----------------------------------------------------------------------------------
 
-    def pgqp1_rows(self, ctx: RuleContext, item: Any) -> tuple[list[tuple[int, str, str, str]], set[str], bool]:
+    def pgqp1_rows(self, ctx: RuleContext, item: Any, *, exact_part: bool = False) -> tuple[list[tuple[int, str, str, str]], set[str], bool]:
         """((row, item, SC value, equipment) of the important-characteristic list, part numbers, whether a PGQP1 sheet exists)."""
         rows, parts, sheets = [], set(), False
         with self.reading(ctx, item, self.READER.pgqp1):
             for sheet in Table(ctx).find_sheets("PGQP1", on_missing=Decision.IGNORE):
                 sheets = True
-                parts |= {_c(value).upper() for value in self.glabel(self.grid(ctx, sheet.ws), self.READER.capability.PGQP1_PART) if _c(value) not in _PLACEHOLDERS}
+                parts |= {(value.strip() if exact_part else _c(value).upper()) for value in self.glabel(self.grid(ctx, sheet.ws), self.READER.capability.PGQP1_PART) if _c(value) not in _PLACEHOLDERS}
                 for row in self.section(sheet, "重要特性区").rows("特性项目", "特殊特性", "测量设备"):
                     name, special, gauge = _text(row.value("特性项目")), _text(row.value("特殊特性")), _text(row.value("测量设备"))
                     # A heading repeated on a later page is not a characteristic.
@@ -763,6 +803,7 @@ class MsaClauses:
                         continue
                     if name or special or gauge:
                         rows.append((row.row_index, name, special, gauge))
+                        self.__dict__.setdefault("_feature_cells", {})[f"PGQP1第{row.row_index}行"] = [(sheet.ws, row.row_index, row.columns[col].header_col) for col in ("特殊特性", "测量设备")]
         return rows, parts, sheets
 
     @rule("PGQP1重要特性计数型量具的Kappa独立文件")
@@ -960,7 +1001,7 @@ class MsaClauses:
 
     # ---- MSA:6 -----------------------------------------------------------------------------------
 
-    def list_rows(self, ctx: RuleContext, item: Any) -> list[tuple[str, str, str, str]] | None:
+    def list_rows(self, ctx: RuleContext, item: Any) -> list[tuple[str, str, str, str, str]] | None:
         """(where, part numbers written, characteristic, measuring equipment) of each row of a spreadsheet special
         characteristic list; None when the list has no measuring equipment column (or is not a spreadsheet).
 
@@ -968,7 +1009,7 @@ class MsaClauses:
         two-row heading; the rows start below the heading's merged area."""
         if str(item.file_url).lower().endswith(".pdf"):
             return None
-        found: list[tuple[str, str, str, str]] = []
+        found: list[tuple[str, str, str, str, str]] = []
         located = False
         with self.reading(ctx, item, self.READER.resources):
             for ws in ctx.workbook.worksheets:
@@ -999,50 +1040,113 @@ class MsaClauses:
                         # A legend line under the table (a symbol explained, no value, part or equipment) is not a row.
                         if not (name or value) or not (value or grid.get((r, column)) or (part_col and grid.get((r, part_col)))):
                             continue
-                        characteristic = " ".join(v for v in (name, value) if v)
-                        found.append((f"清单“{ws.title}”第{r}行", grid.get((r, part_col), "") if part_col else "", characteristic, grid.get((r, column), "")))
+                        where = f"清单“{ws.title}”第{r}行"
+                        self.__dict__.setdefault("_feature_cells", {})[where] = [(ws, r, c) for c in (name_col, value_col, column) if c]
+                        found.append((where, grid.get((r, part_col), "") if part_col else "", name, value, grid.get((r, column), "")))
                     break
         return found if located else None
 
-    def coverage(self, ctx: RuleContext, items: list[tuple[str, str, str]], parts: list[str], main: Any) -> tuple[list[tuple[str, Any]], dict[str, list[str]], list[str]]:
-        """(defects with their landing file, gauges by family, gauges written across kinds) of MSA:6 for `items`
-        (where, characteristic, gauge); `parts[i]` is the part number item i's reports must be of."""
+    @staticmethod
+    def characteristic_match(name: str, requirement: str, report: Report, *, unique_name: bool, unique_requirement: bool) -> bool | None:
+        """Compare an explicitly labelled study parameter, not numbers anywhere on the sheet.
+        Different nominal dimensions or different Rz limits exclude coverage. Equal numbers
+        alone cannot identify a feature; unresolved specs and duplicate identities stay open."""
+        written = {_c(v) for v in report.studied if _c(v) and _c(v) not in _PLACEHOLDERS}
+        if not written:
+            return None
+
+        target = _dimension(_c(requirement))
+        readings = [_dimension(w) for w in written]
+        if target and all(v and v[0] == target[0] and v[1] != target[1] for v in readings):
+            return False
+        if unique_name and len(written) == 1 and _c(name) in written and not readings[0] and re.search(r"[a-z\u4e00-\u9fff]", _c(name)):
+            return True
+        if target and unique_requirement and len(written) == 1 and (study := readings[0]) and study[:2] == target[:2]:
+            # Require the whole value (Rz limit or numeric dimension with tolerance), not a shared nominal.
+            limits = {_c(v).strip("()") for v in report.limits}
+            if target[0]:
+                return True if not limits or all(_dimension(v) == target for v in limits) else None
+            if target[2] and ((study[2] == target[2] and not limits) or (not study[2] and limits == {target[2]})):
+                return True
+        return None
+
+    def coverage(self, ctx: RuleContext, items: list[tuple[str, str, str, str]], parts: list[str], main: Any) -> tuple[list[tuple[str, Any]], dict[str, list[str]], list[str]]:
+        """Align each source row to the same part, gauge and characteristic, then allocate its defect once."""
         everything = self.all_reports(ctx)
-        defects: list[tuple[str, Any]] = []  # (text, landing file)
+        scanned = any(self.scanned(i) for i in self.suite())
+        defects, unresolved = [], []
         gauges: dict[str, list[str]] = {}
-        wanted_parts: dict[str, set[str]] = {}
-        for (where, characteristic, gauge), part in zip(items, parts):
+        keys = [(part, gauge_family(gauge) or _c(gauge)) for (_where, _name, _requirement, gauge), part in zip(items, parts)]
+        names = Counter((key, _c(item[1])) for key, item in zip(keys, items))
+        specs = Counter((key, _spec_identity(item[2])) for key, item in zip(keys, items))
+        for (where, name, requirement, gauge), (part, family) in zip(items, keys):
+            desc = f"{where}“{name}（{requirement}）”"
             if not _c(gauge) or _c(gauge) in _PLACEHOLDERS:
-                defects.append((f"{where}特殊特性“{characteristic}”没有对应的测量设备/量具", main))
+                if self.mine(main):
+                    for cell in self.__dict__.get("_feature_cells", {}).get(where, ()):
+                        self.cite(*cell)
+                defects.append((f"{desc}没有对应的测量设备/量具", main))
                 continue
-            family = gauge_family(gauge) or _c(gauge)
-            gauges.setdefault(family, []).append(f"{where}{characteristic}")
-            wanted_parts.setdefault(family, set()).add(part)
-        mixed = []
-        for family, characteristics in gauges.items():
-            gauge = family
+            gauges.setdefault(family, []).append(desc)
             kind = gauge_kind(gauge)
             if kind == "mixed":
-                mixed.append(f"测量设备“{gauge}”写法跨计数型与计量型")
+                unresolved.append(f"{desc}测量设备“{gauge}”跨计数型与计量型")
                 continue
-            reports = [r for r in everything if all(r.of_part(part) for part in wanted_parts[family])]
-            matched = [r for r in reports if r.named(gauge) and _c(r.characteristic)]
-            first = characteristics[0] + (f"等{len(characteristics)}项" if len(characteristics) > 1 else "")
-            if kind == "counting":
-                usable = [r for r in matched if r.kind in ("Kappa", "Attr", "GRR")]
-                if not usable:
-                    landing = next((r.item for r in everything if r.named(gauge)), main)
-                    defects.append((f"特殊特性{first}使用计数型量具“{gauge}”，套件内没有该量具的分析报告", landing))
-                elif bad := [r for r in usable if self.check_report(r) is not None and self.check_report(r)[0] == "NG"]:
-                    defects.append((f"特殊特性{first}使用的“{gauge}”：" + self.check_report(bad[0])[1], bad[0].item))
-            else:
-                grr = [r for r in matched if r.kind == "GRR"]
-                if not grr:
-                    landing = next((r.item for r in everything if r.named(gauge)), main)
-                    defects.append((f"特殊特性{first}使用“{gauge}”，套件内没有该量具写明所判特性的GR&R报告", landing))
-                elif bad := [r for r in grr if self.check_report(r) is not None and self.check_report(r)[0] == "NG"]:
-                    defects.append((f"特殊特性{first}使用的“{gauge}”：" + self.check_report(bad[0])[1], bad[0].item))
-        return defects, gauges, mixed
+            named = [r for r in everything if r.named(gauge)]
+            # A report citing several part codes is not unambiguously a study of this part.
+            # Unknown identity is not a mismatch. A number found only in body text cannot identify a study.
+            same = [r for r in named if r.subject_codes == {part}]
+            unbound = [r for r in named if not r.subject_codes or (len(r.subject_codes) > 1 and part in r.subject_codes)]
+            if kind == "unknown":
+                unresolved.append(f"{desc}“{gauge}”的系统级评价记录尚不能识别，不能以未读到GR&R报告代替")
+                continue
+            kinds = ("Kappa", "Attr", "GRR") if kind == "counting" else ("GRR",)
+            key = (part, family)
+            matches = [
+                (r, self.characteristic_match(name, requirement, r, unique_name=names[key, _c(name)] == 1, unique_requirement=specs[key, _spec_identity(requirement)] == 1))
+                for r in same
+                if r.kind in kinds
+            ]
+            confirmed = [r for r, match in matches if match is True]
+            if not confirmed:
+                if not part or any(r.kind in kinds for r in unbound) or scanned:
+                    unresolved.append(f"{desc}有未能定位件号的同量具报告或套件扫描页，不能断言缺件")
+                    continue
+                if any(match is None for _r, match in matches):
+                    unresolved.append(f"{desc}未能与“{gauge}”报告所写特性唯一对齐")
+                    continue
+                landing = next((r.item for r in same), None)
+                if landing is None:
+                    landing = self.gauge_file(ctx, family, kinds[0], main)
+                observed = "、".join(dict.fromkeys(v for report, _ in matches for v in report.studied))
+                detail = f"（报告实写：{observed}）" if observed else ""
+                if self.mine(landing):
+                    for cell in self.__dict__.get("_feature_cells", {}).get(where, ()):
+                        self.cite(*cell)
+                    for r, _ in matches:
+                        for cell in r.study_cells:
+                            self.cite(*cell)
+                defects.append((f"{desc}没有零件号{part}、量具“{gauge}”及该特性均匹配的{'或'.join(kinds)}报告{detail}", landing))
+                continue
+            for r in confirmed:
+                if self.mine(r.item):
+                    for cell in self.__dict__.get("_feature_cells", {}).get(where, ()):
+                        self.cite(*cell)
+                    for cell in r.study_cells:
+                        self.cite(*cell)
+                outcomes = [verdict(v) for v in r.conclusions]
+                if "reject" in outcomes:
+                    defects.append((f"{desc}对应的{r.label}结论不合格", r.item))
+                elif (
+                    not outcomes
+                    or any(v != "accept" for v in outcomes)
+                    or self.check_report(r) is not None
+                    or (r.kind == "GRR" and ((r.grr is not None and r.grr > 10) or (r.ndc is not None and r.ndc < 5)))
+                ):
+                    # MSA:6 borrows MSA:2's matching key; an index conflicting with an acceptable conclusion
+                    # is not an unconditional NG under this clause.
+                    unresolved.append(f"{desc}对应的{r.label}未能确定合格结论")
+        return defects, gauges, unresolved
 
     def landed(self, source: str, items: list, defects: list[tuple[str, Any]], gauges: dict, mixed: list[str]) -> tuple[str, str]:
         """This file's MSA:6 outcome: (status, reason)."""
@@ -1051,10 +1155,10 @@ class MsaClauses:
         tail = f"；另有套件级缺陷落在《{'》《'.join(elsewhere)}》，不在本文件重复计入" if elsewhere else ""
         if own:
             return "NG", "；".join(own[:5]) + ("等" if len(own) > 5 else "") + tail + "。"
-        if mixed and not defects:
-            return "UNABLE", "；".join(mixed) + "，移交工程裁定，需人工复核。"
+        if mixed:
+            return "UNABLE", "；".join(mixed[:4]) + "，需人工复核。"
         if defects:
-            return "PASS", f"本文件没有落在本条的缺陷{tail}。"
+            return "UNABLE", f"套件缺陷落在《{'》《'.join(elsewhere)}》，不在本文件重复计入；条文未指定其他文件的结论，不能据此记通过。"
         return "PASS", f"{source}全部{len(items)}项特殊特性对应的{len(gauges)}种量具均有零件匹配、写明所判特性且结论合格的分析报告。"
 
     @rule("特殊特性量具的分析报告覆盖与结论")
@@ -1064,13 +1168,15 @@ class MsaClauses:
         if plans:
             if len(plans) > 1:
                 raise unable("同批次有多份采购件质量计划，尚不能确定按哪一份核对，需人工复核。")
-            rows, parts, sheets = self.pgqp1_rows(ctx, plans[0])
+            if self.scanned(plans[0]):
+                raise unable("采购件质量计划含扫描页，未能确认所需特殊特性范围。")
+            rows, parts, sheets = self.pgqp1_rows(ctx, plans[0], exact_part=True)
             if not sheets:
                 return "NG", "同批次《采购件质量计划》中没有PGQP1表，无法取得特殊特性。"
             if len(parts) != 1:
                 raise unable(f"采购件质量计划PGQP1的零件号未能唯一读取（读到：{'、'.join(sorted(parts)) or '无'}），尚不能按零件号匹配报告，需人工复核。")
             part = next(iter(parts))
-            items = [(f"PGQP1第{row}行", f"{name}（{special}）", gauge) for row, name, special, gauge in rows if _c(special)]
+            items = [(f"PGQP1第{row}行", name, special, gauge) for row, name, special, gauge in rows if _c(special)]
             if not items:
                 raise unable("PGQP1特殊特性列没有内容，不能按空范围通过，需人工复核。")
             status, reason = self.landed("PGQP1", items, *self.coverage(ctx, items, [part] * len(items), main))
@@ -1091,9 +1197,9 @@ class MsaClauses:
         source = f"特殊特性清单《{name}》"
         planned = {_c(row.values.get("零件号", "")).upper() for row in plan} - {""}
         own_part = next(iter(planned)) if len(planned) == 1 else ""
-        row_parts = [set(_PART.findall(unicodedata.normalize("NFKC", part_text).upper())) for _where, part_text, _ch, _g in found]
+        row_parts = [set(_PART.findall(unicodedata.normalize("NFKC", part_text).upper())) for _where, part_text, _ch, _val, _g in found]
         written = set().union(*row_parts)
-        everything = [(where, characteristic, gauge) for where, _p, characteristic, gauge in found]
+        everything = [(where, name, value, gauge) for where, _p, name, value, gauge in found]
         if len(written) <= 1 and (not written or not own_part or written == {own_part}):
             # One part (or none written): the whole list is this part's.
             part = own_part or (next(iter(written)) if written else "")

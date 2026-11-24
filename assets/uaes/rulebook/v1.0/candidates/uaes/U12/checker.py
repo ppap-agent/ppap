@@ -14,7 +14,7 @@ import sys
 import unicodedata
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from audit.checker_lib.agents import AgentAudit
 from audit.checker_lib.excel_agent import rule
@@ -33,7 +33,9 @@ _MAJOR = {"sc", "sc/2", "2", "d", "f", "重要", "主要", "跑道框"}
 _KNOWN = _SAFETY | _MAJOR | {"yc", "ys", "3", "5"}
 _TOKEN = re.compile(r"sc/[12]|安全|关键|重要|主要|跑道框|[a-z]+|\d+|[^\s,，、;；/]")
 _SERIAL = re.compile(r"^\s*\d+(?:\s*-\s*\d+)?\s*[#＃]\s*(?:-\s*\d+)?")
-_CLASS_SUFFIX = re.compile(r"(?:[\s,，、]*(?:[1235]|cc|sc(?:/[12])?|yc|ys|★))+\s*(?=[（(]|$)", re.I)
+_CODE = r"(?:[1235sdf]|cc|sc(?:/[12])?|yc|ys|★)"
+_CLASS_SUFFIX = re.compile(rf"(?<=[一-鿿\s,，、]){_CODE}(?:[\s,，、]+{_CODE})*\s*(?=[（(]|$)", re.I)
+
 # The header fields SCL:1 names, by the labels the lists write them under.
 HEADER_FIELDS = {
     "零件号": ("零件号", "零件编号", "物料编号", "partno", "partnumber", "产品件号", "code"),
@@ -92,53 +94,152 @@ _GEOMETRY = {
     "⌒": "线轮廓度",
     "⌓": "面轮廓度",
 }
-_GEOMETRY_WORDS = tuple(dict.fromkeys(_GEOMETRY.values()))
 
 
 def tolerance_key(value: Any) -> str:
-    """A tolerance value normalised for exact comparison (SCL:3 pairs by "公差值归一后精确相等"): width and case
-    folded, spaces removed, diameter signs unified, a geometric symbol written as its name, a count prefix ("4X")
-    and a geometric tolerance's datum letters dropped."""
-    text = unicodedata.normalize("NFKC", "" if value is None else str(value)).split("\n")[0]
+    """Compare the whole specification; presentation changes never erase datums, their order or quantities."""
+    text = unicodedata.normalize("NFKC", "" if value is None else str(value))
     for symbol, word in _GEOMETRY.items():
         text = text.replace(symbol, word)
-    text = "".join(text.split()).casefold()
+    if any(word in text for word in _GEOMETRY.values()):
+        text = re.sub(r"(?<=[a-z])\s+(?=[a-z](?:\b|$))", "|", text, flags=re.I)
+    text = _norm(text).replace("×", "x")
     text = re.sub(r"[φø⌀∅]", "φ", text)
-    text = re.sub(r"^\d+[x×*]", "", text)
-    text = re.sub(r"\+(\d+(?:\.\d+)?)/-\1(?!\d)", r"±\1", text)
-    if text.startswith(_GEOMETRY_WORDS):
-        text = re.sub(r"(?<=\d)[a-z](?:[-/]?[a-z])*$", "", text)
-    return text
+    return re.sub(r"\+(\d+(?:\.\d+)?)/-\1(?![\d.])", r"±\1", text)
 
 
+class Feature(NamedTuple):
+    where: str
+    name: str
+    spec: str
+    mark: str
+    position: str = ""
+
+
+class Sight(NamedTuple):
+    page: int
+    bbox: tuple[float, ...]  # PDF points
+    tile: int
+    reading: int
+    feature: Feature
+    frame: tuple[float, ...]  # the associated dimension, not a neighbouring stacked frame
+    native: bool
+    located: bool
+
+
+_NULL_TXT = {"type": ["string", "null"]}
 _DRAWING_PROMPT = (
-    "这是一张零件图纸的一块局部图像（整张图纸切成多块，块与块略有重叠）。请按 JSON Schema 转写，只转写，不判断。\n"
-    "items：本块中带有特性类别标记的每一个尺寸、公差或形位公差。类别标记指紧跟在尺寸或形位公差框后面的小框或旗形里的"
-    "数字或字母（如 5、3/5、3、F、S、SC、CC、★）。没有类别标记的尺寸不要列出。\n"
-    "dimension：照原样转写尺寸与公差，含 Φ、R、数量前缀（如 4X）、上下偏差（写成 +0.2/-0.1 的形式）或 ±；形位公差框写成"
-    "“中文名称 公差值 基准”，如“位置度 Φ0.1 A-B”“平行度 0.1 A-B”，名称只用：平行度、位置度、垂直度、同轴度、平面度、圆度、"
-    "圆柱度、圆跳动、全跳动、对称度、倾斜度、线轮廓度、面轮廓度；粗糙度写成“Rz max 3.2”这样。\n"
-    "mark：类别标记框里的内容，照原样，如“5”“3/5”“F”。view：该尺寸所在视图的标签（如 A-A、B-B），看不出写空字符串。\n"
-    "图例、技术要求、标题栏里解释标记含义的示例不是尺寸，不要列出。readable：本块中是否有因模糊、过小而看不清的带标记尺寸，"
-    "全部看得清写 true，有看不清的写 false。"
+    "转写零件图纸裁片中所有带特性类别小框/旗标的实际尺寸或形位公差，不含图例或标题栏示例。只转写原件，不做审核。"
+    "bbox 仅框住该特性旁的类别小框/旗标，frame 只框住与该标记相连的尺寸或形位框，不含标记，切勿借上下相邻框的标识。两框都按本裁片从左上到右下的[x0,y0,x1,y1]千分坐标；两处相同尺寸须分别列出。"
+    "dimension 保留数量、尺寸、公差、形位符号及完整有序基准，如 4X 位置度 Φ0.1 A-B G。"
+    "name 单独转写该特性的文字名称或形位框首格符号（⌖写位置度），不得用基本尺寸、公差数字、序号、类别或位置代替名称。"
+    "mark 原样转写类别码；view 原样转写该视图或区域；若裁片截断或不确定字段写null，明确原处没写名称才写空串。"
+    "complete 仅当本裁片覆盖范围中的标记均已逐一读清时为 true。"
 )
 _DRAWING_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["items", "readable"],
+    "required": ["items", "complete"],
     "properties": {
-        "readable": {"type": "boolean"},
+        "complete": {"type": "boolean"},
         "items": {
             "type": "array",
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["dimension", "mark", "view"],
-                "properties": {"dimension": {"type": "string"}, "mark": {"type": "string"}, "view": {"type": "string"}},
+                "required": ["bbox", "frame", "dimension", "name", "mark", "view"],
+                "properties": {
+                    **{key: {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4} for key in ("bbox", "frame")},
+                    "dimension": _NULL_TXT,
+                    "name": _NULL_TXT,
+                    "mark": _NULL_TXT,
+                    "view": _NULL_TXT,
+                },
             },
         },
     },
 }
+
+
+def same_box(a, b):
+    """Two proposed locations for the actual mark frame, not two sightings of the same tolerance in a tile."""
+    w, h = min(a[2], b[2]) - max(a[0], b[0]), min(a[3], b[3]) - max(a[1], b[1])
+    if w <= 0 or h <= 0:
+        return False
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - w * h
+    return w * h / union >= 0.5
+
+
+def page_box(box, coords):
+    if not isinstance(coords, list) or len(coords) != 4 or not all(isinstance(i, (int, float)) for i in coords):
+        return ()
+    if not (0 <= coords[0] < coords[2] <= 1000 and 0 <= coords[1] < coords[3] <= 1000):
+        return ()
+    return tuple(round((box.x0 + v * box.width / 1000) if i % 2 == 0 else (box.y0 + v * box.height / 1000), 2) for i, v in enumerate(coords))
+
+
+def attached(mark, frame):
+    """A flag beside the corresponding frame, not the same symbol beside the row above or below."""
+    if not mark or not frame or same_box(mark, frame):
+        return False
+    for axis, cross in [(0, 1), (1, 0)]:
+        h = min(mark[cross + 2] - mark[cross], frame[cross + 2] - frame[cross])
+        overlap = min(mark[cross + 2], frame[cross + 2]) - max(mark[cross], frame[cross])
+        gap = max(mark[axis], frame[axis]) - min(mark[axis + 2], frame[axis + 2])
+        if overlap >= 0.5 * h and -0.35 * h <= gap <= h:
+            return True
+    return False
+
+
+def native_at(box, words):
+    return " ".join(w[4] for w in words if box[0] <= (w[0] + w[2]) / 2 <= box[2] and box[1] <= (w[1] + w[3]) / 2 <= box[3])
+
+
+def pair_keys(feature):
+    name, spec = characteristic_name(feature.name), tolerance_key(feature.spec)
+    # A number or dimension repeated in the name field is not an independent name.
+    if not re.search(r"[a-z一-鿿]", name) or tolerance_key(name) == spec:
+        name = ""
+    return (name, spec)
+
+
+def transcription(feature):
+    # On one original "SC/1" and "CC" are competing transcriptions, even though they are the same *level* across originals.
+    return _norm(feature.name), tolerance_key(feature.spec), tuple(mark_tokens(feature.mark)), _norm(feature.position)
+
+
+def pair(feature, peers):
+    """Two independent keys first; a source region or process position can only resolve a remaining tie."""
+    name, spec = pair_keys(feature)
+    pos = _norm(feature.position)
+    if not name or not spec:
+        return []
+    hits = [i for i, p in enumerate(peers) if pair_keys(p) == (name, spec)]
+    if len(hits) > 1 and pos:
+        exact = [i for i in hits if _norm(peers[i].position) == pos]
+        if len(exact) == 1 and all(_norm(peers[i].position) for i in hits):
+            return exact
+    return hits
+
+
+def valid_mark(mark):
+    tokens = mark_tokens(mark)
+    return bool(tokens) and all(token in _KNOWN for token in tokens)
+
+
+def described(f):
+    return f"{f.where} 名称“{f.name}”、规格“{f.spec}”、类别“{f.mark}”" + (f"、区域/工序“{f.position}”" if f.position else "")
+
+
+def source_numbers(value):
+    # A labelled reference may carry a longer material number; its suffix is significant.
+    return set(re.findall(r"(?<![0-9A-Z])F[0-9A-Z]{9,}(?![0-9A-Z])", unicodedata.normalize("NFKC", str(value or "")).upper().replace(" ", "")))
+
+
+def page_scanned(page):
+    import fitz
+
+    return not page.get_text().strip() or any(abs(fitz.Rect(i["bbox"]) & page.rect) >= 0.8 * abs(page.rect) for i in page.get_image_info())
 
 
 _REVISION_LABEL = re.compile(r"改版理由|revisionreason|修改说明|修订说明|变更履历")
@@ -160,17 +261,6 @@ def list_rows(agent: Any, ctx: RuleContext) -> list[tuple[str, Any, dict]]:
             continue
         kept.append((title, row, columns))
     return kept
-
-
-def large_format(path: str) -> bool:
-    """Whether a PDF has a page of A3 size or larger (its longer side at least 1150 pt), as part drawings are."""
-    import fitz
-
-    try:
-        with fitz.open(path) as document:
-            return any(max(page.rect.width, page.rect.height) >= 1150 for page in document)
-    except Exception:
-        return False
 
 
 def original_name(item: Any) -> str:
@@ -199,7 +289,8 @@ def _pgqp1_document(models: Any) -> tuple:
                 header_anchors=("特性项目", "特殊特性", "测量设备"),
                 header_hit=3,
                 header_compact_match=True,
-                row_anchors=("特性项目",),
+                row_anchors=("特性项目", "特殊特性"),
+                row_anchor_match="any",
                 row_stop_on_first_blank=False,
                 row_max_blank_streak=rows,
                 row_stop_markers=("5. Product Audit", "产品审核"),
@@ -208,6 +299,8 @@ def _pgqp1_document(models: Any) -> tuple:
         (
             ColumnModel(canonical_name="特性项目", section_name="重要特性区", aliases=("Items/项目",)),
             ColumnModel(canonical_name="特殊特性", section_name="重要特性区", aliases=("SC/特殊特性",)),
+            ColumnModel(canonical_name="规格公差", section_name="重要特性区", aliases=("特性值", "公差", "规格/公差", "规格公差", "Specification", "Tolerance")),
+            ColumnModel(canonical_name="位置", section_name="重要特性区", aliases=("图纸区域", "工序位置", "Drawing zone", "Process position")),
             ColumnModel(canonical_name="测量设备", section_name="重要特性区", aliases=("Measuring Equipment\n测量设备",)),
         ),
     )
@@ -383,228 +476,355 @@ class _Revision3:
 
     # ---- SCL:3 ------------------------------------------------------------------------------------------------
 
-    def drawings(self) -> list[tuple[Any, bool]]:
-        """(item, typed) of the same-round originals that may be drawings: typed as a drawing, or large-format (A3 or
-        larger) PDF originals of no recognised type; the UAES register has no drawing type, so a drawing arrives untyped,
-        and an A4 parts list or cover is not taken as one."""
-        if self.group_context is None:
+    def drawings(self):
+        """A4 is no less eligible than A0. Positive form identification excludes unrelated untyped PDFs."""
+        if not self.group_context:
             return []
-        own = self.audit_file.audit_id
-        typed: set[str] = set()
-        found: dict[str, tuple[Any, bool]] = {}
+        known = {}
         for kind, items in self.group_context.by_doc_type.items():
-            unknown = not kind or _norm(kind) in {"unknown", "未知"}
-            if not unknown:
-                typed |= {item.audit_id for item in items}
-            if not unknown and re.search(r"图纸|图样|drawing", str(kind), re.I):
-                found |= {item.audit_id: (item, True) for item in items if item.audit_id != own}
-        for item in self.group_context.by_audit_id.values():
-            if item.audit_id != own and item.audit_id not in typed and str(item.file_url).lower().endswith(".pdf") and large_format(str(item.file_url)):
-                found.setdefault(item.audit_id, (item, False))
-        return list(found.values())
+            if kind and _norm(kind) not in {"unknown", "未知"}:
+                for item in items:
+                    known[item.audit_id] = known.get(item.audit_id, False) or bool(re.search(r"图纸|图样|drawing", str(kind), re.I))
+        return [
+            (item, known.get(item.audit_id, False))
+            for item in self.group_context.by_audit_id.values()
+            if item.audit_id != self.audit_file.audit_id and (known.get(item.audit_id) or (item.audit_id not in known and Path(str(item.file_url)).suffix.lower() == ".pdf"))
+        ]
 
-    def drawing_number(self, item: Any) -> set[str]:
+    def drawing_identity(self, item, typed):
+        """Read the drawing's own number, never a number from its BOM, filename, or arbitrary annotation."""
+        import hashlib
+
         import fitz
 
-        with fitz.open(str(item.file_url)) as document:
-            text = "".join(page.get_text() for page in document)
-        found = parts_in(text)
-        if found:
-            return found
-        title = self.drawing_title(item)
-        return parts_in(title.get("drawing_number") or "")
+        path = Path(str(item.file_url))
+        metadata = getattr(item, "file_metadata", None) or {}
+        digest = metadata.get("source_sha256") or metadata.get("sha256")
+        if digest and hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise GuardStop(Decision.ERR, "冻结图纸内容已变化，尚未取得业务结论。")
+        if path.suffix.lower() != ".pdf":
+            return "open", set(), "未读取该格式的图纸"
+        with fitz.open(str(path)) as doc:
+            page = doc[0]
+            if page_scanned(page) or page.rotation:
+                return "open", set(), "首页无可用原生图文或坐标未核实，未转写"
+            text = page.get_text()
+            lines = {_norm(line) for line in text.splitlines()}
+            if lines & {"零件清单", "partslist", "billofmaterials"} and lines & {"qty", "数量", "所属图纸", "related-drawing"}:
+                return "other", set(), "零件清单，不是零件图"
+            # Read an explicitly labelled DWG No. (not a reference drawing in another form).
+            name_label = re.compile(r"^\s*(?:图号\s*/\s*)?(?:DWG\.?\s*No\.?|图号)\s*[:：]?\s*(.+)$", re.I)
+            native = []
+            for block in page.get_text("dict", flags=0)["blocks"]:
+                for line in block.get("lines", []):
+                    value = "".join(span["text"] for span in line["spans"])
+                    if hit := name_label.match(value):
+                        if numbers := source_numbers(hit[1]):
+                            native.append((numbers, line["bbox"], value))
+            form = typed or bool(re.search(r"SECTION\s+[A-Z]\s*-\s*[A-Z]|剖视图|技术要求|GENERAL\s+TOLERANCES", text, re.I))
+            version = str(metadata.get("file_version_id") or item.audit_id)
+            if native and form:
+                for _, bbox, value in native:
+                    self.legacy().witness({"kind": "pdf_region", "page": 1, "bbox": list(bbox), "fact": "drawing_number"}, value, version)
+                return "drawing", set().union(*(n for n, _, _ in native)), "首页图号栏"
+            if not form:
+                # Some originals use strokes rather than characters for the drawing/title. Ask for visible facts,
+                # never whether the file should be audited. Without a positive form, keep the candidate unresolved.
+                schema = {"type": "object", "additionalProperties": False, "required": ["views", "heading"], "properties": {"views": {"type": "boolean"}, "heading": _NULL_TXT}}
+                result = self.transcribe(
+                    page.get_pixmap(matrix=fitz.Matrix(1600 / max(page.rect.width, page.rect.height), 1600 / max(page.rect.width, page.rect.height))).tobytes("png"),
+                    "只读取本页：views 是否可见带尺寸线的零件投影视图或剖面；heading 是文件本身的标题，不填相关资料名称，无标题写null。",
+                    schema,
+                    "可能的图纸首页",
+                )
+                if result.get("views") is not True:
+                    if _norm(result.get("heading")) in {"零件清单", "partslist", "billofmaterials", "采购件质量计划", "控制计划", "controlplan"}:
+                        return "other", set(), "首页为另一种表单"
+                    return "open", set(), "首页未确认零件图身份"
+        return "drawing", source_numbers(self.drawing_title(item).get("drawing_number")), "首页标题栏"
 
-    def drawing_marks(self, item: Any) -> tuple[list[tuple[str, str, str, bool]], bool]:
-        """((dimension, mark, view, confirmed) of every special-characteristic mark on a PDF drawing, whether every tile
-        was read and legible). The drawing's dimensions and marks are vector strokes outside the text layer, so each
-        page is cut into overlapping tiles and each tile transcribed twice by the image model; a mark is confirmed when
-        both transcriptions (or two overlapping tiles) read the same tolerance value and class. Code pairs and decides."""
+    def drawing_marks(self, item):
+        """Return only physically located, consistent observations. An incomplete page is not negative evidence."""
         import contextvars
         from concurrent.futures import ThreadPoolExecutor
 
         import fitz
 
         version = str((getattr(item, "file_metadata", None) or {}).get("file_version_id") or item.audit_id)
-        cache = self.__dict__.setdefault("_drawing_marks", {})
-        if version in cache:
-            return cache[version]
-        tiles: list[bytes] = []
-        with fitz.open(str(item.file_url)) as document:
-            for page in document:
-                columns = max(1, round(page.rect.width / 850))
-                rows = max(1, round(page.rect.height / 800))
-                width, height = page.rect.width / columns, page.rect.height / rows
-                pad = 0.06 * max(width, height)
-                for row in range(rows):
-                    for column in range(columns):
-                        area = fitz.Rect(column * width - pad, row * height - pad, (column + 1) * width + pad, (row + 1) * height + pad) & page.rect
-                        dpi = min(220, int(2400 * 72 / max(area.width, area.height)))
-                        tiles.append(page.get_pixmap(dpi=dpi, clip=area).tobytes("png"))
-        subject = f"图纸{original_name(item)}的特殊特性标记"
-
-        def read(tile: bytes) -> dict[str, Any] | None:
-            try:
-                return self.transcribe(tile, _DRAWING_PROMPT, _DRAWING_SCHEMA, subject)
-            except GuardStop as stop:
-                if stop.decision == Decision.ERR:
-                    return None  # One failed reading of a tile; the other reading of it may stand.
-                raise
-
-        jobs = [tile for tile in tiles for _pass in range(2)]
-        with ThreadPoolExecutor(max_workers=min(12, len(jobs))) as pool:
-            results = list(pool.map(lambda tile: contextvars.copy_context().run(read, tile), jobs))
-        if all(result is None for result in results):
-            raise GuardStop(Decision.ERR, "原件模型请求失败或结果尚未确认，尚未取得业务结论。")
-        seen: dict[tuple[str, frozenset[str]], tuple[str, str, str]] = {}
-        counts: dict[tuple[str, frozenset[str]], int] = {}
-        legible = True
-        for result in results:
-            if result is None:
-                legible = False
-                continue
-            legible = legible and result.get("readable") is True
-            keys = set()
-            for entry in result.get("items") or []:
-                dimension, mark = str(entry.get("dimension") or "").strip(), str(entry.get("mark") or "").strip()
-                tokens = mark_tokens(mark)
-                # Only the class codes the clause names count as a mark; anything else is a misread label.
-                if not tolerance_key(dimension) or not tokens or not all(token in _KNOWN for token in tokens):
+        jobs, pending, sights, words = [], [], [], {}
+        docname = original_name(item)
+        with fitz.open(str(item.file_url)) as doc:
+            for page in doc:
+                p = page.number + 1
+                if page_scanned(page) or page.rotation:
+                    pending.append(f"{docname} p{p}未读取（无可用文字层/扫描页，或页面坐标未核实）")
                     continue
-                key = (tolerance_key(dimension), mark_class(mark))
-                seen.setdefault(key, (dimension, mark, str(entry.get("view") or "").strip()))
-                keys.add(key)
-            for key in keys:
-                counts[key] = counts.get(key, 0) + 1
-        cache[version] = ([(*value, counts[key] >= 2) for key, value in seen.items()], legible)
-        return cache[version]
+                words[p] = page.get_text("words")
+                nc, nr = max(1, round(page.rect.width / 850)), max(1, round(page.rect.height / 800))
+                w, h = page.rect.width / nc, page.rect.height / nr
+                pad = 0.06 * max(w, h)
+                for r in range(nr):
+                    for c in range(nc):
+                        box = fitz.Rect(c * w - pad, r * h - pad, (c + 1) * w + pad, (r + 1) * h + pad) & page.rect
+                        image = page.get_pixmap(dpi=min(220, max(1, int(2400 * 72 / max(box.width, box.height)))), clip=box).tobytes("png")
+                        for k in (1, 2):
+                            jobs.append((p, r * nc + c + 1, k, box, image))
+
+        def read(job):
+            p, tile, k, box, image = job
+            try:
+                return self.transcribe(image, _DRAWING_PROMPT, _DRAWING_SCHEMA, f"{docname} p{p}块{tile}读取{k}"), ""
+            except GuardStop as stop:
+                return None, stop
+
+        errors = 0
+        if jobs:
+            with ThreadPoolExecutor(max_workers=min(12, len(jobs))) as pool:
+                futures = [pool.submit(contextvars.copy_context().run, read, job) for job in jobs]
+                for (p, tile, k, box, _), future in zip(jobs, futures, strict=True):
+                    result, why = future.result()
+                    at = f"{docname} p{p}块{tile}读取{k}"
+                    if result is None:
+                        errors += why.decision == Decision.ERR
+                        pending.append(f"{at}未取得转写：{why.message}")
+                        continue
+                    if result.get("complete") is not True:
+                        pending.append(f"{at}覆盖未核全")
+                    for e in result.get("items") or []:
+                        b, frame = (page_box(box, e.get(key)) for key in ("bbox", "frame"))
+                        if not b:
+                            pending.append(f"{at}有未定位标记")
+                            continue
+                        where = f"{docname} p{p} 框{b}"
+                        f = Feature(where, str(e.get("name") or "").strip(), str(e.get("dimension") or "").strip(), str(e.get("mark") or "").strip(), str(e.get("view") or "").strip())
+                        # A null/incomplete label/unknown mark at a real location also invalidates other reads there.
+                        located = all(e.get(key) is not None for key in ("dimension", "name", "mark")) and valid_mark(f.mark) and attached(b, frame)
+                        native = False
+                        if located:
+                            native_mark, native_spec = native_at(b, words[p]), tolerance_key(native_at(frame, words[p]))
+                            agrees = mark_tokens(native_mark) == mark_tokens(f.mark)
+                            if valid_mark(native_mark) and not agrees:
+                                located = False
+                            native = bool(f.name and f.spec and agrees and native_spec in {tolerance_key(f.spec), tolerance_key(f.name + f.spec)} and characteristic_name(f.name) in native_spec)
+                        sights.append(Sight(p, b, tile, k, f, frame, native, located))
+        if jobs and errors == len(jobs):
+            raise GuardStop(Decision.ERR, "图纸原件转写请求均失败，尚未取得业务结论。")
+        groups = []
+        for s in sights:
+            overlaps = [g for g in groups if g[0].page == s.page and any(same_box(t.bbox, s.bbox) for t in g)]
+            group = [s]
+            for g in overlaps:
+                groups.remove(g)
+                group.extend(g)
+            groups.append(group)
+        confirmed = []
+        for group in groups:
+            first = group[0]
+            passes = sorted({(s.tile, s.reading) for s in group})
+            # Duplicate entries from one request are not votes. Different physical places never vote for each other.
+            stable = (
+                (any(s.native for s in group) or any({s.reading for s in group if s.tile == t.tile} == {1, 2} for t in group))
+                and len(passes) == len(group)
+                and all(
+                    s.located and transcription(s.feature) == transcription(first.feature) and all(same_box(s.bbox, t.bbox) and s.frame and t.frame and same_box(s.frame, t.frame) for t in group)
+                    for s in group
+                )
+            )
+            for s in group:
+                self.legacy().witness(
+                    {
+                        "kind": "pdf_region",
+                        "page": s.page,
+                        "bbox": list(s.bbox),
+                        "coordinate_system": "pdf_points_unrotated",
+                        "tile": s.tile,
+                        "reading": s.reading,
+                        "feature_bbox": list(s.frame),
+                        "native_match": s.native,
+                        "read_located": s.located,
+                        "fact": "drawing_special_mark",
+                    },
+                    described(s.feature),
+                    version,
+                    visual=True,
+                )
+            if stable:
+                confirmed.append(first.feature)
+            else:
+                pending.append(f"{first.feature.where} 同一标记的位置、名称、规格或类别未稳定读实（块/轮{passes}）")
+        return confirmed, pending
+
+    def pgqp_rows(self, ctx, sheet, plan):
+        section = self.section(sheet, "重要特性区")
+        cols = section.columns(optional=("特性项目", "特殊特性", "测量设备", "规格公差", "位置"))
+        result, pending = [], []
+        if not {"特性项目", "特殊特性"} <= cols.keys():
+            return [], [f"PGQP1“{original_name(plan)}”重要特性表未定位"]
+        for row in section.rows_from(cols):
+            source = f"PGQP1“{original_name(plan)}”{sheet.title}!{row.row_index}"
+            name, mark = str(row.value("特性项目") or "").strip(), str(row.value("特殊特性") or "").strip()
+            if _norm(name) in {"items/项目", "项目", "items"}:
+                continue
+            if not name and not mark:
+                continue
+            if not valid_mark(mark):
+                pending.append(f"{source}未读实该行的分类符号（原值“{mark}”），不作已配对项")
+                continue
+            spec = str(row.value("规格公差") or "").strip() if "规格公差" in cols else ""
+            pos = str(row.value("位置") or "").strip() if "位置" in cols else ""
+            if not spec and "规格公差" not in cols:
+                # No located field does not establish that the original has no specification (e.g. embedded graphic).
+                pending.append(f"{source}“{name}”类别“{mark}”已读，独立的规格公差值未定位，未按名称单键配对")
+                continue
+            places = [cols[c].header_col for c in ("特性项目", "规格公差", "特殊特性", "位置") if c in cols]
+            coords = [row.ws.cell(row.row_index, col).coordinate for col in places]
+            source = f"PGQP1“{original_name(plan)}”{sheet.title}!{'/'.join(coords)}"
+            if len(result) < 2:
+                for col in places:
+                    self.cite(row.ws, row.row_index, col)
+            result.append(Feature(source, name, spec, mark, pos))
+        return result, pending
 
     @rule("特殊特性与图纸、PGQP1三方一致")
     def rule_3(self, ctx: RuleContext):
         part, rows, scope = self.scoped(ctx)
-        plans, drawings = self.batch_files("E12"), self.drawings()
-        if not plans and not drawings:
-            return "NA", f"{scope}。同批次未提交图纸与PGQP1，本条不适用（依据：条款“图纸亦未提交时，本条记不适用”）；不记作通过，缺件只在包级计一次。"
-        # Same-number check first: a source of another part number is a mismatched comparison source. It is left out of
-        # the comparison (its content is not checked cell by cell); the sources of this number are still compared.
-        mismatched, pending = [], []
-        plan_rows: list[tuple[str, str, str, str]] = []
-        unmarked_plan = False
-        same_plans = 0
+        pending, notes, failures, sources = [], [], [], []
+        same_plans, same_drawings, mismatched, possible_draw = 0, 0, [], False
+        plans = self.batch_files("E12")
         for plan in plans:
+            if str(plan.file_url).lower().endswith(".pdf"):
+                import fitz
+
+                with fitz.open(str(plan.file_url)) as doc:
+                    if any(page_scanned(page) for page in doc):
+                        pending.append(f"PGQP1“{original_name(plan)}”含扫描页，未证明全表已阅")
             with self.reading(ctx, plan, self._pgqp1):
-                for sheet in Table(ctx).find_sheets("PGQP1", on_missing=Decision.IGNORE):
-                    numbers = set().union(*(parts_in(value) for value in self.labelled(sheet, ("Part No/零件号",)))) if self.labelled(sheet, ("Part No/零件号",)) else set()
-                    if part not in numbers:
-                        mismatched.append(f"PGQP1“{original_name(plan)}”零件号{'、'.join(sorted(numbers)) or '未写明'}")
-                        continue
-                    same_plans += 1
-                    for row in self.section(sheet, "重要特性区").rows("特性项目"):
-                        name = str(row.value("特性项目") or "").strip()
-                        written = str(row.value("特殊特性") or "").strip()
-                        if not name:
-                            continue
-                        if written and all(token in _KNOWN for token in mark_tokens(written)):
-                            plan_rows.append((f"PGQP1“{sheet.title}”第{row.row_index}行", name, "", written))
-                        else:
-                            unmarked_plan = True
-        same_drawings = []
-        unread = False  # A submitted drawing whose number or marks the program could not read.
-        for drawing, typed in drawings:
+                sheets = Table(ctx).find_sheets("PGQP1", on_missing=Decision.IGNORE)
+                if not sheets:
+                    pending.append(f"已提交PGQP1“{original_name(plan)}”，未定位PGQP1页签")
+                for sheet in sheets:
+                    numbers = set().union(*(source_numbers(v) for v in self.labelled(sheet, ("Part No/零件号",))))
+                    label = f"PGQP1“{original_name(plan)}”"
+                    if len(numbers) != 1:
+                        pending.append(f"{label}本件号未核实（读到{'、'.join(sorted(numbers)) or '空'}）")
+                    elif part not in numbers:
+                        mismatched.append(f"{label}表头件号{next(iter(numbers))}")
+                    else:
+                        same_plans += 1
+                        try:
+                            data, gaps = self.pgqp_rows(ctx, sheet, plan)
+                        except GuardStop as stop:
+                            if stop.decision == Decision.ERR:
+                                raise
+                            data, gaps = [], [f"{label}特性区未定位：{stop.message}"]
+                        sources.append(("PGQP1", data))
+                        pending.extend(gaps)
+        for source, typed in self.drawings():
+            label = f"“{original_name(source)}”"
             try:
-                numbers = self.drawing_number(drawing)
+                kind, numbers, basis = self.drawing_identity(source, typed)
             except GuardStop as stop:
-                if typed:
-                    pending.append(f"图纸“{original_name(drawing)}”图号未能读取（{stop.message}）")
-                    unread = True
-                continue  # An untyped original without a readable drawing number is not taken as a drawing.
-            if not numbers and not typed:
+                if stop.decision == Decision.ERR:
+                    raise
+                kind, numbers, basis = "open", set(), stop.message
+            if kind == "other":
                 continue
-            if part not in numbers:
-                mismatched.append(f"图纸“{original_name(drawing)}”图号{'、'.join(sorted(numbers)) or '未能读出'}")
+            possible_draw = True
+            if kind == "open" or len(numbers) != 1:
+                pending.append(f"{label}的图纸身份或本件图号未核实（{basis}），不作已缺件/已错配")
+            elif part not in numbers:
+                mismatched.append(f"图纸{label}{basis}图号{next(iter(numbers))}")
             else:
-                same_drawings.append(drawing)
-        if mismatched and not same_plans and not same_drawings:
-            raise unable(
-                f"{scope}。比对源错配：{'；'.join(mismatched)}，与本件号{part}不同；按条款先做同号校验，不同号不逐项比对特性内容，同批次没有本件号的图纸或PGQP1可比，请提交本件号的图纸/PGQP1后复核。"
-            )
-        notes = []
+                same_drawings += 1
+                data, gaps = self.drawing_marks(source)
+                sources.append(("图纸", data))
+                pending.extend(gaps)
+        if not plans and not possible_draw:
+            return "NA", f"{scope}。同批次未提交图纸与PGQP1，本条不适用，不记作通过，缺件只在包级计一次。"
         if mismatched:
-            notes.append(f"比对源错配：{'；'.join(mismatched)}，与本件号{part}不同，不逐项比对其内容，只用本件号的{'图纸' if same_drawings else 'PGQP1'}比对")
+            pending.append(f"比对源错配：{'；'.join(mismatched)}，与本件号{part}不同，不逐格比较异号源；错号来源对整条结论的影响待澄清")
         if not plans:
-            notes.append("同批次未提交PGQP1，以图纸为唯一基准")
-        scoped_rows = []
+            notes.append("同批次未提交PGQP1，以已确认同号的图纸为唯一基准")
+        if plans and not possible_draw:
+            pending.append("提交PGQP1但未提交图纸；这一组合的整条结论待澄清")
+        list_gap = self.unreadable()
+        if not list_gap and not rows:
+            sheets = Table(ctx).find_sheets("特殊特性清单", on_missing=Decision.IGNORE)
+            if not sheets or not all(self.section(sheet, "特殊特性区").columns(optional=("特性名称", "过程特性名称", "特性值", "特性类别")) for sheet in sheets):
+                list_gap = "未定位清单特性行范围"
+        if list_gap:
+            pending.append(list_gap)
+        items, cells = [], []
         for title, row, columns in rows:
+            names = [c for c in _NAMES if filled(row, c, columns)]
+            name = str(row.value(names[0])).strip() if names else ""
+            spec = str(row.value("特性值") or "").strip() if "特性值" in columns else ""
             mark = str(row.value("特性类别") or "").strip() if "特性类别" in columns else ""
-            name = next((str(row.value(column)).strip() for column in _NAMES if filled(row, column, columns)), "")
-            value = str(row.value("特性值")).strip() if filled(row, "特性值", columns) else ""
-            scoped_rows.append((f"“{title}”第{row.row_index}行", name, value, mark))
-        listed = [entry for entry in scoped_rows if _norm(entry[3]) not in _ORDINARY]
-        failures = []
-        # PGQP1 → list, paired by name (the PGQP1 form writes no separate tolerance column).
-        for where, name, _value, mark in plan_rows:
-            paired = [entry for entry in listed if characteristic_name(entry[1]) == characteristic_name(name)]
-            if not paired:
-                failures.append(f"{where}特殊特性“{name}”（{mark}）在清单中没有对应行")
-            elif not any(mark_class(entry[3]) == mark_class(mark) for entry in paired):
-                failures.append(f"{where}“{name}”标识“{mark}”，清单{paired[0][0]}为“{paired[0][3]}”，类别符号不同")
-            elif any(_norm(entry[3]) != _norm(mark) for entry in paired):
-                notes.append(f"{name}写法“{mark}”/“{paired[0][3]}”按等价写法判一致")
-        # Drawing → list, paired by the tolerance value (the drawing writes no characteristic names).
-        marks: list[tuple[str, str, str, bool]] = []
-        legible = True
-        for drawing in same_drawings:
-            if not str(drawing.file_url).lower().endswith(".pdf"):
-                pending.append(f"图纸“{original_name(drawing)}”不是PDF，其中的特殊特性尚未由检查程序读取")
-                unread = True
-                continue
-            found, readable = self.drawing_marks(drawing)
-            marks.extend(found)
-            legible = legible and readable
-        unsure = []
-        for dimension, mark, view, confirmed in marks:
-            where = f"图纸{('“' + view + '”视图') if view else ''}“{dimension}”（标{mark}）"
-            paired = [entry for entry in scoped_rows if tolerance_key(entry[2]) == tolerance_key(dimension)]
-            problem = ""
-            if not paired:
-                problem = f"{where}在清单中没有同公差值的行"
-            elif not any(mark_class(entry[3]) == mark_class(mark) for entry in paired):
-                problem = f"{where}，清单{paired[0][0]}同公差值的行类别为“{paired[0][3] or '空'}”，类别符号不同"
-            elif any(_norm(entry[3]) != _norm(mark) for entry in paired):
-                notes.append(f"“{dimension}”写法“{mark}”/“{paired[0][3]}”分隔符不同，判一致（留痕）")
-            if problem and confirmed:
-                failures.append(problem)
-            elif problem:
-                unsure.append(problem)
-        if unsure:
-            pending.append(f"图纸另有{len(unsure)}处（如{unsure[0]}）两次读图结果不一致，未据此判定")
-        # List → drawing or PGQP1.
-        orphans = []
-        drawn = {tolerance_key(dimension) for dimension, _mark, _view, _confirmed in marks}
-        planned = {characteristic_name(name) for _where, name, _value, _mark in plan_rows}
-        for where, name, value, mark in listed:
-            if tolerance_key(value) in drawn or characteristic_name(name) in planned:
-                continue
-            orphans.append(f"{where}“{name} {value}”（{mark}）")
-        if orphans:
-            if mismatched or unmarked_plan or not legible or unread:
-                why = "错号的比对源不参与比对" if mismatched else "PGQP1未逐行标特殊特性符号" if unmarked_plan else "图纸有看不清的部分" if not legible else "有图纸未能读取"
-                pending.append(f"清单{'、'.join(orphans[:4])}{'等' + str(len(orphans)) + '项' if len(orphans) > 4 else ''}在本件号图纸/PGQP1中未找到，因{why}，“清单→图纸/PGQP1”方向尚不能判定")
+            region = ""
+            if columns:
+                # A region named by the list itself; N/A is not a tie breaker.
+                for cell in row.ws[row.section.header_row]:
+                    if _norm(cell.value) in {"图纸区域", "drawingzone", "工序位置", "processposition"}:
+                        value = str(row.ws.cell(row.row_index, cell.column).value or "").strip()
+                        if _norm(value) not in {"", "/", "n/a", "na", "-"}:
+                            region = value
+                        break
+            places = [(row.ws, row.row_index, columns[c].header_col) for c in (*names[:1], "特性值", "特性类别") if c in columns]
+            coords = [ws.cell(r, c).coordinate for ws, r, c in places]
+            cells.append(places)
+            items.append(Feature(f"“{title}”!{'/'.join(coords)}", name, spec, mark, region))
+        active = {i for i, f in enumerate(items) if _norm(f.mark) not in _ORDINARY}
+        # If extraction was incomplete, no absence claim in the reverse direction. A positive independent
+        # mismatch or a completely reviewed, unpairable source item is still reportable.
+        covered = set()
+        by_kind = {}
+        for kind, data in sources:
+            this_source = set()
+            for j, feature in enumerate(data):
+                matches = pair(feature, items)
+                if not matches:
+                    message = described(feature) + "：清单未找到名称＋完整规格公差对应行"
+                    if not feature.name or not feature.spec:
+                        message = described(feature) + "：已读标记缺独立名称或规格公差，不能配对，按缺项"
+                    (pending if list_gap else failures).append(message)
+                    continue
+                i = matches[0]
+                if len(matches) != 1 or pair(items[i], data) != [j]:
+                    pending.append(described(feature) + "：两键仍多解，图纸区域/工序位置未能唯一定位，不以类别选择对应行")
+                    continue
+                this_source.add(i)
+                f = items[i]
+                for place in cells[i]:
+                    self.cite(*place)
+                if len(notes) < 3:
+                    notes.append(f"{feature.where}（{feature.position or '未列区域'}）↔清单{f.where}：{f.name} / {f.spec}")
+                if mark_class(feature.mark) != mark_class(f.mark):
+                    failures.append(f"{described(feature)} 与清单{described(f)}按完整公差＋特性名配对，类别符号不同")
+                elif _norm(feature.mark) != _norm(f.mark):
+                    notes.append(f"{feature.where}与{f.where}符号写法“{feature.mark}”/“{f.mark}”同级")
+            covered.update(this_source)
+            by_kind.setdefault(kind, set()).update(this_source)
+        for i in sorted(active - covered):
+            message = f"清单{described(items[i])}：同号对端未找到两键配对"
+            if not sources or pending:
+                pending.append(message + "，对端尚未核全，未认定原件缺项")
             else:
-                failures.append(f"清单{'、'.join(orphans[:4])}{'等' + str(len(orphans)) + '项' if len(orphans) > 4 else ''}在图纸与PGQP1中都找不到对应特殊特性")
+                failures.append(message + "，按缺项不通过")
+        if same_drawings and same_plans and any(len(values & active) < len(covered & active) for values in by_kind.values()):
+            pending.append("同号图纸与PGQP1均已提交，清单有项目仅在一方对上；此组合的整条结论待澄清")
+        summary = f"{scope}。按完整公差＋独立特性名双向配对，多解再核区域/工序位置；同号图纸{same_drawings}份、PGQP1 {same_plans}份。"
+        if mismatched:
+            summary += "比对源错配：" + "；".join(mismatched) + "，不逐格比较。"
+        if notes:
+            summary += "；".join(notes[:3]) + "。"
+        if failures and same_plans and not possible_draw:
+            pending[:0] = ["仅在PGQP1比对中见到：" + problem for problem in failures[:2]]
+            failures.clear()
         if failures:
-            return "NG", f"{scope}。" + "；".join(failures[:5]) + (f"等{len(failures)}处" if len(failures) > 5 else "") + "。" + ("（" + "；".join(notes[:3]) + "）" if notes else "")
-        if unmarked_plan:
-            pending.append("PGQP1重要特性表的“SC/特殊特性”栏写的是规格而不是特殊特性符号，检查程序不能确定其中哪些是特殊特性")
-        if same_drawings and not legible:
-            pending.append("图纸有看不清的带标记尺寸，“图纸→清单”覆盖尚不能确认完整")
+            return "NG", summary + "；".join(failures[:5]) + "。" + (f"另有{len(pending)}处未核定，不作为缺陷。" if pending else "")
         if pending:
-            raise unable(f"{scope}。" + "；".join(pending) + ("；" + "；".join(notes) if notes else "") + "，需人工复核。")
-        basis = []
-        if plan_rows:
-            basis.append(f"PGQP1{len(plan_rows)}项特殊特性（按名称配对）")
-        if same_drawings:
-            basis.append(f"图纸{len(marks)}项带类别标记的尺寸（按公差值配对，图纸经图像转写、每块读两次）")
-        return "PASS", f"{scope}。清单{len(listed)}项特殊特性与{'、'.join(basis) or '比对源'}双向覆盖，类别符号一致" + (f"（{'；'.join(notes[:3])}）" if notes else "") + "。"
+            raise unable(summary + "；".join(pending[:5]) + "，需人工复核。")
+        return "PASS", summary + f"清单{len(active)}项与已读对端双向覆盖，类别符号一致。"
 
 
 def labelled_parts(path: str) -> set[str]:
