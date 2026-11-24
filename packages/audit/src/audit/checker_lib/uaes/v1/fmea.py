@@ -706,10 +706,10 @@ class _Revision3(UaesPfmeaAgent):
         return failures, notes, pending
 
     def prefetch(self, path: str, places: list[tuple[int, int, Any]]) -> None:
-        """Transcribe the not yet read pictures `places` [(page, xref, bbox)] of one PDF together, so a clause stays in its time."""
-        from concurrent.futures import ThreadPoolExecutor
-        from contextvars import copy_context
+        """Transcribe the not yet read pictures `places` [(page, xref, bbox)] of one PDF, one at a time.
 
+        The execution's model gateway answers one request at a time and a request's wait counts against its own time
+        limit, so pictures sent together time out at the back of the queue."""
         import fitz
 
         cache = self.__dict__.setdefault("_drawn_dimensions", {})
@@ -719,19 +719,12 @@ class _Revision3(UaesPfmeaAgent):
                 todo.setdefault(xref, (page_number, fitz.Rect(bbox) + (-2, -2, 2, 2)))
         if not todo:
             return
-        self.legacy()  # built once here, not raced by the reading threads
         images = {}
         with fitz.open(path) as document:
             for xref, (page_number, area) in todo.items():
                 images[xref] = (page_number, document[page_number - 1].get_pixmap(clip=area, dpi=min(600, int(1200 * 72 / max(area.width, 1.0)))).tobytes("png"))
-
-        def read(entry: tuple[int, bytes]) -> dict[str, Any]:
-            return self.transcribe(entry[1], DIMENSION_PROMPT, DIMENSION_SCHEMA, f"{Path(path).name}第{entry[0]}页的尺寸图片")
-
-        with ThreadPoolExecutor(max_workers=min(8, len(images))) as pool:
-            futures = {xref: pool.submit(copy_context().run, read, entry) for xref, entry in images.items()}
-        for xref, future in futures.items():
-            fact = future.result()
+        for xref, (page_number, image) in images.items():
+            fact = self.transcribe(image, DIMENSION_PROMPT, DIMENSION_SCHEMA, f"{Path(path).name}第{page_number}页的尺寸图片")
             cache[(path, xref)] = dimension_text(fact), fact.get("name")
 
     def drawn_dimension(self, path: str, page_number: int, xref: int, bbox: Any, version: str) -> tuple[str | None, str | None]:

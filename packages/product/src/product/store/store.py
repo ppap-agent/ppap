@@ -1253,9 +1253,11 @@ class AuthStore:
                 options = self._reaudit_rule_options(rule, all_rules)
                 origin = conn.execute("SELECT upload_request->'source' FROM product.file_versions WHERE id=%s AND tenant_id=%s", (vid, principal.tenant_id)).fetchone()
                 imported = origin[0] if origin and isinstance(origin[0], dict) and origin[0].get("provider") == "feishu" else None
+                source_row = conn.execute("SELECT provider, object_kind FROM product.file_version_sources WHERE file_version_id=%s", (vid,)).fetchone()
                 files.append(
                     {
-                        "file": version.public(),
+                        # The same file snapshot a task shows, so the recognition receipt for these inputs can be matched to them.
+                        "file": version.public() | {"origin": public_target({"provider": source_row[0], "object_kind": source_row[1]} if source_row else None)},
                         "selection": "selected",
                         "removal_reason": None,
                         "validation": checked["result"] if checked and checked["status"] == "succeeded" else {"state": "pending", "reasons": ["文件待检查。"]},

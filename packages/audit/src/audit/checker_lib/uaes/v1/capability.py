@@ -194,6 +194,7 @@ class PceClauses(UaesCapabilityAgent):
                 if all(texts.get(result, "") in _EMPTY for result, _target in pairs):
                     continue
                 checked += 1
+                ctx.record_execution()
                 low, low_column = [], 0
                 for result, target in pairs:
                     actual_raw, wanted_raw = values.get(result), values.get(target)

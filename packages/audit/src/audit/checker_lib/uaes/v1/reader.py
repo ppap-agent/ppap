@@ -237,6 +237,7 @@ class Reader(ExcelAgent):
 
     def transcribe(self, image: bytes, prompt: str, schema: dict[str, Any], subject: str) -> dict[str, Any]:
         """One image of an original transcribed into `schema` by the image model; the model transcribes, code decides."""
+        from documents.ai import AIError
         from documents.model_access import ModelUnavailable
 
         from audit.engine.checkers.ocr_visual_facts import request_ocr_visual_facts
@@ -252,6 +253,9 @@ class Reader(ExcelAgent):
         except ModelUnavailable as exc:
             if exc.code in ModelUnavailable.UNGRANTED:
                 raise unable(f"当前没有可用的模型，{subject}尚未核实，需人工复核。") from None
+            raise GuardStop(Decision.ERR, "原件模型请求失败或结果尚未确认，尚未取得业务结论。") from None
+        except AIError:
+            # A timed-out, refused or malformed model answer is a failed model request, not an unreadable original.
             raise GuardStop(Decision.ERR, "原件模型请求失败或结果尚未确认，尚未取得业务结论。") from None
         except GuardStop:
             raise

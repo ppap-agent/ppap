@@ -542,10 +542,10 @@ class _Revision3(UaesSpecialCharacteristicsAgent):
         return "drawing", source_numbers(self.drawing_title(item).get("drawing_number")), "首页标题栏"
 
     def drawing_marks(self, item):
-        """Return only physically located, consistent observations. An incomplete page is not negative evidence."""
-        import contextvars
-        from concurrent.futures import ThreadPoolExecutor
+        """Return only physically located, consistent observations. An incomplete page is not negative evidence.
 
+        Tiles are read one at a time: the execution's model gateway answers one request at a time and a request's wait
+        counts against its own time limit."""
         import fitz
 
         version = str((getattr(item, "file_metadata", None) or {}).get("file_version_id") or item.audit_id)
@@ -576,35 +576,33 @@ class _Revision3(UaesSpecialCharacteristicsAgent):
                 return None, stop
 
         errors = 0
-        if jobs:
-            with ThreadPoolExecutor(max_workers=min(12, len(jobs))) as pool:
-                futures = [pool.submit(contextvars.copy_context().run, read, job) for job in jobs]
-                for (p, tile, k, box, _), future in zip(jobs, futures, strict=True):
-                    result, why = future.result()
-                    at = f"{docname} p{p}块{tile}读取{k}"
-                    if result is None:
-                        errors += why.decision == Decision.ERR
-                        pending.append(f"{at}未取得转写：{why.message}")
-                        continue
-                    if result.get("complete") is not True:
-                        pending.append(f"{at}覆盖未核全")
-                    for e in result.get("items") or []:
-                        b, frame = (page_box(box, e.get(key)) for key in ("bbox", "frame"))
-                        if not b:
-                            pending.append(f"{at}有未定位标记")
-                            continue
-                        where = f"{docname} p{p} 框{b}"
-                        f = Feature(where, str(e.get("name") or "").strip(), str(e.get("dimension") or "").strip(), str(e.get("mark") or "").strip(), str(e.get("view") or "").strip())
-                        # A null/incomplete label/unknown mark at a real location also invalidates other reads there.
-                        located = all(e.get(key) is not None for key in ("dimension", "name", "mark")) and valid_mark(f.mark) and attached(b, frame)
-                        native = False
-                        if located:
-                            native_mark, native_spec = native_at(b, words[p]), tolerance_key(native_at(frame, words[p]))
-                            agrees = mark_tokens(native_mark) == mark_tokens(f.mark)
-                            if valid_mark(native_mark) and not agrees:
-                                located = False
-                            native = bool(f.name and f.spec and agrees and native_spec in {tolerance_key(f.spec), tolerance_key(f.name + f.spec)} and characteristic_name(f.name) in native_spec)
-                        sights.append(Sight(p, b, tile, k, f, frame, native, located))
+        for job in jobs:
+            p, tile, k, box, _image = job
+            result, why = read(job)
+            at = f"{docname} p{p}块{tile}读取{k}"
+            if result is None:
+                errors += why.decision == Decision.ERR
+                pending.append(f"{at}未取得转写：{why.message}")
+                continue
+            if result.get("complete") is not True:
+                pending.append(f"{at}覆盖未核全")
+            for e in result.get("items") or []:
+                b, frame = (page_box(box, e.get(key)) for key in ("bbox", "frame"))
+                if not b:
+                    pending.append(f"{at}有未定位标记")
+                    continue
+                where = f"{docname} p{p} 框{b}"
+                f = Feature(where, str(e.get("name") or "").strip(), str(e.get("dimension") or "").strip(), str(e.get("mark") or "").strip(), str(e.get("view") or "").strip())
+                # A null/incomplete label/unknown mark at a real location also invalidates other reads there.
+                located = all(e.get(key) is not None for key in ("dimension", "name", "mark")) and valid_mark(f.mark) and attached(b, frame)
+                native = False
+                if located:
+                    native_mark, native_spec = native_at(b, words[p]), tolerance_key(native_at(frame, words[p]))
+                    agrees = mark_tokens(native_mark) == mark_tokens(f.mark)
+                    if valid_mark(native_mark) and not agrees:
+                        located = False
+                    native = bool(f.name and f.spec and agrees and native_spec in {tolerance_key(f.spec), tolerance_key(f.name + f.spec)} and characteristic_name(f.name) in native_spec)
+                sights.append(Sight(p, b, tile, k, f, frame, native, located))
         if jobs and errors == len(jobs):
             raise GuardStop(Decision.ERR, "图纸原件转写请求均失败，尚未取得业务结论。")
         groups = []

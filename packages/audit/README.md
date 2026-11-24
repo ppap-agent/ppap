@@ -57,6 +57,8 @@ RESOURCE = {
 - 写成普通的模块和类：不用 `type(...)` 现场造类，不用 `globals().update` 注入名字，需要什么就 import 什么。
 - 规则版本换了（条款编号变了），新建版本子包，如 `checker_lib/uaes/v1/`。新类继承旧版读取类，只加新条款的方法。旧版的类和方法不动：旧语料的人工真值仍用存档的旧叶子（如 `assets/uaes/rulebook/v0.0/m1/checkers`）跑当前的共享库。
 - 几个读取类共用的代码放进同一子包的一个模块（如 `uaes/v1/reader.py`），不在每个模块里各抄一份。
+- 判「通过」之前，每做一次真正的比较就调用一次 `ctx.record_execution()`（规则上下文记下证据单元格、完成一段扫描或一次检索时会自动计数，只在 Python 里比较的要自己登记）。线上审核会把零核对的「通过」改判为技术错误（`agent.mapping.unproven_pass`）。
+- 读图、转写等模型请求一个一个发，不用线程池并发。线上执行环境的模型网关一次只处理一个请求，排队时间也算进单个请求的时限，并发发出的请求会在队尾超时。
 
 ## 候选与转正
 
@@ -67,5 +69,5 @@ RESOURCE = {
 ## 测试
 
 - 叶子的结构由 `tests/test_predefined_checker_directory.py` 检查。改完叶子先跑它，再跑 `python scripts/compile_v4_presets.py --check`。
-- 判定方法用真实样本测，测试放在 `tests/corpus/contracts/tests/`。叶子要用 `audit.standard_suites._load_leaf` 读出，再交给 `agent.execution.audit_runtime.run_audit`（或 `_load_program`）按产品路径执行。不要按文件路径用 `importlib` 加载模块，仓库约定测试会拒绝。
+- 判定方法用真实样本测，测试放在 `tests/corpus/contracts/tests/`。样本试跑（`corpus_contracts.uaes_samples.run_batch`、`candidate_run`）按线上规则出结论，零核对的「通过」同样显示为技术错误。叶子要用 `audit.standard_suites._load_leaf` 读出，再交给 `agent.execution.audit_runtime.run_audit`（或 `_load_program`）按产品路径执行。不要按文件路径用 `importlib` 加载模块，仓库约定测试会拒绝。
 - 只跑受影响的测试。

@@ -444,6 +444,15 @@ def _finished_scan_scope(result) -> dict[str, int] | None:
     return {"total": total, "checked": checked, "unknown": unknown}
 
 
+def unproven_pass(status: object, performed: object, empty_scope_basis: object, suggestions: object) -> str | None:
+    """Why a checker's PASS proves nothing, or None: a PASS that ran no check and names no empty scope is a technical error.
+
+    Sample and candidate runs apply the same rule, so a clause that would fail this way in an audit fails there too."""
+    if status != "PASS" or str(empty_scope_basis or "").strip() or not (performed == 0 or performed is None):
+        return None
+    return "零断言不能判为通过。" if str(suggestions or "").strip() else "空结果不能判为通过。"
+
+
 def _checker_finding(
     result, *, file_version_id: str, file_facts: Mapping[str, tuple[str, str]], frozen_sha256: Mapping[str, str] | None = None
 ) -> tuple[Literal["PASS", "NG", "ERR", "UNABLE", "NA"], str, bool, list[dict]]:
@@ -464,10 +473,8 @@ def _checker_finding(
         note = "含义未确认，不能判为不适用。"
         if note not in suggestions:
             suggestions = f"{suggestions}；{note}" if suggestions else note
-    explicit_empty_scope = status == "PASS" and bool(str(getattr(result, "empty_scope_basis", "") or "").strip())
-    if not explicit_empty_scope and status == "PASS" and (performed == 0 or performed is None):
-        status = "ERR"
-        suggestions = "零断言不能判为通过。" if (result.suggestions or "").strip() else "空结果不能判为通过。"
+    if unproven := unproven_pass(status, performed, getattr(result, "empty_scope_basis", ""), result.suggestions):
+        status, suggestions = "ERR", unproven
     elif status == "PASS" and _gap_blocks_pass(result):
         status = "UNABLE"
         note = "原件定位、读取或预算未完成，不能判为通过。"

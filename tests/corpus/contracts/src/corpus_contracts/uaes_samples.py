@@ -110,6 +110,7 @@ def run_batch(batch: Batch, suites: dict[str, Any] | None = None) -> list[dict[s
 
     ``suites`` 按目录叶子路径给出要运行的检查程序；不给时用人工真值所对应的冻结版本。"""
     from agent.execution.audit_runtime import run_audit
+    from agent.mapping import unproven_pass
     from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
     from audit.standard_suites import library_revision
     from product.precheck import precheck_task
@@ -225,7 +226,11 @@ def run_batch(batch: Batch, suites: dict[str, Any] | None = None) -> list[dict[s
         identity, clause = finding["file_version_id"], str(finding["clause_id"])
         if identity in reported:
             where: dict[str, Any] = {"kind": "finding", "batch": batch.label, "source": str(sources[identity].relative_to(REPO_ROOT)), "clause": clause}
-            report.append({**where, "status": finding.get("status"), "severity": severity.get((identity, clause)), "reason": str(finding.get("suggestions") or "")})
+            status, reason = finding.get("status"), str(finding.get("suggestions") or "")
+            # As an audit shows it: a PASS that ran no check is a technical error there.
+            if unproven := unproven_pass(status, finding.get("checks_performed"), finding.get("empty_scope_basis"), reason):
+                status, reason = "ERR", unproven
+            report.append({**where, "status": status, "severity": severity.get((identity, clause)), "reason": reason})
     return report
 
 

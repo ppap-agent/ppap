@@ -651,10 +651,10 @@ class _Revision3(UaesControlPlanAgent):
         return cache[(path, id(document))]
 
     def prefetch(self, item, places):
-        """Transcribe the not yet read pictures `places` [(page, xref, area)] of one PDF together, so a clause stays in its time."""
-        from concurrent.futures import ThreadPoolExecutor
-        from contextvars import copy_context
+        """Transcribe the not yet read pictures `places` [(page, xref, area)] of one PDF, one at a time.
 
+        The execution's model gateway answers one request at a time and a request's wait counts against its own time
+        limit, so pictures sent together time out at the back of the queue."""
         import fitz
 
         path = str(item.file_url)
@@ -665,20 +665,12 @@ class _Revision3(UaesControlPlanAgent):
                 todo.setdefault(xref, (page_number, area))
         if not todo:
             return
-        self.legacy()  # built once here, not raced by the reading threads
         images = {}
         with fitz.open(path) as pdf:
             for xref, (page_number, area) in todo.items():
                 images[xref] = (page_number, pdf[page_number - 1].get_pixmap(clip=area, dpi=min(600, int(1200 * 72 / max(area.width, 1.0)))).tobytes("png"))
-
-        def read(entry):
-            page_number, image = entry
-            return self.transcribe(image, DIMENSION_PROMPT, DIMENSION_SCHEMA, f"{Path(path).name}第{page_number}页的尺寸图片")
-
-        with ThreadPoolExecutor(max_workers=min(8, len(images))) as pool:
-            futures = {xref: pool.submit(copy_context().run, read, entry) for xref, entry in images.items()}
-        for xref, future in futures.items():
-            fact = future.result()
+        for xref, (page_number, image) in images.items():
+            fact = self.transcribe(image, DIMENSION_PROMPT, DIMENSION_SCHEMA, f"{Path(path).name}第{page_number}页的尺寸图片")
             found = dimension_text(fact)
             transcribed[(path, xref)] = None if found is None else (*found, str(fact.get("frame") or "").strip(), fact.get("name"))
 

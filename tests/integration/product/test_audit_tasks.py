@@ -1436,6 +1436,8 @@ def test_linked_reaudit_keeping_the_original_rule_reruns_its_frozen_program_with
     assert current["predecessor_id"] == original["id"]
     assert current["files"][0]["match"]["rule"]["id"] == old["id"]
     assert {row["id"] for row in current["files"][0]["rule_options"]} == {old["id"], newer["id"]}
+    # The page matches the recognition receipt to the inputs it sent by their file snapshot: both read the same.
+    assert prepared["files"][0]["file"] == current["files"][0]["file"]
     confirmation = confirmation_command(client, next_path, 0)
     new_round = client.post(next_path + "/confirm", json=confirmation)
     assert new_round.status_code == 201, new_round.text

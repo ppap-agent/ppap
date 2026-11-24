@@ -703,6 +703,7 @@ class MsaClauses(UaesMsaAgent):
         own = [report for report in self.reports_of(ctx, self.audit_file) if report.kind != "Cgk"]
         failures, opens, notes, passed = [], [], [], []
         for report in own:
+            ctx.record_execution()
             result = self.check_report(report)
             if result is None:
                 passed.append(self.checked(report))
@@ -739,6 +740,8 @@ class MsaClauses(UaesMsaAgent):
             groups.setdefault(key, []).append(row)
         matched_here: list[str] = []
         for key, rows in groups.items():
+            # Each plan gauge is matched against the suite's reports, whichever file its defect belongs to.
+            ctx.record_execution()
             gauge = rows[0].gauge
             counting = gauge_kind(gauge) == "counting"
             wanted = "Kappa" if counting else "GRR"
@@ -948,6 +951,7 @@ class MsaClauses(UaesMsaAgent):
                 raise unable(f"文件自带要求行的阈值为{'、'.join(map(str, other))}，与1.33不同，登记冲突交客户裁决。")
         failures = []
         for index, (cg, cgk, where) in enumerate(groups, 1):
+            ctx.record_execution()
             if cg is None or cgk is None:
                 failures.append(f"{where}评定区只有{'Cgk' if cg is None else 'Cg'}一个指数有实测值（另一个为空、只有标签或公式未算出）")
                 continue

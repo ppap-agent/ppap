@@ -197,6 +197,7 @@ class UaesExcelAgent(ExcelAgent):
         return self._from_legacy(lambda agent: agent.controlled_stamp(fails_unidentified=fails_unidentified))
 
     def _from_legacy(self, read: Any) -> Any:
+        from documents.ai import AIError
         from documents.model_access import ModelUnavailable
 
         from .native import MissingFact, UnknownFact
@@ -211,6 +212,9 @@ class UaesExcelAgent(ExcelAgent):
             # Only a missing model grant leaves the fact open; a failed or uncertain request is a technical fault.
             if exc.code in ModelUnavailable.UNGRANTED:
                 raise unable("当前没有可用的模型，所需原件事实尚未核实。") from None
+            raise GuardStop(Decision.ERR, "原件模型请求失败或结果尚未确认，尚未取得业务结论。") from None
+        except AIError:
+            # A timed-out, refused or malformed model answer is a failed model request, not an unreadable original.
             raise GuardStop(Decision.ERR, "原件模型请求失败或结果尚未确认，尚未取得业务结论。") from None
         except GuardStop:
             raise
