@@ -2,7 +2,8 @@
 
 A binary Excel warrant (F-PU-206) is read from its cells, form checkboxes and pictures; only whether a picture is a
 handwritten signature or a seal is asked of the image model. A one-page warrant PDF without a text layer (a scan)
-is transcribed once into a fixed schema by the image model. Every clause decides in code over those facts.
+is transcribed by the image model into a fixed schema, one region of the form per request (the request a clause
+first needs). Every clause decides in code over those facts.
 PSW:7 reads the header of the same-round control plan from its cells.
 """
 
@@ -450,6 +451,23 @@ PROMPT = (
     "ink_seal：页面上任何位置有用印泥盖的实际印章为 true；表头印刷的品牌标志、电子/数字签名文字框、勾选框不算印章；确认没有为 false，看不清为 null。\n"
     "字段与表单标签的对应：\n" + "\n".join(f"{name}: {label}" for name, label in _LABELS)
 )
+# A scanned warrant is transcribed in three requests over the same page image, one per region of the form. The whole
+# schema in one request ran the image model past its fixed output limit (4096 tokens) before it answered.
+PARTS = (
+    (*IDENTITY, SAFETY[0], WEIGHT[0], ORDER[0], TOOLING[0], EXPLANATION[0]),
+    (SUPPLIER_AREA[0], SUPPLIER_NAME[0], CUSTOMER_AREA[0], *CUSTOMER, SUBSTANCES[0], IMDS[0], SIGNATURE[0], *CONTACT, SEAL[0]),
+    (REASON[0], REASON_OTHER[0], LEVEL[0], RESULTS_AREA[0], *RESULTS, MEETS[0]),
+)
+assert sorted(name for part in PARTS for name in part) == sorted(SCHEMA["properties"])
+
+
+def part_request(names: tuple[str, ...]) -> tuple[str, dict[str, Any]]:
+    """The prompt and schema for one region of the form: the shared instructions, only this region's labels."""
+    head = PROMPT[: PROMPT.index("字段与表单标签的对应：")]
+    labels = "\n".join(f"{name}: {label}" for name, label in _LABELS if name in names)
+    return head + "本次只转写下列字段，字段与表单标签的对应：\n" + labels, _object(**{name: SCHEMA["properties"][name] for name in names})
+
+
 PICTURE_SCHEMA = _object(handwritten_signature=_MARK, ink_seal=_MARK)
 PICTURE_PROMPT = (
     "这是零件提交保证书工作表中嵌入的一张图片。请只描述图片本身，不判断是否合格。\n"
@@ -755,12 +773,45 @@ CP_LABEL_WORDS = ("更改等级", "联系人", "电话", "小组", "批准", "�
 _UAES_PART = re.compile(r"(?<![0-9A-Za-z])F[0-9A-Z]{9}(?![0-9A-Za-z])")
 _CP_KIND = "控制计划"
 _APPROVAL_KINDS = ("E11", "顾客工程批准")
+# A signing date, year first (2023-06-23, 2023年6月23日, 20230623) or day first (23.6.2023, 23/06/2023).
+SIGNED_DATE = re.compile(r"\d{4}\s*[-/.年]\s*\d{1,2}\s*[-/.月]\s*\d{1,2}|\d{8}|(?<!\d)\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{4}")
 _APPROVAL_NAMES = ("顾客工程批准", "工程批准", "偏差", "OTS", "认可")
 
 
 def _identity(value: Any) -> str:
     """A part number as compared: width-folded, spaces removed, case-folded."""
     return "".join(unicodedata.normalize("NFKC", "" if value is None else str(value)).split()).casefold()
+
+
+class _ScanFacts:
+    """The facts of a scanned warrant, transcribed one region of the form at a time when a clause first reads it.
+
+    Each region is one request (see PARTS) and is asked once: a failed request is kept and raised again, so only the
+    clauses that read that region stop, and the others are still decided from the regions that were read."""
+
+    def __init__(self, agent: "WarrantR3", image: bytes):
+        self.agent, self.image = agent, image
+        self.parts: dict[int, Any] = {}
+
+    def _part(self, name: str) -> dict[str, Any]:
+        index = next((index for index, names in enumerate(PARTS) if name in names), None)
+        if index is None:
+            return {}
+        if index not in self.parts:
+            prompt, schema = part_request(PARTS[index])
+            try:
+                self.parts[index] = self.agent.transcribe(self.image, prompt, schema, "零件提交保证书")
+            except GuardStop as stop:
+                self.parts[index] = stop
+        if isinstance(self.parts[index], GuardStop):
+            raise self.parts[index]
+        return self.parts[index]
+
+    def get(self, name: str, default: Any = None) -> Any:
+        return self._part(name).get(name, default)
+
+    def __getitem__(self, name: str) -> Any:
+        return self._part(name)[name]
 
 
 class WarrantR3(Reader):
@@ -771,7 +822,7 @@ class WarrantR3(Reader):
 
     # ---- facts -------------------------------------------------------------------------------
 
-    def transcription(self) -> dict[str, Any]:
+    def transcription(self) -> Any:
         if "_transcription" not in self.__dict__:
             try:
                 self._transcription: Any = self._transcribe()
@@ -781,7 +832,7 @@ class WarrantR3(Reader):
             raise self._transcription
         return self._transcription
 
-    def _transcribe(self) -> dict[str, Any]:
+    def _transcribe(self) -> Any:
         path = str(self.audit_file.file_url)
         if path.lower().endswith(".xls"):
             return self._read_xls(path)
@@ -796,7 +847,7 @@ class WarrantR3(Reader):
                 raise unable(f"零件提交保证书有{len(document)}页，检查程序尚未声明多页保证书的读取范围，需人工复核。")
             image = document[0].get_pixmap(dpi=200).tobytes("png")
         self._digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        return self.transcribe(image, PROMPT, SCHEMA, "零件提交保证书")
+        return _ScanFacts(self, image)
 
     def _read_xls(self, path: str) -> dict[str, Any]:
         try:
@@ -1029,22 +1080,24 @@ class WarrantR3(Reader):
         name, label = SIGNATURE
         if (self.transcription().get(name) or {}).get("present") is False:
             return "NG", "零件提交保证书中缺少供方代表签字字段。"
-        contact = []
+        contact, invalid = [], []
         for field, words in CONTACT.items():
             value = reading.field(field, words)
             if value is None:
                 continue
             text = unicodedata.normalize("NFKC", value)
             if field == "phone" and len(re.sub(r"\D", "", text)) < 7:
-                reading.failed.append(f"电话号码“{value}”格式不合法")
+                invalid.append(f"电话号码“{value}”格式不合法")
             elif field == "email" and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[A-Za-z]{2,}", text.strip()):
-                reading.failed.append(f"电子邮箱“{value}”格式不合法")
-            elif field == "signed_date" and not re.search(r"\d{4}\s*[-/.年]\s*\d{1,2}\s*[-/.月]\s*\d{1,2}|\d{8}", text):
-                reading.failed.append(f"签署日期“{value}”不是日期")
+                invalid.append(f"电子邮箱“{value}”格式不合法")
+            elif field == "signed_date" and not SIGNED_DATE.search(text):
+                invalid.append(f"签署日期“{value}”不是日期")
             contact.append(f"{words.split('（')[0]}{value}")
-        if reading.failed:
-            reading.failed[0:0] = ["联系信息不完整："]
-            return "NG", "零件提交保证书" + reading.failed[0] + "；".join(reading.failed[1:]) + "。"
+        # Every gap of the signing area is reported together: contact details, signature and seal.
+        missing = [failure for failure in reading.failed if failure.startswith("缺少") or failure.endswith("为空")]
+        if missing or invalid:
+            reading.failed[:] = [failure for failure in reading.failed if failure not in missing]
+            reading.failed.insert(0, "联系信息不完整：" + "、".join([*missing, *invalid]))
         if reading.present(name, label):
             try:
                 signature = self.signature()
@@ -1258,5 +1311,6 @@ class WarrantR3(Reader):
         if unsure:
             raise unable("零件号一致；" + "；".join(unsure) + "，需人工判断。")
         return "PASS", f"零件提交保证书客户零件号“{number}”与同批次控制计划零件号一致；" + "；".join(matched) + "。"
+
 
 # ruff: noqa: E402, F821  # a candidate leaf binds the declared reader's names at run time; it may not import it

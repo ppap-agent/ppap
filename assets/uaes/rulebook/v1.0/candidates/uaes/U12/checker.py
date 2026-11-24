@@ -52,7 +52,9 @@ def parts_in(value: Any) -> set[str]:
 
 
 def mark_tokens(value: Any) -> list[str]:
-    return _TOKEN.findall(_norm(value).replace("／", "/"))
+    """The class codes a mark writes; codes side by side are separated by commas or spaces alike ("3 5" is 3 and 5)."""
+    text = ",".join(unicodedata.normalize("NFKC", "" if value is None else str(value)).split())
+    return _TOKEN.findall(_norm(text).replace("／", "/"))
 
 
 def mark_class(value: Any) -> frozenset[str]:
@@ -69,6 +71,74 @@ def self_declared_class(value: Any) -> str:
     text = unicodedata.normalize("NFKC", "" if value is None else str(value))
     match = re.search(r"^\s*\d+(?:-\d+)?#.*?[一-鿿]\s*((?:[1235])(?:\s*[,，、\s]\s*[1235])*)\s*(?:[（(].*)?$", text)
     return match.group(1) if match else ""
+
+
+# Geometric tolerance symbols as the list writes them in words (the drawing transcription is asked for the words).
+_GEOMETRY = {
+    "∥": "平行度",
+    "//": "平行度",
+    "⊕": "位置度",
+    "⌖": "位置度",
+    "⊥": "垂直度",
+    "◎": "同轴度",
+    "⏥": "平面度",
+    "▱": "平面度",
+    "○": "圆度",
+    "⌭": "圆柱度",
+    "↗": "圆跳动",
+    "⌰": "全跳动",
+    "⌯": "对称度",
+    "∠": "倾斜度",
+    "⌒": "线轮廓度",
+    "⌓": "面轮廓度",
+}
+_GEOMETRY_WORDS = tuple(dict.fromkeys(_GEOMETRY.values()))
+
+
+def tolerance_key(value: Any) -> str:
+    """A tolerance value normalised for exact comparison (SCL:3 pairs by "公差值归一后精确相等"): width and case
+    folded, spaces removed, diameter signs unified, a geometric symbol written as its name, a count prefix ("4X")
+    and a geometric tolerance's datum letters dropped."""
+    text = unicodedata.normalize("NFKC", "" if value is None else str(value)).split("\n")[0]
+    for symbol, word in _GEOMETRY.items():
+        text = text.replace(symbol, word)
+    text = "".join(text.split()).casefold()
+    text = re.sub(r"[φø⌀∅]", "φ", text)
+    text = re.sub(r"^\d+[x×*]", "", text)
+    text = re.sub(r"\+(\d+(?:\.\d+)?)/-\1(?!\d)", r"±\1", text)
+    if text.startswith(_GEOMETRY_WORDS):
+        text = re.sub(r"(?<=\d)[a-z](?:[-/]?[a-z])*$", "", text)
+    return text
+
+
+_DRAWING_PROMPT = (
+    "这是一张零件图纸的一块局部图像（整张图纸切成多块，块与块略有重叠）。请按 JSON Schema 转写，只转写，不判断。\n"
+    "items：本块中带有特性类别标记的每一个尺寸、公差或形位公差。类别标记指紧跟在尺寸或形位公差框后面的小框或旗形里的"
+    "数字或字母（如 5、3/5、3、F、S、SC、CC、★）。没有类别标记的尺寸不要列出。\n"
+    "dimension：照原样转写尺寸与公差，含 Φ、R、数量前缀（如 4X）、上下偏差（写成 +0.2/-0.1 的形式）或 ±；形位公差框写成"
+    "“中文名称 公差值 基准”，如“位置度 Φ0.1 A-B”“平行度 0.1 A-B”，名称只用：平行度、位置度、垂直度、同轴度、平面度、圆度、"
+    "圆柱度、圆跳动、全跳动、对称度、倾斜度、线轮廓度、面轮廓度；粗糙度写成“Rz max 3.2”这样。\n"
+    "mark：类别标记框里的内容，照原样，如“5”“3/5”“F”。view：该尺寸所在视图的标签（如 A-A、B-B），看不出写空字符串。\n"
+    "图例、技术要求、标题栏里解释标记含义的示例不是尺寸，不要列出。readable：本块中是否有因模糊、过小而看不清的带标记尺寸，"
+    "全部看得清写 true，有看不清的写 false。"
+)
+_DRAWING_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["items", "readable"],
+    "properties": {
+        "readable": {"type": "boolean"},
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["dimension", "mark", "view"],
+                "properties": {"dimension": {"type": "string"}, "mark": {"type": "string"}, "view": {"type": "string"}},
+            },
+        },
+    },
+}
 
 
 _REVISION_LABEL = re.compile(r"改版理由|revisionreason|修改说明|修订说明|变更履历")
@@ -90,6 +160,17 @@ def list_rows(agent: Any, ctx: RuleContext) -> list[tuple[str, Any, dict]]:
             continue
         kept.append((title, row, columns))
     return kept
+
+
+def large_format(path: str) -> bool:
+    """Whether a PDF has a page of A3 size or larger (its longer side at least 1150 pt), as part drawings are."""
+    import fitz
+
+    try:
+        with fitz.open(path) as document:
+            return any(max(page.rect.width, page.rect.height) >= 1150 for page in document)
+    except Exception:
+        return False
 
 
 def original_name(item: Any) -> str:
@@ -302,10 +383,25 @@ class _Revision3:
 
     # ---- SCL:3 ------------------------------------------------------------------------------------------------
 
-    def drawings(self) -> list[Any]:
+    def drawings(self) -> list[tuple[Any, bool]]:
+        """(item, typed) of the same-round originals that may be drawings: typed as a drawing, or large-format (A3 or
+        larger) PDF originals of no recognised type; the UAES register has no drawing type, so a drawing arrives untyped,
+        and an A4 parts list or cover is not taken as one."""
         if self.group_context is None:
             return []
-        return [item for kind, items in self.group_context.by_doc_type.items() if re.search(r"图纸|图样|drawing", kind, re.I) for item in items if item.audit_id != self.audit_file.audit_id]
+        own = self.audit_file.audit_id
+        typed: set[str] = set()
+        found: dict[str, tuple[Any, bool]] = {}
+        for kind, items in self.group_context.by_doc_type.items():
+            unknown = not kind or _norm(kind) in {"unknown", "未知"}
+            if not unknown:
+                typed |= {item.audit_id for item in items}
+            if not unknown and re.search(r"图纸|图样|drawing", str(kind), re.I):
+                found |= {item.audit_id: (item, True) for item in items if item.audit_id != own}
+        for item in self.group_context.by_audit_id.values():
+            if item.audit_id != own and item.audit_id not in typed and str(item.file_url).lower().endswith(".pdf") and large_format(str(item.file_url)):
+                found.setdefault(item.audit_id, (item, False))
+        return list(found.values())
 
     def drawing_number(self, item: Any) -> set[str]:
         import fitz
@@ -318,16 +414,82 @@ class _Revision3:
         title = self.drawing_title(item)
         return parts_in(title.get("drawing_number") or "")
 
+    def drawing_marks(self, item: Any) -> tuple[list[tuple[str, str, str, bool]], bool]:
+        """((dimension, mark, view, confirmed) of every special-characteristic mark on a PDF drawing, whether every tile
+        was read and legible). The drawing's dimensions and marks are vector strokes outside the text layer, so each
+        page is cut into overlapping tiles and each tile transcribed twice by the image model; a mark is confirmed when
+        both transcriptions (or two overlapping tiles) read the same tolerance value and class. Code pairs and decides."""
+        import contextvars
+        from concurrent.futures import ThreadPoolExecutor
+
+        import fitz
+
+        version = str((getattr(item, "file_metadata", None) or {}).get("file_version_id") or item.audit_id)
+        cache = self.__dict__.setdefault("_drawing_marks", {})
+        if version in cache:
+            return cache[version]
+        tiles: list[bytes] = []
+        with fitz.open(str(item.file_url)) as document:
+            for page in document:
+                columns = max(1, round(page.rect.width / 850))
+                rows = max(1, round(page.rect.height / 800))
+                width, height = page.rect.width / columns, page.rect.height / rows
+                pad = 0.06 * max(width, height)
+                for row in range(rows):
+                    for column in range(columns):
+                        area = fitz.Rect(column * width - pad, row * height - pad, (column + 1) * width + pad, (row + 1) * height + pad) & page.rect
+                        dpi = min(220, int(2400 * 72 / max(area.width, area.height)))
+                        tiles.append(page.get_pixmap(dpi=dpi, clip=area).tobytes("png"))
+        subject = f"图纸{original_name(item)}的特殊特性标记"
+
+        def read(tile: bytes) -> dict[str, Any] | None:
+            try:
+                return self.transcribe(tile, _DRAWING_PROMPT, _DRAWING_SCHEMA, subject)
+            except GuardStop as stop:
+                if stop.decision == Decision.ERR:
+                    return None  # One failed reading of a tile; the other reading of it may stand.
+                raise
+
+        jobs = [tile for tile in tiles for _pass in range(2)]
+        with ThreadPoolExecutor(max_workers=min(12, len(jobs))) as pool:
+            results = list(pool.map(lambda tile: contextvars.copy_context().run(read, tile), jobs))
+        if all(result is None for result in results):
+            raise GuardStop(Decision.ERR, "原件模型请求失败或结果尚未确认，尚未取得业务结论。")
+        seen: dict[tuple[str, frozenset[str]], tuple[str, str, str]] = {}
+        counts: dict[tuple[str, frozenset[str]], int] = {}
+        legible = True
+        for result in results:
+            if result is None:
+                legible = False
+                continue
+            legible = legible and result.get("readable") is True
+            keys = set()
+            for entry in result.get("items") or []:
+                dimension, mark = str(entry.get("dimension") or "").strip(), str(entry.get("mark") or "").strip()
+                tokens = mark_tokens(mark)
+                # Only the class codes the clause names count as a mark; anything else is a misread label.
+                if not tolerance_key(dimension) or not tokens or not all(token in _KNOWN for token in tokens):
+                    continue
+                key = (tolerance_key(dimension), mark_class(mark))
+                seen.setdefault(key, (dimension, mark, str(entry.get("view") or "").strip()))
+                keys.add(key)
+            for key in keys:
+                counts[key] = counts.get(key, 0) + 1
+        cache[version] = ([(*value, counts[key] >= 2) for key, value in seen.items()], legible)
+        return cache[version]
+
     @rule("特殊特性与图纸、PGQP1三方一致")
     def rule_3(self, ctx: RuleContext):
         part, rows, scope = self.scoped(ctx)
         plans, drawings = self.batch_files("E12"), self.drawings()
         if not plans and not drawings:
             return "NA", f"{scope}。同批次未提交图纸与PGQP1，本条不适用（依据：条款“图纸亦未提交时，本条记不适用”）；不记作通过，缺件只在包级计一次。"
-        # Same-number check first: a source of another part number is a mismatched comparison source.
+        # Same-number check first: a source of another part number is a mismatched comparison source. It is left out of
+        # the comparison (its content is not checked cell by cell); the sources of this number are still compared.
         mismatched, pending = [], []
         plan_rows: list[tuple[str, str, str, str]] = []
         unmarked_plan = False
+        same_plans = 0
         for plan in plans:
             with self.reading(ctx, plan, self._pgqp1):
                 for sheet in Table(ctx).find_sheets("PGQP1", on_missing=Decision.IGNORE):
@@ -335,6 +497,7 @@ class _Revision3:
                     if part not in numbers:
                         mismatched.append(f"PGQP1“{original_name(plan)}”零件号{'、'.join(sorted(numbers)) or '未写明'}")
                         continue
+                    same_plans += 1
                     for row in self.section(sheet, "重要特性区").rows("特性项目"):
                         name = str(row.value("特性项目") or "").strip()
                         written = str(row.value("特殊特性") or "").strip()
@@ -344,26 +507,40 @@ class _Revision3:
                             plan_rows.append((f"PGQP1“{sheet.title}”第{row.row_index}行", name, "", written))
                         else:
                             unmarked_plan = True
-        for drawing in drawings:
+        same_drawings = []
+        unread = False  # A submitted drawing whose number or marks the program could not read.
+        for drawing, typed in drawings:
             try:
                 numbers = self.drawing_number(drawing)
             except GuardStop as stop:
-                pending.append(f"图纸“{original_name(drawing)}”图号未能读取（{stop.message}）")
+                if typed:
+                    pending.append(f"图纸“{original_name(drawing)}”图号未能读取（{stop.message}）")
+                    unread = True
+                continue  # An untyped original without a readable drawing number is not taken as a drawing.
+            if not numbers and not typed:
                 continue
             if part not in numbers:
                 mismatched.append(f"图纸“{original_name(drawing)}”图号{'、'.join(sorted(numbers)) or '未能读出'}")
+            else:
+                same_drawings.append(drawing)
+        if mismatched and not same_plans and not same_drawings:
+            raise unable(
+                f"{scope}。比对源错配：{'；'.join(mismatched)}，与本件号{part}不同；按条款先做同号校验，不同号不逐项比对特性内容，同批次没有本件号的图纸或PGQP1可比，请提交本件号的图纸/PGQP1后复核。"
+            )
+        notes = []
         if mismatched:
-            raise unable(f"{scope}。比对源错配：{'；'.join(mismatched)}，与本件号{part}不同；按条款先做同号校验，不同号不逐项比对特性内容，请提交本件号的图纸/PGQP1后复核。")
-        listed = []
+            notes.append(f"比对源错配：{'；'.join(mismatched)}，与本件号{part}不同，不逐项比对其内容，只用本件号的{'图纸' if same_drawings else 'PGQP1'}比对")
+        if not plans:
+            notes.append("同批次未提交PGQP1，以图纸为唯一基准")
+        scoped_rows = []
         for title, row, columns in rows:
             mark = str(row.value("特性类别") or "").strip() if "特性类别" in columns else ""
-            if _norm(mark) in _ORDINARY:
-                continue
             name = next((str(row.value(column)).strip() for column in _NAMES if filled(row, column, columns)), "")
             value = str(row.value("特性值")).strip() if filled(row, "特性值", columns) else ""
-            listed.append((f"“{title}”第{row.row_index}行", name, value, mark))
-        failures, notes = [], []
-        # PGQP1 → list, and list → PGQP1 (or the drawing), paired by name (the PGQP1 form writes no separate tolerance column).
+            scoped_rows.append((f"“{title}”第{row.row_index}行", name, value, mark))
+        listed = [entry for entry in scoped_rows if _norm(entry[3]) not in _ORDINARY]
+        failures = []
+        # PGQP1 → list, paired by name (the PGQP1 form writes no separate tolerance column).
         for where, name, _value, mark in plan_rows:
             paired = [entry for entry in listed if characteristic_name(entry[1]) == characteristic_name(name)]
             if not paired:
@@ -372,17 +549,62 @@ class _Revision3:
                 failures.append(f"{where}“{name}”标识“{mark}”，清单{paired[0][0]}为“{paired[0][3]}”，类别符号不同")
             elif any(_norm(entry[3]) != _norm(mark) for entry in paired):
                 notes.append(f"{name}写法“{mark}”/“{paired[0][3]}”按等价写法判一致")
+        # Drawing → list, paired by the tolerance value (the drawing writes no characteristic names).
+        marks: list[tuple[str, str, str, bool]] = []
+        legible = True
+        for drawing in same_drawings:
+            if not str(drawing.file_url).lower().endswith(".pdf"):
+                pending.append(f"图纸“{original_name(drawing)}”不是PDF，其中的特殊特性尚未由检查程序读取")
+                unread = True
+                continue
+            found, readable = self.drawing_marks(drawing)
+            marks.extend(found)
+            legible = legible and readable
+        unsure = []
+        for dimension, mark, view, confirmed in marks:
+            where = f"图纸{('“' + view + '”视图') if view else ''}“{dimension}”（标{mark}）"
+            paired = [entry for entry in scoped_rows if tolerance_key(entry[2]) == tolerance_key(dimension)]
+            problem = ""
+            if not paired:
+                problem = f"{where}在清单中没有同公差值的行"
+            elif not any(mark_class(entry[3]) == mark_class(mark) for entry in paired):
+                problem = f"{where}，清单{paired[0][0]}同公差值的行类别为“{paired[0][3] or '空'}”，类别符号不同"
+            elif any(_norm(entry[3]) != _norm(mark) for entry in paired):
+                notes.append(f"“{dimension}”写法“{mark}”/“{paired[0][3]}”分隔符不同，判一致（留痕）")
+            if problem and confirmed:
+                failures.append(problem)
+            elif problem:
+                unsure.append(problem)
+        if unsure:
+            pending.append(f"图纸另有{len(unsure)}处（如{unsure[0]}）两次读图结果不一致，未据此判定")
+        # List → drawing or PGQP1.
+        orphans = []
+        drawn = {tolerance_key(dimension) for dimension, _mark, _view, _confirmed in marks}
+        planned = {characteristic_name(name) for _where, name, _value, _mark in plan_rows}
+        for where, name, value, mark in listed:
+            if tolerance_key(value) in drawn or characteristic_name(name) in planned:
+                continue
+            orphans.append(f"{where}“{name} {value}”（{mark}）")
+        if orphans:
+            if mismatched or unmarked_plan or not legible or unread:
+                why = "错号的比对源不参与比对" if mismatched else "PGQP1未逐行标特殊特性符号" if unmarked_plan else "图纸有看不清的部分" if not legible else "有图纸未能读取"
+                pending.append(f"清单{'、'.join(orphans[:4])}{'等' + str(len(orphans)) + '项' if len(orphans) > 4 else ''}在本件号图纸/PGQP1中未找到，因{why}，“清单→图纸/PGQP1”方向尚不能判定")
+            else:
+                failures.append(f"清单{'、'.join(orphans[:4])}{'等' + str(len(orphans)) + '项' if len(orphans) > 4 else ''}在图纸与PGQP1中都找不到对应特殊特性")
         if failures:
-            return "NG", f"{scope}。" + "；".join(failures[:5]) + (f"等{len(failures)}处" if len(failures) > 5 else "") + "。"
+            return "NG", f"{scope}。" + "；".join(failures[:5]) + (f"等{len(failures)}处" if len(failures) > 5 else "") + "。" + ("（" + "；".join(notes[:3]) + "）" if notes else "")
         if unmarked_plan:
             pending.append("PGQP1重要特性表的“SC/特殊特性”栏写的是规格而不是特殊特性符号，检查程序不能确定其中哪些是特殊特性")
-        if drawings:
-            pending.append("图纸中的特殊特性尚未由检查程序读取，“图纸↔清单”双向覆盖与名称、公差、符号一致性未审")
-        if not plans:
-            notes.append("同批次未提交PGQP1，以图纸为唯一基准")
+        if same_drawings and not legible:
+            pending.append("图纸有看不清的带标记尺寸，“图纸→清单”覆盖尚不能确认完整")
         if pending:
             raise unable(f"{scope}。" + "；".join(pending) + ("；" + "；".join(notes) if notes else "") + "，需人工复核。")
-        return "PASS", f"{scope}。清单{len(listed)}项特殊特性与PGQP1{len(plan_rows)}项特殊特性双向覆盖，名称与类别符号一致" + (f"（{'；'.join(notes[:3])}）" if notes else "") + "。"
+        basis = []
+        if plan_rows:
+            basis.append(f"PGQP1{len(plan_rows)}项特殊特性（按名称配对）")
+        if same_drawings:
+            basis.append(f"图纸{len(marks)}项带类别标记的尺寸（按公差值配对，图纸经图像转写、每块读两次）")
+        return "PASS", f"{scope}。清单{len(listed)}项特殊特性与{'、'.join(basis) or '比对源'}双向覆盖，类别符号一致" + (f"（{'；'.join(notes[:3])}）" if notes else "") + "。"
 
 
 def labelled_parts(path: str) -> set[str]:
@@ -450,5 +672,6 @@ class Revision3Audit(AgentAudit):
 
 def create_audit(audit_file, rule, group_context=None):
     return Revision3Audit(audit_file, rule, group_context, resource=RESOURCE)
+
 
 # ruff: noqa: E402, F821  # a candidate leaf binds the declared reader's names at run time; it may not import it

@@ -395,6 +395,8 @@ DEVIATION_TERMS = ("偏差", "超差", "整改", "条件认可")
 # Two statements of the remark that contradict each other: an approval and its refusal.
 REFUSALS = ("不认可", "不予认可", "不同意", "不批准")
 _APPROVAL_KINDS = ("E11", "顾客工程批准")
+# The deviation release list as recognition registers it: a counterpart compared against, never audited on its own.
+_LIST_KIND = "E11A"
 
 _MARK_SCHEMA = {"type": ["boolean", "null"]}
 REJECT_SCHEMA = {"type": "object", "additionalProperties": False, "required": list(CATEGORIES), "properties": {name: _MARK_SCHEMA for name in CATEGORIES}}
@@ -671,13 +673,19 @@ class ApprovalR3(Reader):
         else:
             failures.append("封面没有整改承诺的最晚期限")
         part, name = self.identity(ctx, sheet)
-        lists = self.deviation_lists(ctx, part, name)
-        if not lists:
+        lists, open_points = self.deviation_lists(ctx, part, name)
+        if not lists and not open_points:
             self.need("偏差认可汇总清单", part=part)
             failures.append(f"文件内及同批次没有零件号“{part}”、零件名称“{name}”的偏差认可汇总清单")
             return "NG", route + "；".join(failures) + "。"
         if len(lists) > 1:
-            raise unable(f"{route}文件内及同批次有{len(lists)}份同零件的偏差认可汇总清单，尚不能确定按哪一份核对，需人工复核。")
+            open_points.append(f"文件内及同批次有{len(lists)}份同零件的偏差认可汇总清单，尚不能确定按哪一份核对")
+        if open_points:
+            # The list's own conditions cannot be decided; a failure already found on the cover still decides.
+            pending = "；".join(open_points) + "，清单相关各项（清单是否存在、临时偏差有效期、两处期限一致性）未核对，需人工复核"
+            if failures:
+                return "NG", route + "；".join(failures) + "。另：" + pending + "。"
+            raise unable(route + pending + "。")
         item = lists[0]
         with self.reading(ctx, item, DEVIATIONS, (PER_PAGE, STITCHED)) if item is not None else _Here(ctx):
             listed = self.list_deadlines(ctx)
@@ -699,37 +707,66 @@ class ApprovalR3(Reader):
             return "NG", route + "；".join(failures) + "。"
         return "PASS", route + f"同零件的偏差认可汇总清单四个字段齐全；封面整改承诺最晚期限{deadline}晚于当前日期，与清单最晚有效期一致；清单临时偏差有效期均晚于当前日期。"
 
-    def deviation_lists(self, ctx: RuleContext, part: str, name: str) -> list:
-        """The lists (None for this file) whose header names this part number and part name among its own."""
-        found: list[Any] = []
-        unknown: list[str] = []
-        if self.list_matches(ctx, part, name):
-            found.append(None)
-        candidates = {item.audit_id: item for item in [*self.batch_files(*_APPROVAL_KINDS), *self.named_files(("偏差认可汇总", "偏差"))]}
-        for item in candidates.values():
-            with self.reading(ctx, item, DEVIATIONS, (PER_PAGE, STITCHED)):
-                matched = self.list_matches(ctx, part, name)
-            if matched:
-                found.append(item)
-            elif matched is None or self.untabled(str(item.file_url)):
-                unknown.append(original_name(item))
-        if not found and unknown:
-            raise unable(f"同批次原件（{'、'.join(unknown)}）未能读取，尚不能确认是否为同零件的偏差认可汇总清单，需人工复核。")
-        return found
+    def deviation_lists(self, ctx: RuleContext, part: str, name: str) -> tuple[list, list[str]]:
+        """(lists of this part number and part name, None for this file; what keeps a same-round list undecided).
 
-    def list_matches(self, ctx: RuleContext, part: str, name: str) -> bool | None:
+        Every other same-round original is a candidate, whatever it was recognised as (an unknown type, a reference), as
+        the clause only asks for a list "in the file or in the same batch"; a list is told by its content, never its name."""
+        found: list[Any] = []
+        open_points: list[str] = []
+        unread: list[str] = []
+        if self.list_matches(ctx, part, name)[0] == "same":
+            found.append(None)
+        if self.group_context is None:
+            return found, open_points
+        typed = {item.audit_id: kind for kind, items in self.group_context.by_doc_type.items() for item in items}
+        # Same-round E11A counterparts (deviation release lists by recognition) first, then every other original.
+        ordered = sorted(self.group_context.by_audit_id.values(), key=lambda item: typed.get(item.audit_id) != _LIST_KIND)
+        for item in ordered:
+            if item.audit_id == self.audit_file.audit_id or Path(str(item.file_url)).suffix.lower() not in type(self).SUPPORTED_EXTENSIONS:
+                continue
+            # A file recognised as another document type and unreadable as a table is not taken as a possible list.
+            loose = typed.get(item.audit_id) in (None, "", _LIST_KIND, *_APPROVAL_KINDS)
+            with self.reading(ctx, item, DEVIATIONS, (PER_PAGE, STITCHED)):
+                state, theirs = self.list_matches(ctx, part, name)
+            if state == "none" and loose and self.untabled(str(item.file_url)):
+                state = "unread"
+            if state == "same":
+                found.append(item)
+            elif state == "joint":
+                open_points.append(
+                    f"同批《{original_name(item)}》是偏差认可汇总清单，零件号写作“{theirs[0]}”、零件名称写作“{theirs[1]}”，并列了多个零件；"
+                    f"条文“同零件编号、同零件名称”是否包括这种并列多个零件的清单，按字面判不了"
+                )
+            elif state == "unread":
+                unread.append(original_name(item))
+        if self.group_context.unavailable_files:
+            unread.append(f"{len(self.group_context.unavailable_files)}份无法读取的冻结资料")
+        if not found and unread:
+            open_points.append(f"同批次原件（{'、'.join(unread)}）未能读取，尚不能确认是否为同零件的偏差认可汇总清单")
+        return found, open_points
+
+    def list_matches(self, ctx: RuleContext, part: str, name: str) -> tuple[str, tuple[str, str]]:
+        """Whether the table read is a deviation release list of this part, and the identity it writes.
+
+        "same": its 零件号 and 零件名称 are exactly this part's; "joint": it writes several parts ("F01RD0YC50/F01RC0Y796")
+        and this one among them, which the clause's "same part number" does not settle; "other": another part;
+        "unread": a list whose identity cannot be read; "none": no list with the clause's fields."""
         for sheet in Table(ctx).find_sheets("偏差认可汇总", on_missing=Decision.IGNORE):
             if self.located(sheet, "偏差区") is None:
                 continue
             try:
                 theirs = self.identity(ctx, sheet)
             except GuardStop:
-                return None
-            # A list may cover several parts: "F01RD0YC50/F01RC0Y796", "机加工壳体 / 毛坯件壳体".
+                return "unread", ("", "")
+            if compact(theirs[0]) == compact(part) and compact(theirs[1]) == compact(name):
+                return "same", theirs
             parts = {compact(value) for value in re.split(r"[/、,，;；]", theirs[0])}
             names = {compact(value) for value in re.split(r"[/、,，;；]", theirs[1])}
-            return compact(part) in parts and compact(name) in names
-        return False
+            if compact(part) in parts and compact(name) in names:
+                return "joint", theirs
+            return "other", theirs
+        return "none", ("", "")
 
     def list_deadlines(self, ctx: RuleContext) -> list[tuple[date, str]]:
         """Each "临时偏差至<date>" of the list's remark column, with the deviation item it belongs to."""
@@ -745,5 +782,6 @@ class ApprovalR3(Reader):
                 self.cite(sheet, row.row_index, row.columns["偏差备注"].header_col)
                 found.append((day, current or f"第{row.row_index}行"))
         return found
+
 
 # ruff: noqa: E402, F821  # a candidate leaf binds the declared reader's names at run time; it may not import it

@@ -62,18 +62,15 @@ class OrderClauses:
             try:
                 values: dict[str, Any] = {}
                 with unreadable_facts() as seen:
-                    # One fact per request: the image model answers several facts over several pages unreliably.
-                    for field, description in FIELDS.items():
-                        try:
-                            values |= read_original_pdf_visual_facts(
-                                agent.audit_file, {field: description}, agent.witness, operation="uaes_original_visual_facts", cache=agent._original_page_cache, source_pages=chosen
-                            )
-                        except VisualFactsUnavailable:
-                            raise
-                        except Exception:
-                            # A failed request leaves this fact open; a fact the other requests settle still counts.
-                            values[field] = None
-                            self.__dict__.setdefault("_failed_facts", set()).add(field)
+                    # All five facts in one request over the chosen pages: one request per fact ran past the
+                    # clause's three-minute limit on a 17-page BV. A failed request leaves every fact open.
+                    try:
+                        values = read_original_pdf_visual_facts(agent.audit_file, FIELDS, agent.witness, operation="uaes_original_visual_facts", cache=agent._original_page_cache, source_pages=chosen)
+                    except VisualFactsUnavailable:
+                        raise
+                    except Exception:
+                        values = dict.fromkeys(FIELDS)
+                        self.__dict__["_failed_facts"] = set(FIELDS)
             except VisualFactsUnavailable as exc:
                 raise unable(str(exc)) from None
             return values, {field for field in seen if values.get(field) is None}

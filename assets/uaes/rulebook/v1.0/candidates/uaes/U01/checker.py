@@ -903,4 +903,5 @@ class InspectionR3(Reader):
         places = [f"ISIR内工作表“{title}”" for title in embedded] + [f"同批次《{original_name(item)}》" for item in found]
         raise unable(f"有可能的气泡图（{'、'.join(places)}），检查程序尚不能读取气泡图的件号与气泡编号，未能核对物料编号“{part}”、物料名称“{name}”及与ISIR尺寸项的双向对齐和逐项尺寸公差，需人工复核。")
 
+
 # ruff: noqa: E402, F821  # a candidate leaf binds the declared reader's names at run time; it may not import it

@@ -67,6 +67,10 @@ OUTSOURCED = ("外协", "委外", "外委", "外购", "外包")
 OUTSOURCED_KINDS = ("外协加工", "表面处理", "热处理", "焊接外委", "电镀")
 IN_HOUSE = ("自制", "厂内", "内制")
 RAW_MATERIAL = ("原材料", "原料")
+# MSL:4 engineering semantics the clause allows: where a raw material enters the process (incoming
+# inspection, melting), and the flow chart column that names the process nodes.
+MATERIAL_ENTRY = ("进料检验", "来料检验", "原材料检验", "原料检验", "incominginspect", "熔化", "熔炼", "melt", *RAW_MATERIAL)
+FLOW_STEP = ("过程描述", "operationdescription", "工序描述", "工序名称", "processdescription")
 
 
 def _found(text: str, spellings: tuple[str, ...]) -> bool:
@@ -322,19 +326,42 @@ class MslClauses:
         return "NG", f"零件名称不一致：同批次零件号“{part}”的图纸（{'、'.join(self.lib.Related(same_project).names)}）中没有清单零件名称“{name}”。"
 
     # ---- MSL:4 ----
-    def related_texts(self, ctx: RuleContext, item: Any) -> list[str]:
-        cells = self.drawing_cells(ctx, item)
-        if cells is not None:
-            return cells
-        import fitz
+    def flow_nodes(self, ctx: RuleContext, item: Any) -> list[str]:
+        """The flow chart's process nodes: the 过程描述 column of a spreadsheet, the text lines of a PDF.
 
-        with fitz.open(str(item.file_url)) as document:
-            if any(not page.get_text().strip() for page in document):
-                raise unable(f"过程流程图{original_name(item)}有页面没有文字层，检查程序未能读取，需人工复核。")
-            return "".join(page.get_text() for page in document).splitlines()
+        Control methods, characteristics and record names are not nodes; a spreadsheet without a
+        过程描述 column cannot be read as nodes."""
+        if str(item.file_url).lower().endswith(".pdf"):
+            import fitz
 
-    def records(self, ctx: RuleContext, sheet: Sheet) -> list[dict[str, Any]]:
-        """Each filled record: its row, names (part/material), and whether the list marks it outsourced."""
+            with fitz.open(str(item.file_url)) as document:
+                if any(not page.get_text().strip() for page in document):
+                    raise unable(f"过程流程图{original_name(item)}有页面没有文字层，检查程序未能读取，需人工复核。")
+                return [line.strip() for line in "".join(page.get_text() for page in document).splitlines() if line.strip()]
+        nodes: list[str] = []
+        with self.reading(ctx, item, self.READER.drawing_for_materials):
+            for worksheet in ctx.workbook.worksheets:
+                sheet = Sheet(ctx, worksheet)
+                rows, columns = self.extent(sheet)
+                heads = [cell for cell in sheet.scan_non_empty(row_min=1, row_max=min(rows, 30), col_min=1, col_max=columns) if _found(cell_text(cell), FLOW_STEP)]
+                for head in heads:
+                    merged = ctx.ops.get_detailed_merge_info(sheet.ws, head.row_index, head.col_index)
+                    last_row = merged.max_row if merged else head.row_index
+                    span = range(head.col_index, (merged.max_col if merged else head.col_index) + 1)
+                    for row in range(last_row + 1, rows + 1):
+                        values = dict.fromkeys(" ".join(str(sheet.cell(row, column).value() or "").split()) for column in span)
+                        text = " ".join(value for value in values if value)
+                        if text and not _found(compact(text), FLOW_STEP):
+                            nodes.append(text)
+        if not nodes:
+            raise unable(f"过程流程图{original_name(item)}未能定位“过程描述”列，检查程序未能读取工序节点，需人工复核。")
+        return list(dict.fromkeys(nodes))
+
+    def records(self, ctx: RuleContext, sheet: Sheet, part: str) -> list[dict[str, Any]]:
+        """Each filled record: its row, names (part/material), and whether the list marks it outsourced.
+
+        The record of the part itself (its part number is the list's own part number) is the part being made,
+        not an outsourced item; its material is still a raw material."""
         section = self.section(sheet, "材料清单区")
         header, serial = section.resolved.header_row, section.column("材料序号")
         _rows, width = self.extent(sheet)
@@ -342,6 +369,8 @@ class MslClauses:
         name_columns = [column for column, head in heads.items() if _found(head, ("零件/部件名称", "部件名称", "子零件名称", "工序名称"))]
         material_columns = [column for column, head in heads.items() if _found(head, ("材料名称和材料牌号", "材料牌号", "材料名称"))]
         outsourced_columns = [column for column, head in heads.items() if _found(head, ("外协", "Subcontract", "国产", "进口"))]
+        number_columns = [column for column, head in heads.items() if _found(head, ("零件号", "PartNo", "分部件零件号", "子件号"))]
+        own = self.lib._identity(part) if part else ""
         found = []
         for row in section.rows("材料序号"):
             index = row.row_index
@@ -349,12 +378,14 @@ class MslClauses:
             if not any(value for column, value in values.items() if column != serial.header_col):
                 continue
             text = compact("".join(values.values()))
+            itself = bool(own) and any(self.lib._identity(values[column]) == own for column in number_columns if values[column])
             found.append(
                 {
                     "row": index,
                     "names": [values[column] for column in name_columns if values[column]],
                     "materials": [values[column] for column in material_columns if values[column]],
-                    "outsourced": any(values[column] for column in outsourced_columns) or _found(text, OUTSOURCED),
+                    "outsourced": not itself and (any(values[column] for column in outsourced_columns) or _found(text, OUTSOURCED)),
+                    "itself": itself,
                     "text": text,
                 }
             )
@@ -366,54 +397,74 @@ class MslClauses:
         if flows.missing:
             return "NA", "同批次未提交过程流程图，本条不适用（依据：条文“同批次未提交过程流程图时本条记‘不适用’”），不记作通过。"
         sheets = self.lists(ctx)
-        records = [record for sheet in sheets for record in self.records(ctx, sheet)]
+        records = []
+        for sheet in sheets:
+            try:
+                part = self.field_value(ctx, sheet, "零件号", self.res.PART_NUMBER)
+            except GuardStop:
+                part = ""  # Without the list's own part number no record is taken as the part itself.
+            records.extend(self.records(ctx, sheet, part))
         if not records:
             raise unable("分供清单没有已填写的记录行，检查程序未能核对双向溯源，需人工复核。")
-        texts: list[str] = []
+        nodes: list[str] = []
         for item in flows.items:
-            texts.extend(self.related_texts(ctx, item))
-        flow_text = compact("".join(texts))
+            nodes.extend(self.flow_nodes(ctx, item))
+        flow_text = compact("".join(nodes))
+        material_nodes = [node for node in nodes if _found(compact(node), MATERIAL_ENTRY) and not _found(compact(node), IN_HOUSE)]
         unmatched_list: list[str] = []
         matched_list: list[str] = []
         # Direction 2: each outsourced item and each raw material of the list has a flow chart node.
         for record in records:
-            wanted = [*(record["names"] if record["outsourced"] else []), *record["materials"]]
-            for value in wanted:
+            for value in record["names"] if record["outsourced"] else []:
                 key = compact(value)
                 if key and key in flow_text:
-                    matched_list.append(f"第{record['row']}行“{value}”")
+                    matched_list.append(f"第{record['row']}行外协项“{value}”（流程图同名节点）")
                 elif key:
-                    unmatched_list.append(f"第{record['row']}行“{value}”")
-        # Direction 1: each outsourced process and raw material node the flow chart writes has a list record.
+                    unmatched_list.append(f"第{record['row']}行外协项“{value}”")
+            for value in record["materials"]:
+                key = compact(value)
+                if key and key in flow_text:
+                    matched_list.append(f"第{record['row']}行材料“{value}”（流程图同名节点）")
+                elif key and material_nodes:
+                    matched_list.append(f"第{record['row']}行材料“{value}”（流程图原材料进入节点“{material_nodes[0]}”）")
+                elif key:
+                    unmatched_list.append(f"第{record['row']}行材料“{value}”")
+        # Direction 1: each outsourced process and raw material node of the flow chart has a list record.
         list_text = compact("".join(record["text"] for record in records))
-        nodes = []
-        for text in texts:
-            own = compact(text)
-            if not own or _found(own, IN_HOUSE):
-                continue
-            if _found(own, OUTSOURCED) or _found(own, OUTSOURCED_KINDS) or _found(own, RAW_MATERIAL):
-                nodes.append(str(text).strip())
-        outsourced_nodes = [node for node in nodes if _found(compact(node), OUTSOURCED + OUTSOURCED_KINDS)]
+        outsourced_nodes = [node for node in nodes if not _found(compact(node), IN_HOUSE) and (_found(compact(node), OUTSOURCED) or _found(compact(node), OUTSOURCED_KINDS))]
+        named_material_nodes = [node for node in nodes if not _found(compact(node), IN_HOUSE) and _found(compact(node), RAW_MATERIAL)]
         if outsourced_nodes and not any(record["outsourced"] for record in records):
             return "NG", "过程流程图有外协工序节点（" + "、".join(f"“{node}”" for node in outsourced_nodes[:6]) + "），分供清单中没有任何外协记录，流程图外协工序未列入分供清单。"
+        has_material = any(record["materials"] for record in records)
+        if named_material_nodes and not has_material:
+            return "NG", "过程流程图有原材料节点（" + "、".join(f"“{node}”" for node in named_material_nodes[:6]) + "），分供清单中没有任何材料记录，流程图原材料未列入分供清单。"
         unmatched_nodes = []
-        for node in nodes:
+        for node in outsourced_nodes:
             bare = compact(node)
-            for word in (*OUTSOURCED, *RAW_MATERIAL, "(", ")", "（", "）"):
+            for word in (*OUTSOURCED, "(", ")", "（", "）"):
                 bare = bare.replace(compact(word), "")
             if not bare or bare not in list_text and not any(compact(name) in bare for record in records for name in [*record["names"], *record["materials"]] if compact(name)):
                 unmatched_nodes.append(f"“{node}”")
+        if material_nodes and not has_material:
+            unmatched_nodes.extend(f"“{node}”" for node in material_nodes[:4])
         if unmatched_list or unmatched_nodes:
             parts = []
             if unmatched_list:
-                parts.append("分供清单中" + "、".join(unmatched_list[:8]) + "在过程流程图中未找到同名节点")
+                parts.append("分供清单中" + "、".join(unmatched_list[:8]) + "在过程流程图中未找到同名或原材料进入（进料检验、熔化类）节点")
             if unmatched_nodes:
-                parts.append("过程流程图中" + "、".join(unmatched_nodes[:8]) + "在分供清单中未找到同名记录")
+                parts.append("过程流程图中" + "、".join(unmatched_nodes[:8]) + "在分供清单中未找到对应记录")
             raise unable("；".join(parts) + "。条文允许按工程语义以简称或别名对应，文字不同不能据此判定缺失，需人工确认是否对应。")
         if not matched_list:
             raise unable("分供清单没有标为外协的项或原材料可供核对，检查程序未能确认双向溯源，需人工复核。")
-        reverse = "均在分供清单中有记录。" if nodes else "未见，无需反向对应。"
-        return "PASS", "分供清单的外协项与原材料（" + "、".join(matched_list[:8]) + "）均在过程流程图中有同名节点；流程图中写明外协或原材料的节点" + reverse
+        itself = [f"第{record['row']}行" for record in records if record["itself"]]
+        note = ("；" + "、".join(itself) + "零件号即本清单零件号，是零件本身，不作外协项核对") if itself else ""
+        if outsourced_nodes:
+            reverse = "流程图外协工序节点（" + "、".join(f"“{node}”" for node in outsourced_nodes[:6]) + "）均在分供清单中有记录"
+        else:
+            reverse = "流程图“过程描述”列没有外协工序节点"
+        if material_nodes:
+            reverse += "，原材料进入节点（" + "、".join(f"“{node}”" for node in material_nodes[:4]) + "）在分供清单中有材料记录"
+        return "PASS", "分供清单的外协项与原材料：" + "、".join(matched_list[:8]) + "，均在过程流程图中有对应节点；" + reverse + note + "。"
 
 
 class Audit(AgentAudit):

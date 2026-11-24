@@ -626,6 +626,39 @@ class MsaClauses:
                 return "NG", f"{report.label}Kappa为{'、'.join(str(v) for v in low)}，低于0.75，即使结论写可接受也按数据失真判不通过"
         return None
 
+    @staticmethod
+    def checked(report: Report) -> str:
+        """What was actually read and checked on a passing report, in the report's own terms."""
+        said = "；".join(report.conclusions)
+        if report.kind == "GRR":
+            return f"{report.label}结论“{said}”，%GRR {_fmt(report.grr)}%，ndc {_fmt(report.ndc)}"
+        if report.kind == "Kappa":
+            values = report.overall or report.kappas
+            which = "总体Kappa" if report.overall else "Kappa值"
+            return f"{report.label}结论“{said}”，{which}{'、'.join(_fmt(v) for v in values)}均不低于0.75"
+        return f"{report.label}结论“{said}”（计数型分析，没有Kappa值）"
+
+    def file_gauges(self, ctx: RuleContext, item: Any) -> list[str]:
+        """The gauges a suite file is about: those its reports name, then the one its file name names."""
+        found = [gauge_family(name) or _c(name) for report in self.reports_of(ctx, item) for name in report.names]
+        if family := gauge_family(Path(original_name(item)).stem):
+            found.append(family)
+        return list(dict.fromkeys(found))
+
+    def gauge_file(self, ctx: RuleContext, key: str, wanted: str, main: Any) -> Any:
+        """The file a gauge's defect belongs to (MSA:2: the file of that gauge): a file with a report of the wanted
+        kind naming it, else a file with any report naming it, else a file named after it, else the suite's main file."""
+        suite = self.suite()
+        named = lambda report: any((gauge_family(name) or _c(name)) == key for name in report.names)  # noqa: E731
+        for test in (
+            lambda item: any(report.kind == wanted and named(report) for report in self.reports_of(ctx, item)),
+            lambda item: any(named(report) for report in self.reports_of(ctx, item)),
+            lambda item: key in self.file_gauges(ctx, item),
+        ):
+            if hit := next((item for item in suite if test(item)), None):
+                return hit
+        return main
+
     @rule("计划量具与GRR/Kappa报告匹配及报告结论与指标")
     def rule_2(self, ctx: RuleContext):
         plan, main, scanned = self.suite_plan(ctx)
@@ -634,7 +667,7 @@ class MsaClauses:
         for report in own:
             result = self.check_report(report)
             if result is None:
-                passed.append(report.label)
+                passed.append(self.checked(report))
             elif result[0] == "NG":
                 failures.append(result[1])
             else:
@@ -643,6 +676,7 @@ class MsaClauses:
             notes.append(f"{without[0].label}{'等' + str(len(without)) + '份Kappa研究' if len(without) > 1 else ''}没有总体Kappa，已逐项核对读到的各个Kappa值（含单个评价者的分项值）")
         suite_level = self.mine(main)
         reports = self.all_reports(ctx)
+        elsewhere: list[str] = []  # Defects of other files' gauges: not in this file's scope.
         if suite_level:
             if not plan:
                 if scanned:
@@ -651,50 +685,67 @@ class MsaClauses:
                     failures.append("文件内及同批次文件中没有测量系统分析计划表")
             if not any(report.kind in ("GRR", "Kappa") for report in reports):
                 failures.append("文件内及同批次文件中没有重复性及再现性（GR&R）报告或Kappa报告")
-            groups: dict[str, list[PlanRow]] = {}
-            for row in plan:
-                gauge = row.gauge
-                where = f"《{original_name(row.item)}》“{row.sheet}”第{row.row}行"
-                if not _c(gauge) or _c(gauge) in _PLACEHOLDERS:
+        groups: dict[str, list[PlanRow]] = {}
+        for row in plan:
+            gauge = row.gauge
+            where = f"《{original_name(row.item)}》“{row.sheet}”第{row.row}行"
+            key = gauge_family(gauge) or _c(gauge)
+            if not _c(gauge) or _c(gauge) in _PLACEHOLDERS:
+                if suite_level:
                     notes.append(f"{where}量具名称{'为空' if not _c(gauge) else '为占位词“' + gauge + '”'}，该项未审")
-                    continue
-                kind = gauge_kind(gauge)
-                if kind == "mixed":
+                continue
+            if gauge_kind(gauge) == "mixed":
+                if self.mine(self.gauge_file(ctx, key, "", main)):
                     opens.append(f"{where}量具名称“{gauge}”跨计数型与计量型，无法判定属哪一类，移交工程裁定")
-                    continue
-                groups.setdefault(gauge_family(gauge) or _c(gauge), []).append(row)
-            for _family, rows in groups.items():
-                gauge = rows[0].gauge
-                counting = gauge_kind(gauge) == "counting"
-                wanted = "Kappa" if counting else "GRR"
-                part = rows[0].values.get("零件号", "")
-                matched = [r for r in reports if r.kind == wanted and r.named(gauge) and r.of_part(part) and _c(r.characteristic)]
-                distinct = {r.signature for r in matched}
-                where = "、".join(f"第{row.row}行" for row in rows)
-                label = "以评价者为对象的Kappa研究" if counting else "GR&R报告"
-                if not matched:
-                    near = [r for r in reports if r.named(gauge)]
-                    why = ""
-                    if near:
-                        kinds = {"GRR": "GR&R报告", "Kappa": "Kappa研究", "Attr": "计数型分析（无Kappa值）", "Cgk": "Cg/Cgk报告"}
-                        described = [
-                            f"{r.label}为{kinds[r.kind]}，零件号{'、'.join(sorted(r.parts)) or '未写'}，所判特性{'“' + r.characteristic + '”' if _c(r.characteristic) else '未写'}" for r in near[:3]
-                        ]
-                        why = "（同名报告：" + "；".join(described) + "）"
-                    failures.append(f"计划表{where}“{gauge}”（零件号{rows[0].values.get('零件号') or '未写'}）没有零件号与量具名称匹配、且写明所判特性的{label}{why}")
-                elif len(distinct) < len(rows):
-                    failures.append(f"同类量具报告份数不足：计划表列出{len(rows)}台“{gauge}”（{where}），匹配的{label}只有{len(distinct)}份")
-        else:
-            notes.append(f"计划表与报告的配对、份数等套件级缺陷记在套件主文件《{original_name(main)}》，不在本文件归属范围内")
+                continue
+            groups.setdefault(key, []).append(row)
+        matched_here: list[str] = []
+        for key, rows in groups.items():
+            gauge = rows[0].gauge
+            counting = gauge_kind(gauge) == "counting"
+            wanted = "Kappa" if counting else "GRR"
+            part = rows[0].values.get("零件号", "")
+            # A counting gauge is matched only by a Kappa study; an attribute sheet without Kappa is not one.
+            matched = [r for r in reports if r.kind == wanted and r.named(gauge) and r.of_part(part) and _c(r.characteristic)]
+            distinct = {r.signature for r in matched}
+            where = "、".join(f"第{row.row}行" for row in rows)
+            label = "以评价者为对象的Kappa研究" if counting else "GR&R报告"
+            owner = self.gauge_file(ctx, key, wanted, main)
+            defect = ""
+            if not matched:
+                near = [r for r in reports if r.named(gauge)]
+                why = ""
+                if near:
+                    kinds = {"GRR": "GR&R报告", "Kappa": "Kappa研究", "Attr": "计数型分析（无Kappa值）", "Cgk": "Cg/Cgk报告"}
+                    described = []
+                    for r in near[:3]:
+                        said = "“" + r.characteristic + "”" if _c(r.characteristic) else "未写"
+                        described.append(f"{r.label}为{kinds[r.kind]}，零件号{'、'.join(sorted(r.parts)) or '未写'}，所判特性{said}")
+                    why = "（同名报告：" + "；".join(described) + "）"
+                defect = f"计划表{where}“{gauge}”（零件号{rows[0].values.get('零件号') or '未写'}）没有零件号与量具名称匹配、且写明所判特性的{label}{why}"
+            elif len(distinct) < len(rows):
+                defect = f"同类量具报告份数不足：计划表列出{len(rows)}台“{gauge}”（{where}），匹配的{label}只有{len(distinct)}份"
+            if self.mine(owner):
+                if defect:
+                    failures.append(defect)
+                else:
+                    matched_here.append(f"计划表{where}“{gauge}”有{len(distinct)}份零件号、量具名称匹配且写明所判特性的{label}（{'、'.join(dict.fromkeys(r.label for r in matched))}）")
+            elif defect:
+                elsewhere.append(f"“{gauge}”的缺陷归《{original_name(owner)}》")
+        if elsewhere:
+            notes.append("计划表中" + "；".join(elsewhere) + "，不在本文件归属范围内")
         tail = ("；提示：" + "；".join(notes[:4])) if notes else ""
         if failures:
             return "NG", "；".join(failures[:5]) + ("等" if len(failures) > 5 else "") + "。" + tail
         if opens:
             raise unable("；".join(opens[:4]) + "，需人工复核。" + tail)
-        if not own and not suite_level:
-            return "PASS", "本文件不含GR&R或Kappa报告，也不是套件主文件，本条没有落在本文件的缺陷。" + tail
-        done = f"本文件报告{'、'.join(passed)}结论可接受（GR&R的%GRR与ndc、Kappa值均已核对达标）" if passed else "本文件没有GR&R或Kappa报告"
-        return "PASS", done + ("；计划表每种量具均有零件号与量具名称匹配的报告，份数不少于台数。" if suite_level else "。") + tail
+        done = []
+        if passed:
+            done.append("本文件报告" + "；".join(passed))
+        done.extend(matched_here)
+        if not done:
+            done.append("本文件没有GR&R或Kappa报告，计划表中也没有归本文件的量具缺陷")
+        return "PASS", "；".join(done) + "。" + tail
 
     # ---- MSA:3 -----------------------------------------------------------------------------------
 
@@ -909,39 +960,64 @@ class MsaClauses:
 
     # ---- MSA:6 -----------------------------------------------------------------------------------
 
-    @rule("特殊特性量具的分析报告覆盖与结论")
-    def rule_6(self, ctx: RuleContext):
-        plans = self.batch_files(_PGQP1)
-        items: list[tuple[str, str, str]] = []  # (where, characteristic, gauge)
-        source, part = "", ""
-        if plans:
-            if len(plans) > 1:
-                raise unable("同批次有多份采购件质量计划，尚不能确定按哪一份核对，需人工复核。")
-            rows, parts, sheets = self.pgqp1_rows(ctx, plans[0])
-            if not sheets:
-                return "NG", "同批次《采购件质量计划》中没有PGQP1表，无法取得特殊特性。"
-            if len(parts) != 1:
-                raise unable(f"采购件质量计划PGQP1的零件号未能唯一读取（读到：{'、'.join(sorted(parts)) or '无'}），尚不能按零件号匹配报告，需人工复核。")
-            part = next(iter(parts))
-            source = "PGQP1"
-            items = [(f"PGQP1第{row}行", f"{name}（{special}）", gauge) for row, name, special, gauge in rows if _c(special)]
-        else:
-            lists = [item for kind in _LISTS for item in self.batch_files(kind)]
-            if not lists:
-                raise unable("同批次既没有PGQP1，也没有特殊特性清单，没有可取特殊特性的来源，需人工复核。")
-            raise unable(f"同批次未提交PGQP1，回退特殊特性清单《{original_name(lists[0])}》；特殊特性清单没有测量设备栏，检查程序不能按“特性→量具”对齐，需人工复核。")
-        if not items:
-            raise unable(f"{source}特殊特性列没有内容，不能按空范围通过，需人工复核。")
-        plan, main, _scanned = self.suite_plan(ctx)
+    def list_rows(self, ctx: RuleContext, item: Any) -> list[tuple[str, str, str, str]] | None:
+        """(where, part numbers written, characteristic, measuring equipment) of each row of a spreadsheet special
+        characteristic list; None when the list has no measuring equipment column (or is not a spreadsheet).
+
+        The equipment heading may be English and Chinese in one cell ("Measuring Equipment/测量设备") over a
+        two-row heading; the rows start below the heading's merged area."""
+        if str(item.file_url).lower().endswith(".pdf"):
+            return None
+        found: list[tuple[str, str, str, str]] = []
+        located = False
+        with self.reading(ctx, item, self.READER.resources):
+            for ws in ctx.workbook.worksheets:
+                grid = self.grid(ctx, ws)
+                for (row, column), text in sorted(grid.items()):
+                    if row > 12 or not any(term in _c(text) for term in ("测量设备", "measuringequipment", "检测设备", "测量工具", "量具")):
+                        continue
+                    if any(term in _c(text) for term in ("能力", "capability")):
+                        continue
+                    heads = {c: _c(t) for (r, c), t in grid.items() if r == row}
+                    name_col = next((c for c, t in sorted(heads.items()) if any(term in t for term in ("特殊特性名称", "sppcname", "特性名称", "特性描述"))), None)
+                    value_col = next((c for c, t in sorted(heads.items()) if any(term in t for term in ("特性值", "规格", "公差"))), None)
+                    part_col = next((c for c, t in sorted(heads.items()) if any(term in t for term in ("零件号", "件号", "partno", "/code"))), None)
+                    if name_col is None:
+                        continue
+                    located = True
+                    bottom = row
+                    for range_ in ws.merged_cells.ranges:
+                        if range_.min_row == row and range_.min_col in heads:
+                            bottom = max(bottom, range_.max_row)
+                    last = max(r for r, _c2 in grid)
+                    for r in range(bottom + 1, last + 1):
+                        # The table ends at its sign-off or remark line ("备注：内部过程特性符号" is a legend, not a row).
+                        if any(_c(grid[(rr, c)]).startswith(marker) for rr, c in grid if rr == r for marker in _PLAN_END):
+                            break
+                        name = grid.get((r, name_col), "")
+                        value = grid.get((r, value_col), "") if value_col else ""
+                        # A legend line under the table (a symbol explained, no value, part or equipment) is not a row.
+                        if not (name or value) or not (value or grid.get((r, column)) or (part_col and grid.get((r, part_col)))):
+                            continue
+                        characteristic = " ".join(v for v in (name, value) if v)
+                        found.append((f"清单“{ws.title}”第{r}行", grid.get((r, part_col), "") if part_col else "", characteristic, grid.get((r, column), "")))
+                    break
+        return found if located else None
+
+    def coverage(self, ctx: RuleContext, items: list[tuple[str, str, str]], parts: list[str], main: Any) -> tuple[list[tuple[str, Any]], dict[str, list[str]], list[str]]:
+        """(defects with their landing file, gauges by family, gauges written across kinds) of MSA:6 for `items`
+        (where, characteristic, gauge); `parts[i]` is the part number item i's reports must be of."""
         everything = self.all_reports(ctx)
-        reports = [report for report in everything if report.of_part(part)]
         defects: list[tuple[str, Any]] = []  # (text, landing file)
         gauges: dict[str, list[str]] = {}
-        for where, characteristic, gauge in items:
+        wanted_parts: dict[str, set[str]] = {}
+        for (where, characteristic, gauge), part in zip(items, parts):
             if not _c(gauge) or _c(gauge) in _PLACEHOLDERS:
                 defects.append((f"{where}特殊特性“{characteristic}”没有对应的测量设备/量具", main))
                 continue
-            gauges.setdefault(gauge_family(gauge) or _c(gauge), []).append(f"{where}{characteristic}")
+            family = gauge_family(gauge) or _c(gauge)
+            gauges.setdefault(family, []).append(f"{where}{characteristic}")
+            wanted_parts.setdefault(family, set()).add(part)
         mixed = []
         for family, characteristics in gauges.items():
             gauge = family
@@ -949,6 +1025,7 @@ class MsaClauses:
             if kind == "mixed":
                 mixed.append(f"测量设备“{gauge}”写法跨计数型与计量型")
                 continue
+            reports = [r for r in everything if all(r.of_part(part) for part in wanted_parts[family])]
             matched = [r for r in reports if r.named(gauge) and _c(r.characteristic)]
             first = characteristics[0] + (f"等{len(characteristics)}项" if len(characteristics) > 1 else "")
             if kind == "counting":
@@ -965,16 +1042,80 @@ class MsaClauses:
                     defects.append((f"特殊特性{first}使用“{gauge}”，套件内没有该量具写明所判特性的GR&R报告", landing))
                 elif bad := [r for r in grr if self.check_report(r) is not None and self.check_report(r)[0] == "NG"]:
                     defects.append((f"特殊特性{first}使用的“{gauge}”：" + self.check_report(bad[0])[1], bad[0].item))
+        return defects, gauges, mixed
+
+    def landed(self, source: str, items: list, defects: list[tuple[str, Any]], gauges: dict, mixed: list[str]) -> tuple[str, str]:
+        """This file's MSA:6 outcome: (status, reason)."""
         own = [text for text, landing in defects if self.mine(landing)]
         elsewhere = sorted({original_name(landing) for _text_, landing in defects if not self.mine(landing)})
         tail = f"；另有套件级缺陷落在《{'》《'.join(elsewhere)}》，不在本文件重复计入" if elsewhere else ""
         if own:
-            return "NG", "；".join(own[:5]) + ("等" if len(own) > 5 else "") + "。" + tail
+            return "NG", "；".join(own[:5]) + ("等" if len(own) > 5 else "") + tail + "。"
         if mixed and not defects:
-            raise unable("；".join(mixed) + "，移交工程裁定，需人工复核。")
+            return "UNABLE", "；".join(mixed) + "，移交工程裁定，需人工复核。"
         if defects:
             return "PASS", f"本文件没有落在本条的缺陷{tail}。"
         return "PASS", f"{source}全部{len(items)}项特殊特性对应的{len(gauges)}种量具均有零件匹配、写明所判特性且结论合格的分析报告。"
+
+    @rule("特殊特性量具的分析报告覆盖与结论")
+    def rule_6(self, ctx: RuleContext):
+        plans = self.batch_files(_PGQP1)
+        plan, main, _scanned = self.suite_plan(ctx)
+        if plans:
+            if len(plans) > 1:
+                raise unable("同批次有多份采购件质量计划，尚不能确定按哪一份核对，需人工复核。")
+            rows, parts, sheets = self.pgqp1_rows(ctx, plans[0])
+            if not sheets:
+                return "NG", "同批次《采购件质量计划》中没有PGQP1表，无法取得特殊特性。"
+            if len(parts) != 1:
+                raise unable(f"采购件质量计划PGQP1的零件号未能唯一读取（读到：{'、'.join(sorted(parts)) or '无'}），尚不能按零件号匹配报告，需人工复核。")
+            part = next(iter(parts))
+            items = [(f"PGQP1第{row}行", f"{name}（{special}）", gauge) for row, name, special, gauge in rows if _c(special)]
+            if not items:
+                raise unable("PGQP1特殊特性列没有内容，不能按空范围通过，需人工复核。")
+            status, reason = self.landed("PGQP1", items, *self.coverage(ctx, items, [part] * len(items), main))
+            if status == "UNABLE":
+                raise unable(reason)
+            return status, reason
+        lists = [item for kind in _LISTS for item in self.batch_files(kind)]
+        if not lists:
+            raise unable("同批次既没有PGQP1，也没有特殊特性清单，没有可取特殊特性的来源，需人工复核。")
+        if len(lists) > 1:
+            raise unable(f"同批次未提交PGQP1，回退的特殊特性清单有{len(lists)}份，尚不能确定按哪一份核对，需人工复核。")
+        found = self.list_rows(ctx, lists[0])
+        name = original_name(lists[0])
+        if found is None:
+            raise unable(f"同批次未提交PGQP1，回退特殊特性清单《{name}》；未能在清单中定位测量设备栏，检查程序不能按“特性→量具”对齐，需人工复核。")
+        if not found:
+            raise unable(f"同批次未提交PGQP1，回退特殊特性清单《{name}》没有读到特性行，不能按空范围通过，需人工复核。")
+        source = f"特殊特性清单《{name}》"
+        planned = {_c(row.values.get("零件号", "")).upper() for row in plan} - {""}
+        own_part = next(iter(planned)) if len(planned) == 1 else ""
+        row_parts = [set(_PART.findall(unicodedata.normalize("NFKC", part_text).upper())) for _where, part_text, _ch, _g in found]
+        written = set().union(*row_parts)
+        everything = [(where, characteristic, gauge) for where, _p, characteristic, gauge in found]
+        if len(written) <= 1 and (not written or not own_part or written == {own_part}):
+            # One part (or none written): the whole list is this part's.
+            part = own_part or (next(iter(written)) if written else "")
+            status, reason = self.landed(source, everything, *self.coverage(ctx, everything, [part] * len(everything), main))
+        else:
+            # The list mixes part numbers. The clause does not say whether only this part's rows count or all rows:
+            # conclude only when both readings give this file the same outcome.
+            if not own_part:
+                raise unable(f"{source}混装多个零件号（{'、'.join(sorted(written))}），测量系统分析计划表没有唯一零件号，尚不能确定本零件号，需人工复核。")
+            mine = [(item, own_part) for item, parts in zip(everything, row_parts) if own_part in parts]
+            narrow = self.landed(source + f"中零件号{own_part}的行", [i for i, _p in mine], *self.coverage(ctx, [i for i, _p in mine], [p for _i, p in mine], main)) if mine else ("UNABLE", "")
+            wide_parts = [next(iter(parts)) if len(parts) == 1 else own_part for parts in row_parts]
+            wide = self.landed(source + "全部行", everything, *self.coverage(ctx, everything, wide_parts, main))
+            if narrow[0] != wide[0]:
+                raise unable(
+                    f"{source}混装多个零件号（{'、'.join(sorted(written))}）。条文写“无PGQP1时取特殊特性清单”，未写只取本零件号{own_part}的行还是全部行："
+                    f"只取本零件号的行时，{narrow[1] or '没有本零件号的行。'}按全部行时，{wide[1].rstrip('。')}。两种读法结论不同，需人工复核。"
+                )
+            status, reason = wide[0], f"{source}混装多个零件号，只取本零件号{own_part}的行与取全部行结论相同。" + wide[1]
+        if status == "UNABLE":
+            raise unable(reason)
+        return status, reason
 
 
 class Audit(AgentAudit):
