@@ -2,6 +2,7 @@
 
 import json
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from documents.ai import AIResult
@@ -85,6 +86,28 @@ def test_metadata_reads_every_sheet_head_keeps_every_value_and_reports_written_b
 
 def rule(rule_id: str, customers: list[str], document_type: str = "控制计划", **fields) -> dict:
     return {"id": rule_id, "title": f"规则-{rule_id}", "kind": "engine", "type": document_type, "customers": customers, **fields}
+
+
+@pytest.mark.parametrize("form", ["A40-气动量仪-Cgk.xls", "A40-Kappa.xls", "MSA-3-粗糙度仪.xls", "MSA-5-塞规.xls"])
+def test_uaes_study_heading_stably_matches_the_msa_rule(form: str) -> None:
+    original = Path(__file__).resolve().parents[3] / "assets/uaes/samples/F01RD0YA40_机加工壳体/测试文件/06 测量系统分析评价/MSA" / form
+    operations = []
+
+    def metadata_only(operation: str, **kwargs) -> AIResult:
+        operations.append(operation)
+        return AIResult({})
+
+    result = analyze_file(
+        "study.xls",  # The original heading alone should identify the form.
+        original.read_bytes(),
+        [rule("msa", ["UAES"], "测量系统分析评价", rule_profile="v4")],
+        ai=metadata_only,
+        customer_preference="UAES",
+    )
+
+    assert result["matching_status"] == "matched"
+    assert result["matched_rule_id"] == "msa"
+    assert operations == ["document_metadata_extraction"]
 
 
 def test_explicitly_unrestricted_rule_matches_without_inventing_a_customer() -> None:
