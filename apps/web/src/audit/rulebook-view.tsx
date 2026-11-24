@@ -9,7 +9,10 @@ import {Item, ItemActions, ItemContent, ItemDescription, ItemTitle} from '../com
 import {Label} from '../components/ui/label'
 import {Switch} from '../components/ui/switch'
 import {ReadSkeleton} from '../components/read-skeleton'
+import {displayTime} from '../helpers'
+import {describe} from '../journey/intent'
 import {message} from '../journey/remote'
+import type {components} from '../generated/openapi'
 import {RuleClause, RuleClauseList} from './rule-detail'
 import {QuestionnaireEntries, reveal} from './rule-questions'
 import type {Question, QuestionnaireList, QuestionnaireView} from './rule-questions-contract'
@@ -18,6 +21,21 @@ import {CHANGE_LABEL, changeSummary, parseRevisionKey, questionnaireFor, questio
 
 const READING_PARTS = [['checks', '查什么'], ['passes', '通过'], ['fails', '不通过'], ['manual', '转人工']] as const
 const progress = (row: {answered: number; total: number}) => `待确认问题 已答 ${row.answered} / ${row.total}`
+
+type OpenIntent = components['schemas']['OpenIntent']
+
+/** A proposal completed on this customer's rules page. */
+function onRulesOf(page: string, customerId: string): boolean {
+  const url = new URL(page, location.origin)
+  return url.pathname === '/requirements' && url.searchParams.get('template') === customerId
+}
+
+/** The proposal's own page, opened on it. */
+function intentAddress(row: OpenIntent): string {
+  const url = new URL(row.page, location.origin)
+  url.searchParams.set('intent', row.id)
+  return url.pathname + url.search
+}
 
 /** Under a customer on the rules page: its rulebook revisions, then any questionnaire not reached through one. */
 export function CustomerRulebook({customerId, questionnaires}: {customerId: string; questionnaires: QuestionnaireList | null}) {
@@ -31,8 +49,29 @@ export function CustomerRulebook({customerId, questionnaires}: {customerId: stri
       .catch(() => {})
     return () => controller.abort()
   }, [customerId])
+  const [waiting, setWaiting] = useState<OpenIntent[]>([])
+  useEffect(() => {
+    const controller = new AbortController()
+    setWaiting([])
+    // What waits for this person on this customer's rules, found without the link it was proposed with.
+    void request<components['schemas']['OpenIntentList']>('/intents', 'GET', undefined, controller.signal)
+      .then(list => {if (!controller.signal.aborted) setWaiting(list.intents.filter(row => onRulesOf(row.page, customerId)))})
+      .catch(() => {})
+    return () => controller.abort()
+  }, [customerId])
   const shown = new Set(revisions.flatMap(row => questionnaireFor(questionnaires, customerId, row)?.id ?? []))
   return <>
+    {waiting.length > 0 && <div className="grid shrink-0 gap-2 border-b p-4">
+      {waiting.map(row => {
+        const href = intentAddress(row), id = `intent-${row.id}`
+        return <Item key={row.id} variant="outline" size="sm" asChild>
+          <a href={href} aria-labelledby={`${id}-title`} aria-describedby={`${id}-facts`} onClick={event => followRulesLink(event, href)}>
+            <ItemContent><ItemTitle id={`${id}-title`} wrap>待你确认：{describe(row)[0]}</ItemTitle><ItemDescription id={`${id}-facts`}>提出于 {displayTime(row.created_at)}</ItemDescription></ItemContent>
+            <ItemActions aria-hidden="true"><span className="flex items-center gap-1 text-sm text-primary">去确认<Icon icon={iconChevronRight} className="size-3.5"/></span></ItemActions>
+          </a>
+        </Item>
+      })}
+    </div>}
     {revisions.length > 0 && <div className="grid shrink-0 gap-2 border-b p-4">
       {[...revisions].reverse().map(row => {
         const href = rulesAddress({template: customerId, rulebook: revisionKey(row)}), id = `rb-${revisionKey(row)}`

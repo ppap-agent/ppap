@@ -27,6 +27,15 @@ SETTLED = {"succeeded", "declined"}
 def register_intent_routes(app, session_of) -> None:
     """Proposals exist only where MCP is installed (`app.state.mcp_store`); elsewhere there are none to show."""
 
+    @app.get("/intents", response_model=wc.OpenIntentList)
+    async def list_open_intents(request: Request):
+        # Where the person finds a proposal waiting for them without its link: the pages show their own (#348).
+        session = await asyncio.to_thread(session_of, request)
+        if not session:
+            return JSONResponse({"error": "authentication_required"}, status_code=401)
+        store = getattr(request.app.state, "mcp_store", None)
+        return {"intents": [] if store is None else await asyncio.to_thread(store.open_intents, session.principal)}
+
     @app.get("/intents/{intent_id}", response_model=wc.Intent)
     async def get_intent(intent_id: str, request: Request):
         session = await asyncio.to_thread(session_of, request)

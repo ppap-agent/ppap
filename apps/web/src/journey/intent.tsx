@@ -18,7 +18,7 @@ const settled = (intent: Intent) => intent.outcome.state === 'succeeded' || inte
 const readId = () => new URL(location.href).searchParams.get('intent')
 
 /** What the proposal does, and where on the page it is completed (a plan is completed in this panel). */
-function describe(intent: Intent): [string, string] {
+export function describe(intent: Pick<Intent, 'path'>): [string, string] {
   const path = intent.path
   if (path.endsWith('/plan')) return ['确认规则澄清的这一轮', '']
   if (path.endsWith('/confirm')) return ['开始审核', '核对本页的文件、规则和预计点数后，点「开始审核」完成。']

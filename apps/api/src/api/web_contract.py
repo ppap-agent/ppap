@@ -832,6 +832,20 @@ class IntentPlan(TypedDict):
     steps: list[IntentPlanStep]
 
 
+class OpenIntent(TypedDict):
+    """A proposal waiting for the person: completed on `page`, opened with `?intent=<id>`."""
+
+    id: str
+    created_at: str
+    method: str
+    path: str
+    page: str
+
+
+class OpenIntentList(TypedDict):
+    intents: list[OpenIntent]
+
+
 class IntentReceipt(TypedDict):
     """The person's receipt for completing the proposal (#361)."""
 

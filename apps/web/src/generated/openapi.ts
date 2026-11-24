@@ -1235,6 +1235,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/intents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Open Intents */
+        get: operations["list_open_intents_intents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/intents/{intent_id}": {
         parameters: {
             query?: never;
@@ -4253,6 +4270,27 @@ export interface components {
             notice?: string;
             /** Script Url */
             script_url?: string;
+        };
+        /**
+         * OpenIntent
+         * @description A proposal waiting for the person: completed on `page`, opened with `?intent=<id>`.
+         */
+        OpenIntent: {
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Method */
+            method: string;
+            /** Page */
+            page: string;
+            /** Path */
+            path: string;
+        };
+        /** OpenIntentList */
+        OpenIntentList: {
+            /** Intents */
+            intents: components["schemas"]["OpenIntent"][];
         };
         /** PdfBlockLocator */
         PdfBlockLocator: {
@@ -8944,6 +8982,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_open_intents_intents_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenIntentList"];
                 };
             };
         };
