@@ -434,53 +434,7 @@ def put_cards(conn, principal, payload) -> dict:
         position += 1
         added += 1
         conn.execute("INSERT INTO product.rule_questions(questionnaire_id, question_key, position, card) VALUES (%s,%s,%s,%s)", (ident, card["key"], position, Jsonb(card)))
-    # Everyone who has answered this version's questionnaires hears about the new cards, once per send.
-    recipients = [
-        str(row[0])
-        for row in conn.execute(
-            """SELECT DISTINCT a.answered_by FROM product.rule_question_answers a JOIN product.rule_questionnaires q ON q.id = a.questionnaire_id
-               WHERE q.tenant_id=%s AND q.customer_id=%s AND q.rulebook_version=%s""",
-            (principal.tenant_id, customer.id, version),
-        ).fetchall()
-    ]
-    if added:
-        total = position + 1
-        for user in recipients:
-            payload = {"questionnaire_id": ident, "user_id": user, "added": added, "customer_id": customer.id, "rulebook": {"version": version, "revision": revision}}
-            conn.execute(
-                """INSERT INTO engine.jobs (id, tenant_id, kind, payload, status, result)
-                   VALUES (%s, %s, 'rule_cards_notification', %s, 'queued', '{"state":"queued","reason":null}'::jsonb) ON CONFLICT DO NOTHING""",
-                (str(uuid5(UUID(ident), f"cards:{total}:{user}")), principal.tenant_id, Jsonb(payload)),
-            )
-    return {**_summary(conn, principal, _questionnaire(conn, principal, ident)), "added": added, "notified": len(recipients) if added else 0}
-
-
-def claim_card_notification(store, worker_ident: str) -> dict | None:
-    """One queued card notification and its recipient's Feishu identity; None when nothing is queued."""
-    with store._conn() as conn, conn.transaction():
-        row = conn.execute(
-            """SELECT id, tenant_id, payload FROM engine.jobs WHERE kind='rule_cards_notification' AND status='queued'
-               AND (lease_until IS NULL OR lease_until < now()) ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1""",
-        ).fetchone()
-        if row is None:
-            return None
-        conn.execute(
-            """UPDATE engine.jobs SET status='leased', attempt=attempt+1, lease_owner=%s, lease_until=now()+interval '90 seconds',
-               result='{"state":"dispatching","reason":null}'::jsonb, updated_at=now() WHERE id=%s""",
-            (worker_ident, row[0]),
-        )
-        identity = conn.execute(
-            """SELECT i.tenant_key, i.subject FROM product.identities i JOIN product.tenants t ON t.provider=i.provider AND t.external_key=i.tenant_key
-               JOIN product.memberships m ON m.user_id=i.user_id AND m.tenant_id=t.id WHERE i.user_id=%s AND t.id=%s AND i.app_id=%s""",
-            (row[2]["user_id"], row[1], store.settings.feishu_app_id),
-        ).fetchone()
-        if identity is None:
-            conn.execute(
-                """UPDATE engine.jobs SET status='cancelled', result='{"state":"suppressed","reason":"recipient_unavailable"}'::jsonb, lease_until=NULL, updated_at=now() WHERE id=%s""",
-                (row[0],),
-            )
-            return None
-        return {"id": str(row[0]), "kind": "rule_cards_notification", "tenant_key": identity[0], "receive_id": identity[1], "worker": worker_ident, **row[2]}
+    return {**_summary(conn, principal, _questionnaire(conn, principal, ident)), "added": added}
 
 
 def finish_notification(store, claimed: dict, receipt: dict) -> None:

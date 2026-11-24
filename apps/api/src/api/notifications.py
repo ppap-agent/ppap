@@ -8,7 +8,7 @@ import uuid
 
 import httpx
 from product.customers import find
-from product.feishu_notifications import rule_answers_card, rule_cards_card, send_task_notification
+from product.feishu_notifications import rule_answers_card, send_task_notification
 from product.feishu_usage import FeishuUsageError, tenant_access_token
 from product.logs import emit
 from product.settings import Settings
@@ -49,18 +49,6 @@ def _customer_name(customer_id: str) -> str:
     return registered.name if registered else customer_id
 
 
-def dispatch_card_notification(store: AuthStore, http, settings: Settings, worker_ident: str) -> bool:
-    """New rule questions, to someone who answered that rulebook version before. One send per job, never repeated."""
-    if not (settings.feishu_notifications_enabled and settings.feishu_app_id and settings.feishu_app_secret):
-        return False
-    claimed = rule_questionnaires.claim_card_notification(store, worker_ident)
-    if claimed is None:
-        return False
-    web = settings.canonical_web_url()
-    _send_rule_notice(store, http, settings, claimed, lambda c: rule_cards_card(_customer_name(c["customer_id"]), c["customer_id"], c["rulebook"], c["added"], web, c["questionnaire_id"]))
-    return True
-
-
 def dispatch_answer_notification(store: AuthStore, http, settings: Settings, worker_ident: str) -> bool:
     """Customer answers on a rulebook version being clarified, to whoever prepares it (#354). One send per job, never repeated."""
     if not (settings.feishu_notifications_enabled and settings.feishu_app_id and settings.feishu_app_secret):
@@ -83,10 +71,6 @@ def run_task_notifications(store: AuthStore, settings: Settings, stop: threading
             except Exception:
                 # Never requeue after an uncertain send; the persisted dispatch boundary owns recovery.
                 emit("notification_dispatch_unavailable", level=logging.WARNING)
-            try:
-                worked = dispatch_card_notification(store, http, settings, worker_ident) or worked
-            except Exception:
-                emit("rule_card_notification_unavailable", level=logging.WARNING)
             try:
                 worked = dispatch_answer_notification(store, http, settings, worker_ident) or worked
             except Exception:

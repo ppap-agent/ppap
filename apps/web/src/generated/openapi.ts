@@ -5099,8 +5099,6 @@ export interface components {
             imported_at: string;
             /** Mine */
             mine: number;
-            /** Notified */
-            notified: number;
             /** Rule Version */
             rule_version: string;
             rulebook: components["schemas"]["RuleQuestionnaireRulebook"];
