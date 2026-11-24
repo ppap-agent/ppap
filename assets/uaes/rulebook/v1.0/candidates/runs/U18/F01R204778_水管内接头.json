@@ -1,0 +1,1 @@
+{"kind": "finding", "batch": "F01R204778_水管内接头", "source": "assets/uaes/samples/F01R204778_水管内接头/测试文件/22 零件追溯说明/零件追溯检查单.xlsx", "clause": "TRACE:1", "status": "NG", "severity": "B", "reason": "供应商零件追溯表局部空洞1处（主要）：“分供方追溯”列“子零件名称”整列未填写。另：供应商签署栏的签字或印章尚未能从原件核实，需人工复核。"}

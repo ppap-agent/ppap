@@ -22,22 +22,25 @@ import json
 import sys
 from pathlib import Path
 
-from audit.standard_suites import load_predefined_checkers, predefined_directory_suites
+from audit.standard_suites import _load_leaf, predefined_directory_suites
+from documents.model_access import model_access_scope, platform_model_access
 
 from corpus_contracts.uaes_samples import Batch, batches, run_batch
 
 
 def candidate(directory: Path):
-    """The leaf at `directory`, read and checked as an installed leaf is; it must name an installed leaf to replace."""
+    """The leaf at `directory`, read and checked as an installed leaf is; it must name an installed leaf to replace. Only this
+    leaf is read: other candidates and the run results kept beside them are not part of the run."""
     directory = directory.resolve()
     path = f"{directory.parent.name}/{directory.name}"
-    found = {suite.source_path: suite for suite in load_predefined_checkers(directory.parent.parent)}
-    if path not in found:
-        raise SystemExit(f"不是检查程序目录：{directory}")
+    try:
+        suite = _load_leaf(directory.parent.parent, directory.parent.name, directory)
+    except ValueError as exc:
+        raise SystemExit(f"不是检查程序目录：{directory}（{exc}）") from None
     installed = {suite.source_path: suite for suite in predefined_directory_suites()}
     if path not in installed:
         raise SystemExit(f"没有同名的已安装检查程序可以替换：{path}")
-    return found[path], installed
+    return suite, installed
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,7 +61,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         batch = Batch(part="candidate", files=tuple(path.resolve() for path in args.file), references=tuple(path.resolve() for path in args.reference))
     clauses = {row["id"] for row in json.loads(suite.files["rules.json"])["rules"]}
-    rows = [row for row in run_batch(batch, {**installed, suite.source_path: suite}) if row["kind"] == "finding" and row["clause"] in clauses]
+    # The audit runs under the platform model, as a frozen run does; recognition reads it from the environment either way.
+    with model_access_scope(platform_model_access):
+        found = run_batch(batch, {**installed, suite.source_path: suite})
+    rows = [row for row in found if row["kind"] == "finding" and row["clause"] in clauses]
     if args.json:
         sys.stdout.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
     else:

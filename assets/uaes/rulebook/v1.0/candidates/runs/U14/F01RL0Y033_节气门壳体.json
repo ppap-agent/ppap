@@ -1,0 +1,1 @@
+{"kind": "finding", "batch": "F01RL0Y033_节气门壳体", "source": "assets/uaes/samples/F01RL0Y033_节气门壳体/测试文件/21 订单规范/BV_F01RL0Y033_V02 (1).pdf", "clause": "ORD:1", "status": "ERR", "severity": "A", "reason": "checker_clause_timeout_external_usage_unknown"}

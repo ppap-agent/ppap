@@ -1,0 +1,7 @@
+{"kind": "finding", "batch": "candidate", "source": "assets/uaes/samples/通用文件/其他通用文件/测试文件/16 零件提交保证书/PSW_Bosch signed.pdf", "clause": "PSW:1", "status": "ERR", "severity": "A", "reason": "原件读取失败，尚未取得业务结论。"}
+{"kind": "finding", "batch": "candidate", "source": "assets/uaes/samples/通用文件/其他通用文件/测试文件/16 零件提交保证书/PSW_Bosch signed.pdf", "clause": "PSW:2", "status": "ERR", "severity": "A", "reason": "原件读取失败，尚未取得业务结论。"}
+{"kind": "finding", "batch": "candidate", "source": "assets/uaes/samples/通用文件/其他通用文件/测试文件/16 零件提交保证书/PSW_Bosch signed.pdf", "clause": "PSW:3", "status": "ERR", "severity": "A", "reason": "原件读取失败，尚未取得业务结论。"}
+{"kind": "finding", "batch": "candidate", "source": "assets/uaes/samples/通用文件/其他通用文件/测试文件/16 零件提交保证书/PSW_Bosch signed.pdf", "clause": "PSW:4", "status": "ERR", "severity": "A", "reason": "原件读取失败，尚未取得业务结论。"}
+{"kind": "finding", "batch": "candidate", "source": "assets/uaes/samples/通用文件/其他通用文件/测试文件/16 零件提交保证书/PSW_Bosch signed.pdf", "clause": "PSW:5", "status": "ERR", "severity": "A", "reason": "原件读取失败，尚未取得业务结论。"}
+{"kind": "finding", "batch": "candidate", "source": "assets/uaes/samples/通用文件/其他通用文件/测试文件/16 零件提交保证书/PSW_Bosch signed.pdf", "clause": "PSW:6", "status": "ERR", "severity": "A", "reason": "原件读取失败，尚未取得业务结论。"}
+{"kind": "finding", "batch": "candidate", "source": "assets/uaes/samples/通用文件/其他通用文件/测试文件/16 零件提交保证书/PSW_Bosch signed.pdf", "clause": "PSW:7", "status": "NA", "severity": "A", "reason": "同批次未提交控制计划，本条不适用（缺件只在包级报告一次）。"}
