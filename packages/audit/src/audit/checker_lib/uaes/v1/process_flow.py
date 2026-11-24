@@ -209,6 +209,10 @@ class _Revision3(UaesProcessFlowAgent):
             raise unable("全图未定位检验类活动，是否应设检验工序属工程有效性判断，请客户确认。")
         return "PASS", "工序符号均有图例定义，各活动列符号一致，检验活动已核对。" + "；".join(links) + "（单元格及图形解析，请人工复核。）"
 
+    @staticmethod
+    def station_name_key(name: str) -> str:
+        return _text(name)
+
     def station_link(self, ctx: RuleContext, op, flow_steps, flow_part) -> tuple[bool, str]:
         """The exception is positive only: retain all three spellings and CP fields, never guess equivalence or missing-file policy."""
         facts, linked = [], bool(compact(op.step))
@@ -228,12 +232,13 @@ class _Revision3(UaesProcessFlowAgent):
                 matches = []
                 for ws in ctx.workbook.worksheets:
                     matches.extend(self.station_rows(Sheet(ctx, ws), label, op.step, flow_steps))
-                names = {name for name, _param, _method, _proof, _loc, _part in matches}
+                names = {self.station_name_key(name) for name, _param, _method, _proof, _loc, _part in matches}
                 if not matches:
                     facts.append(f"{label}未定位到同号工序的表格行")
                     linked = False
                     continue
-                exact = len(names) == 1 and _text(op.description) in names
+                source_name = self.station_name_key(op.description)
+                exact = bool(source_name) and names == {source_name}
                 if label == "控制计划":
                     exact &= any(proof and method for _, _p, method, proof, _, _part in matches)
                 different_parts = {part for *_, part in matches if part and flow_part and part != flow_part}
@@ -265,6 +270,9 @@ class _Revision3(UaesProcessFlowAgent):
                         values.add(raw)
                         self.cite(sheet, rr, cc)
         return next(iter(values)) if len(values) == 1 else None
+
+    def station_row_name(self, name: str, mode: str) -> str:
+        return name
 
     def station_rows(self, sheet: Sheet, label: str, step, flow_steps):
         roles = _CP_HEADERS if label == "控制计划" else _FMEA_HEADERS
@@ -301,6 +309,11 @@ class _Revision3(UaesProcessFlowAgent):
                 name = read(name_col)
                 self.cite(sheet, row, step_col)
                 self.cite(sheet, row, name_col)
+                if label == "PFMEA" and not name and header["mode"]:
+                    mode_col = header["mode"][0]
+                    name = self.station_row_name(name, read(mode_col))
+                    if name:
+                        self.cite(sheet, row, mode_col)
                 param, method, proof = "", "", False
                 if label == "控制计划":
                     for key in ("parameter", "method"):
@@ -389,6 +402,9 @@ class _Revision3(UaesProcessFlowAgent):
 
     # ---- PFD:4 ------------------------------------------------------------------------------------------------
 
+    def node_annotations(self, ctx: RuleContext):
+        return ()
+
     @rule("四类核心控制节点")
     def rule_4(self, ctx: RuleContext):
         pdf = str(self.audit_file.file_url).lower().endswith(".pdf")
@@ -425,6 +441,9 @@ class _Revision3(UaesProcessFlowAgent):
                         text = _text(line)
                         if text and not any(sym in text for sym in self._m.flow_resources.SYMBOLS) and not re.search(r"[《》]|instruction|作业指导", text, re.I):
                             places.append((f"第{page.number + 1}页", text, False))
+        for loc, annotation, source, explicit_node in self.node_annotations(ctx):
+            cells_at[loc] = source
+            places.append((loc, annotation, explicit_node))
         if not places:
             raise unable("过程流程图未能读出任何工序或文字，需人工复核。")
         shown, missing = [], []
