@@ -164,7 +164,20 @@ def run_batch(batch: Batch, suites: dict[str, Any] | None = None) -> list[dict[s
     metadata = {row["file"]["id"]: dict((row["match"] or {}).get("metadata") or {}) for row in rows}
 
     reported = {identity for identity, path in sources.items() if path in batch.files}
-    report: list[dict[str, Any]] = [
+    # Every submitted file recognition left out of the audit, and why (its notices), so a missing result has a cause to read.
+    missed: list[dict[str, Any]] = [
+        {
+            "kind": "recognition",
+            "batch": batch.label,
+            "source": str(sources[row["file"]["id"]].relative_to(REPO_ROOT)),
+            "state": (row["match"] or {}).get("state") or row["validation"].get("state"),
+            "document_type": (row["match"] or {}).get("document_type"),
+            "notices": (row["match"] or {}).get("gaps") or [],
+        }
+        for row in rows
+        if (row["match"] or {}).get("state") not in {"matched", "reference"}
+    ]
+    report: list[dict[str, Any]] = missed + [
         {"kind": "precheck", "batch": batch.label, "source": str(sources[identity].relative_to(REPO_ROOT)), "actual": precheck_actual(precheck, metadata[identity], identity)}
         for identity in sorted(reported)
     ]

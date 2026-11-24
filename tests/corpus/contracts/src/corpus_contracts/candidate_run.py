@@ -12,7 +12,8 @@ precheck, the frozen run) exactly as a sample batch does.
     uv run --no-sync python -m corpus_contracts.candidate_run <leaf directory> --file <file> ... [--reference <file> ...]
 
 Models are the platform's, from the environment (PPAP_MODEL_TEXT_*, PPAP_MODEL_VISION_*); without them a reading that
-needs a model comes back UNABLE. Results are shown, never recorded as validation or proof.
+needs a model comes back UNABLE. Results are shown, never recorded as validation or proof. Each submitted file recognition
+left out of the audit is printed to stderr with its state and notices (why it was not matched).
 """
 
 from __future__ import annotations
@@ -65,6 +66,10 @@ def main(argv: list[str] | None = None) -> int:
     with model_access_scope(platform_model_access):
         found = run_batch(batch, {**installed, suite.source_path: suite})
     rows = [row for row in found if row["kind"] == "finding" and row["clause"] in clauses]
+    # Files recognition left out of the audit go to stderr, so stdout stays the findings alone.
+    for row in found:
+        if row["kind"] == "recognition":
+            print(f"未进入审核：{row['source']}\t{row['state']}\t类型 {row['document_type'] or '未知'}\t{'、'.join(row['notices']) or '无提示'}", file=sys.stderr)
     if args.json:
         sys.stdout.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
     else:
