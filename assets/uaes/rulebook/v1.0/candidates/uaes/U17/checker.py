@@ -348,6 +348,8 @@ _CN_DIGITS = {"一": "1", "二": "2", "三": "3", "四": "4", "五": "5"}
 
 _TEXT = {"type": ["string", "null"]}
 _MARK = {"type": ["boolean", "null"]}
+# Coordinates in the image supplied to this one request, not the PDF or an earlier view.
+_BOX = {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 1000}, "minItems": 4, "maxItems": 4}
 
 
 def _object(**properties: dict) -> dict:
@@ -412,12 +414,12 @@ SCHEMA = _object(
     **{SUPPLIER_AREA[0]: _object(present=_MARK), SUPPLIER_NAME[0]: _FIELD, CUSTOMER_AREA[0]: _object(present=_MARK)},
     **{name: _FIELD for name in CUSTOMER},
     **{SUBSTANCES[0]: _CHOICE, IMDS[0]: _FIELD},
-    **{SIGNATURE[0]: _object(present=_MARK, handwritten=_MARK, value=_TEXT)},
-    **{name: _FIELD for name in CONTACT},
+    **{SIGNATURE[0]: _object(present=_MARK, field_box={"anyOf": [_BOX, {"type": "null"}]})},
+    **{name: _object(present=_MARK, value=_TEXT, role_as_written=_TEXT) if name == "title" else _FIELD for name in CONTACT},
     **{REASON[0]: _CHOICE, REASON_OTHER[0]: _FIELD, LEVEL[0]: _CHOICE},
     **{RESULTS_AREA[0]: _object(present=_MARK)},
     **{name: _RESULT for name in RESULTS},
-    **{MEETS[0]: _CHOICE, SEAL[0]: _MARK},
+    **{MEETS[0]: _CHOICE},
 )
 _LABELS = (
     *IDENTITY.items(),
@@ -447,15 +449,15 @@ PROMPT = (
     "value：照原样转写栏中填写的内容（打印或手写均可），栏位空白写空字符串，看不清写 null。\n"
     "options：按表单顺序列出该组的每一个选项；实际被勾选（√、×、涂黑等）为 true，明确未勾选为 false，看不清为 null。\n"
     "提交结果的四项（尺寸、材料/性能、外观、统计）：checked 为该项勾选框是否被勾选；value 转写该项旁写出的结论或数值，没有写空字符串。\n"
-    "供方代表签字：handwritten 只在签字栏中有实际手写签名时为 true；打印姓名、电子/数字签名文字或空白为 false；value 转写签字栏中的可见文字。\n"
-    "ink_seal：页面上任何位置有用印泥盖的实际印章为 true；表头印刷的品牌标志、电子/数字签名文字框、勾选框不算印章；确认没有为 false，看不清为 null。\n"
+    "供方代表签字：field_box 只圈出包含供方签字标签及整条填写线的局部区域，不取顾客签字栏。按整张图左、上、右、下各 0–1000 标坐标；无法定位写 null。\n"
+    "Title 的 value 照抄；role_as_written 只抄实际表示该人职务的原文字段内容，不从公司名、部门或邮箱推定职务；没有可辨识的职务写 null。\n"
     "字段与表单标签的对应：\n" + "\n".join(f"{name}: {label}" for name, label in _LABELS)
 )
 # A scanned warrant is transcribed in three requests over the same page image, one per region of the form. The whole
 # schema in one request ran the image model past its fixed output limit (4096 tokens) before it answered.
 PARTS = (
     (*IDENTITY, SAFETY[0], WEIGHT[0], ORDER[0], TOOLING[0], EXPLANATION[0]),
-    (SUPPLIER_AREA[0], SUPPLIER_NAME[0], CUSTOMER_AREA[0], *CUSTOMER, SUBSTANCES[0], IMDS[0], SIGNATURE[0], *CONTACT, SEAL[0]),
+    (SUPPLIER_AREA[0], SUPPLIER_NAME[0], CUSTOMER_AREA[0], *CUSTOMER, SUBSTANCES[0], IMDS[0], SIGNATURE[0], *CONTACT),
     (REASON[0], REASON_OTHER[0], LEVEL[0], RESULTS_AREA[0], *RESULTS, MEETS[0]),
 )
 assert sorted(name for part in PARTS for name in part) == sorted(SCHEMA["properties"])
@@ -468,11 +470,50 @@ def part_request(names: tuple[str, ...]) -> tuple[str, dict[str, Any]]:
     return head + "本次只转写下列字段，字段与表单标签的对应：\n" + labels, _object(**{name: SCHEMA["properties"][name] for name in names})
 
 
-PICTURE_SCHEMA = _object(handwritten_signature=_MARK, ink_seal=_MARK)
+# The locator proposes regions, not positive/negative business facts. The crop reader gets only actual local pixels.
+_STAMP_SEARCH = _object(fully_examined=_MARK, candidates={"type": "array", "items": _BOX})
+_STAMP_FIND = (
+    "逐处查看本图，圈出每个可能的独立盖章印迹，不限颜色、形状、文字或盖章位置。"
+    "无法区分是印迹、印刷标志、手写还是数字签名的也圈出待核。返回各图形本身的紧框 [左,上,右,下]，本图横纵轴各为0至1000。"
+    "整片边缘均清楚且已完整检查、没有遗漏疑似印迹才填 fully_examined=true；未能检查全部填null。清楚且没有疑似印迹才返回空列表。不要作审核判断。"
+)
+_STAMP_LOCAL = _object(kind={"enum": ["imprint", "printed_logo", "handwriting", "digital_signature", "printed_text", "checkbox", "uncertain"]}, detail=_TEXT)
+_STAMP_READ = (
+    "只描述此局部图像本身。若能直接看见实际盖章印迹，kind=imprint，detail照录印文或描述具体可见的盖印痕迹。"
+    "印刷商标、手写签字、数字签字框、打印文字和勾框分别归类，不是盖印。若图形不完整、图文关系不清、不能区别印章与标志，填 uncertain。"
+    "不得根据文件类别或上下文推测，不作审核判断。"
+)
+_SIGN_LOCAL = _object(label=_TEXT, entire_field=_MARK, mark={"enum": ["handwriting", "digital_signature", "printed_text", "blank", "uncertain"]}, detail=_TEXT)
+_SIGN_READ = (
+    "只读本局部。label 照抄与笔迹或空白直接相连的签字栏标签；entire_field 是这条签字栏从标签到填写线终点是否在图内。"
+    "mark 只描述该栏的填写内容：手写笔迹、数字签署、印刷体、空白或不确定，detail 写明看见的笔迹/字样或实际空白线。"
+    "不得把邻栏、打印姓名或公司标志算到该栏。"
+)
+
+
+def _subbox(proposal: Any, bounds: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
+    """Reject invalid and near-whole-image proposals: those are not local witnesses. Never infer absence from rejection."""
+    if not isinstance(proposal, list) or len(proposal) != 4 or any(type(v) is not int or not 0 <= v <= 1000 for v in proposal):
+        return None
+    left, top, right, bottom = proposal
+    if left >= right or top >= bottom or (right - left) * (bottom - top) > 500_000:
+        return None
+    x, y, w, h = bounds[0], bounds[1], bounds[2] - bounds[0], bounds[3] - bounds[1]
+    box = (x + left * w // 1000, y + top * h // 1000, x + (right * w + 999) // 1000, y + (bottom * h + 999) // 1000)
+    return box if box[2] > box[0] and box[3] > box[1] else None
+
+
+def _local_image(image, box) -> bytes:
+    out = BytesIO()
+    image.crop(box).save(out, format="PNG")
+    return out.getvalue()
+
+
+_EMBEDDED_FORM = {"enum": ["imprint", "handwriting", "imprint_and_handwriting", "printed_logo", "digital_signature", "printed_text", "blank", "uncertain"]}
+PICTURE_SCHEMA = _object(kind=_EMBEDDED_FORM, detail=_TEXT)
 PICTURE_PROMPT = (
-    "这是零件提交保证书工作表中嵌入的一张图片。请只描述图片本身，不判断是否合格。\n"
-    "handwritten_signature：图片是手写笔迹的签名为 true；印刷体文字、印章、标志或空白为 false；看不清为 null。\n"
-    "ink_seal：图片是公司印章（公章、专用章等的印迹或其图像）为 true；品牌标志、表头 logo、签名、文字或勾选框为 false；看不清为 null。"
+    "就这一张嵌入原图区分实际盖章印迹、手写笔迹、两者同时可见、印刷商标、数字签字、打印文字、空白或不确定。"
+    "detail写出具体可见痕迹或转写字样；不得把印刷标志、姓名或数字签署算作盖章，不推断是否在本文件上亲签，不作审核判断。"
 )
 
 # The F-PU-206 Excel warrant: each field is found by the words of its printed label (all of them, in one cell).
@@ -523,7 +564,7 @@ RESULT_WORDS = {
 # ---- binary Excel drawing objects (BIFF8): form checkboxes and pictures ----------------------------
 
 
-@dataclass
+@dataclass(eq=False)
 class _Shape:
     kind: int
     anchor: tuple[int, int, int, int]
@@ -655,6 +696,7 @@ class _XlsWarrant:
         if len(found) != 1:
             raise unable("零件提交保证书工作簿中" + ("未找到" if not found else "有多张") + "保证书工作表，检查程序未能读取，需人工复核。")
         self.sheet, self.datemode = found[0], book.datemode
+        self.extents = {sheet.name: (max(1, sheet.nrows), max(1, sheet.ncols)) for sheet in book.sheets()}
         self.shapes = sheet_shapes(path, self.sheet.name)
         labels = [words for words, _where in XLS_FIELDS.values()] + [XLS_DATE, XLS_SIGNATURE, *XLS_TOOLING]
         labels += [*XLS_AREAS.values(), *(words for words, _end in XLS_CHOICES.values())]
@@ -789,8 +831,8 @@ class _ScanFacts:
     Each region is one request (see PARTS) and is asked once: a failed request is kept and raised again, so only the
     clauses that read that region stop, and the others are still decided from the regions that were read."""
 
-    def __init__(self, agent: "WarrantR3", image: bytes):
-        self.agent, self.image = agent, image
+    def __init__(self, agent: "WarrantR3", image: bytes, page_size: tuple[float, float]):
+        self.agent, self.image, self.page_size = agent, image, page_size
         self.parts: dict[int, Any] = {}
 
     def _part(self, name: str) -> dict[str, Any]:
@@ -845,9 +887,12 @@ class WarrantR3(Reader):
         with fitz.open(path) as document:
             if len(document) != 1:
                 raise unable(f"零件提交保证书有{len(document)}页，检查程序尚未声明多页保证书的读取范围，需人工复核。")
-            image = document[0].get_pixmap(dpi=200).tobytes("png")
+            page = document[0]
+            page.set_rotation(0)  # All witnesses below are unrotated original PDF points.
+            page_size = page.rect.width, page.rect.height
+            image = page.get_pixmap(dpi=200).tobytes("png")
         self._digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        return _ScanFacts(self, image)
+        return _ScanFacts(self, image, page_size)
 
     def _read_xls(self, path: str) -> dict[str, Any]:
         try:
@@ -970,46 +1015,153 @@ class WarrantR3(Reader):
 
     def _picture(self, shape: _Shape) -> dict[str, Any]:
         cache = self.__dict__.setdefault("_pictures", {})
-        if id(shape) not in cache:
-            if shape.picture is None:
-                cache[id(shape)] = {"handwritten_signature": None, "ink_seal": None}
-            else:
-                from PIL import Image
+        if shape not in cache:
+            unknown = {"handwritten_signature": None, "ink_seal": None, "detail": ""}
+            if shape.picture is None or len(cache) >= 6:
+                return unknown
+            from PIL import Image
 
-                output = BytesIO()
+            output = BytesIO()
+            try:
                 with Image.open(BytesIO(shape.picture)) as image:
                     image.convert("RGB").save(output, format="PNG")
-                cache[id(shape)] = self.transcribe(output.getvalue(), PICTURE_PROMPT, PICTURE_SCHEMA, "零件提交保证书上的图片")
-        return cache[id(shape)]
+            except (ValueError, OSError):
+                cache[shape] = unknown
+                return unknown
+            local = self.transcribe(output.getvalue(), PICTURE_PROMPT, PICTURE_SCHEMA, "零件提交保证书上的图片")
+            kind, detail = local.get("kind"), local.get("detail")
+            cache[shape] = unknown
+            if kind in _EMBEDDED_FORM["enum"] and kind != "uncertain" and isinstance(detail, str) and detail.strip():
+                cache[shape] = {"handwritten_signature": kind in {"handwriting", "imprint_and_handwriting"}, "ink_seal": kind in {"imprint", "imprint_and_handwriting"}, "detail": detail}
+        return cache[shape]
 
     @staticmethod
     def _any(values: list[bool | None]) -> bool | None:
         return True if True in values else (False if all(value is False for value in values) else None)
 
-    def signature(self) -> dict[str, Any]:
-        field = dict(self.transcription().get(SIGNATURE[0]) or {})
-        if not hasattr(self, "_sheet") or self._signature_cell is None:
-            return field
-        row, column = self._signature_cell
-        candidates = [shape for shape in self._sheet.shapes if shape.kind == _PICTURE and shape.anchor[0] <= row + 1 and shape.anchor[2] >= row - 1 and shape.anchor[3] > column]
-        signed = [shape for shape in candidates if self._picture(shape)["handwritten_signature"] is True]
-        field["handwritten"] = True if signed else self._any([self._picture(shape)["handwritten_signature"] for shape in candidates])
-        if signed:
-            self._where[SIGNATURE[0]] = (self._range(signed[0]), True)
+    def _scan_note(self, scan: _ScanFacts, image, box, fact: str, detail: str) -> None:
+        sx, sy = scan.page_size[0] / image.width, scan.page_size[1] / image.height
+        bbox = [round(value * scale, 3) for value, scale in zip(box, (sx, sy, sx, sy), strict=True)]
+        self.witness(
+            {"kind": "pdf_region", "page": 1, "bbox": bbox, "coordinate_system": "pdf_points_unrotated", "source_sha256": self._digest, "engine": "ocr_llm", "fact": fact},
+            detail,
+            visual=True,
+        )
+
+    def _scan_signature(self, scan: _ScanFacts, field: dict[str, Any]) -> dict[str, Any]:
+        from PIL import Image
+
+        field["handwritten"] = None
+        with Image.open(BytesIO(scan.image)) as image:
+            box = _subbox(field.get("field_box"), (0, 0, *image.size))
+            if box is None:
+                return field
+            local = self.transcribe(_local_image(image, box), _SIGN_READ, _SIGN_LOCAL, "供方签署栏局部")
+            label = compact(local.get("label"))
+            bound = re.search(r"(?:供方|供应商|供應商).*(?:签字|签名|簽名|簽字)|(?:supplier|organization).{0,32}signature", label)
+            detail = local.get("detail")
+            customer = re.search(r"customer|purchaser|buyer|客户|顧客|顾客|客戶", label)
+            if not bound or customer or local.get("entire_field") is not True or not isinstance(detail, str) or not detail.strip():
+                return field
+            mark = local.get("mark")
+            self._scan_note(scan, image, box, SIGNATURE[0], f"{local['label']}：{detail}")
+            if mark in {"handwriting", "digital_signature", "printed_text", "blank"}:
+                field["handwritten"] = mark == "handwriting"
         return field
 
-    def seal(self) -> bool | None:
-        if not hasattr(self, "_sheet"):
-            return self.transcription().get(SEAL[0])
-        pictures = [shape for shape in self._sheet.shapes if shape.kind == _PICTURE]
-        seals = [shape for shape in pictures if self._picture(shape)["ink_seal"] is True]
-        if seals:
-            self._where[SEAL[0]] = (self._range(seals[0]), True)
-        return True if seals else self._any([self._picture(shape)["ink_seal"] for shape in pictures])
+    def signature(self) -> dict[str, Any]:
+        facts = self.transcription()
+        field = dict(facts.get(SIGNATURE[0]) or {})
+        if isinstance(facts, _ScanFacts):
+            return self._scan_signature(facts, field)
+        if self._signature_cell is None:
+            return field
+        row, column = self._signature_cell
+        boundary = min((c for r, c in self._sheet.labels if r == row and c > column), default=self._sheet.sheet.ncols + 1)
+        values = []
+        for shape in self._sheet.shapes:
+            top, left, bottom, right = shape.anchor
+            if shape.kind in {_CHECKBOX, 0x19} or not (top <= row <= bottom and right > column and left < boundary):
+                continue
+            mark = self._picture(shape)["handwritten_signature"] if shape.kind == _PICTURE else None
+            if mark is True:
+                # PSW:3#r3.2: the original proves an inserted picture of handwriting, not who signed this document.
+                self.witness(self._range(shape), "供方签署栏附近有嵌入的手写笔迹图片；无法确认本件亲签", visual=True)
+                field["inserted"] = True
+            values.append(None if mark is True else mark)
+        field["handwritten"] = self._any(values)
+        return field
 
-    def _range(self, shape: _Shape) -> dict[str, Any]:
+    def _scan_seal(self, scan: _ScanFacts) -> bool | None:
+        from PIL import Image
+
+        with Image.open(BytesIO(scan.image)) as image:
+            w, h = image.size
+            # Overlapping original-image views cover the entire submitted page, not just its signature block.
+            complete = True
+            # One PSW has a bounded worker budget; a limit skips the unresolved region, never certifies absence.
+            crops = {}
+            for panel in ((0, 0, w, (h * 55 + 99) // 100), (0, h * 45 // 100, w, h)):
+                result = self.transcribe(_local_image(image, panel), _STAMP_FIND, _STAMP_SEARCH, "印章全页分区定位")
+                boxes = result.get("candidates")
+                if not isinstance(boxes, list):
+                    complete = False
+                    continue
+                cleared = result.get("fully_examined") is True and len(boxes) <= 6
+                for proposal in boxes[:6]:
+                    box = _subbox(proposal, panel)
+                    if box is None or len(set(image.crop(box).convert("L").getextrema())) == 1:
+                        cleared = False
+                        continue
+                    if box not in crops:
+                        if len(crops) >= 2:
+                            cleared = False
+                            continue
+                        crops[box] = self.transcribe(_local_image(image, box), _STAMP_READ, _STAMP_LOCAL, "疑似印迹的原件局部")
+                    local = crops[box]
+                    kind, detail = local.get("kind"), local.get("detail")
+                    if not isinstance(detail, str) or not detail.strip():
+                        cleared = False
+                        continue
+                    self._scan_note(scan, image, box, SEAL[0], f"{kind}：{detail}")
+                    if kind == "imprint":
+                        return True
+                    if kind not in {"printed_logo", "handwriting", "digital_signature", "printed_text", "checkbox"}:
+                        cleared = False
+                if cleared:
+                    self._scan_note(scan, image, panel, SEAL[0], "本图区域完整查看，未见独立盖章印迹")
+                complete = complete and cleared
+            return False if complete else None
+
+    def seal(self) -> bool | None:
+        facts = self.transcription()
+        if isinstance(facts, _ScanFacts):
+            return self._scan_seal(facts)
+        complete = True
+        for sheet_name in (self._sheet.sheet.name, *(name for name in self._sheet.extents if name != self._sheet.sheet.name)):
+            try:
+                shapes = self._sheet.shapes if sheet_name == self._sheet.sheet.name else sheet_shapes(str(self.audit_file.file_url), sheet_name)
+            except (OSError, ValueError, struct.error):
+                complete = False
+                continue
+            for shape in shapes:
+                if shape.kind in {_CHECKBOX, 0x19}:  # Form controls and BIFF cell comments are not applied marks.
+                    continue
+                mark = self._picture(shape)["ink_seal"] if shape.kind == _PICTURE else None
+                if mark is True:
+                    self.witness(self._range(shape, sheet_name), self._picture(shape)["detail"], visual=True)
+                    return True
+                if mark is None:
+                    complete = False
+            self.witness(
+                {"kind": "xlsx_range", "sheet": sheet_name, "start": "A1", "end": _cell_name(*self._sheet.extents[sheet_name]), "scope": "worksheet_drawing_inventory"},
+                f"核对该表绘图对象，共 {len(shapes)} 个",
+            )
+        return False if complete else None
+
+    def _range(self, shape: _Shape, sheet_name: str | None = None) -> dict[str, Any]:
         top, left, bottom, right = shape.anchor
-        return {"kind": "xlsx_range", "sheet": self._sheet.sheet.name, "start": _cell_name(top, left), "end": _cell_name(bottom, right)}
+        return {"kind": "xlsx_range", "sheet": sheet_name or self._sheet.sheet.name, "start": _cell_name(top, left), "end": _cell_name(bottom, right)}
 
     def note(self, fact: str, value: str) -> None:
         if hasattr(self, "_sheet"):
@@ -1078,7 +1230,8 @@ class WarrantR3(Reader):
     def rule_3(self, ctx: RuleContext):
         reading = _Reading(self)
         name, label = SIGNATURE
-        if (self.transcription().get(name) or {}).get("present") is False:
+        if (reading.facts.get(name) or {}).get("present") is False:
+            self.note(name, "未见供方代表签字栏")
             return "NG", "零件提交保证书中缺少供方代表签字字段。"
         contact, invalid = [], []
         for field, words in CONTACT.items():
@@ -1086,6 +1239,10 @@ class WarrantR3(Reader):
             if value is None:
                 continue
             text = unicodedata.normalize("NFKC", value)
+            if field == "title" and isinstance(reading.facts, _ScanFacts):
+                role = reading.facts[field].get("role_as_written")
+                if not isinstance(role, str) or not role.strip() or compact(role) not in compact(value):
+                    reading.unknown.append(f"Title 原文“{value}”中可辨识的职务")
             if field == "phone" and len(re.sub(r"\D", "", text)) < 7:
                 invalid.append(f"电话号码“{value}”格式不合法")
             elif field == "email" and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[A-Za-z]{2,}", text.strip()):
@@ -1107,24 +1264,23 @@ class WarrantR3(Reader):
                 signature = {"handwritten": None}
             signed = signature.get("handwritten")
             if signed is False:
-                self.note(name, signature.get("value") or "未签名")
+                if not isinstance(reading.facts, _ScanFacts):
+                    self.note(name, signature.get("value") or "签署线未见手写笔迹")
                 reading.failed.append(f"{label}没有手写签名")
             elif signed is None:
-                reading.unknown.append(f"{label}是否手写")
-            else:
-                self.note(name, signature.get("value") or "手写签名")
+                reading.unknown.append("签署栏嵌入的手写图片是否算本件手签" if signature.get("inserted") else f"{label}是否手写")
         try:
             seen = self.seal()
         except GuardStop as stop:
             if stop.decision != Decision.UNABLE:
                 raise
             seen = None
-        if seen is True:
-            self.note(SEAL[0], "印章")
-        elif seen is False:
+        if seen is False:
             reading.failed.append("原件上未找到印章")
-        else:
+        elif seen is None:
             reading.unknown.append("原件上是否有印章")
+        if reading.failed and reading.unknown:
+            return "NG", "零件提交保证书" + "；".join(reading.failed) + "。另未核实：" + "、".join(reading.unknown) + "。"
         return reading.decided(f"零件提交保证书有供方代表手写签字和印章，签署区{'、'.join(contact)}。")
 
     # ---- PSW:4 ---------------------------------------------------------------------------------
@@ -1133,7 +1289,8 @@ class WarrantR3(Reader):
     def rule_4(self, ctx: RuleContext):
         reading = _Reading(self)
         name, label = REASON
-        if (self.transcription().get(name) or {}).get("present") is False:
+        if (reading.facts.get(name) or {}).get("present") is False:
+            self.note(name, "未见供方代表签字栏")
             return "NG", "零件提交保证书缺少“提交原因”字段。"
         checked = reading.choice(name, label)
         if checked is not None:
@@ -1150,7 +1307,8 @@ class WarrantR3(Reader):
     def rule_5(self, ctx: RuleContext):
         reading = _Reading(self)
         name, label = LEVEL
-        if (self.transcription().get(name) or {}).get("present") is False:
+        if (reading.facts.get(name) or {}).get("present") is False:
+            self.note(name, "未见供方代表签字栏")
             return "NG", "零件提交保证书缺少“要求提交的等级”字段。"
         checked = reading.choice(name, label)
         if checked is None:

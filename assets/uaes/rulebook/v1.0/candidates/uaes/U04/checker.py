@@ -8,6 +8,7 @@ reused. Verdicts are decided in code; the image model only reads signatures, sea
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sys
 import unicodedata
@@ -84,6 +85,79 @@ def _signer_label(text: str, names: tuple[str, ...]) -> str | None:
         if bare in {compact(name), compact(name) + "人", compact(name) + "者"}:
             return name
     return None
+
+
+# Only layout whitespace is discarded in a written identity; no case, punctuation or suffix correction.
+def layout_id(value: str) -> str:
+    return "".join(value.split())
+
+
+DRAWING_TITLE = {"图纸", "零件图", "工程图", "drawing", "partdrawing", "engineeringdrawing"}
+PARTS_TITLE = {"零件清单", "partslist", "零件清单partslist"}
+TITLE = {
+    "number": {"图号", "dwgno.", "dwgno", "drawingno.", "drawingno", "drawingnumber"},
+    "name": {"名称", "零件名称", "designation", "partname"},
+    "project": {"项目", "项目编号", "uaes项目编号", "project", "projectno.", "projectnumber"},
+    "status": {"图纸状态", "drawingstatus"},
+}
+
+
+def title_key(label: Any) -> str | None:
+    key = compact(label).replace("/", "")
+    return next((field for field, names in TITLE.items() if key in names or any(key in {cn + en, en + cn} for cn in names if re.search(r"[\u3400-\u9fff]", cn) for en in names if en.isascii())), None)
+
+
+def pdf_field(lines, labels, *, numbers=False):
+    """Only an inline labelled value or a single adjacent/below value of that label; never a full-text match."""
+    found = {}
+    for box, text in lines:
+        parts = re.split("[:：]", text, maxsplit=1)
+        if compact(parts[0]) not in labels and TITLE.get(title_key(parts[0])) != labels:
+            continue
+        if len(parts) == 2 and parts[1].strip():
+            candidates = [(box, parts[1].strip())]
+        else:
+            candidates = [
+                (b, v)
+                for b, v in lines
+                if (box.y1 <= b.y0 < box.y1 + 1.9 * box.height and abs((b.x0 + b.x1) / 2 - (box.x0 + box.x1) / 2) <= max(5, box.width / 2)) and compact(v) not in labels and not title_key(v)
+            ]
+        if numbers and len(parts) < 2:
+            candidates = [(b, v) for b, v in candidates if re.fullmatch(r"[\w. /\-]+", v, re.ASCII) and re.search(r"\d", v)]
+        if len(candidates) == 1:
+            b, v = candidates[0]
+            found[tuple(b)] = (b, v)
+    return list(found.values())
+
+
+def local_box(area, raw):
+    import fitz
+
+    if not isinstance(raw, list) or len(raw) != 4 or not all(type(v) in {int, float} for v in raw):
+        return None
+    x, y, r, b = raw
+    if not (0 <= x < r <= 1 and 0 <= y < b <= 1) or (r - x) * (b - y) >= 0.9:
+        return None
+    return fitz.Rect(area.x0 + x * area.width, area.y0 + y * area.height, area.x0 + r * area.width, area.y0 + b * area.height)
+
+
+_TITLE_FIELD = {
+    "type": ["object", "null"],
+    "properties": {"label": {"type": "string"}, "value": {"type": "string"}, "bbox": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4}},
+    "required": ["label", "value", "bbox"],
+    "additionalProperties": False,
+}
+TITLE_SCHEMA = {
+    "type": "object",
+    "properties": {"kind": {"enum": ["drawing", "unknown"], "type": "string"}, **dict.fromkeys(TITLE, _TITLE_FIELD)},
+    "additionalProperties": False,
+    "required": ["kind", *TITLE],
+}
+TITLE_PROMPT = (
+    "只转写图中独立工程零件图标题栏。能看到工程图标题栏结构、标注的图号字段才填 drawing，否则 unknown。"
+    "分别转写本件图号、名称、项目编号、图纸在用状态，给出每个字段实际印刷的标签、原值与该栏在图内的归一坐标[x0,y0,x1,y1]。"
+    "保留大小写、空格、后缀、完整双语名称。排除相关图号、首次用于、BOM、订货规范、物料行。未设或读不清一律 null，不推断项目或在用状态。"
+)
 
 
 class MslClauses:
@@ -258,12 +332,113 @@ class MslClauses:
         return "PASS", "供应商负责工程师、UAES NE工程师、UAES SQD/SQE工程师三方均已签字" + layer + "。"
 
     # ---- MSL:3 ----
-    def drawing_identity(self, ctx: RuleContext, item: Any) -> tuple[list[str] | None, dict[str, Any] | None]:
-        """A drawing's cells (spreadsheet) or its transcribed title block (PDF)."""
-        cells = self.drawing_cells(ctx, item)
-        if cells is not None:
-            return cells, None
-        return None, self.drawing_title(item)
+    def identity_fields(self, ctx: RuleContext, item: Any) -> list[dict]:
+        """Keep the original's own identity distinct from related drawings, BOM rows and order specifications."""
+        version = str((item.file_metadata or {}).get("file_version_id") or item.audit_id)
+        path = Path(str(item.file_url))
+        expected = (item.file_metadata or {}).get("source_sha256") or (item.file_metadata or {}).get("sha256")
+        if expected:
+            with path.open("rb") as source:
+                if hashlib.file_digest(source, "sha256").hexdigest() != expected:
+                    raise OSError("冻结的关联资料已变化。")
+        if path.suffix.lower() in {".xls", ".xlsx", ".xlsm"}:
+            found = []
+            with self.reading(ctx, item, self.lib.drawing_for_materials):
+                for ws in ctx.workbook.worksheets:
+                    sheet = Sheet(ctx, ws)
+                    rows, width = self.extent(sheet)
+                    cells = sheet.scan_non_empty(row_min=1, row_max=rows, col_min=1, col_max=width)
+                    fields = {}
+                    kind = "unknown"
+                    for cell in cells:
+                        value = str(cell.value() or "").strip()
+                        if compact(value) in PARTS_TITLE:
+                            kind = "parts_list"
+                        elif compact(value) in DRAWING_TITLE and kind == "unknown":
+                            kind = "drawing"
+                        field = title_key(value)
+                        if not field:
+                            continue
+                        merged = ctx.ops.get_detailed_merge_info(ws, cell.row_index, cell.col_index)
+                        col = (merged.max_col if merged else cell.col_index) + 1
+                        if col <= width:
+                            raw = str(sheet.cell(cell.row_index, col).value() or "").strip()
+                            if raw and not title_key(raw):
+                                fields.setdefault(field, set()).add(raw)
+                    if kind == "drawing" and "number" not in fields:
+                        kind = "unknown"
+                    found.append({"kind": kind, "where": f"{original_name(item)}!{ws.title}", **{k: next(iter(v)) for k, v in fields.items() if len(v) == 1}})
+            return found or [{"kind": "unknown", "where": original_name(item)}]
+        if path.suffix.lower() != ".pdf":
+            return [{"kind": "unknown", "where": original_name(item)}]
+        import fitz
+
+        found = []
+        with fitz.open(path) as doc:
+            for page in doc:
+                where = f"{original_name(item)} 第{page.number + 1}页"
+                # Only upright visible strings, not oblique watermarks crossing the form's cells.
+                lines = [
+                    (fitz.Rect(s["bbox"]), s["text"].strip())
+                    for b in page.get_text("dict", flags=0)["blocks"]
+                    for line in b.get("lines", [])
+                    if line["dir"][0] > 0.99
+                    for s in line["spans"]
+                    if s["text"].strip() and s.get("alpha", 255)
+                ]
+
+                def cite(box, label, value, visual=False):
+                    self.legacy().witness({"kind": "pdf_region", "page": page.number + 1, "bbox": list(box), "fact": label}, value, version, visual=visual)
+
+                # An expressly titled parts-list form, not a drawing. Report its two distinct header fields,
+                # not the numbers in its component rows. This also works when the type classifier called it a drawing.
+                top = [(r, v) for r, v in lines if r.y0 < page.rect.height * 0.3]
+                list_title = next(((r, v) for r, v in top if compact(v) in PARTS_TITLE), None)
+                if list_title and any(compact(v) in {"所属图纸", "related-drawing", "序号", "index/po"} for _, v in lines):
+                    cite(list_title[0], "单据标题", list_title[1])
+                    for labels, label in [({"number", "编号"}, "清单表头编号"), ({"related-drawing", "所属图纸"}, "所属图纸")]:
+                        for box, value in pdf_field(top, labels, numbers=True):
+                            cite(box, label, value)
+                    found.append({"kind": "parts_list", "where": where})
+                    continue
+                # A page without a text layer is not a candidate for visual OCR (PSW alone has that exception).
+                if not lines or page.rotation or any(fitz.Rect(img["bbox"]).get_area() >= 0.9 * page.rect.get_area() for img in page.get_image_info()):
+                    found.append({"kind": "unknown", "where": where})
+                    continue
+                # Prefer an explicit drawing-number label. A naked number anywhere in the file is not an identity.
+                values = {key: pdf_field(lines, labels, numbers=key == "number") for key, labels in TITLE.items()}
+                # Independent identity: an explicit part-drawing heading or an actual engineering title block.
+                # The same labels in a list of references do not turn that list into a part drawing.
+                headings = {compact(v) for _, v in lines}
+                drawing_layout = bool(headings & DRAWING_TITLE or headings & {"scale", "比例"} and headings & {"版本", "version", "sheet", "页次"})
+                if drawing_layout and len(values["number"]) == 1 and len(values["name"]) == 1:
+                    fields = {}
+                    for field, items in values.items():
+                        if len(items) == 1:
+                            box, value = items[0]
+                            fields[field] = value
+                            cite(box, field, value)
+                    found.append({"kind": "drawing", "where": where, **fields})
+                    continue
+                area = fitz.Rect(page.rect.width * 0.55, page.rect.height * 0.7, page.rect.width, page.rect.height)
+                image = page.get_pixmap(matrix=fitz.Matrix(min(3, 2300 / max(area.width, area.height)), min(3, 2300 / max(area.width, area.height))), clip=area).tobytes("png")
+                raw = self.transcribe(image, TITLE_PROMPT, TITLE_SCHEMA, where + "工程图标题栏")
+                fields = {}
+                # Require the visible field's own label, value and a local box; a related reference or BOM number
+                # returned in the drawing-number slot must not become this part's number.
+                if not isinstance(raw, dict):
+                    raw = {}
+                for field, record in raw.items():
+                    if field not in TITLE or not isinstance(record, dict) or title_key(record.get("label")) != field:
+                        continue
+                    box = local_box(area, record.get("bbox"))
+                    value = record.get("value")
+                    if box is not None and isinstance(value, str) and value.strip():
+                        fields[field] = value.strip()
+                        cite(box, field, f"{record['label']}: {value}", visual=True)
+                kind = "drawing" if raw.get("kind") == "drawing" and "number" in fields else "unknown"
+                found.append({"kind": kind, "where": where, **fields})
+        return found or [{"kind": "unknown", "where": original_name(item)}]
 
     @rule("同批图纸的零件名称与零件号一致")
     def msl_3(self, ctx: RuleContext):
@@ -272,58 +447,53 @@ class MslClauses:
             raise unable(f"原件有{len(sheets)}份材料及分供方清单，尚不能确定按哪一份核对图纸，需人工复核。")
         sheet = sheets[0]
         part = self.field_value(ctx, sheet, "零件号", self.res.PART_NUMBER)
-        name = self.field_value(ctx, sheet, "零件名称", self.res.PART_NAME)
-        project = self.field_value(ctx, sheet, "UAES项目编号", self.res.PROJECT)
-        drawings = self.lib.related_by_content(self, _DRAWING)
-        if drawings.missing:
-            self.need("图纸")
-            return "NG", "同批次没有图纸独立文件，缺少图纸。"
-        if self.lib._placeholder(self.lib._identity(part)):
-            raise unable(f"清单零件号为“{part}”，不能用于配对图纸，需人工复核。")
-        same, other, unknown = [], [], []
-        for item in drawings.items:
-            found = self.drawing_shows(ctx, item, part)
-            if found is True:
-                same.append(item)
-            elif found is False:
-                other.append(item)
-            else:
-                unknown.append(original_name(item))
+        if self.lib._placeholder(compact(part)):
+            raise unable(f"清单零件号为“{part}”，不能用于配对图纸。")
+        refs = self.lib.related_by_content(self, _DRAWING)
+        records = []
+        for item in refs.items:
+            try:
+                records.extend(self.identity_fields(ctx, item))
+            except GuardStop as stop:
+                if stop.status != Decision.UNABLE:
+                    raise
+                records.append({"kind": "unknown", "where": original_name(item)})
+        drawings = [r for r in records if r["kind"] == "drawing" and r.get("number")]
+        unknown = [r["where"] for r in records if r["kind"] == "unknown" or r["kind"] == "drawing" and not r.get("number")]
+        lists = "；已按表头排除零件清单：" + "、".join(r["where"] for r in records if r["kind"] == "parts_list") if any(r["kind"] == "parts_list" for r in records) else ""
+        same = [r for r in drawings if layout_id(r["number"]) == layout_id(part)]
         if not same:
             if unknown:
-                raise unable(f"同批次图纸（{'、'.join(unknown)}）的零件号未能读取，尚不能确认是否为零件号“{part}”的图纸，需人工复核。")
-            numbers = []
-            for item in other:
-                if str(item.file_url).lower().endswith(".pdf"):
-                    numbers.append(f"{original_name(item)}的图号“{self.drawing_title(item).get('drawing_number')}”")
-                else:
-                    numbers.append(original_name(item))
+                raise unable("尚不能确认图纸类型或本件图号：" + "、".join(unknown) + lists + "。")
             self.need("图纸", part=part)
-            return "NG", f"比对源错配：同批次图纸与分供清单的零件号本身不一致（清单零件号“{part}”；图纸：{'；'.join(numbers)}），没有与当前物料编号一致的图纸。"
-        # The clause asks for the drawing of the current project as well.
-        if self.lib._placeholder(self.lib._identity(project)):
-            raise unable(f"清单UAES项目编号为“{project}”，尚不能确认图纸是否为当前项目的图纸，需人工复核。")
-        same_project = [item for item in same if self.drawing_mentions(ctx, item, project)]
-        if not same_project:
-            raise unable(f"零件号“{part}”的图纸（{'、'.join(self.lib.Related(same).names)}）未能读取到项目“{project}”，尚不能确认是否为当前项目的图纸，需人工复核。")
-        # Two drawings in use for the same project and part: the list's name matching either is consistent.
-        unread = []
-        for item in same_project:
-            cells, title = self.drawing_identity(ctx, item)
-            if cells is not None:
-                if any(self.lib._identity(name) in self.lib._names(cell) for cell in cells):
-                    return "PASS", f"同批次图纸{original_name(item)}与清单同项目“{project}”，零件号“{part}”、零件名称“{name}”一致。"
-                continue
-            designation = str((title or {}).get("designation") or "")
-            if not designation:
-                unread.append(original_name(item))
-                continue
-            words = {self.lib._identity(word) for word in re.split(r"[\s/／,，]+", designation)} | {self.lib._identity(designation)}
-            if self.lib._identity(name) in words:
-                return "PASS", f"同批次图纸{original_name(item)}与清单同项目“{project}”，零件号“{part}”一致，标题栏名称“{designation}”与清单零件名称“{name}”一致。"
-        if unread:
-            raise unable(f"图纸{'、'.join(unread)}的零件名称未能读取，尚不能确认与清单零件名称“{name}”一致，需人工复核。")
-        return "NG", f"零件名称不一致：同批次零件号“{part}”的图纸（{'、'.join(self.lib.Related(same_project).names)}）中没有清单零件名称“{name}”。"
+            if not drawings:
+                return "NG", "同批次没有图纸独立文件" + lists + "。"
+            details = "；".join(f"{r['where']} 图号“{r['number']}”" for r in drawings)
+            return "NG", f"比对源错配：清单零件号“{part}”；{details}。没有同号图纸，未比较零件名称{lists}。"
+        # Project and designation cannot obscure an already established wrong-number source.
+        project = self.field_value(ctx, sheet, "UAES项目编号", self.res.PROJECT)
+        name = self.field_value(ctx, sheet, "零件名称", self.res.PART_NAME)
+        if self.lib._placeholder(compact(project)) or not name:
+            raise unable("已找到同号图纸，但清单的项目或零件名称无法用于核对。")
+        eligible = [r for r in same if r.get("project") and layout_id(r["project"]) == layout_id(project)]
+        if not eligible:
+            if unknown or any(not r.get("project") for r in same):
+                raise unable(f"找到零件号“{part}”的图纸，但尚不能从图纸字段确认项目“{project}”。")
+            return "NG", f"同号图纸所列项目（{'、'.join(r['project'] for r in same)}）均不是清单项目“{project}”。"
+        matches = [r for r in eligible if r.get("name", "").strip() == name.strip()]
+        if matches:
+            if len({r.get("name") for r in eligible}) > 1 and not any(compact(r.get("status")) in {"在用", "active", "current"} for r in matches):
+                raise unable("同项目同件号有多份图纸，虽有名称相同者，但无法从原件确认该图在用。")
+            matched = next((r for r in matches if compact(r.get("status")) in {"在用", "active", "current"}), matches[0])
+            if matched.get("status") and compact(matched["status"]) not in {"在用", "active", "current"}:
+                raise unable("同号图纸虽有相同名称，但其状态不能确认为在用。")
+            return "PASS", f"{matched['where']} 的项目“{project}”、图号“{matched['number']}”、名称“{matched['name']}”与清单一致。"
+        if unknown or any(not r.get("project") for r in same) or any(not r.get("name") for r in eligible):
+            raise unable("存在身份、项目或名称未读全的候选图纸，不能判为名称不一致。")
+        names = "；".join(f"{r['where']}：{r['name']}" for r in eligible)
+        if any(re.search("[A-Za-z]", r["name"]) and re.search(r"[\u3400-\u9fff]", r["name"]) for r in eligible):
+            raise unable(f"同号同项目图纸名称“{names}”与清单“{name}”非逐字相同；中英文对应关系待确认。")
+        return "NG", f"零件名称不一致：同项目、同号图纸名称“{names}”，清单名称“{name}”。"
 
     # ---- MSL:4 ----
     def flow_nodes(self, ctx: RuleContext, item: Any) -> list[str]:

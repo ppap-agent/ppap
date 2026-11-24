@@ -40,8 +40,14 @@ _CPK, _PPK = Decimal("1.33"), Decimal("1.67")
 _DEFAULTS = {"目标CPK": _CPK, "目标PPK": _PPK}
 _EMPTY = {"", "/", "-", "—", "na", "n/a", "无"}
 # A stated planned sample count of a report (PCE:2's reminder).
-_PLANNED = ("规定样本数", "样本数", "样本量", "samplesize")
+_PLANNED = ("规定样本数", "规定样本量", "计划样本数", "计划样本量", "plannedsamplesize", "requiredsamplesize")
 _DRAWING = ("图纸", "drawing")
+
+
+def _text_count(raw: Any) -> Decimal | None:
+    if isinstance(raw, bool) or not re.fullmatch(r"\d+(?:\.0+)?", str(raw).strip()):
+        return None
+    return Decimal(str(raw).strip())
 
 
 class PceClauses:
@@ -94,7 +100,8 @@ class PceClauses:
     def rule_2(self, ctx: RuleContext):
         R = self.READER
         failures, errors, gaps, notes = [], [], [], []
-        for report in self.require_reports(ctx):
+        reports = self.require_reports(ctx)
+        for report in reports:
             ppk = report.values.get("Ppk")
             if "Ppk" in report.errors:
                 errors.append(R._placed(f"{report.where}{report.errors['Ppk']}", report.errors["Ppk"], report.where))
@@ -103,32 +110,59 @@ class PceClauses:
                 gaps.append(R._placed(f"{report.where}：" + gap, gap, report.where))
             elif ppk < _PPK:
                 failures.append(f"工艺能力认证报告{report.where}Performance index (Ppk)为{ppk}，低于1.67")
-        for planned, readings, where in self.planned_counts(ctx):
-            if readings is not None and planned != readings:
-                notes.append(f"提醒：{where}载明的规定样本数{planned}与实际读数{readings}不符")
-        tail = ("；" + "；".join(notes[:3])) if notes else ""
-        status, reason = self.finding(failures, errors, gaps, "Ppk", "全部工艺能力认证报告Ppk均不低于1.67（恰为1.67按达标）。")
-        return status, reason + tail
+            readings = report.values.get("读数次数")
+            if readings is not None and readings < 125:
+                count = f"最多{readings}" if report.bounded else str(readings)
+                notes.append(f"{report.where}实测读数{count}，少于125；样本量按PCE:1核对，和本条的Ppk比较分开列示")
+        reminders = self.plan_reminders(ctx, reports)
+        tail = "；".join(reminders[:3] + notes[:3])
+        try:
+            status, reason = self.finding(failures, errors, gaps, "Ppk", "全部已定位的工艺能力认证报告Ppk均不低于1.67（恰为1.67按达标）。")
+        except GuardStop as stop:
+            if tail and stop.decision == Decision.UNABLE:
+                raise unable(f"{stop.message}；{tail}") from None
+            raise
+        if status == "PASS" and notes:
+            raise unable(f"{reason.rstrip('。')}；{tail}；样本量不足是否同时影响PCE:2的结论尚待确认。")
+        if status == "PASS" and any(report.values.get("读数次数") is None or report.bounded for report in reports):
+            raise unable(f"{reason.rstrip('。')}；PCE:1所需的实际样本数未能核实，不能确定是否存在少于125的情形。{tail}")
+        if status == "PASS" and self.unreadable_pdf():
+            raise unable(f"{reason}另有未读页面，其Ppk未核实。{tail}")
+        return status, reason + ("；" + tail if tail else "")
 
-    def planned_counts(self, ctx: RuleContext) -> list[tuple[Decimal, Decimal | None, str]]:
-        """(planned sample count a report states, its readings, where) for reports that state one."""
-        found = []
+    def plan_reminders(self, ctx: RuleContext, reports) -> list[str]:
+        """Compare only a stated plan with the same report's count. A merged PDF grid gives an upper bound, not an actual."""
         wanted = {compact(label) for label in _PLANNED}
+        reminders = []
         for sheet in Table(ctx).find_sheets("能力报告", on_missing=Decision.IGNORE):
-            # Raw values: a formula error elsewhere on the report is not this reminder's fact.
-            rows, columns = self.extent(sheet)
-            planned = []
-            for r, values in enumerate(sheet.ws.iter_rows(min_row=1, max_row=rows, max_col=columns, values_only=True), 1):
-                for c, value in enumerate(values, 1):
-                    if compact(value) in wanted:
-                        right = next((v for v in values[c : c + 8] if v not in (None, "")), None)
-                        if self.READER._number(right) is not None:
-                            planned.append(right)
-            if not planned:
+            related = [report for report in reports if str(report.where) == f"“{sheet.title}”"]
+            if len(related) != 1 or related[0].bounded:
                 continue
-            readings = next((report.values.get("读数次数") for report in self.reports(ctx) if sheet.title in str(report.where)), None)
-            found.append((self.READER._number(planned[0]), readings, f"“{sheet.title}”"))
-        return found
+            readings = related[0].values.get("读数次数")
+            if readings is None:
+                continue
+            rows, columns = self.extent(sheet)
+            plans = {}
+            for cells in sheet.ws.iter_rows(min_row=1, max_row=rows, max_col=columns):
+                for i, cell in enumerate(cells):
+                    if compact(cell.value) not in wanted:
+                        continue
+                    # Only its own adjacent value (including the edge of a merged label), not a different field.
+                    merged = ctx.ops.get_detailed_merge_info(sheet.ws, cell.row, cell.column)
+                    j = merged.max_col if merged else i + 1
+                    if j >= len(cells):
+                        continue
+                    raw = _text_count(cells[j].value)
+                    if raw is not None:
+                        plans.setdefault(raw, cells[j])
+            if len(plans) == 1:
+                planned, cell = next(iter(plans.items()))
+                if planned != readings:
+                    self.cite(sheet, cell.row, cell.column)
+                    reminders.append(f"提醒：“{sheet.title}”{cell.coordinate}规定样本数{planned}与本表实际读数{readings}不符")
+            elif plans:
+                reminders.append(f"“{sheet.title}”载明多个不同规定样本数，不能确定计划与实际读数是否相符")
+        return reminders
 
     # ---- PCE:3 -----------------------------------------------------------------------------------
 

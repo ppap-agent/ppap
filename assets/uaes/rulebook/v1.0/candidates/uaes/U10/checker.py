@@ -50,14 +50,24 @@ def name_of(item: Any) -> str:
     return str((getattr(item, "file_metadata", None) or {}).get("original_filename") or Path(str(item.file_url)).name)
 
 
-def file_lines(path: str) -> list[str]:
+def file_lines(path: str, locators=None) -> list[str]:
     """The text of an original by lines: a PDF's text layer, a spreadsheet's cells, a Word document's paragraphs."""
     suffix = Path(path).suffix.lower()
     if suffix == ".pdf":
         import fitz
 
+        lines = []
         with fitz.open(path) as document:
-            return "\n".join(page.get_text() for page in document).splitlines()
+            for page in document:
+                lines.append("<PAGE>")
+                if locators is not None:
+                    locators.append(None)
+                for block in page.get_text("dict", flags=0)["blocks"]:
+                    for line in block.get("lines", []):
+                        lines.append("".join(span["text"] for span in line["spans"]).strip())
+                        if locators is not None:
+                            locators.append({"kind": "pdf_region", "page": page.number + 1, "bbox": list(line["bbox"])})
+        return lines
     if suffix in {".xlsx", ".xlsm", ".xls"}:
         from audit.checker_lib.excel import load_workbook
 
@@ -65,11 +75,29 @@ def file_lines(path: str) -> list[str]:
         try:
             lines = []
             for sheet in book.worksheets:
+                lines.append("<SHEET>")
+                if locators is not None:
+                    locators.append(None)
                 for row in sheet.iter_rows():
-                    values = [str(cell.value).strip() for cell in row if cell.value is not None and str(cell.value).strip()]
-                    # A label cell and the value right of it read as one "label: value" line.
-                    lines.extend(f"{values[index]}：{values[index + 1]}" for index in range(len(values) - 1))
-                    lines.extend(values)
+                    values = [str(c.value).strip() if c.value is not None else "" for c in row]
+                    i = 0
+                    if not any(values):
+                        lines.append("<ROW>")
+                        if locators is not None:
+                            locators.append(None)
+                    while i < len(values):
+                        text = values[i]
+                        if text and i + 1 < len(values) and values[i + 1] and (field_kind(text) or text.rstrip(":：") in MATERIAL_LABELS):
+                            lines.append(f"{text.rstrip(':：')}：{values[i + 1]}")
+                            if locators is not None:
+                                locators.append({"kind": "cell", "sheet": sheet.title, "cell": row[i + 1].coordinate})
+                            i += 2
+                        else:
+                            if text:
+                                lines.append(text)
+                                if locators is not None:
+                                    locators.append({"kind": "cell", "sheet": sheet.title, "cell": row[i].coordinate})
+                            i += 1
             return lines
         finally:
             book.close()
@@ -89,6 +117,52 @@ def labelled_material(lines: list[str]) -> list[str]:
         if match and match.group(1).strip():
             found.append(match.group(1).strip())
     return list(dict.fromkeys(found))
+
+
+# An explicit grade field and its execution-standard field in the same uninterrupted record.
+# In particular the real Bosch spec's "Material number" is not its "Material abbreviation".
+GRADE_FIELDS = {"材料牌号", "牌号", "grade", "materialgrade", "materialabbreviation"}
+STANDARD_FIELDS = {"执行标准", "执行标准号", "标准号", "qualitystandard", "materialstandard", "standardnumber"}
+
+
+def field_kind(label: str) -> str:
+    key = compact(label)
+    return "grade" if key in GRADE_FIELDS else "standard" if key in STANDARD_FIELDS else ""
+
+
+def exact(value: str) -> str:
+    return " ".join(value.split())
+
+
+def grade_records(lines: list[str], witness=None) -> list[tuple[str, str]]:
+    records = []
+    row = {}
+    index = 0
+    while index < len(lines):
+        text = lines[index].strip()
+        index += 1
+        label, *tail = re.split("[:：]", text, maxsplit=1)
+        kind = field_kind(label)
+        if not kind:
+            row.clear()
+            continue
+        if kind in row:
+            row.clear()
+        value = tail[0].strip() if tail else ""
+        if not value and index < len(lines) and not field_kind(re.split("[:：]", lines[index], maxsplit=1)[0]) and not lines[index].strip().startswith("<"):
+            value = lines[index].strip()
+            index += 1
+        if not value:
+            row.clear()
+            continue
+        row[kind] = (exact(value), index - 1)
+        if row.keys() >= {"grade", "standard"}:
+            records.append((row["grade"][0], row["standard"][0]))
+            if witness:
+                for key, (raw, at) in row.items():
+                    witness(key, raw, at)
+            row.clear()
+    return list(dict.fromkeys(records))
 
 
 def kind_matches(kind: Any, terms: tuple[str, ...]) -> bool:
@@ -124,47 +198,56 @@ class SpecClauses:
         import fitz
 
         with fitz.open(path) as document:
+            if not len(document) or not document[0].get_text().strip():
+                return []  # Scanned drawing pages are not an OCR source.
             page = document[0]
             area = fitz.Rect(page.rect.x1 * 0.55, page.rect.y1 * 0.7, page.rect.x1, page.rect.y1)
             image = page.get_pixmap(dpi=min(200, int(2400 * 72 / area.width)), clip=area).tobytes("png")
         material = self.transcribe(image, MATERIAL_PROMPT, MATERIAL_SCHEMA, f"图纸{name_of(item)}的材料栏").get("material")
         return [material] if material else []
 
+    def pairs(self, item):
+        locations = []
+        lines = file_lines(str(item.file_url), locations)
+        version = str((item.file_metadata or {}).get("file_version_id") or item.audit_id)
+
+        def witness(key, raw, at):
+            if at < len(locations) and locations[at]:
+                self.legacy().witness({**locations[at], "fact": key}, raw, version)
+
+        return lines, grade_records(lines, witness)
+
     def grade(self) -> tuple[str, str]:
         drawings, reports = self.related(DRAWING), self.related(ISIR)
         if not drawings and not reports:
             return "NA", "同批未提交图纸，也未提交ISIR材料报告，“牌号一致”一项不适用（依据：条文“两者均缺时……记‘不适用’”），不记作通过"
-        own = file_lines(str(self.audit_file.file_url))
-        text = compact("".join(own))
-        if not text:
-            return "UNABLE", "材料规范原件没有可读的文字层，检查程序未能读出所载牌号"
-        basis: list[tuple[str, str]] = []
-        unread: list[str] = []
-        for item in drawings:
-            values = self.drawing_material(item)
-            basis.extend((f"图纸{name_of(item)}", value) for value in values)
-            if not values:
-                unread.append(f"图纸{name_of(item)}")
-        for item in reports:
-            values = labelled_material(file_lines(str(item.file_url)))
-            basis.extend((f"ISIR材料报告{name_of(item)}", value) for value in values)
-            if not values:
-                unread.append(f"ISIR材料报告{name_of(item)}")
-        sources = "、".join(dict.fromkeys(source for source, _value in basis)) or "无"
-        differ, partial = [], []
-        for source, value in basis:
-            tokens = [compact(token) for token in re.split(r"[\s,，;；]+", value) if compact(token)]
-            present = [token in text for token in tokens]
-            if not any(present):
-                differ.append(f"{source}记载“{value}”，材料规范中没有")
-            elif not all(present):
-                partial.append(f"{source}记载“{value}”，材料规范中只见其中部分（牌号或执行标准号）")
-        if differ:
-            return "NG", "牌号不一致：" + "；".join(differ) + f"（取值来源：{sources}）"
-        if partial or unread:
-            notes = [*partial, *(f"{source}的材料牌号未能读出" for source in unread)]
-            return "UNABLE", "；".join(notes) + "，牌号与执行标准是否一致需人工核对" + f"（取值来源：{sources}）"
-        return "PASS", f"所载牌号与执行标准与{sources}记载一致"
+        _, own = self.pairs(self.audit_file)
+        if len(own) != 1:
+            return "UNABLE", "材料规范中未定位到唯一明确成组的材料牌号与执行标准字段，不能用全文词片段代替"
+        grade, standard = own[0]
+        matched, unread = [], []
+        for typ, items in (("图纸", drawings), ("ISIR材料报告", reports)):
+            for item in items:
+                source = typ + name_of(item)
+                lines, pairs = self.pairs(item)
+                if len(pairs) == 1:
+                    ref_grade, ref_standard = pairs[0]
+                    if (grade, standard) != pairs[0]:
+                        return "NG", f"材料规范牌号“{grade}”、执行标准“{standard}”，与{source}牌号“{ref_grade}”、执行标准“{ref_standard}”不一致"
+                elif not pairs:
+                    raw = self.drawing_material(item) if typ == "图纸" else labelled_material(lines)
+                    # A single combined material field can establish equality only in its entirety;
+                    # do not guess a grade/standard boundary on a different unstructured value.
+                    if len(raw) != 1 or exact(raw[0]) != f"{grade} {standard}":
+                        unread.append(source)
+                        continue
+                else:
+                    unread.append(source)
+                    continue
+                matched.append(source)
+        if unread:
+            return "UNABLE", f"材料规范牌号“{grade}”、执行标准“{standard}”；{'、'.join(unread)}未定位到可唯一对照的牌号与标准字段，不能按全文包含判相同"
+        return "PASS", f"材料规范牌号“{grade}”、执行标准“{standard}”与{'、'.join(matched)}的材料字段一致"
 
     @rule("材料规范受控章与同批图纸及ISIR材料报告牌号一致")
     def mspec_1(self, ctx: RuleContext):
