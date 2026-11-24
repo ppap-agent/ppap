@@ -145,3 +145,21 @@ def test_trial_compares_only_width_spaces_and_hyphens_and_cites_both_fields(tmp_
     result = run("U15", "TA:1", target, [(psw, "PSW", "reference")])
     assert result["status"] == "PASS", result["suggestions"]
     assert {(v["excerpt"], json.loads(v["locator"]).get("file_version_id")) for v in result["evidence"]["sources"]} >= {("ａＺ＿００-８", "file0"), ("aZ_0 08", "file1")}
+
+
+@pytest.mark.parametrize("signoff", [["编制：甲", "审核", "乙", "批准：丙"], [None, "审核人：丁"]])
+def test_sample_history_checks_delivery_rows_through_to_the_signoff(tmp_path, signoff):
+    target = workbook(
+        tmp_path,
+        "记录.xlsx",
+        "送样履历",
+        [
+            ["交付目的", "送样件数", "样件编号", "送样日期", "更改状态"],
+            ["工程更改审核验证", 6, "B-03", "2020-03-22", "未设变"],
+            ["批准工装后的生产验证", 4, "B-02", "2020-03-17", "已设变"],
+            ["审核", 2, "B-01", "2020-03-16", "已设变"],
+            signoff,
+        ],
+    )
+    finding = run("U11", "SSH:2", target)
+    assert finding["status"] == "PASS" and "3个有效行" in finding["suggestions"], finding

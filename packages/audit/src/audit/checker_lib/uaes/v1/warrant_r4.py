@@ -23,6 +23,7 @@ from audit.checker_lib.uaes.v1.warrant import (
     WarrantR3,
     _Reading,
 )
+from audit.checker_lib.uaes.v1.warrant_pdf_r4 import DocumentPage, WarrantDocument
 from audit.engine.rule_engine import RuleContext
 
 
@@ -48,11 +49,48 @@ def submission_detail(text: str) -> bool:
 class WarrantR4(WarrantR3):
     """Reader for signed UAES v1.0 revision 4."""
 
+    def _transcribe(self) -> Any:
+        path = Path(str(self.audit_file.file_url))
+        if path.suffix.lower() != ".pdf":
+            return super()._transcribe()
+        with path.open("rb") as source:
+            self._digest = hashlib.file_digest(source, "sha256").hexdigest()
+        expected = (self.audit_file.file_metadata or {}).get("source_sha256")
+        if expected and expected != self._digest:
+            raise unable("保证书与冻结原件不符，不能核对。")
+        return WarrantDocument(self, path)
+
+    def note(self, fact: str, value: str) -> None:
+        document = self.transcription()
+        if isinstance(document, WarrantDocument):
+            if page := document.selected.get(fact):
+                page.cite(fact, value)
+        else:
+            super().note(fact, value)
+
+    def _scan_note(self, scan, image, box, fact, detail) -> None:
+        if not isinstance(scan, DocumentPage):
+            return super()._scan_note(scan, image, box, fact, detail)
+        sx, sy = scan.page_size[0] / image.width, scan.page_size[1] / image.height
+        scan.bounds[fact] = [round(v * k, 3) for v, k in zip(box, (sx, sy, sx, sy), strict=True)]
+        scan.cite(fact, detail)
+
+    def signature(self) -> dict[str, Any]:
+        document = self.transcription()
+        return document.signature() if isinstance(document, WarrantDocument) else super().signature()
+
+    def seal(self) -> bool | None:
+        document = self.transcription()
+        return document.seal() if isinstance(document, WarrantDocument) else super().seal()
+
     def transcribe(self, image: bytes, prompt: str, schema: dict[str, Any], subject: str, *, output_correction: str | None = None) -> dict[str, Any]:
         if schema is PICTURE_SCHEMA:
-            properties = schema["properties"]
-            schema = {**schema, "properties": {**properties, "kind": {"type": "string", **properties["kind"]}}}
             output_correction = "仅输出 JSON 对象，包含 kind 和 detail 两个字段。kind 必须是允许的字符串；无法判断时 kind 写 uncertain，detail 写 null。不加解释或代码块。"
+        # The picture, signature and seal prompts all have string choices. The strict structured reader
+        # requires the primitive type alongside the enum, even though enum alone is valid JSON Schema.
+        fields = schema["properties"]
+        if any("enum" in value and "type" not in value for value in fields.values()):
+            schema = {**schema, "properties": {key: {"type": "string", **value} if "enum" in value else value for key, value in fields.items()}}
         return super().transcribe(image, prompt, schema, subject, output_correction=output_correction)
 
     def check_explanation(self, audit: _Reading, value: str) -> None:
@@ -101,7 +139,7 @@ class WarrantR4(WarrantR3):
         if cell and item is self.audit_file and getattr(getattr(self, "_sheet", None), "sheet", None) is not None and cell[1] == self._sheet.sheet.name:
             audit.unknown.append("说明栏只指向本表，未核到随附的附页")
             return
-        if page and item is self.audit_file:
+        if page and item is self.audit_file and (not isinstance(doc := self.transcription(), WarrantDocument) or int(next(n for n in page.groups() if n)) not in doc.annex):
             audit.unknown.append("所引页未被识别为随附附页，不能用保证书自身说明替代")
             return
         try:

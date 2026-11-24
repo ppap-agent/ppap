@@ -315,6 +315,9 @@ class ApprovalR3(Reader):
             return "NG", f"封面否决列{rejected}有否决标记，为否决件，直接不通过。"
         remarks, cell = self.remark(sheet)
         self.cite(sheet, cell.row_index, cell.col_index)
+        return self.approval_from_remark(ctx, sheet, remarks)
+
+    def approval_from_remark(self, ctx: RuleContext, sheet: Sheet, remarks: str) -> tuple[str, str]:
         full = FULL in remarks
         deviation = [term for term in DEVIATION_TERMS if term in remarks]
         refused = [term for term in REFUSALS if term in remarks]

@@ -40,6 +40,56 @@ def finding(leaf, clause, path, refs=(), reader=None):
     return answer
 
 
+def test_engineering_approval_reads_only_the_original_cover_remark(monkeypatch):
+    from documents.ai import AIResult
+
+    read = []
+
+    def facts(task, *, prompt, schema, **_):
+        assert task == "cea_remark_facts" and set(schema["properties"]) == {"coverage", "facts"}
+        assert "完全认可" in prompt and "批准的前提" not in prompt and "组长" not in prompt
+        read.append(prompt)
+        return AIResult({"coverage": "complete", "facts": [{"kind": "full_approval", "scope": "current_approval", "assertion": "affirmed", "quote": prompt}]})
+
+    monkeypatch.setattr("documents.ai.run_json", facts)
+    result = finding("U19", "CEA:1", RELEASE, reader=CheckerRuntime(allow_model_tools=True))
+    assert result["status"] == "PASS" and len(read) == 1, result["suggestions"]
+    assert any("完全认可" in item["excerpt"] and json.loads(item["locator"]).get("bbox") for item in result["evidence"]["sources"])
+
+
+@pytest.mark.parametrize(
+    ("facts", "expected", "relevant"),
+    [
+        (
+            [
+                ("full_approval", "affirmed", "current_approval", "完全认可"),
+                ("out_of_tolerance", "negated", "current_approval", "本批确认未发生超差"),
+            ],
+            "full",
+            "完全认可；本批确认未发生超差",
+        ),
+        (
+            [
+                ("rectification_commitment", "affirmed", "other", "此前承诺整改截止2039-12-31"),
+                ("conditional_approval", "affirmed", "current_approval", "本次条件认可"),
+                ("rectification_commitment", "affirmed", "current_approval", "本次整改截止2031-02-28"),
+            ],
+            "conditional",
+            "本次条件认可；本次整改截止2031-02-28",
+        ),
+    ],
+)
+def test_approval_uses_current_assertions_and_their_own_deadlines(monkeypatch, facts, expected, relevant):
+    from audit.checker_lib.uaes.v1.engineering_approval_r4 import _route
+    from audit.engine.runtime import bind_runtime
+    from documents.ai import AIResult
+
+    reading = [dict(kind=k, assertion=a, scope=s, quote=q) for k, a, s, q in facts]
+    monkeypatch.setattr("documents.ai.run_json", lambda *_, **__: AIResult({"coverage": "complete", "facts": reading}))
+    with bind_runtime(CheckerRuntime(allow_model_tools=True)):
+        assert _route("；".join(row["quote"] for row in reading)) == (expected, relevant)
+
+
 def picture(kind):
     png = BytesIO()
     Image.new("RGB", (kind + 2, 5), "black").save(png, "PNG")
@@ -124,7 +174,7 @@ class Form(CheckerRuntime):
             )
         if "reason_for_submission" in keys:
             out["reason_for_submission"] = {"present": True, "options": []}
-        return out
+        return {k: {**v, "bbox": [40, 50, 560, 130]} for k, v in out.items()}
 
 
 @pytest.mark.parametrize(
@@ -142,7 +192,7 @@ class Form(CheckerRuntime):
 def test_psw_explanation_is_data_not_just_a_reference(tmp_path, comment, value, level, status):
     path = tmp_path / "form.pdf"
     with fitz.open() as doc:
-        doc.new_page()
+        doc.new_page().insert_text((32, 32), "Part Submission Warrant")
         doc.save(path)
     appendix = tmp_path / "附表.xlsx"
     book = Workbook()
@@ -192,3 +242,115 @@ def test_specific_acceptance_has_customer_supplier_and_exact_item_scope(tmp_path
     assert result["status"] == expected, result["suggestions"]
     if expected == "PASS":
         assert any(source["excerpt"] == part and json.loads(source["locator"]).get("file_version_id") == "1" for source in result["evidence"]["sources"])
+
+
+def test_psw_native_document_header_after_an_annex(tmp_path):
+    """Read the uploaded warrant page, not the earlier attachment; preserve label/value locations."""
+    pdf = tmp_path / "submission.pdf"
+    with fitz.open() as doc:
+        annex = doc.new_page()
+        annex.insert_text((44, 80), "Attachment: Approval record")
+        annex.insert_text((44, 130), "Customer Part Number: OLD-439")
+        body = doc.new_page()
+        body.insert_text((44, 89), "Part Submission Warrant")
+        body.insert_text((208, 190), "Customer Part Number: PZ-39.8")
+        body.insert_text((60, 275), "Part Name: Sleeve")
+        doc.save(pdf)
+    plan = tmp_path / "plan.xlsx"
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Control plan"
+    sheet["A1"], sheet["A2"], sheet["A5"] = "Part Number: PZ-39.8", "Part Name: Sleeve", "工序名称"
+    book.save(plan)
+    result = finding("U17", "PSW:7", pdf, [(plan, "控制计划")], reader=CheckerRuntime())
+    assert result["status"] == "PASS", result["suggestions"]
+    found = [(s["excerpt"], json.loads(s["locator"])) for s in result["evidence"]["sources"]]
+    original = {v: loc for v, loc in found if loc.get("fact") in {"part_name", "customer_part_number"} and loc.get("engine") == "native_pdf"}
+    assert set(original) == {"PZ-39.8", "Sleeve"}
+    for value, loc in original.items():
+        assert loc["page"] == 2 and loc["source_sha256"] == hashlib.sha256(pdf.read_bytes()).hexdigest()
+        with fitz.open(pdf) as doc:
+            assert value in doc[1].get_textbox(fitz.Rect(loc["bbox"]))
+
+
+def test_psw_scanned_continuation_and_authorization_have_separate_page_evidence(tmp_path):
+    # Field extraction double only. The three original pages, their layout/roles and exact source locators are real.
+    from PIL import ImageDraw
+
+    raster = Image.new("RGB", (600, 420), "white")
+    pen = ImageDraw.Draw(raster)
+    pen.text((30, 36), "Part Submission Warrant - continued", fill="black")
+    pen.text((30, 80), "Requested Submission Level   [X] Level 4", fill="black")
+    pen.text((30, 340), "Page 2 of 2", fill="black")
+    buf = BytesIO()
+    raster.save(buf, "PNG")
+    path = tmp_path / "document.pdf"
+    with fitz.open() as doc:
+        body = doc.new_page(width=400, height=600)
+        body.insert_text((30, 85), "Part Submission Warrant")
+        body.insert_text((95, 190), "Customer Part Number: PZ-39.8")
+        body.insert_text((60, 440), "Page 1 of 2")
+        annex = doc.new_page(width=320, height=600)
+        annex.insert_text((40, 50), "Annex: Authorization record")
+        annex.insert_text((40, 120), "Requested Submission Level: Level 1")
+        scan = doc.new_page(width=600, height=420)
+        scan.insert_image(scan.rect, stream=buf.getvalue())
+        doc.save(path)
+
+    class Pages(CheckerRuntime):
+        def read_ocr_visual_facts(self, *, images, response_schema, **unused):
+            with Image.open(BytesIO(images[0])) as view:
+                landscape = view.width > view.height
+                assert abs(view.width / view.height - 320 / 600) > 0.02  # authorization page is never supplied as warrant evidence
+            fields = response_schema["schema"]["properties"]
+            if "heading" in fields:
+                assert landscape
+                return {"heading": "Part Submission Warrant - continued", "bbox": [42, 65, 450, 140], "pagination": "Page 2 of 2"}
+            result = {k: {"present": False} for k in fields}
+            if landscape and "requested_submission_level" in result:
+                result["requested_submission_level"] = {"present": True, "options": [{"label": "Level 4", "checked": True}], "bbox": [45, 165, 480, 250]}
+            return result
+
+    result = finding("U17", "PSW:5", path, reader=Pages())
+    assert result["status"] == "PASS", result["suggestions"]
+    locations = [(s["excerpt"], json.loads(s["locator"])) for s in result["evidence"]["sources"]]
+    [(value, loc)] = [(value, loc) for value, loc in locations if loc.get("fact") == "requested_submission_level"]
+    assert value == "Level 4" and (loc["page"], loc["bbox"]) == (3, [27, 69.3, 288, 105])
+
+
+def test_psw_vector_signature_and_stamp_keep_their_original_page(tmp_path):
+    path = tmp_path / "signed.pdf"
+    with fitz.open() as doc:
+        doc.new_page().insert_text((32, 64), "Annex: Authorization record")
+        page = doc.new_page(width=400, height=400)
+        page.insert_text((20, 40), "Part Submission Warrant")
+        page.insert_text((20, 222), "Supplier Authorized Signature")
+        page.draw_polyline([(185, 220), (189, 205), (191, 225), (205, 210)])
+        page.draw_circle((65, 76), 15)
+        page.insert_text((55, 80), "QC")
+        for row, value in enumerate(("Print Name: A Tester", "Title: Engineer", "Phone: 123456789", "Email: a@example.com", "Date: 2026-02-10")):
+            page.insert_text((30, 240 + row * 18), value)
+        doc.save(path)
+
+    class Marks(CheckerRuntime):
+        def read_ocr_visual_facts(self, *, response_schema, **unused):
+            fields = response_schema["schema"]["properties"]
+            if "supplier_authorized_signature" in fields:
+                values = {"print_name": "A Tester", "title": "Engineer", "phone": "123456789", "email": "a@example.com", "signed_date": "2026-02-10"}
+                answer = {k: {"present": True, "value": v, "bbox": [65, 565 + i * 45, 525, 612 + i * 45]} for i, (k, v) in enumerate(values.items())}
+                answer["title"]["role_as_written"] = "Engineer"
+                answer["supplier_authorized_signature"] = {"present": True, "field_box": [45, 475, 560, 575], "bbox": [45, 475, 560, 575]}
+                return answer
+            if "entire_field" in fields:
+                assert fields["mark"]["type"] == "string"
+                return {"label": "Supplier Authorized Signature", "entire_field": True, "mark": "handwriting", "detail": "签字栏右侧有折线笔迹"}
+            if "fully_examined" in fields:
+                return {"fully_examined": True, "candidates": [[115, 245, 210, 438]]}
+            assert fields["kind"]["type"] == "string"
+            return {"kind": "imprint", "detail": "QC 圆形印迹"}
+
+    result = finding("U17", "PSW:3", path, reader=Marks())
+    assert result["status"] == "PASS", result["suggestions"]
+    marks = [json.loads(s["locator"]) for s in result["evidence"]["sources"] if json.loads(s["locator"]).get("fact") in {"supplier_authorized_signature", "ink_seal"}]
+    assert {m["fact"] for m in marks} == {"supplier_authorized_signature", "ink_seal"}
+    assert all(m["kind"] == "pdf_region" and m["page"] == 2 and m["engine"] == "ocr_llm" for m in marks)
