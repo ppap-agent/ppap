@@ -243,9 +243,9 @@ def test_native_usage_and_logout_keep_the_task_report_address(browser_page):
     expect(account).to_be_visible()
     expect(page).to_have_url(WEB + "/tasks/original-task?report=frozen-report#original-clause")
     account.click()
-    # Usage is reached from the product navigation only; the account menu holds only sign-out.
+    # Usage is reached from the product navigation only; the account menu holds the person's receipts and sign-out.
     expect(page.get_by_role("menuitem", name="退出登录")).to_be_visible()
-    expect(page.get_by_role("menuitem")).to_have_count(1)
+    expect(page.get_by_role("menuitem")).to_have_text(["我的回执", "退出登录"])
     page.keyboard.press("Escape")
     page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="用量记录", exact=True).click()
     expect(page.get_by_role("heading", name="用量记录", exact=True)).to_be_visible()

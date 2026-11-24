@@ -387,7 +387,8 @@ def check(context):
         view = body.pop("read_view")
         self.assertEqual(body, before)
         self.assertEqual({row["file"]["id"] for row in view["files"]}, {target.id, reference.id})
-        self.assertEqual(next(row["file"] for row in view["files"] if row["role"] == "target"), target.public())
+        # The frozen version as the task page shows it, with where it came from: uploaded here, so no import source.
+        self.assertEqual(next(row["file"] for row in view["files"] if row["role"] == "target"), {**target.public(), "origin": {"available": False}})
         self.assertIsNone(next(row["audit"] for row in view["files"] if row["role"] == "reference"))
         replacement = self.store.create_staging(self.alice, "historical.xlsx", "application/octet-stream", 1, file_id=target.file_id)
         self.store.put_blob(replacement, b"y")
