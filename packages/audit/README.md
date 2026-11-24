@@ -62,7 +62,7 @@ RESOURCE = {
 
 ## 候选与转正
 
-- 候选叶子放在 `assets/<客户>/rulebook/<版本>/candidates/<公司>/<叶子>/`，和正式叶子同形：同样三份文件，同样的 `checker.py`。
+- 候选叶子放在 `assets/<客户>/rulebook/<版本>/candidates/m<修订>/<公司>/<叶子>/`，和正式叶子同形：同样三份文件，同样的 `checker.py`。
 - 候选的判定代码写进共享库，写成新的模块或新的类，不改正式叶子正在用的类和方法。候选的 `resources.py` 指向这些新类。
 - 转正：把候选叶子的三份文件复制进 `src/audit/checkers/<公司>/<叶子>/`，候选目录留作历史；再按 docs/rules.md 第 8 步重编预置规则、部署。
 
