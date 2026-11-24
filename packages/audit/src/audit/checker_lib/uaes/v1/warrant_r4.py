@@ -16,6 +16,7 @@ from audit.checker_lib.uaes.v1.warrant import (
     EXPLANATION,
     IDENTITY,
     ORDER,
+    PICTURE_SCHEMA,
     SAFETY,
     TOOLING,
     WEIGHT,
@@ -46,6 +47,13 @@ def submission_detail(text: str) -> bool:
 
 class WarrantR4(WarrantR3):
     """Reader for signed UAES v1.0 revision 4."""
+
+    def transcribe(self, image: bytes, prompt: str, schema: dict[str, Any], subject: str, *, output_correction: str | None = None) -> dict[str, Any]:
+        if schema is PICTURE_SCHEMA:
+            properties = schema["properties"]
+            schema = {**schema, "properties": {**properties, "kind": {"type": "string", **properties["kind"]}}}
+            output_correction = "仅输出 JSON 对象，包含 kind 和 detail 两个字段。kind 必须是允许的字符串；无法判断时 kind 写 uncertain，detail 写 null。不加解释或代码块。"
+        return super().transcribe(image, prompt, schema, subject, output_correction=output_correction)
 
     def check_explanation(self, audit: _Reading, value: str) -> None:
         """A reference is not an observation. Resolve only bounded, unambiguous locations in frozen originals."""
