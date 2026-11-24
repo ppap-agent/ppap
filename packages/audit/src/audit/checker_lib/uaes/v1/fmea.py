@@ -1111,6 +1111,9 @@ class _Revision3(UaesPfmeaAgent):
                     unread.append(page.number + 1)
         return rows, unread
 
+    def process_witness(self, description: str, characteristic: str, item: Item) -> str | None:
+        return process_witness(description, characteristic, item)
+
     @rule("PFD主工序在PFMEA中覆盖")
     def rule_5(self, ctx: RuleContext):
         pfds = self.batch_files("过程流程图")
@@ -1158,7 +1161,7 @@ class _Revision3(UaesPfmeaAgent):
                     (unsure if unread else missing).append(f"PFD“{name}”工序{step}“{description}”未定位到对应PFMEA行")
                     continue
                 analyzed = [item for group in mine for item in group]
-                proof = next(((item, witness) for item in analyzed if (witness := process_witness(description, characteristic, item))), None)
+                proof = next(((item, witness) for item in analyzed if (witness := self.process_witness(description, characteristic, item))), None)
                 if proof:
                     item, witness = proof
                     if locator := getattr(item, "locator", None):

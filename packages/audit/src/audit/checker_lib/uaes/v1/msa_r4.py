@@ -38,12 +38,23 @@ from .msa import (
     Report as MsaReport,
 )
 
+_PARAMETER = ("测量参数", "Measure parameter", "Measuring parameter", "特性", "特 性", "Denote Requirement", "标注要求")
+_LIMIT = ("参数规格", "Parameter specification")
+_UNIT_LABEL = ("测量单位", "测量参数单位", "measurement unit", "unit of measurement")
+_LINEAR_UNIT = r"(?:mm|μm|um|毫米|微米)"
+
+
+def linear_unit(value: str | None) -> str | None:
+    unit = _c(value or "")
+    return {"mm": "mm", "毫米": "mm", "μm": "μm", "um": "μm", "微米": "μm"}.get(unit)
+
 
 @dataclass
 class Report(MsaReport):
     """Keep separately anchored conclusion and metric evidence for this revision."""
 
     result_cells: tuple = ()
+    dimension_units: frozenset[str] = frozenset()
     allowance: bool = False
     waiver: bool = False
 
@@ -189,11 +200,24 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
         report.parts = set(_PART.findall(unicodedata.normalize("NFKC", text).upper()))
         report.names = [value for value in self.glabel(grid, (*self.READER.resources.GAUGE_NAME, "名称 Object", "测量工具名称")) if _c(value) not in _PLACEHOLDERS]
         report.numbers = [value for value in self.glabel(grid, (*self.READER.resources.GAUGE_NUMBER, "编号")) if _c(value) not in _PLACEHOLDERS]
-        parameter_cells = self.label_cells(grid, ("测量参数", "Measure parameter", "Measuring parameter", "特性", "特 性", "Denote Requirement", "标注要求"))
+        # A dimension unit belongs to a declared measurement field or to an
+        # explicit measurement-unit field, never to the gauge range or the plan.
+        measurement_grid = grid.copy()
+        unit_places = self.label_cells(grid, _UNIT_LABEL)
+        fields = {compact(label) for label in (*_PARAMETER, *_LIMIT)}
+        for (row, col), text in grid.items():
+            heading = re.fullmatch(rf"(.+?)\s*\(({_LINEAR_UNIT})\)(\s*[:：].*)?", unicodedata.normalize("NFKC", text), re.I | re.S)
+            if heading and compact(heading[1]) in fields:
+                measurement_grid[row, col] = heading[1] + (heading[3] or "")
+                unit_places.append((row, col, heading[2]))
+        parameter_cells = self.label_cells(measurement_grid, _PARAMETER)
+        limit_cells = self.label_cells(measurement_grid, _LIMIT)
         characteristic = [value for _, _, value in parameter_cells]
-        report.study_cells = tuple((ws, r, c) for r, c, _ in parameter_cells)
+        units = {linear_unit(text) or "unresolved" for _, _, text in unit_places if _c(text) not in _PLACEHOLDERS}
+        report.dimension_units = frozenset(units)
+        report.study_cells = tuple(dict.fromkeys((ws, r, c) for r, c, _ in (*parameter_cells, *limit_cells, *unit_places)))
         report.studied = tuple(v for v in characteristic if _c(v) not in _PLACEHOLDERS)
-        limits = self.glabel(grid, ("参数规格", "Parameter specification"))
+        limits = [value for _, _, value in limit_cells]
         report.limits = tuple(v for v in limits if _c(v) not in _PLACEHOLDERS)
         characteristic += limits
         subjects = self.glabel(grid, ("零件号", "零件名称", "零件编号", "Part No.", "Part Number", "Part Name", "Product number", "测量对象: Measurement object"))
@@ -388,17 +412,25 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
         # A plan can give endpoints while the report separates the nominal and
         # tolerance. Only a complete interval, not a shared nominal, proves identity.
         number = r"(\d+(?:\.\d+)?)"
-        interval = re.fullmatch(number + r"[-~～–]" + number + r"(mm|μm|um)?", expected)
-        nominal = re.fullmatch(number + r"(mm|μm|um)?", written)
-        if interval and nominal and interval[3] == nominal[2] and len(report.limits) == 1:
-            lim = _c(report.limits[0]).strip("()")
-            sym = re.fullmatch("±" + number, lim)
-            asym = re.fullmatch(r"\+?" + number + "/-" + number, lim)
+        interval = re.fullmatch(number + r"[-~～–]" + number + rf"({_LINEAR_UNIT})?", expected)
+        nominal = re.fullmatch(number + rf"({_LINEAR_UNIT})?", written)
+        if interval and nominal and len(report.limits) == 1:
+            lim = _c(report.limits[0]).strip("()").replace("−", "-")
+            sym = re.fullmatch("±" + number + rf"({_LINEAR_UNIT})?", lim)
+            asym = re.fullmatch(r"\+?" + number + "/-" + number + rf"({_LINEAR_UNIT})?", lim)
             if tol := sym or asym:
+                report_units = set(report.dimension_units) if isinstance(report, Report) else set()
+                report_units.update(unit for text in (nominal[2], tol[3] if asym else tol[2]) if (unit := linear_unit(text)))
+                # Do not import the expected unit into an unlabelled report.
+                expected_unit = linear_unit(interval[3])
+                if len(report_units) != 1 or not expected_unit or "unresolved" in report_units:
+                    return None
+                observed_unit = next(iter(report_units))
+                scale = {"mm": Decimal(1000), "μm": Decimal(1)}
                 high = Decimal(tol[1])
                 low = Decimal(tol[2]) if asym else high
                 n = Decimal(nominal[1])
-                return (n - low, n + high) == (Decimal(interval[1]), Decimal(interval[2]))
+                return ((n - low) * scale[observed_unit], (n + high) * scale[observed_unit]) == (Decimal(interval[1]) * scale[expected_unit], Decimal(interval[2]) * scale[expected_unit])
         return MsaClauses.characteristic_match(feature, feature, report, unique_name=True, unique_requirement=True)
 
     @rule("计划量具与GRR/Kappa报告匹配及报告结论与指标")

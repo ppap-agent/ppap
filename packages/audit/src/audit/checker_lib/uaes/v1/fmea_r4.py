@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import replace
 
 from audit.checker_lib.excel_agent import rule
@@ -19,6 +20,28 @@ _LIST_FIELDS = (
 )
 _FMEA_OPERATION = ColumnModel(canonical_name="分析工序", section_name="PFMEA失效区", aliases=("工序名称", "过程名称", "Process Name"))
 _BASE = UaesPfmeaRevision3.EXTRA_RESOURCE
+
+
+# Process-specific positive evidence, restricted to a matched step and a
+# substantive failure mode. Similar process names alone never match.
+_PROCESS_ACTIONS = (
+    (r"熔化|溶化|\b(?:melt|melting)\b", r"硅|成[分份]|silicon|composition|熔体|炉温|熔炼温度"),
+    (r"激光(?:打码|打标|刻字)|laser\s*(?:marking|engraving)", r"刻字|打码|打标|二维码|追溯码|marking|engraving"),
+)
+
+
+def action_failure_witness(description: str, function: str, mode: str) -> str | None:
+    if not substantive(mode):
+        return None
+    source = operation_labels(description)
+    actions = {label for token in re.split(r"[，,、；;]", function) for label in operation_labels(token)}
+    for operation, failure in _PROCESS_ACTIONS:
+        if not any(re.fullmatch(operation, name, re.I) for name in source):
+            continue
+        if not any(re.fullmatch(operation, name, re.I) for name in actions) or not re.search(failure, unicodedata.normalize("NFKC", mode), re.I):
+            continue
+        return f"同号工序“{description}”与“{function}”写明同一工艺动作，且该行分析了“{mode}”"
+    return None
 
 
 class UaesPfmeaRevision4(UaesPfmeaRevision3):
@@ -40,6 +63,12 @@ class UaesPfmeaRevision4(UaesPfmeaRevision3):
             ),
         },
     )
+
+    def process_witness(self, description: str, characteristic: str, item):
+        found = super().process_witness(description, characteristic, item)
+        if found is not None:
+            return found
+        return action_failure_witness(description, item.values.get("功能", ""), item.values.get("失效模式", ""))
 
     def _same_part_lists(self, ctx, part, project):
         classified, unresolved = [], []
