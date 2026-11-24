@@ -68,6 +68,7 @@ def test_every_shown_type_has_one_readable_name():
             assert entry["code"].startswith("E") or name == entry["rule_type"], (customer.id, entry)
     # Counterpart documents are named too, though in no M.
     assert names["E12"] and names["E12"] != "E12"
+    assert names["E11A"] == "偏差认可汇总清单" and "E11A" not in customers.find("uaes").type_set.types
 
 
 def test_missing_type_set_yields_no_coverage():

@@ -344,6 +344,13 @@ def test_uaes_pgqp1_is_an_automatic_reference_never_a_formal_target(filename):
     assert (result["document_type"], result["matching_status"], result["matched_rule_id"]) == ("E12", "reference", None)
 
 
+def test_uaes_deviation_list_is_recognized_as_the_approval_cover_counterpart():
+    rules = [rule("uaes-cea", ["UAES"], "E11", rule_profile="v4")]
+    content = workbook_bytes(("零件号", "F01RD0YC50"), ("偏差项", "尺寸超差"), ("UAES 评估确认", "同意"), ("是否需要偏差", "是"))
+    result = analyze_file("偏差汇总清单.xlsx", content, rules, ai=MetadataAI({}, "E11A 偏差认可汇总清单"), customer_preference="UAES")
+    assert (result["document_type"], result["matching_status"], result["matched_rule_id"]) == ("E11A", "reference", None)
+
+
 def test_pgqp1_reference_routing_does_not_escape_the_uaes_customer_scope():
     result = analyze_file("PGQP1.xlsx", workbook_bytes(("客户", "理想")), [rule("li-cp", ["理想"], rule_profile="v4")], ai=MetadataAI({}), customer_preference="理想")
     assert result["matching_status"] != "reference"

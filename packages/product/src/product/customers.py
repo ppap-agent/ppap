@@ -48,8 +48,11 @@ CUSTOMERS: tuple[RegisteredCustomer, ...] = (
     RegisteredCustomer("nio", "蔚来", "蔚来/Nio", TypeSet("V3.33", _V3_33, ("T01a", "T09", "T10", "T11", "T12"))),
 )
 
-# Counterpart documents: compared against, never audited on their own and in no customer's M.
-COUNTERPARTS = {"E12": "采购件质量计划（PGQP1）"}
+# Counterpart documents: compared against, never audited on their own and in no customer's M. E11A is the deviation
+# list a customer engineering approval (E11) cover is checked against on its deviation path; it has no customer code.
+COUNTERPARTS = {"E12": "采购件质量计划（PGQP1）", "E11A": "偏差认可汇总清单"}
+# What a counterpart holds, for recognition to tell it from the documents it is compared with.
+COUNTERPART_CONTENTS = {"E11A": "顾客工程批准偏差认可的比对清单：逐行列零件号、偏差项、UAES 评估确认、是否需要偏差"}
 
 
 def find(customer_id: str) -> RegisteredCustomer | None:

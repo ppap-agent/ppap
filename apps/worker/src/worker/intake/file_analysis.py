@@ -8,6 +8,7 @@ from pathlib import Path
 
 import documents.ai
 from audit.kinds import PpapDocumentType
+from product.customers import COUNTERPART_CONTENTS, COUNTERPARTS
 from product.rules import document_types
 
 # Both answers are short JSON, but some providers count hidden reasoning in the cap.
@@ -167,8 +168,10 @@ def analyze_file(
         if len(source_matches) == 1:
             source_type = next(iter(source_matches))
         if customer_preference == "UAES":
-            # E12 is an allowed original reference, never a 42nd formal rule.
+            # Counterparts (E12 PGQP1, E11A deviation list) are allowed original references, never formal rules.
             source_types["E12"] = "采购件质量计划"
+            source_types["E11A"] = COUNTERPARTS["E11A"]
+            described.update(COUNTERPART_CONTENTS)
             if (
                 source_type is None
                 and PpapDocumentType.infer_from_signals(filename=filename) == PpapDocumentType.UNKNOWN
@@ -222,7 +225,7 @@ def analyze_file(
     matching = "unmatched"
     if any(notice in notices for notice in ("document_text_unavailable", "empty_document_text", "metadata_extraction_failed", "document_classification_failed")):
         matching = "failed"
-    elif reference_only or source_type == "E12":
+    elif reference_only or source_type in COUNTERPARTS:
         matching = "reference"
     elif inferred == PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST and not v4_mode:
         matching = "reference"
