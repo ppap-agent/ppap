@@ -1258,3 +1258,5 @@ class WarrantR3(Reader):
         if unsure:
             raise unable("零件号一致；" + "；".join(unsure) + "，需人工判断。")
         return "PASS", f"零件提交保证书客户零件号“{number}”与同批次控制计划零件号一致；" + "；".join(matched) + "。"
+
+# ruff: noqa: E402, F821  # a candidate leaf binds the declared reader's names at run time; it may not import it

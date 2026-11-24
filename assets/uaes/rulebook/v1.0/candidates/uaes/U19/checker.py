@@ -745,3 +745,5 @@ class ApprovalR3(Reader):
                 self.cite(sheet, row.row_index, row.columns["偏差备注"].header_col)
                 found.append((day, current or f"第{row.row_index}行"))
         return found
+
+# ruff: noqa: E402, F821  # a candidate leaf binds the declared reader's names at run time; it may not import it

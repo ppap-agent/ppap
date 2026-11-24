@@ -940,3 +940,5 @@ class Revision3Audit(AgentAudit):
 
 def create_audit(audit_file, rule, group_context=None):
     return Revision3Audit(audit_file, rule, group_context, resource=RESOURCE)
+
+# ruff: noqa: E402, F821  # a candidate leaf binds the declared reader's names at run time; it may not import it
