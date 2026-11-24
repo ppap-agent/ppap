@@ -4,11 +4,11 @@ RESOURCE = {
     "customer": "UAES",
     "preset_key": "U14",
     "carriers": {
-        ".docx": "audit.checker_lib.uaes.records:UaesControlledDocumentAgent",
-        ".pdf": "audit.checker_lib.uaes.records:UaesControlledDocumentAgent",
-        ".xls": "audit.checker_lib.uaes.records:UaesControlledDocumentAgent",
-        ".xlsm": "audit.checker_lib.uaes.records:UaesControlledDocumentAgent",
-        ".xlsx": "audit.checker_lib.uaes.records:UaesControlledDocumentAgent",
+        ".docx": "audit.checker_lib.uaes.v1.order_spec:UaesControlledDocumentAgentR3",
+        ".pdf": "audit.checker_lib.uaes.v1.order_spec:UaesControlledDocumentAgentR3",
+        ".xls": "audit.checker_lib.uaes.v1.order_spec:UaesControlledDocumentAgentR3",
+        ".xlsm": "audit.checker_lib.uaes.v1.order_spec:UaesControlledDocumentAgentR3",
+        ".xlsx": "audit.checker_lib.uaes.v1.order_spec:UaesControlledDocumentAgentR3",
     },
-    "methods": {"U14:1": "rule_1"},
+    "methods": {"ORD:1": "ord_1"},
 }

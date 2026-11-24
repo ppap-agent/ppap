@@ -1,4 +1,4 @@
-"""Revision-3 MSL:3 / ORD:1, frozen candidate entry point. Visual transcriptions here are fixtures, not live model tests."""
+"""Revision-3 MSL:3 / ORD:1, frozen installed entry point. Visual transcriptions here are fixtures, not live model tests."""
 
 import hashlib
 import json
@@ -10,11 +10,11 @@ import pytest
 from agent.execution.audit_runtime import run_audit
 from agent.execution.checker_runtime import CheckerRuntime
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-from audit.standard_suites import _load_leaf, library_revision
+from audit.standard_suites import _CHECKERS_ROOT, _load_leaf, library_revision
 from openpyxl import load_workbook
 
 UAES = Path(__file__).resolve().parents[4] / "assets/uaes"
-LEAVES = UAES / "rulebook/v1.0/candidates"
+LEAVES = _CHECKERS_ROOT
 PART = next((UAES / "samples").glob("F01R10Y776*"))
 MSL = next(PART.rglob("7.*776.xlsx"))
 DRAWING = next(PART.rglob("Z_F01R10Y776.pdf"))

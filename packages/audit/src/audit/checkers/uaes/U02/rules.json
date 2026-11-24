@@ -10,16 +10,16 @@
   "title": "测量比较报告审核规则",
   "rules": [
     {
-      "id": "U02:1",
-      "category": "签字确认",
+      "id": "MCMP:1",
+      "category": "UAES-MCMP-四方签字-校验",
       "priority": "P0",
-      "rule_to_check": "识别文件中是否包含测量比较报告，如果包含则继续识别报告底部的供应商、UAES技术中心、UAES测量部门、UAES供应商质量开发工程师四个字段是否都存在且字段对应区域都有签字则通过，否则不通过。",
+      "rule_to_check": "文件必须包含测量比较报告；该报告底部必须有“供应商”“UAES 技术中心”“UAES 测量部门”“UAES 供应商质量开发工程师”四个字段，且四个对应区域均有签字。缺报告、缺字段或任一签字缺失均不通过。\n\n供应商侧签署区除签字外还须加盖供应商有效印章。",
       "type_of_rule": "text",
       "severity": "A"
     }
   ],
   "directory_coverage": "complete",
   "checker_binding": {
-    "U02:1": "checker:create_audit"
+    "MCMP:1": "checker:create_audit"
   }
 }

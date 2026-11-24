@@ -23,13 +23,13 @@ def text_model(monkeypatch):
     return install
 
 
-def read_leaf_resource(source_path: str) -> dict:
-    """The ``RESOURCE`` literal of an installed leaf such as ``nio/N03``, read without importing the leaf."""
+def read_leaf_resource(source_path: str, root=None) -> dict:
+    """The ``RESOURCE`` literal of a leaf such as ``nio/N03`` (installed unless ``root`` names an archive), read without importing the leaf."""
     import ast
 
     from audit.standard_suites import _CHECKERS_ROOT
 
-    source = (_CHECKERS_ROOT / source_path / "resources.py").read_text(encoding="utf-8")
+    source = ((root or _CHECKERS_ROOT) / source_path / "resources.py").read_text(encoding="utf-8")
     (resource,) = [
         ast.literal_eval(node.value) for node in ast.parse(source).body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "RESOURCE" for target in node.targets)
     ]

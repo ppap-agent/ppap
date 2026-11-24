@@ -4,10 +4,10 @@ RESOURCE = {
     "customer": "UAES",
     "preset_key": "U04",
     "carriers": {
-        ".pdf": "audit.checker_lib.uaes.materials:UaesMaterialsAgent",
-        ".xls": "audit.checker_lib.uaes.materials:UaesMaterialsAgent",
-        ".xlsm": "audit.checker_lib.uaes.materials:UaesMaterialsAgent",
-        ".xlsx": "audit.checker_lib.uaes.materials:UaesMaterialsAgent",
+        ".pdf": "audit.checker_lib.uaes.v1.materials:UaesMaterialsAgentR3",
+        ".xls": "audit.checker_lib.uaes.v1.materials:UaesMaterialsAgentR3",
+        ".xlsm": "audit.checker_lib.uaes.v1.materials:UaesMaterialsAgentR3",
+        ".xlsx": "audit.checker_lib.uaes.v1.materials:UaesMaterialsAgentR3",
     },
-    "methods": {"U04:1": "rule_1", "U04:2": "rule_2", "U04:3": "rule_3"},
+    "methods": {"MSL:1": "msl_1", "MSL:2": "msl_2", "MSL:3": "msl_3", "MSL:4": "msl_4"},
 }

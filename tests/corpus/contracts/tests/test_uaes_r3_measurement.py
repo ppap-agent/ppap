@@ -1,4 +1,4 @@
-"""Only revision-3 candidate code, run with frozen originals and no model grants."""
+"""Only revision-3 leaf code, run with frozen originals and no model grants."""
 
 import hashlib
 import json
@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 from agent.execution.audit_runtime import run_audit
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-from audit.standard_suites import _load_leaf, library_revision
+from audit.standard_suites import _CHECKERS_ROOT, _load_leaf, library_revision
 
 BASE = Path(__file__).resolve().parents[4] / "assets/uaes"
-LEAVES = BASE / "rulebook/v1.0/candidates"
+LEAVES = _CHECKERS_ROOT
 NORMAL = next((BASE / "samples").glob("F01RD0YA40*")) / "测试文件"
 IR = next(NORMAL.glob("01-1 */*207*.xls"))
 OTS = next(NORMAL.glob("17 */*OTS*.pdf"))

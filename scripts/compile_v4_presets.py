@@ -1,8 +1,10 @@
 """Compile the customer rule presets shipped with audit wheels.
 
 Clause text comes from each checker leaf's rules.json, the current authority.
-The DOCX files are the historical import archive: they only supply document
-identity, clause numbering, category and locator, never clause text.
+The DOCX files are the historical import archive: they supply document identity
+and, unless the customer audits a clarified rulebook revision, clause numbering,
+category and locator; never clause text. A revision's clause files then supply
+clause identity and category.
 This neither generates Checker code nor claims that a clause is implemented.
 CI runs --check in the Repository job; it exits nonzero when preset_rules.json drifts.
 """
@@ -23,6 +25,8 @@ ASSETS = ROOT / "assets"
 OUTPUT = ROOT / "packages/audit/src/audit/preset_rules.json"
 LEAVES = ROOT / "packages/audit/src/audit/checkers"
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+# Customers whose audits switched to a clarified rulebook revision: one clause file per abbreviation.
+REVISIONS = {"UAES": ASSETS / "uaes/rulebook/v1.0/m3/条文"}
 # Explicit source identity. Sorting filenames would swap L02/L03 and U07/U08.
 FILES = {
     "UAES": [
@@ -104,6 +108,44 @@ def assign_clause_ids(entry: str, clauses: list[dict]) -> None:
         clause["id"] = f"{entry}:{number}" if uses[number] == 1 else f"{entry}:{number}-{seen[number]}"
 
 
+def docx_clauses(path: Path, entry: str) -> list[dict]:
+    with ZipFile(path) as archive:
+        document = ET.fromstring(archive.read("word/document.xml"))
+    clauses = []
+    for table_index, table in enumerate(document.findall(".//w:tbl", NS), 1):
+        header = [cell_text(cell) for cell in table.findall("w:tr", NS)[0].findall("w:tc", NS)]
+        description_column = next((header.index(label) for label in ("规则说明", "审核规则") if label in header), None)
+        category_column = header.index("规则简述") if "规则简述" in header else None
+        for row_index, row in enumerate(table.findall("w:tr", NS), 1):
+            cells = [cell_text(cell) for cell in row.findall("w:tc", NS)]
+            if not cells or not cells[0].isdigit():
+                continue
+            if description_column is None or len(cells) <= description_column:
+                raise ValueError(f"Invalid rule header: {path.name}:{row_index}")
+            number = cells[0]
+            category = cells[category_column] if category_column is not None else f"条款 {number}"
+            text = cells[description_column]
+            if not text:
+                raise ValueError(f"Empty rule text: {path.name}:{row_index}")
+            clauses.append({"id": "", "source_number": number, "category": category, "text": text, "locator": f"table:{table_index}/row:{row_index}"})
+    if not clauses:
+        raise ValueError(f"Empty clauses: {path.name}")
+    assign_clause_ids(entry, clauses)
+    return clauses
+
+
+def revision_clauses(directory: Path, leaf: Path) -> tuple[Path, list[dict]]:
+    """The revision file whose abbreviation names the leaf's clauses, e.g. CP:6 → CP.json."""
+    abbreviations = {item["id"].split(":", 1)[0] for item in json.loads(leaf.read_text(encoding="utf-8"))["rules"]}
+    if len(abbreviations) != 1:
+        raise ValueError(f"Clause abbreviations differ inside the checker leaf: {leaf.relative_to(ROOT)}")
+    path = directory / f"{abbreviations.pop()}.json"
+    rules = json.loads(path.read_text(encoding="utf-8"))["rules"]
+    if not rules:
+        raise ValueError(f"Empty clauses: {path.relative_to(ROOT)}")
+    return path, [{"id": item["id"], "source_number": item["id"].split(":", 1)[1], "category": item["category"], "text": item["rule_to_check"], "locator": "rule:" + item["id"]} for item in rules]
+
+
 def compile_presets() -> str:
     result = []
     expected_files = set()
@@ -113,28 +155,10 @@ def compile_presets() -> str:
             entry = f"{prefix}{index:02d}"
             path = ASSETS / customer_directory(customer) / "rules" / filename
             expected_files.add(path)
-            with ZipFile(path) as archive:
-                document = ET.fromstring(archive.read("word/document.xml"))
-            clauses = []
-            for table_index, table in enumerate(document.findall(".//w:tbl", NS), 1):
-                header = [cell_text(cell) for cell in table.findall("w:tr", NS)[0].findall("w:tc", NS)]
-                description_column = next((header.index(label) for label in ("规则说明", "审核规则") if label in header), None)
-                category_column = header.index("规则简述") if "规则简述" in header else None
-                for row_index, row in enumerate(table.findall("w:tr", NS), 1):
-                    cells = [cell_text(cell) for cell in row.findall("w:tc", NS)]
-                    if not cells or not cells[0].isdigit():
-                        continue
-                    if description_column is None or len(cells) <= description_column:
-                        raise ValueError(f"Invalid rule header: {path.name}:{row_index}")
-                    number = cells[0]
-                    category = cells[category_column] if category_column is not None else f"条款 {number}"
-                    text = cells[description_column]
-                    if not text:
-                        raise ValueError(f"Empty rule text: {path.name}:{row_index}")
-                    clauses.append({"id": "", "source_number": number, "category": category, "text": text, "locator": f"table:{table_index}/row:{row_index}"})
-            if not clauses:
-                raise ValueError(f"Empty clauses: {path.name}")
-            assign_clause_ids(entry, clauses)
+            if customer in REVISIONS:
+                source, clauses = revision_clauses(REVISIONS[customer], LEAVES / customer_directory(customer) / entry / "rules.json")
+            else:
+                source, clauses = path, docx_clauses(path, entry)
             result.append(
                 {
                     "customer": customer,
@@ -142,7 +166,7 @@ def compile_presets() -> str:
                     "source_type": kind,
                     "level": "L1" if index <= (3 if customer == "蔚来" else 8) else "L2",
                     "title": path.stem,
-                    "source_path": str(path.relative_to(ROOT)),
+                    "source_path": str(source.relative_to(ROOT)),
                     "clauses": clauses,
                 }
             )

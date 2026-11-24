@@ -4,11 +4,10 @@ RESOURCE = {
     "customer": "UAES",
     "preset_key": "U05",
     "carriers": {
-        ".docx": "audit.checker_lib.uaes.msa:UaesMsaAgent",
-        ".pdf": "audit.checker_lib.uaes.msa:UaesMsaAgent",
-        ".xls": "audit.checker_lib.uaes.msa:UaesMsaAgent",
-        ".xlsm": "audit.checker_lib.uaes.msa:UaesMsaAgent",
-        ".xlsx": "audit.checker_lib.uaes.msa:UaesMsaAgent",
+        ".pdf": "audit.checker_lib.uaes.v1.msa:UaesMsaAgentR3",
+        ".xls": "audit.checker_lib.uaes.v1.msa:UaesMsaAgentR3",
+        ".xlsm": "audit.checker_lib.uaes.v1.msa:UaesMsaAgentR3",
+        ".xlsx": "audit.checker_lib.uaes.v1.msa:UaesMsaAgentR3",
     },
-    "methods": {"U05:1-1": "rule_1", "U05:1-2": "rule_2", "U05:2": "rule_3", "U05:3": "rule_4"},
+    "methods": {"MSA:1": "rule_1", "MSA:2": "rule_2", "MSA:3": "rule_3", "MSA:4": "rule_4", "MSA:5": "rule_5", "MSA:6": "rule_6"},
 }

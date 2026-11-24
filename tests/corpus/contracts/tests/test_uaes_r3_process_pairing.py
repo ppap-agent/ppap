@@ -1,4 +1,4 @@
-"""Revision 3 cross-file identity, using the candidate entry point and real source cells. Only image transcription is substituted."""
+"""Revision 3 cross-file identity, using the leaf entry point and real source cells. Only image transcription is substituted."""
 
 import hashlib
 import json
@@ -8,11 +8,11 @@ import fitz
 import pytest
 from agent.execution.audit_runtime import _load_program, _restore_modules
 from audit.contracts import AuditInput, GroupContextInput, RuleInput
-from audit.standard_suites import _load_leaf
+from audit.standard_suites import _CHECKERS_ROOT, _load_leaf
 from openpyxl import Workbook, load_workbook
 
 UAES = Path(__file__).resolve().parents[4] / "assets/uaes"
-LEAVES = UAES / "rulebook/v1.0/candidates"
+LEAVES = _CHECKERS_ROOT
 V040 = next((UAES / "samples").glob("*V040*")) / "测试文件"
 
 
@@ -21,7 +21,7 @@ def original(folder, section):
 
 
 @pytest.fixture
-def candidate(tmp_path):
+def leaf(tmp_path):
     loaded = []
 
     def open_audit(kind, target, peers):
@@ -75,8 +75,8 @@ def image_reader(files):
     return lambda image, *_: facts.get(pixels(fitz.Pixmap(image)), dict.fromkeys(("name", "nominal", "upper", "lower", "diameter", "envelope", "frame"), None) | {"readable": False})
 
 
-def test_magnetic_cover_quantitative_spec_is_not_no_dimensions(candidate):
-    audit, _ = candidate("U08", original(V040, "10"), {})
+def test_magnetic_cover_quantitative_spec_is_not_no_dimensions(leaf):
+    audit, _ = leaf("U08", original(V040, "10"), {})
     try:
         r = audit.evaluate("CP:5")
         assert r.status == "UNABLE"
@@ -85,9 +85,9 @@ def test_magnetic_cover_quantitative_spec_is_not_no_dimensions(candidate):
         audit.close()
 
 
-def test_list_dimensions_remain_distinct_from_names(candidate):
+def test_list_dimensions_remain_distinct_from_names(leaf):
     f = original(V040, "11")
-    audit, _ = candidate("U07", original(V040, "09"), {"过程特殊特性清单": f})
+    audit, _ = leaf("U07", original(V040, "09"), {"过程特殊特性清单": f})
     try:
         audit._implementation().transcribe = image_reader([(f, {30: (0, 1), 31: (1, 1), 32: (2, 1), 33: (3, 2), 34: (4, 2), 35: (5, 1), 36: (6, 2)})])
         r = audit.evaluate("PFMEA:3")
@@ -97,9 +97,9 @@ def test_list_dimensions_remain_distinct_from_names(candidate):
         audit.close()
 
 
-def test_control_plan_compares_a_mark_only_after_pairing_both_keys(candidate):
+def test_control_plan_compares_a_mark_only_after_pairing_both_keys(leaf):
     flow, fmea = original(V040, "08"), original(V040, "09")
-    audit, _ = candidate("U08", original(V040, "10"), {"过程流程图": flow, "潜在过程失效模式及后果分析": fmea})
+    audit, _ = leaf("U08", original(V040, "10"), {"过程流程图": flow, "潜在过程失效模式及后果分析": fmea})
     try:
         audit._implementation().transcribe = image_reader(
             [
@@ -115,9 +115,9 @@ def test_control_plan_compares_a_mark_only_after_pairing_both_keys(candidate):
 
 
 @pytest.mark.parametrize("part", ["776", "A40"])
-def test_process_analysis_retains_evidence_for_local_names(candidate, part):
+def test_process_analysis_retains_evidence_for_local_names(leaf, part):
     folder = next((UAES / "samples").glob(f"*{part}*")) / "测试文件"
-    audit, _ = candidate("U07", original(folder, "09"), {"过程流程图": original(folder, "08")})
+    audit, _ = leaf("U07", original(folder, "09"), {"过程流程图": original(folder, "08")})
     try:
         r = audit.evaluate("PFMEA:5")
         assert r.status == "UNABLE", r.suggestions
@@ -126,7 +126,7 @@ def test_process_analysis_retains_evidence_for_local_names(candidate, part):
         audit.close()
 
 
-def test_same_step_with_identified_stock_and_inspection_objects(candidate, tmp_path):
+def test_same_step_with_identified_stock_and_inspection_objects(leaf, tmp_path):
     # A short flow containing the three operations, exactly as written in 776.
     folder = next((UAES / "samples").glob("*776*")) / "测试文件"
     source = load_workbook(original(folder, "08"), read_only=True, data_only=True)
@@ -141,7 +141,7 @@ def test_same_step_with_identified_stock_and_inspection_objects(candidate, tmp_p
         source.close()
     flow = tmp_path / "flow.xlsx"
     book.save(flow)
-    audit, _ = candidate("U07", original(folder, "09"), {"过程流程图": flow})
+    audit, _ = leaf("U07", original(folder, "09"), {"过程流程图": flow})
     try:
         r = audit.evaluate("PFMEA:5")
         assert r.status == "PASS" and "全部3道" in r.suggestions, r.suggestions
@@ -150,8 +150,8 @@ def test_same_step_with_identified_stock_and_inspection_objects(candidate, tmp_p
         audit.close()
 
 
-def test_wrapped_bilingual_operations_keep_the_same_chinese_name(candidate):
-    audit, _ = candidate("U07", original(V040, "09"), {"过程流程图": original(V040, "08")})
+def test_wrapped_bilingual_operations_keep_the_same_chinese_name(leaf):
+    audit, _ = leaf("U07", original(V040, "09"), {"过程流程图": original(V040, "08")})
     try:
         result = audit.evaluate("PFMEA:5")
         assert result.status == "UNABLE" and "已确认7道主工序" in result.suggestions, result.suggestions

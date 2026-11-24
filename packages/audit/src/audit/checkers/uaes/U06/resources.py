@@ -4,10 +4,10 @@ RESOURCE = {
     "customer": "UAES",
     "preset_key": "U06",
     "carriers": {
-        ".pdf": "audit.checker_lib.uaes.engineering:UaesCapabilityAgent",
-        ".xls": "audit.checker_lib.uaes.engineering:UaesCapabilityAgent",
-        ".xlsm": "audit.checker_lib.uaes.engineering:UaesCapabilityAgent",
-        ".xlsx": "audit.checker_lib.uaes.engineering:UaesCapabilityAgent",
+        ".pdf": "audit.checker_lib.uaes.v1.capability:UaesCapabilityAgentR3",
+        ".xls": "audit.checker_lib.uaes.v1.capability:UaesCapabilityAgentR3",
+        ".xlsm": "audit.checker_lib.uaes.v1.capability:UaesCapabilityAgentR3",
+        ".xlsx": "audit.checker_lib.uaes.v1.capability:UaesCapabilityAgentR3",
     },
-    "methods": {"U06:1": "rule_1", "U06:2": "rule_2", "U06:3": "rule_3", "U06:4": "rule_4", "U06:5": "rule_5"},
+    "methods": {"PCE:1": "rule_1", "PCE:2": "rule_2", "PCE:3": "rule_3", "PCE:4": "rule_4", "PCE:5": "rule_5", "PCE:6": "rule_6"},
 }

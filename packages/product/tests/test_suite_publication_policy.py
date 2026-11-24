@@ -49,7 +49,8 @@ def test_partial_official_directory_cannot_be_forced_into_the_active_head():
     # leaf's current implementation coverage.
     partial_rules = json.loads(files["rules.json"])
     partial_rules["directory_coverage"] = "partial"
-    partial_rules["checker_binding"] = {clause: partial_rules["checker_binding"][clause] for clause in ("U08:1", "U08:4")}
+    clauses = [row["id"] for row in partial_rules["rules"]]
+    partial_rules["checker_binding"] = {clause: partial_rules["checker_binding"][clause] for clause in (clauses[0], clauses[3])}
     files["rules.json"] = json.dumps(partial_rules).encode()
     partial = _resolved(files, tenant_id=None, related=directory.related_suite_keys)
     assert partial_official_directory_slice(partial) is True

@@ -1,4 +1,4 @@
-"""UAES revision 3 flow and capability candidates, frozen originals and bindings; visual reads are offline fixtures."""
+"""UAES revision 3 flow and capability leaves, frozen originals and bindings; visual reads are offline fixtures."""
 
 import hashlib
 import json
@@ -9,11 +9,11 @@ import pytest
 from agent.execution.audit_runtime import run_audit
 from agent.execution.checker_runtime import CheckerRuntime
 from audit.checker_core import ExecutionSnapshot, FrozenInput, FrozenTarget, RuleBinding, checker_digest
-from audit.standard_suites import _load_leaf, library_revision
+from audit.standard_suites import _CHECKERS_ROOT, _load_leaf, library_revision
 from openpyxl import Workbook
 
 UAES = Path(__file__).resolve().parents[4] / "assets/uaes"
-LEAVES = UAES / "rulebook/v1.0/candidates"
+LEAVES = _CHECKERS_ROOT
 
 
 def check(path, leaf, clause, peers=None, read=None):

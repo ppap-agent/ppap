@@ -4,11 +4,11 @@ RESOURCE = {
     "customer": "UAES",
     "preset_key": "U18",
     "carriers": {
-        ".docx": "audit.checker_lib.uaes.records:UaesTraceabilityDocxAgent",
-        ".pdf": "audit.checker_lib.uaes.records:UaesTraceabilityAgent",
-        ".xls": "audit.checker_lib.uaes.records:UaesTraceabilityAgent",
-        ".xlsm": "audit.checker_lib.uaes.records:UaesTraceabilityAgent",
-        ".xlsx": "audit.checker_lib.uaes.records:UaesTraceabilityAgent",
+        ".pdf": "audit.checker_lib.uaes.v1.traceability:UaesTraceabilityAgentR3",
+        ".xls": "audit.checker_lib.uaes.v1.traceability:UaesTraceabilityAgentR3",
+        ".xlsm": "audit.checker_lib.uaes.v1.traceability:UaesTraceabilityAgentR3",
+        ".xlsx": "audit.checker_lib.uaes.v1.traceability:UaesTraceabilityAgentR3",
+        ".docx": "audit.checker_lib.uaes.v1.traceability:UaesTraceabilityDocxAgentR3",
     },
-    "methods": {"U18:1": "rule_1"},
+    "methods": {"TRACE:1": "trace_1"},
 }

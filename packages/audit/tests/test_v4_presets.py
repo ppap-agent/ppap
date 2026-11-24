@@ -1,5 +1,8 @@
 """Independent V4 source identities; these tests do not certify Checker coverage."""
 
+import json
+from pathlib import Path
+
 import pytest
 from audit.kinds import PpapDocumentType
 from audit.presets import preset_rule, preset_rule_body
@@ -18,13 +21,15 @@ def test_preset_matrix_uses_customer_identity_not_legacy_filename_numbers():
 
 
 def test_repeated_source_numbers_have_distinct_stable_clause_identities():
-    sample = preset_rule("UAES", "U01")
-    assert [clause.source_number for clause in sample.clauses] == ["1", "2", "3", "1"]
-    assert len({clause.id for clause in sample.clauses}) == 4
-    assert sample.clauses[0].category == "尺寸测量报告覆盖性检查"
-    assert "实测值的列数是否是3或3的倍数" in sample.clauses[0].text
-    assert "气泡图独立文件" in sample.clauses[3].text
-    assert sample.clauses[0].id != sample.clauses[3].id
+    # UAES v0.0 numbered its clauses from the DOCX tables; the archived presets keep those identities for the old human truths.
+    archived = json.loads((Path(__file__).resolve().parents[3] / "assets/uaes/rulebook/v0.0/m1/presets.json").read_text(encoding="utf-8"))
+    clauses = next(row for row in archived if row["customer"] == "UAES" and row["entry_id"] == "U01")["clauses"]
+    assert [clause["source_number"] for clause in clauses] == ["1", "2", "3", "1"]
+    assert len({clause["id"] for clause in clauses}) == 4
+    assert clauses[0]["category"] == "尺寸测量报告覆盖性检查"
+    assert "实测值的列数是否是3或3的倍数" in clauses[0]["text"]
+    assert "气泡图独立文件" in clauses[3]["text"]
+    assert clauses[0]["id"] != clauses[3]["id"]
 
 
 def test_control_plan_customer_rules_preserve_actual_differences():

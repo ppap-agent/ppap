@@ -73,7 +73,7 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
             changes["rules.json"] = json.dumps(rules, ensure_ascii=False)
         elif fault == "no-reader":
             resource = ast.literal_eval(selected_source.files["resources.py"].decode().split("RESOURCE = ", 1)[1])
-            resource["methods"].pop("U08:6")
+            resource["methods"].pop("CP:6")
             changes["resources.py"] = "RESOURCE = " + repr(resource) + "\n"
         if changes:
             base = suites.get_revision(selected, principal.tenant_id)
@@ -154,6 +154,6 @@ def test_u08_api_worker_keeps_selected_source_under_failures(auth_store_factory,
             snapshot, programs = captured[0]
             assert snapshot == frozen.to_dict() and programs == {checker_digest(program): program}
             if fault == "native":
-                assert findings["U08:1"]["status"] == findings["U08:4"]["status"] == "PASS", {cid: (findings[cid]["status"], findings[cid].get("suggestions")) for cid in ("U08:1", "U08:4")}
+                assert findings["CP:1"]["status"] == findings["CP:4"]["status"] == "PASS", {cid: (findings[cid]["status"], findings[cid].get("suggestions")) for cid in ("CP:1", "CP:4")}
             else:
-                assert findings["U08:6"]["status"] == "UNABLE"
+                assert findings["CP:6"]["status"] == "UNABLE"

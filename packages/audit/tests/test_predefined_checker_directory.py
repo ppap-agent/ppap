@@ -12,6 +12,8 @@ from audit.presets import customer_presets
 from audit.standard_suites import _CHECKERS_ROOT, customer_directory, customer_name, load_predefined_checkers, predefined_directory_suites, predefined_sources
 
 ROOT = Path(__file__).resolve().parents[3]
+# The UAES v0.0 m1 leaves the old human truths were judged under; they still run the current shared library.
+ARCHIVED = ROOT / "assets/uaes/rulebook/v0.0/m1/checkers"
 LEAF = ("checker.py", "rules.json", "resources.py")
 CHECKER = "def create_audit(audit_file, rule, group_context=None):\n    return None\n"
 RULES = {"rules": [{"id": "C1", "rule_to_check": "clause"}], "checker_binding": {"C1": "checker:create_audit"}}
@@ -90,39 +92,67 @@ def test_li_and_nio_carriers_read_their_suffix_and_the_leaf_document_type(leaf_r
     assert checked
 
 
-def test_uaes_carriers_declare_the_formats_their_leaves_hand_them(leaf_resource):
+@pytest.mark.parametrize("root", [_CHECKERS_ROOT, ARCHIVED], ids=["installed", "v0.0-m1"])
+def test_uaes_carriers_declare_the_formats_their_leaves_hand_them(leaf_resource, root):
     carried: dict[type, set[str]] = {}
-    for suite in predefined_directory_suites():
+    for suite in load_predefined_checkers(root):
         if suite.source_path.startswith("uaes/"):
-            for suffix, cls in _carriers(leaf_resource, suite):
-                carried.setdefault(cls, set()).add(suffix)
+            for suffix, path in leaf_resource(suite.source_path, root)["carriers"].items():
+                module, name = path.split(":", 1)
+                carried.setdefault(getattr(importlib.import_module(module), name), set()).add(suffix)
     assert all(carried[cls] >= cls.SUPPORTED_EXTENSIONS for cls in carried), "a declared format no leaf hands over"
-    unread = {(cls.__name__, suffix) for cls, suffixes in carried.items() for suffix in suffixes - cls.SUPPORTED_EXTENSIONS}
-    # The MSA and control plan leaves hand over a DOCX their table readers do not read: UNABLE (below).
-    assert unread == {("UaesMsaAgent", ".docx"), ("UaesControlPlanAgent", ".docx")}
+    if root == ARCHIVED:
+        unread = {(cls.__name__, suffix) for cls, suffixes in carried.items() for suffix in suffixes - cls.SUPPORTED_EXTENSIONS}
+        # The MSA and control plan leaves hand over a DOCX their table readers do not read: UNABLE (below).
+        assert unread == {("UaesMsaAgent", ".docx"), ("UaesControlPlanAgent", ".docx")}
 
 
-@pytest.mark.parametrize("entry", ["U02", "U03", "U05", "U08", "U09", "U10", "U11", "U14", "U15", "U17", "U18"])
-def test_uaes_docx_is_decided_or_unable_without_a_model(tmp_path, leaf_resource, monkeypatch, entry):
+def _bare_docx(tmp_path, monkeypatch) -> Path:
     import docx
-    from audit.checker_lib.agents import AgentAudit
-    from audit.contracts import AuditInput, RuleInput
-    from audit.presets import preset_rule_body
 
     def no_model(*args, **kwargs):
         raise AssertionError("model called")
 
     monkeypatch.setattr("documents.ai.run_json", no_model)
     monkeypatch.setattr("audit.engine.checkers.ocr_visual_facts.request_ocr_visual_facts", no_model)
-    resource = leaf_resource(f"uaes/{entry}")
-    assert ".docx" in resource["carriers"]
     path = tmp_path / "original.docx"
     document = docx.Document()
     document.add_paragraph("文件")
     document.add_table(rows=1, cols=2).cell(0, 0).text = "零件号"
     document.save(path)
-    body = preset_rule_body("UAES", entry)
-    rule = RuleInput.of(body, rule_id=entry)
+    return path
+
+
+def test_installed_uaes_docx_never_passes_without_a_model(tmp_path, leaf_resource, monkeypatch):
+    from audit.checker_lib.agents import AgentAudit
+    from audit.contracts import AuditInput, RuleInput
+
+    path = _bare_docx(tmp_path, monkeypatch)
+    checked = 0
+    for suite in predefined_directory_suites():
+        resource = leaf_resource(suite.source_path)
+        if not suite.source_path.startswith("uaes/") or ".docx" not in resource["carriers"]:
+            continue
+        rule = RuleInput.of(json.loads(suite.files["rules.json"]), rule_id=suite.source_path)
+        audit = AgentAudit(AuditInput(audit_id=suite.source_path, file_url=str(path)), rule, None, resource=resource)
+        try:
+            results = {clause: audit.evaluate(clause) for clause in resource["methods"]}
+        finally:
+            audit.close()
+        assert "PASS" not in {item.status for item in results.values()}, (suite.source_path, {clause: (item.status, item.suggestions) for clause, item in results.items()})
+        checked += 1
+    assert checked
+
+
+@pytest.mark.parametrize("entry", ["U02", "U03", "U05", "U08", "U09", "U10", "U11", "U14", "U15", "U17", "U18"])
+def test_uaes_docx_is_decided_or_unable_without_a_model(tmp_path, leaf_resource, monkeypatch, entry):
+    from audit.checker_lib.agents import AgentAudit
+    from audit.contracts import AuditInput, RuleInput
+
+    resource = leaf_resource(f"uaes/{entry}", ARCHIVED)
+    assert ".docx" in resource["carriers"]
+    path = _bare_docx(tmp_path, monkeypatch)
+    rule = RuleInput.of(json.loads((ARCHIVED / "uaes" / entry / "rules.json").read_text(encoding="utf-8")), rule_id=entry)
     audit = AgentAudit(AuditInput(audit_id=entry, file_url=str(path)), rule, None, resource=resource)
     results = {clause: audit.evaluate(clause) for clause in resource["methods"]}
     assert {item.status for item in results.values()} <= {"NG", "UNABLE"}, {clause: (item.status, item.suggestions) for clause, item in results.items()}
@@ -340,17 +370,15 @@ def test_wheel_and_container_context_keep_the_same_leaf_bytes(tmp_path):
 
 
 def test_u13_accepts_image_formats_only(tmp_path, leaf_resource):
-    # U13:1 "提交文件为图片格式": a PDF is not an image format, so no implementation reads it.
+    # v0.0 U13:1 "提交文件为图片格式": a PDF is not an image format, so no implementation reads it.
     import io
 
     from audit.checker_lib.agents import AgentAudit
     from audit.contracts import AuditInput, RuleInput
-    from audit.presets import preset_rule_body
     from PIL import Image
 
-    resource = leaf_resource("uaes/U13")
-    body = preset_rule_body("UAES", "U13")
-    rule = RuleInput.of(body, rule_id="u13")
+    resource = leaf_resource("uaes/U13", ARCHIVED)
+    rule = RuleInput.of(json.loads((ARCHIVED / "uaes/U13/rules.json").read_text(encoding="utf-8")), rule_id="u13")
     stream = io.BytesIO()
     Image.new("RGB", (2, 2), "white").save(stream, format="PNG")
     statuses = {}

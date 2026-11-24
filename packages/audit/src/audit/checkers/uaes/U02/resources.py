@@ -4,11 +4,11 @@ RESOURCE = {
     "customer": "UAES",
     "preset_key": "U02",
     "carriers": {
-        ".docx": "audit.checker_lib.uaes.records:UaesMeasurementComparisonDocxAgent",
-        ".pdf": "audit.checker_lib.uaes.records:UaesMeasurementComparisonAgent",
-        ".xls": "audit.checker_lib.uaes.records:UaesMeasurementComparisonAgent",
-        ".xlsm": "audit.checker_lib.uaes.records:UaesMeasurementComparisonAgent",
-        ".xlsx": "audit.checker_lib.uaes.records:UaesMeasurementComparisonAgent",
+        ".pdf": "audit.checker_lib.uaes.v1.measurement_comparison:UaesMeasurementComparisonAgentR3",
+        ".xls": "audit.checker_lib.uaes.v1.measurement_comparison:UaesMeasurementComparisonAgentR3",
+        ".xlsm": "audit.checker_lib.uaes.v1.measurement_comparison:UaesMeasurementComparisonAgentR3",
+        ".xlsx": "audit.checker_lib.uaes.v1.measurement_comparison:UaesMeasurementComparisonAgentR3",
+        ".docx": "audit.checker_lib.uaes.v1.measurement_comparison:UaesMeasurementComparisonDocxAgentR3",
     },
-    "methods": {"U02:1": "rule_1"},
+    "methods": {"MCMP:1": "mcmp_1"},
 }

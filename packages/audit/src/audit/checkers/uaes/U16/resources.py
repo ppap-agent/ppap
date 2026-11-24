@@ -4,10 +4,10 @@ RESOURCE = {
     "customer": "UAES",
     "preset_key": "U16",
     "carriers": {
-        ".pdf": "audit.checker_lib.uaes.engineering:UaesProcessFlowAgent",
-        ".xls": "audit.checker_lib.uaes.engineering:UaesProcessFlowAgent",
-        ".xlsm": "audit.checker_lib.uaes.engineering:UaesProcessFlowAgent",
-        ".xlsx": "audit.checker_lib.uaes.engineering:UaesProcessFlowAgent",
+        ".pdf": "audit.checker_lib.uaes.v1.process_flow:UaesProcessFlowRevision3",
+        ".xls": "audit.checker_lib.uaes.v1.process_flow:UaesProcessFlowRevision3",
+        ".xlsm": "audit.checker_lib.uaes.v1.process_flow:UaesProcessFlowRevision3",
+        ".xlsx": "audit.checker_lib.uaes.v1.process_flow:UaesProcessFlowRevision3",
     },
-    "methods": {"U16:1": "rule_1", "U16:2": "rule_2", "U16:3": "rule_3"},
+    "methods": {"PFD:1": "rule_1", "PFD:2": "rule_2", "PFD:3": "rule_3", "PFD:4": "rule_4"},
 }
