@@ -1,0 +1,25 @@
+{
+  "schema": "clause-check-report-v1",
+  "clause": {
+    "id": "PCE:1",
+    "title": "过程能力研究（UAES 审核规则库 规范性条款 v1.0）",
+    "category": "UAES-PCE-样本量与Cpk-校验",
+    "text": "所有工艺能力认证报告须同时满足：\n\n1. “读数次数”或“实测结果”区域的样本数量不少于 125（按有读数的单元格计）；\n\n2. 报告中的 Process Capability（Cpk）值不低于 1.33（即 Cpk ≥ 1.33）。\n\n任何一份报告不满足上述任一条件即不通过。\n\n阈值统一取“不低于（≥）”，不取更严的“必须大于”：实测值恰为 1.33 判达标，不得卡在边界值上判不通过。规则 2、规则 3 与本条同口径，三处不得各设一套。",
+    "source": "rules/PCE.json#PCE:1",
+    "source_sha256": "20cef091db93aa8fc883f9d47368a9d0fc3df614b1dbf60ad0dbed81fccfbd3b"
+  },
+  "review_sha256": "6e50f7e20de7fdf5b1b256e67e8c8e05d3bad52c01af75369fc700f907d0a2b2",
+  "findings": [],
+  "excluded": [
+    {
+      "quote": "不少于 125",
+      "issue": "样本数恰好125、Cpk恰好1.33是否不过",
+      "reason": "两个下限均包含等号。这两个指标恰等于门槛时，不能以“不大于”否决。"
+    },
+    {
+      "quote": "按有读数的单元格计",
+      "issue": "125个预留格是否就等于125个样本",
+      "reason": "只计实际有读数的格。若有125个预留格但只有120个读数，不满足样本量要求。"
+    }
+  ]
+}

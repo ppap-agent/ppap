@@ -1,0 +1,32 @@
+{
+  "schema": "clause-check-review-v1",
+  "source": "rules/CP.json#CP:9",
+  "requirements": [
+    {
+      "quote": "同批次必须提交同零件号的《采购件质量计划》独立文件且其中包含 PGQP1 表",
+      "role": "necessary",
+      "scope": "基准文件及基准表",
+      "meaning": "既要本批同号独立质量计划，也要其中实际含 PGQP1。"
+    },
+    {
+      "quote": "PGQP1 表中所有尺寸类特性，均须在控制计划“出货检验”工序行的“产品”“过程”或“产品/过程规格/公差”列中出现并分析",
+      "role": "necessary",
+      "scope": "全部尺寸类特性的落点",
+      "meaning": "从 PGQP1 逐项核对尺寸，须落在出货检验工序行的规定列，并有分析；其他工序有同尺寸不能替代。"
+    },
+    {
+      "quote": "缺少文件、PGQP1 表或任何尺寸类特性即不通过",
+      "role": "outcome",
+      "scope": "整条",
+      "meaning": "缺计划、缺表或少任一应覆盖尺寸均不通过；整包缺件的计数不在此重复。"
+    },
+    {
+      "quote": "按行判定，禁止把分散在不同行的字段拼成“同一项命中”",
+      "role": "prohibition",
+      "scope": "每一项的行级核对",
+      "meaning": "必须在相应行确认该项，不可用几行各自零散字段拼出一项。"
+    }
+  ],
+  "findings": [],
+  "excluded": []
+}

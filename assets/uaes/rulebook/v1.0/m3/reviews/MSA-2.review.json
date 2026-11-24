@@ -1,0 +1,59 @@
+{
+  "schema": "clause-check-review-v1",
+  "source": "rules/MSA.json#MSA:2",
+  "requirements": [
+    {"quote": "文件内或同批次文件集中须有测量系统分析计划表，并有重复性及再现性（GR&R）报告或 Kappa 报告", "role": "necessary", "scope": "计划表与报告是否存在", "meaning": "本文件或同批资料里要有计划表，还要有 GR&R 报告或 Kappa 报告。"},
+    {"quote": "计划表每一种量具须有匹配的报告", "role": "necessary", "scope": "计划表每一种量具", "meaning": "计划表里每种量具都要有对得上的报告。"},
+    {"quote": "人工、目视、通止规、塞规、塞尺等计数型量具对应以评价者为对象的 Kappa 研究，其余量具对应 GR&R 报告", "role": "definition", "scope": "量具与报告类型的对应", "meaning": "计数型量具配 Kappa 研究，其他量具配 GR&R 报告。"},
+    {"quote": "匹配键为零件号＋特性/量具名称，不比量具编号", "role": "definition", "scope": "计划表与报告怎么对上", "meaning": "按零件号加特性或量具名称对应，不看量具编号。"},
+    {"quote": "同一零件的计划里只有一把该名称的量具时，报告也须同时写明所判特性，只写量具名称不能认定匹配", "role": "necessary", "scope": "匹配认定", "meaning": "报告必须写出测的是哪个特性，只写量具名称对不上。"},
+    {"quote": "每份 GR&R 报告的结论须为“测量系统可以接受”", "role": "necessary", "scope": "GR&R 报告结论", "meaning": "GR&R 报告结论要是测量系统可以接受。"},
+    {"quote": "每份 Kappa 报告的结论须为“Acceptable”（含可接受、合格、Good、PASS 等等价写法）", "role": "necessary", "scope": "Kappa 报告结论", "meaning": "Kappa 报告结论要是可接受，意思相同的写法都算。"},
+    {"quote": "量具编号只作辅助核对，不作匹配键，也不作为判不通过的理由", "role": "exception", "scope": "量具编号", "meaning": "量具编号对不上不影响结论。"},
+    {"quote": "任一项不满足即不通过", "role": "outcome", "scope": "整条规则", "meaning": "有一项没做到就不通过。"},
+    {"quote": "结论合格还须底层指标达标，不只看结论栏", "role": "necessary", "scope": "报告结论合格的认定", "meaning": "结论栏写合格还不够，报告里的数据也要达标。"},
+    {"quote": "%GRR ≤ 10% 判合格", "role": "sufficient", "scope": "GR&R 指标", "meaning": "%GRR 不超过 10% 这一项算合格。"},
+    {"quote": "10% < %GRR ≤ 30% 须附客户批准或整改说明方可判合格", "role": "necessary", "scope": "GR&R 指标", "meaning": "%GRR 在 10% 到 30% 之间，要附客户批准或整改说明才算合格。"},
+    {"quote": "%GRR > 30%、ndc < 5 且无公差带豁免说明、Kappa < 0.75 的，即使结论栏写“可接受”，也按数据失真判不通过", "role": "prohibition", "scope": "报告数据", "meaning": "%GRR 超过 30%、ndc 小于 5 又无豁免说明、Kappa 小于 0.75，结论栏写可接受也不通过。"},
+    {"quote": "报告同时有总体 Kappa 和各评价者相对标准的 Kappa 时，只核总体 Kappa，单个评价者的分项值不单独否决", "role": "exception", "scope": "Kappa 指标", "meaning": "有总体 Kappa 时只看总体值，个人分项只提醒。"},
+    {"quote": "本条不判 Cgk", "role": "applicability", "scope": "Cgk 报告", "meaning": "Cgk 不归本条判。"},
+    {"quote": "N 台不同编号的同类量具须有 N 份报告，不得用一份报告或重名的多份报告顶替", "role": "necessary", "scope": "报告份数", "meaning": "同一特性下有几台同类量具，就要有几份报告。"},
+    {"quote": "份数不足的按“同类量具报告份数不足”判不通过，与“报告缺失”分开表述", "role": "outcome", "scope": "报告份数", "meaning": "份数不够判不通过，并且和报告缺失分开说。"},
+    {"quote": "报告内评价者、样本编号、测量日期不同的多份报告，视为分别覆盖不同台同类量具", "role": "definition", "scope": "报告份数", "meaning": "评价者、样本编号、测量日期不同的报告，算覆盖不同的量具。"},
+    {"quote": "判定对象限于本文件对应的量具", "role": "applicability", "scope": "报告型子文件", "meaning": "每份报告文件只判它自己对应的量具。"},
+    {"quote": "同一套件、同一缺陷只记一次，其余子件判通过并写明该缺陷不在本文件归属范围内", "role": "outcome", "scope": "套件内多份文件", "meaning": "同一个问题只记在一份文件上。"},
+    {"quote": "数台数须以套件计划表全集的台数为基准", "role": "exception", "scope": "报告份数", "meaning": "数量具台数时按整个套件的计划表来数。"},
+    {"quote": "移交工程裁定并写明原写法，不得按缺报告硬判", "role": "exception", "scope": "分不清计数型还是计量型的量具", "meaning": "量具写法分不清类型时交给工程判断，不直接按缺报告判。"},
+    {"quote": "量具名称为空或为占位词的，该判定项记“未审”", "role": "outcome", "scope": "量具名称空白或占位", "meaning": "量具名称没填或填占位词，这一项记未审。"},
+    {"quote": "填占位词与单元格空白是两种不同问题，须分开陈述", "role": "necessary", "scope": "问题的写法", "meaning": "填占位词和空着要分开说。"},
+    {"quote": "Kappa 结论属“有条件接受／边界”类（Marginal／临界／Near／Conditional／有条件接受）的，既非合格也非不合格，须整改后复评，按不通过处理", "role": "outcome", "scope": "Kappa 结论", "meaning": "有条件接受、临界之类的 Kappa 结论按不通过处理。"}
+  ],
+  "findings": [
+    {
+      "id": "1", "kind": "ambiguity", "quotes": ["%GRR ≤ 10% 判合格", "10% < %GRR ≤ 30% 须附客户批准或整改说明方可判合格"],
+      "title": "%GRR 按哪个基准算",
+      "question": "报告里同时有“相对总变差”和“相对公差”两个 %GRR 时，按哪一个判断？",
+      "example": "一份 GR&R 报告与计划表的零件号、特性对得上，结论栏写“测量系统可以接受”，ndc 为 6；报告同时列出 %GRR（相对总变差）22% 和 %GRR（相对公差）8%，没有附客户批准或整改说明。",
+      "challenge": "原文只写 %GRR，没有说明是相对总变差还是相对公差；报告的其他要求在此例中都满足，两个数分别落在 10% 以下和 10% 到 30% 之间，结论随取哪个数而变，原文没有排除任何一个。",
+      "readings": [
+        {"label": "按相对公差", "meaning": "取相对公差的 %GRR，8% 不超过 10%，合格。", "basis": "原文只写 %GRR，未限定基准。", "verdict": "通过"},
+        {"label": "按相对总变差", "meaning": "取相对总变差的 %GRR，22% 落在 10% 到 30% 之间，又没附客户批准或整改说明，不合格。", "basis": "原文同样未排除按总变差计算。", "verdict": "不通过"}
+      ]
+    },
+    {
+      "id": "2", "kind": "ambiguity", "quotes": ["每份 GR&R 报告的结论须为“测量系统可以接受”"],
+      "title": "GR&R 结论的其他写法算不算",
+      "question": "GR&R 报告结论写“合格”“OK”这类意思相同的话，算不算“测量系统可以接受”？",
+      "example": "一份 GR&R 报告与计划表对得上，%GRR 为 7%，ndc 为 8，结论栏只写“合格”。",
+      "challenge": "Kappa 报告那一句写明了可接受、合格、Good、PASS 等等价写法都算，GR&R 这一句只给了一个写法，没有说明其他写法能否同样认可；数据都达标，差别只在结论写法。",
+      "readings": [
+        {"label": "意思相同即可", "meaning": "“合格”与“测量系统可以接受”意思相同，算满足。", "basis": "原文没有要求逐字照写。", "verdict": "通过"},
+        {"label": "须按原话写", "meaning": "GR&R 只列了这一种写法，其他写法不算。", "basis": "原文为 Kappa 列了等价写法，却没有为 GR&R 列。", "verdict": "不通过"}
+      ]
+    }
+  ],
+  "excluded": [
+    {"quote": "报告同时有总体 Kappa 和各评价者相对标准的 Kappa 时，只核总体 Kappa", "issue": "报告只有各评价者分项 Kappa、没有总体 Kappa 时怎么判", "reason": "只看总体值的放宽只在两者都有时适用；只有分项值时，任一分项低于 0.75 就是原文写明的“Kappa < 0.75”，原文已能判定。"},
+    {"quote": "量具名称为空或为占位词的，该判定项记“未审”", "issue": "某项记未审或移交工程裁定时，整条怎么判", "reason": "原文已写明该项记未审或交工程裁定、不得硬判；该项既未证明满足也未证明不满足，整条随之待定，不属原文空缺。"}
+  ]
+}

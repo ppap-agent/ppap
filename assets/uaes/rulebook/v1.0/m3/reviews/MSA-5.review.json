@@ -1,0 +1,26 @@
+{
+  "schema": "clause-check-review-v1",
+  "source": "rules/MSA.json#MSA:5",
+  "requirements": [
+    {"quote": "适用子件：含 Cg／Cgk 评定区的测量能力报告（文件名或表头含“Cgk”“能力指数”“Capability Index”）", "role": "applicability", "scope": "含 Cg／Cgk 评定区的报告", "meaning": "本条只判含 Cg、Cgk 评定区的测量能力报告。"},
+    {"quote": "计划表、Kappa 报告、GR&R 报告不含该评定区，本条对它们记“不适用”，不得记作通过", "role": "applicability", "scope": "其他类型文件", "meaning": "计划表、Kappa、GR&R 报告记不适用，不算通过。"},
+    {"quote": "“不适用”须写明依据，不占通过／不通过结论位，不计入通过率分母", "role": "outcome", "scope": "不适用的记法", "meaning": "不适用要写理由，不算通过也不算不通过。"},
+    {"quote": "“本文件无评定区”与“评定区在别的文件里”是两件事，后者不得按不适用处理", "role": "prohibition", "scope": "评定区在别的文件", "meaning": "评定区在别的文件里，不能记不适用。"},
+    {"quote": "文件内须存在 Cg 与 Cgk 两个能力指数，且位于同一评定区块", "role": "necessary", "scope": "评定区", "meaning": "Cg 和 Cgk 都要有，并在同一块评定区里。"},
+    {"quote": "两个指数均须 ≥ 1.33", "role": "necessary", "scope": "指数阈值", "meaning": "Cg 和 Cgk 都要不低于 1.33。"},
+    {"quote": "同一报告有多组 Cg／Cgk 评定的，每一组都须不低于 1.33，任一组不达标即不通过", "role": "necessary", "scope": "多组评定", "meaning": "有几组就每组都要达标。"},
+    {"quote": "全部满足才通过，否则不通过", "role": "outcome", "scope": "整条规则", "meaning": "全部做到才通过。"},
+    {"quote": "文件自带“要求：Cg 和 Cgk 1.33”一类要求行时，以该行印的阈值为准", "role": "definition", "scope": "文件自带要求行", "meaning": "文件印有要求值时，按文件印的值判。"},
+    {"quote": "若该阈值与 1.33 不同，登记冲突交客户裁决，不得静默择一", "role": "outcome", "scope": "要求行阈值与 1.33 不同", "meaning": "文件印的值和 1.33 不一样时，要把这处不一致记下来交客户。"},
+    {"quote": "评定区只有一个指数、或指数值只有标签而无实测值（空白、公式未算出）的，不通过", "role": "outcome", "scope": "评定区内容", "meaning": "只有一个指数或没有实测数值，不通过。"},
+    {"quote": "该栏与实测值矛盾（栏标“是”而实测低于阈值，或栏标“否”而实测达标）的，以实测值为准并登记冲突", "role": "definition", "scope": "文件自带判定栏", "meaning": "判定栏和实测值对不上时，按实测值判并记下不一致。"},
+    {"quote": "不得因判定栏标“是”就判通过，也不得因判定栏标“否”就不看实测值", "role": "prohibition", "scope": "文件自带判定栏", "meaning": "不能只看判定栏。"},
+    {"quote": "该结论不得用作“重复性与再现性报告是否存在”“Kappa 报告是否存在”等存在性判定的证据；反之，报告存在也不推出本条通过", "role": "prohibition", "scope": "与其他判定的关系", "meaning": "本条结论和报告是否存在互不证明。"},
+    {"quote": "1.33 的取值依据为测量系统分析手册第四版，并以文件自带要求行为准", "role": "definition", "scope": "阈值来源", "meaning": "1.33 来自测量系统分析手册第四版，文件自带要求行优先。"}
+  ],
+  "findings": [],
+  "excluded": [
+    {"quote": "若该阈值与 1.33 不同，登记冲突交客户裁决，不得静默择一", "issue": "文件要求行的阈值与 1.33 不同时，先按哪个值判", "reason": "原文两处写明以文件自带要求行为准，登记不一致是另外的留痕，按要求行判定并登记就不是静默择一，原文已能判定。"},
+    {"quote": "文件内须存在 Cg 与 Cgk 两个能力指数，且位于同一评定区块", "issue": "Cg 与 Cgk 分在两个区块时怎么判", "reason": "原文要求两者位于同一评定区块，且“全部满足才通过，否则不通过”，分在两处即不通过。"}
+  ]
+}

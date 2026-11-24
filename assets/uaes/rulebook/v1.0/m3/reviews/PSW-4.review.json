@@ -1,0 +1,44 @@
+{
+  "schema": "clause-check-review-v1",
+  "source": "rules/PSW.json#PSW:4",
+  "requirements": [
+    {
+      "quote": "PSW 必须包含“提交原因”字段，",
+      "role": "necessary",
+      "scope": "PSW 提交原因区域",
+      "meaning": "必须有提交原因字段。"
+    },
+    {
+      "quote": "且“提交原因”区域至少有一项选项被勾选。",
+      "role": "necessary",
+      "scope": "提交原因的勾选数量",
+      "meaning": "至少选一项，不是仅限一项。"
+    },
+    {
+      "quote": "若勾选“其它----请说明”，其旁边的说明内容必须非空；",
+      "role": "necessary",
+      "scope": "勾选“其它----请说明”时",
+      "meaning": "必须填写该选项旁边的说明，即使同时勾了常规原因也要填。"
+    },
+    {
+      "quote": "若未勾选“其它----请说明”，则必须有其他选项被勾选。",
+      "role": "necessary",
+      "scope": "未勾“其它----请说明”时",
+      "meaning": "至少要勾一个其余的提交原因选项。"
+    },
+    {
+      "quote": "不满足上述条件即不通过。",
+      "role": "outcome",
+      "scope": "整条",
+      "meaning": "任一适用要求不满足就不通过。"
+    }
+  ],
+  "findings": [],
+  "excluded": [
+    {
+      "quote": "至少有一项选项被勾选",
+      "issue": "勾了两个正常原因是否一定多选不合格",
+      "reason": "本条规定下限，没有规定只能选一个；若同时勾“其它”，其旁仍要填说明。"
+    }
+  ]
+}

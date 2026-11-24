@@ -1,0 +1,14 @@
+{
+  "schema": "clause-check-report-v1",
+  "clause": {
+    "id": "CP:9",
+    "title": "控制计划（CP）（UAES 审核规则库 规范性条款 v1.0）",
+    "category": "UAES-CP-PGQP1尺寸-覆盖",
+    "text": "同批次必须提交同零件号的《采购件质量计划》独立文件且其中包含 PGQP1 表；PGQP1 表中所有尺寸类特性，均须在控制计划“出货检验”工序行的“产品”“过程”或“产品/过程规格/公差”列中出现并分析。\n\n缺少文件、PGQP1 表或任何尺寸类特性即不通过。按行判定，禁止把分散在不同行的字段拼成“同一项命中”。",
+    "source": "rules/CP.json#CP:9",
+    "source_sha256": "2e800deca2a486b9ffb10a1e238d16aed34ca4d376093237fde993f039f3faa5"
+  },
+  "review_sha256": "42d4e7da900e60cdf200e030d52a7197077a0ddae02133791de8aa4bc25c71fc",
+  "findings": [],
+  "excluded": []
+}
