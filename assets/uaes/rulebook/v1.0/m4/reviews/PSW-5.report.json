@@ -1,0 +1,20 @@
+{
+  "schema": "clause-check-report-v1",
+  "clause": {
+    "id": "PSW:5",
+    "title": "零件提交保证书（PSW）",
+    "category": "提交等级-校验",
+    "text": "PSW 必须包含“要求提交的等级”字段，且该字段对应区域的等级选项中有且仅有一项被勾选；没有该字段、没有任何选项被勾选，或多于一项被勾选，均不通过。\n\n勾选计数前须做同义合并：同一语义的中英文／简称／序号写法算 1 项（等级 3 ＝ Level 3 ＝ 等级三），合并后仍多于 1 项才判“勾选多项”，不按字面卡唯一性。",
+    "source": "条文/PSW.json#PSW:5",
+    "source_sha256": "ca7d1a492ef4001d6c98a81035b4ea8271d5b80d6549106c03fd84504d0498dd"
+  },
+  "review_sha256": "6ce12b7c2b22f6bacb9b0e7fd72ec1e96d642e7a7cbedb7d98c90323dfd7b735",
+  "findings": [],
+  "excluded": [
+    {
+      "quote": "等级 3 ＝ Level 3 ＝ 等级三",
+      "issue": "只同时勾选中英文的等级 3，是否违反单选",
+      "reason": "两种写法是同一项，原文明确要求先合并再计数。"
+    }
+  ]
+}

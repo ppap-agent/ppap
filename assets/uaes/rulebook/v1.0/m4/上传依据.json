@@ -1,0 +1,295 @@
+{
+  "customer": "uaes",
+  "version": "v1.0",
+  "revision": 4,
+  "based_on": {
+    "version": "v1.0",
+    "revision": 3
+  },
+  "origin": "clarification",
+  "created_at": "2026-11-24T09:32:25.405228+00:00",
+  "receipt": "R-20261124-0011",
+  "unchanged_from_revision_3": [
+    "PFMEA:1",
+    "PFMEA:2",
+    "PFMEA:4",
+    "PFMEA:5",
+    "MSA:3",
+    "MSA:4",
+    "MSA:5",
+    "LAB:1",
+    "PFD:1",
+    "PFD:2",
+    "PFD:3",
+    "PFD:4",
+    "TA:1",
+    "PSW:2",
+    "PSW:3",
+    "PSW:4",
+    "PSW:5",
+    "PSW:6",
+    "PSW:7",
+    "SSH:1",
+    "SSH:2",
+    "ORD:1",
+    "IR:2",
+    "IR:4",
+    "CEA:1",
+    "CP:2",
+    "CP:3",
+    "CP:4",
+    "CP:5",
+    "CP:7",
+    "CP:8",
+    "CP:9",
+    "CP:10",
+    "CP:11",
+    "CP:12",
+    "CP:13",
+    "SCL:1",
+    "SCL:3",
+    "PCE:1",
+    "MSL:1",
+    "MSL:2",
+    "MSL:4",
+    "MCMP:1",
+    "MSPEC:1",
+    "PHOTO:1"
+  ],
+  "changes": [
+    {
+      "clause": "PKG:1",
+      "kind": "changed",
+      "note": "照依据增句：首段末保留原句，只增补内容块按实际内容认定，不改标题及签章要求。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "PKG:1#r3.1"
+        }
+      ]
+    },
+    {
+      "clause": "PFMEA:3",
+      "kind": "changed",
+      "note": "混装的同批次、同项目独立清单可凭本物料行满足第 2 项的编号要求，第 3、4 项只比本物料行；不改变第 1 项或本物料的名称、公差／规格、符号和分析要求。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "PFMEA:3#r3.2"
+        }
+      ]
+    },
+    {
+      "clause": "MSA:1",
+      "kind": "changed",
+      "note": "照依据增句：在五类字段列表之后独立成段，仅排除只预印序号且其余完全空白的备用行；不改实际使用行的检查。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "MSA:1#r3.1.1"
+        }
+      ]
+    },
+    {
+      "clause": "MSA:2",
+      "kind": "changed",
+      "note": "照依据替换：只允许 GR&R 报告结论的等义表述。不改底层指标、Kappa 或其他判据；整套缺计划表的归属与子件结论（MSA:2#r3.3）仍待答。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "MSA:2#r3.2"
+        }
+      ]
+    },
+    {
+      "clause": "MSA:6",
+      "kind": "changed",
+      "note": "仅限同批无 PGQP1、回退混装清单且本零件号可确定；只取明确归属本件的特殊特性。不得将身份或本件行不明视为空集合通过，不另加回退、阈值、缺件或子件状态判决。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "MSA:6#r3.2"
+        }
+      ]
+    },
+    {
+      "clause": "PSW:1",
+      "kind": "changed",
+      "note": "照自由答复在说明栏缺项句后新增：精确引用可核验本次提交数据的随附附页可算有实质内容，不能仅凭附件名认定。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "PSW:1#r3.2"
+        }
+      ]
+    },
+    {
+      "clause": "IR:1",
+      "kind": "changed",
+      "note": "第 62 卡选 B。明确顾客工程批准必须指向本超差项；笼统认可不算覆盖。不指定如何标识该项，不改变原有偏差许可、实测列数或单项结论规则。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "IR:1#r3.1"
+        }
+      ]
+    },
+    {
+      "clause": "IR:3",
+      "kind": "changed",
+      "note": "照 A 替换印章句：在本文件须签字的各报告签署区合计一处即可；各处所需签字不变。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "IR:3#r3.1"
+        }
+      ]
+    },
+    {
+      "clause": "CP:1",
+      "kind": "changed",
+      "note": "照 B 替换第二种方式的要求，明确专门列也须逐工序填写，不改变工序主行、跨行继承和纯人工工序的原判法。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "CP:1#r3.1"
+        }
+      ]
+    },
+    {
+      "clause": "CP:6",
+      "kind": "changed",
+      "note": "照 NG 在第 4 项末新增：无变更履历时第 4 项不满足；不裁定有履历时原文未指定的日期取舍。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "CP:6#r3.G1"
+        }
+      ]
+    },
+    {
+      "clause": "SCL:2",
+      "kind": "changed",
+      "note": "第 64 卡选 UNABLE。新句仅置于规则 2 判定段，不改规则 1–3 通用口径，也不回答无件号列的单件号场景。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "SCL:2#r3.G2"
+        }
+      ]
+    },
+    {
+      "clause": "PCE:2",
+      "kind": "changed",
+      "note": "照 NG 在 Ppk 门槛句后新增：任一工艺能力认证报告只给 Cpk 而无 Ppk 时本条不通过；不涉及汇总清单的行内缺值。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "PCE:2#r3.G1"
+        }
+      ]
+    },
+    {
+      "clause": "PCE:3",
+      "kind": "changed",
+      "note": "第 65 卡选 A。按表内逐行的目标和结果认定汇总清单，不把这种充分情形当作唯一形式。目标取值、行级判定与未答的行内缺值问题均不变。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "PCE:3#r3.1"
+        }
+      ]
+    },
+    {
+      "clause": "PCE:4",
+      "kind": "changed",
+      "note": "第 67 卡选 B。只就同批同号、同套且各有目录的分册合查已标记特殊特性的目录覆盖。保留各份目录及独立质量计划要求，不定义哪些项目算已标记。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "PCE:4#r3.2"
+        }
+      ]
+    },
+    {
+      "clause": "PCE:5",
+      "kind": "changed",
+      "note": "第 69 卡选 B。仅就同批同号、同套且各有目录的分册合查过程特性目录覆盖；不改变研究页、可读实测指数、定性例外或计划要求，不裁定研究页能否跨册补。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "PCE:5#r3.2"
+        }
+      ]
+    },
+    {
+      "clause": "PCE:6",
+      "kind": "changed",
+      "note": "仅明确图纸和研究页均列明名义值、上下公差时须逐项数值相同，不以区间相同替代。原有等价写法、图纸只给上限时的原句及跨条去重照旧。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "PCE:6#r3.2"
+        }
+      ]
+    },
+    {
+      "clause": "TRACE:1",
+      "kind": "changed",
+      "note": "将局部空洞与末尾未用上的模板预留行区分；原文关于五区实质内容、缺失严重度、计数、占位词及签章的要求不变。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "TRACE:1#r3.1"
+        }
+      ]
+    },
+    {
+      "clause": "MSL:3",
+      "kind": "changed",
+      "note": "双语并列图纸只就名称允许精确匹配其中一种完整名称；不改变独立图纸、项目和件号要求，不授权简称、近义词或模糊匹配。",
+      "sources": [
+        {
+          "answerers": [
+            "张华枫"
+          ],
+          "question_key": "MSL:3#r3.1"
+        }
+      ]
+    }
+  ]
+}

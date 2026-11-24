@@ -1,0 +1,14 @@
+{
+  "schema": "clause-check-report-v1",
+  "clause": {
+    "id": "CP:9",
+    "title": "控制计划（CP）",
+    "category": "PGQP1尺寸-覆盖",
+    "text": "同批次必须提交同零件号的《采购件质量计划》独立文件且其中包含 PGQP1 表；PGQP1 表中所有尺寸类特性，均须在控制计划“出货检验”工序行的“产品”“过程”或“产品/过程规格/公差”列中出现并分析。\n\n缺少文件、PGQP1 表或任何尺寸类特性即不通过。按行判定，禁止把分散在不同行的字段拼成“同一项命中”。",
+    "source": "条文/CP.json#CP:9",
+    "source_sha256": "bb9204d52f4ae19dd7b5ee836cbea474921bf27c56d447f19ff80351053a68f9"
+  },
+  "review_sha256": "13e607a0db3510786a51db87cb1350387017f314940c791f18fb60e000aa3333",
+  "findings": [],
+  "excluded": []
+}
