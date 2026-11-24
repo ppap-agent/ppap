@@ -766,7 +766,7 @@ def test_signing_is_proposed_by_the_client_and_completed_or_declined_by_the_pers
         # Declined, with a reason the client reads back; the declined proposal cannot be completed.
         declined = {"task_id": task, "request_id": str(uuid4())}
         other = intent_of(call(client, token, "publish_report", **declined))
-        # The person finds what waits for them without the link: the newer proposal of the same call stands for the older.
+        # The person finds what waits for them without the link: only the newest proposal of the same call counts.
         assert [row["id"] for row in client.get("/intents").json()["intents"]] == [other]
         assert client.get("/intents").json()["intents"][0]["page"] == f"/tasks/{task}"
         said = client.post(f"/intents/{other}/decline", json={"reason": "先等供应商补件"}, headers={"X-PPAP-Intent": other})
@@ -775,7 +775,8 @@ def test_signing_is_proposed_by_the_client_and_completed_or_declined_by_the_pers
         assert answer["next"]["action_id"] == "denied_by_user" and answer["next"]["reason"] == "先等供应商补件", answer
         assert client.post(path, json={}, headers={"X-PPAP-Intent": other}).json()["error"] == "intent_unavailable"
         assert drive.written == []
-        assert [row["id"] for row in client.get("/intents").json()["intents"]] == [ident]
+        # Declining the newest spends the older ones of the same call too.
+        assert client.get("/intents").json()["intents"] == []
 
         intent, done = complete(client, asked)
         assert done.status_code == 200 and len(drive.written) == 2, done.text

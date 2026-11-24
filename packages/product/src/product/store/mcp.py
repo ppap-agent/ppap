@@ -330,22 +330,24 @@ class McpStore:
         return {**self.operation_public(row), "grant_id": str(row["grant_id"]), "outcome": self.intent_outcome(ident)}
 
     def open_intents(self, principal: Principal) -> list[dict]:
-        """The person's proposals they have neither completed nor declined, newest first. A newer proposal of the same call
-        on the same task stands for the older ones, which stay readable by their own link."""
+        """The person's proposals they have neither completed nor declined, newest first. Only the newest proposal of the
+        same call on the same task counts: once it is done or declined, the older ones are spent too."""
         with self.connection() as conn:
             rows = conn.execute(
-                """SELECT o.id, o.created_at, o.arguments FROM product.mcp_operations o JOIN product.mcp_grants g ON g.id=o.grant_id
-                   WHERE o.state='proposed' AND g.user_id=%s AND g.tenant_id=%s AND NOT EXISTS (
-                     SELECT 1 FROM product.actions a WHERE a.intent_id=o.id AND a.user_id=g.user_id AND a.tenant_id=g.tenant_id AND a.outcome='succeeded')
-                   ORDER BY o.created_at DESC, o.id LIMIT 200""",
+                """SELECT o.id, o.created_at, o.arguments, EXISTS (
+                     SELECT 1 FROM product.actions a WHERE a.intent_id=o.id AND a.user_id=g.user_id AND a.tenant_id=g.tenant_id AND a.outcome='succeeded') AS settled
+                   FROM product.mcp_operations o JOIN product.mcp_grants g ON g.id=o.grant_id
+                   WHERE o.state='proposed' AND g.user_id=%s AND g.tenant_id=%s ORDER BY o.created_at DESC, o.id LIMIT 200""",
                 (principal.user_id, principal.tenant_id),
             ).fetchall()
         found, seen = [], set()
         for row in rows:
             arguments = row["arguments"]
             call = (arguments["method"], arguments["path"], (arguments.get("request") or {}).get("task_id"))
-            if call not in seen:
-                seen.add(call)
+            if call in seen:
+                continue
+            seen.add(call)
+            if not row["settled"]:
                 found.append({"id": str(row["id"]), "created_at": row["created_at"].isoformat(), "method": arguments["method"], "path": arguments["path"], "page": arguments["page"]})
         return found
 
