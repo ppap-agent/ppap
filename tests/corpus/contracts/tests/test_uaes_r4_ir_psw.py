@@ -47,12 +47,12 @@ def picture(kind):
     return png
 
 
-def reports(tmp_path, *, signature=True, seal=None, seal_sheet=0, engineer=False):
+def reports(tmp_path, *, signature=True, seal=None, seal_sheet=0, engineer=False, part=PART):
     book = Workbook()
     book.remove(book.active)
     for i, title in enumerate(TITLES):
         ws = book.create_sheet(title)
-        ws["A1"], ws["J1"] = "Supplier/供应商：" + SUPPLIER, "Part Number/零件号：" + PART
+        ws["A1"], ws["J1"] = "Supplier/供应商：" + SUPPLIER, "Part Number/零件号：" + part
         ws["A2"], ws["B2"], ws["C2"], ws["F2"] = "No.", "Requirements/要求", "Actual-Value Supplier/供应商实测值", "Evaluation"
         ws.merge_cells("C2:E2")
         ws["A3"], ws["B3"], ws["C3"], ws["D3"], ws["E3"], ws["F3"] = 23, "10±0.1", 10.2, 10.0, 10.0, "OK"
@@ -157,10 +157,17 @@ def test_psw_explanation_is_data_not_just_a_reference(tmp_path, comment, value, 
 
 
 @pytest.mark.parametrize(
-    ("item", "supplier", "customer", "expected"),
-    [("23", SUPPLIER, "联合汽车电子有限公司", "PASS"), ("123", SUPPLIER, "联合汽车电子有限公司", "NG"), ("23", "另一公司", "联合汽车电子有限公司", "NG"), ("23", SUPPLIER, "另一客户", "UNABLE")],
+    ("part", "item", "supplier", "customer", "expected"),
+    [
+        (PART, "23", SUPPLIER, "联合汽车电子有限公司", "PASS"),
+        ("Qz-007.4", "23", SUPPLIER, "联合汽车电子有限公司", "PASS"),
+        ("00042", "23", SUPPLIER, "联合汽车电子有限公司", "PASS"),
+        (PART, "123", SUPPLIER, "联合汽车电子有限公司", "NG"),
+        (PART, "23", "另一公司", "联合汽车电子有限公司", "NG"),
+        (PART, "23", SUPPLIER, "另一客户", "UNABLE"),
+    ],
 )
-def test_specific_acceptance_has_customer_supplier_and_exact_item_scope(tmp_path, item, supplier, customer, expected):
+def test_specific_acceptance_has_customer_supplier_and_exact_item_scope(tmp_path, part, item, supplier, customer, expected):
     # A newly generated single-page release; no customer's signed document is modified.
     path = tmp_path / "release.pdf"
     with fitz.open() as doc:
@@ -169,7 +176,7 @@ def test_specific_acceptance_has_customer_supplier_and_exact_item_scope(tmp_path
             ("C Sample Release Report", "", ""),
             (customer, "", ""),
             ("公司名称\nName：", supplier, ""),
-            ("零件号\nPart No.", PART, ""),
+            ("零件号\nPart No.", part, ""),
             ("UAES Condition of approval / remark\n" + f"同意第{item}项尺寸偏差，要求：10±0.1，同意本次实测值", "", ""),
             ("批准：李工程师 2026-09-14\nApproved by：", "", ""),
         ]
@@ -181,5 +188,7 @@ def test_specific_acceptance_has_customer_supplier_and_exact_item_scope(tmp_path
                 for k, line in enumerate(content.splitlines()):
                     page.insert_text((x + 3, y + 14 + k * 17), line, fontsize=9, fontname="china-s" if any(ord(v) > 127 for v in line) else "helv")
         doc.save(path)
-    result = finding("U01", "IR:1", reports(tmp_path), [(path, "E11")])
+    result = finding("U01", "IR:1", reports(tmp_path, part=part), [(path, "E11")])
     assert result["status"] == expected, result["suggestions"]
+    if expected == "PASS":
+        assert any(source["excerpt"] == part and json.loads(source["locator"]).get("file_version_id") == "1" for source in result["evidence"]["sources"])

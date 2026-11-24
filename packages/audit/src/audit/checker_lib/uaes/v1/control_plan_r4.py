@@ -93,7 +93,7 @@ def _label(value, aliases):
     """Return whether the cell has an independent label and any inline value, never match nested text."""
     if value is None:
         return False, ""
-    left, colon, right = unicodedata.normalize("NFKC", str(value)).strip().partition(":")
+    left, *right = re.split(r"[:：]", str(value).strip(), maxsplit=1)
     key = _fold(left)
     options = tuple(_fold(alias) for alias in aliases)
     if key not in options:
@@ -101,7 +101,7 @@ def _label(value, aliases):
         zh = _cjk(left)
         if not zh or zh not in options or not any(char.isascii() and char.isalpha() for char in left):
             return False, ""
-    return True, right.strip() if colon else ""
+    return True, right[0].strip() if right else ""
 
 
 def _label_cell(value):
@@ -329,7 +329,7 @@ class UaesControlPlanRevision4(UaesControlPlanRevision3):
                 present, value = _label(line, aliases)
                 if present and value:
                     data[key].add(value)
-        if (data["part"] or data["drawing_number"]) and data["name"] and data["project"] and (data["review"] or data["issue"] or data["drawn"]):
+        if data["part"] and data["name"] and data["project"] and (data["review"] or data["issue"] or data["drawn"]):
             with fitz.open(path) as drawing:
                 page = drawing[0]
                 rect = page.rect
@@ -379,11 +379,11 @@ class UaesControlPlanRevision4(UaesControlPlanRevision3):
                     raise
                 maybe.append(original_name(item))
                 continue
-            identity = data["part"] or data["drawing_number"]
-            fields = [(identity, part), (data["name"], name), (data["project"], project)]
-            if any(values and _fold(want) not in {_fold(v) for v in values} for values, want in fields):
+            # Material number is not the drawing number; never case-fold an identity.
+            fields = [(data["part"], part), (data["name"], name), (data["project"], project)]
+            if any(values and want not in values for values, want in fields):
                 continue
-            if any({_fold(v) for v in values} != {_fold(want)} for values, want in fields):
+            if any(values != {want} for values, want in fields):
                 maybe.append(original_name(item))
                 continue
             # Named review has priority over drawing date when there is no separate issue date.
@@ -409,15 +409,15 @@ class UaesControlPlanRevision4(UaesControlPlanRevision3):
         is_pdf = str(self.audit_file.file_url).lower().endswith(".pdf")
 
         def unique(texts):
-            by_value = {_fold(text): text for text, _ in texts if _fold(text) not in self._m._PLACEHOLDERS}
-            return next(iter(by_value.values())) if len(by_value) == 1 else None
+            values = {text for text, _ in texts if _fold(text) not in self._m._PLACEHOLDERS}
+            return next(iter(values)) if len(values) == 1 else None
 
         raw_part = unique([pair for sheet, end in headers for pair in self._fields(sheet, _FIELDS[-1][1], stop=end)])
         for field, aliases in _FIELDS:
             readings = [pair for sheet, end in headers for pair in self._fields(sheet, aliases, stop=end)]
             value = unique(readings)
             ctx.record_execution()  # evaluated one independently required title-block field
-            if field == "控制计划编号" and value is not None and raw_part and _fold(value) == _fold(raw_part):
+            if field == "控制计划编号" and value is not None and raw_part and value == raw_part:
                 value = None
             if readings and (field == "受控日期/创建日期/修订日期" or value is not None):
                 values[field] = value
@@ -463,7 +463,7 @@ class UaesControlPlanRevision4(UaesControlPlanRevision3):
             self.need("图纸")
             return "NG", "同批次未提交图纸独立文件。", []
         workbook_headers = [(sheet, self.section(sheet, "控制计划区").resolved.header_row - 1) for sheet in self.plan_sheets(ctx)]
-        ids = [{_fold(v) for sheet, end in workbook_headers for v, _ in self._fields(sheet, aliases, stop=end) if _fold(v) not in self._m._PLACEHOLDERS} for aliases in (_FIELDS[-1][1], _PROJECT)]
+        ids = [{v for sheet, end in workbook_headers for v, _ in self._fields(sheet, aliases, stop=end) if _fold(v) not in self._m._PLACEHOLDERS} for aliases in (_FIELDS[-1][1], _PROJECT)]
         if any(len(values) != 1 for values in ids):
             raise unable("控制计划物料编号或项目未能唯一确定，不能核对图纸特性。")
         part, project = (next(iter(values)) for values in ids)
@@ -476,15 +476,15 @@ class UaesControlPlanRevision4(UaesControlPlanRevision3):
                 continue
             with self.reading(ctx, item, drawing_for_materials):
                 sheets = [Sheet(ctx, ws) for ws in ctx.workbook.worksheets]
-                i_part = {_fold(v) for s in sheets for v, _ in self._fields(s, _DRAWING_FIELDS["part"]) if v}
-                i_project = {_fold(v) for s in sheets for v, _ in self._fields(s, _PROJECT) if v}
+                i_part = {v for s in sheets for v, _ in self._fields(s, _DRAWING_FIELDS["part"]) if v}
+                i_project = {v for s in sheets for v, _ in self._fields(s, _PROJECT) if v}
                 fields = [(part, i_part), (project, i_project)]
                 if any(values and expected not in values for expected, values in fields):
                     continue
                 if any(values != {expected} for expected, values in fields):
                     unresolved.append(f"{title}未能定位明确的同项目、同物料身份")
                     continue
-                inventory = [s for s in sheets if _fold(s.title) in _DRAWING_TABLES]
+                inventory = [s for s in sheets if self._complete_drawing_heading(s)]
                 if len(inventory) != 1:
                     unresolved.append(f"{title}未能定位唯一完整图纸特殊特性明细")
                     continue
@@ -506,6 +506,20 @@ class UaesControlPlanRevision4(UaesControlPlanRevision3):
             raise unable("无法唯一读取同项目同物料图纸的全部特殊特性：" + "；".join(unresolved[:3] or ["同批存在多份图纸明细，版本未能唯一核对"]) + "。")
         self.need("图纸", part=part)
         return "NG", f"同批次未提交项目“{project}”、物料号“{part}”的图纸独立文件。", []
+
+    def _complete_drawing_heading(self, sheet):
+        # An explicit title may be printed on the sheet rather than used as its tab name.
+        # Only a stand-alone top heading qualifies; never treat a detail row or note as a completeness declaration.
+        if _fold(sheet.title) in _DRAWING_TABLES:
+            return True
+        rows, width = self.extent(sheet)
+        if (rows, width) != (sheet.ws.max_row, sheet.ws.max_column) or rows * width > 1_000_000:
+            return False
+        for row in sheet.ws.iter_rows(values_only=True):
+            values = [value for cell in row if (value := _fold(cell))]
+            if values:
+                return len(values) == 1 and values[0] in _DRAWING_TABLES
+        return False
 
     def _structured_features(self, sheet, require_cpk):
         rows, width = self.extent(sheet)

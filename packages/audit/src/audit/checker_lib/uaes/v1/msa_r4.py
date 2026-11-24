@@ -49,6 +49,51 @@ def linear_unit(value: str | None) -> str | None:
     return {"mm": "mm", "毫米": "mm", "μm": "μm", "um": "μm", "微米": "μm"}.get(unit)
 
 
+# A linear specification is evidence only when both endpoints and a unit can
+# be read. Never borrow a unit from the other document or from a sibling value.
+_MAG = r"(?:\d+(?:\.\d*)?|\.\d+)"
+_NOMINAL = rf"([+-]?{_MAG})"
+_TOL = rf"(?:±({_MAG})|\+({_MAG})/-({_MAG}))"
+_RANGE = re.compile(rf"{_NOMINAL}[-–~至]{_NOMINAL}({_LINEAR_UNIT})?")
+_COMBINED = re.compile(rf"{_NOMINAL}{_TOL}({_LINEAR_UNIT})?")
+_SINGLE = re.compile(rf"{_NOMINAL}({_LINEAR_UNIT})?")
+_SCALE = {"mm": Decimal(1000), "μm": Decimal(1)}
+
+
+def length_bounds(raw: str, limits: tuple, declared: frozenset[str]):
+    """Read one complete length specification in µm; an unbound or conflicting unit is not evidence."""
+
+    def scale(suffix):
+        sources = declared | ({linear_unit(suffix)} if suffix else set())
+        return _SCALE.get(next(iter(sources))) if len(sources) == 1 else None
+
+    value = _c(raw).replace("−", "-")
+    if not limits and (interval := _RANGE.fullmatch(value)):
+        factor = scale(interval[3])
+        if factor and Decimal(interval[1]) <= Decimal(interval[2]):
+            return Decimal(interval[1]) * factor, Decimal(interval[2]) * factor
+    if not limits and (both := _COMBINED.fullmatch(value)):
+        nominal, symmetric, upper, lower, suffix = both.groups()
+        nominal_scale = tol_scale = scale(suffix)
+    elif len(limits) == 1 and (single := _SINGLE.fullmatch(value)):
+        deviation = _c(limits[0]).strip("()").replace("−", "-")
+        # In a standalone field the upper deviation may be written unsigned.
+        if "/" in deviation and not deviation.startswith("+"):
+            deviation = "+" + deviation
+        tol = re.fullmatch(rf"{_TOL}({_LINEAR_UNIT})?", deviation)
+        if not tol:
+            return None
+        nominal, suffix = single.groups()
+        symmetric, upper, lower, tol_suffix = tol.groups()
+        nominal_scale, tol_scale = scale(suffix), scale(tol_suffix)
+    else:
+        return None
+    if nominal_scale and tol_scale:
+        n = Decimal(nominal) * nominal_scale
+        return n - Decimal(symmetric or lower) * tol_scale, n + Decimal(symmetric or upper) * tol_scale
+    return None
+
+
 @dataclass
 class Report(MsaReport):
     """Keep separately anchored conclusion and metric evidence for this revision."""
@@ -151,21 +196,15 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
         if not own_part and len(own_codes) == 1:
             own_part = next(iter(own_codes))
 
-        # Preserve literal identity, including suffixes and case. Descriptive text may
-        # follow a Bosch part code in a combined "product name / part number" column.
-        def part_ids(value: str) -> set[str]:
-            if not value or _c(value) in _PLACEHOLDERS | _DECLARED_NA:
-                return set()
-            codes = {token for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value) if re.match(r"[Ff][A-Za-z0-9]{9,}", token)}
-            return codes or {value.strip()}
-
-        row_parts = [part_ids(part_text) for _where, part_text, _ch, _val, _g in found]
-        written = set().union(*row_parts)
+        # A number must be the complete value of the part field. Extracting a
+        # familiar-looking token from a compound cell discards other identities.
+        row_parts = [raw.strip() if _c(raw) not in _PLACEHOLDERS | _DECLARED_NA else "" for _, raw, _, _, _ in found]
+        written = {part for part in row_parts if part}
         items = [(where, feature, value, gauge) for where, _p, feature, value, gauge in found]
         if len(written) > 1:
             if not own_part:
                 raise unable(f"{source}列有多个零件号，未能确定本零件号，不能选择适用特性行。")
-            items = [item for item, ids in zip(items, row_parts) if ids == {own_part}]
+            items = [item for item, part in zip(items, row_parts) if part == own_part]
             if not items:
                 raise unable(f"{source}没有明确归属本零件号{own_part}的行，不能按空范围通过。")
             source += f"中明确归属本零件号{own_part}的行"
@@ -202,16 +241,36 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
         report.numbers = [value for value in self.glabel(grid, (*self.READER.resources.GAUGE_NUMBER, "编号")) if _c(value) not in _PLACEHOLDERS]
         # A dimension unit belongs to a declared measurement field or to an
         # explicit measurement-unit field, never to the gauge range or the plan.
-        measurement_grid = grid.copy()
-        unit_places = self.label_cells(grid, _UNIT_LABEL)
-        fields = {compact(label) for label in (*_PARAMETER, *_LIMIT)}
+        dimension_labels = {compact(label): field for field, aliases in (("parameter", _PARAMETER), ("limit", _LIMIT), ("unit", _UNIT_LABEL)) for label in aliases}
+        data: dict[str, list[tuple[int, int, str]]] = {"parameter": [], "limit": [], "unit": []}
+        unit_places = []
         for (row, col), text in grid.items():
-            heading = re.fullmatch(rf"(.+?)\s*\(({_LINEAR_UNIT})\)(\s*[:：].*)?", unicodedata.normalize("NFKC", text), re.I | re.S)
-            if heading and compact(heading[1]) in fields:
-                measurement_grid[row, col] = heading[1] + (heading[3] or "")
-                unit_places.append((row, col, heading[2]))
-        parameter_cells = self.label_cells(measurement_grid, _PARAMETER)
-        limit_cells = self.label_cells(measurement_grid, _LIMIT)
+            heading, _, inline = _text(text).partition(":")
+            unit = re.fullmatch(r"(.+?)\s*\(([^()]+)\)", heading)
+            field = dimension_labels.get(compact(unit[1] if unit else heading))
+            if not field:
+                continue
+            if unit and field != "unit":
+                unit_places.append((row, col, unit[2]))
+            if inline.strip():
+                data[field].append((row, col, inline.strip()))
+            else:
+                merged = ctx.ops.get_detailed_merge_info(ws, row, col)
+                next_col = (merged.max_col if merged else col) + 1
+                if value := grid.get((row, next_col)):
+                    data[field].append((row, next_col, value))
+        parameter_cells, limit_cells = data["parameter"], data["limit"]
+        # A standalone unit field can describe the same row or an adjoining
+        # registration row, not a separate section after intervening fields.
+        value_rows = {r for r, _, _ in parameter_cells + limit_cells}
+        scope = set(value_rows)
+        rows = sorted({r for r, _ in grid})
+        for before, after in zip(rows, rows[1:]):
+            if before in value_rows:
+                scope.add(after)
+            if after in value_rows:
+                scope.add(before)
+        unit_places.extend(cell for cell in data["unit"] if cell[0] in scope)
         characteristic = [value for _, _, value in parameter_cells]
         units = {linear_unit(text) or "unresolved" for _, _, text in unit_places if _c(text) not in _PLACEHOLDERS}
         report.dimension_units = frozenset(units)
@@ -407,30 +466,15 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
         expected = _c(feature)
         if not expected or expected in _DECLARED_NA | _PLACEHOLDERS:
             return None
+        # A named characteristic can be matched literally. An isolated number,
+        # range or nominal/tolerance must establish the full physical interval.
+        numeric = expected.replace("−", "-")
+        if any(pattern.fullmatch(numeric) for pattern in (_RANGE, _COMBINED, _SINGLE)):
+            wanted = length_bounds(expected, (), frozenset())
+            seen = length_bounds(written, report.limits, getattr(report, "dimension_units", frozenset()))
+            return wanted == seen if wanted is not None and seen is not None else None
         if written == expected:
             return True
-        # A plan can give endpoints while the report separates the nominal and
-        # tolerance. Only a complete interval, not a shared nominal, proves identity.
-        number = r"(\d+(?:\.\d+)?)"
-        interval = re.fullmatch(number + r"[-~～–]" + number + rf"({_LINEAR_UNIT})?", expected)
-        nominal = re.fullmatch(number + rf"({_LINEAR_UNIT})?", written)
-        if interval and nominal and len(report.limits) == 1:
-            lim = _c(report.limits[0]).strip("()").replace("−", "-")
-            sym = re.fullmatch("±" + number + rf"({_LINEAR_UNIT})?", lim)
-            asym = re.fullmatch(r"\+?" + number + "/-" + number + rf"({_LINEAR_UNIT})?", lim)
-            if tol := sym or asym:
-                report_units = set(report.dimension_units) if isinstance(report, Report) else set()
-                report_units.update(unit for text in (nominal[2], tol[3] if asym else tol[2]) if (unit := linear_unit(text)))
-                # Do not import the expected unit into an unlabelled report.
-                expected_unit = linear_unit(interval[3])
-                if len(report_units) != 1 or not expected_unit or "unresolved" in report_units:
-                    return None
-                observed_unit = next(iter(report_units))
-                scale = {"mm": Decimal(1000), "μm": Decimal(1)}
-                high = Decimal(tol[1])
-                low = Decimal(tol[2]) if asym else high
-                n = Decimal(nominal[1])
-                return ((n - low) * scale[observed_unit], (n + high) * scale[observed_unit]) == (Decimal(interval[1]) * scale[expected_unit], Decimal(interval[2]) * scale[expected_unit])
         return MsaClauses.characteristic_match(feature, feature, report, unique_name=True, unique_requirement=True)
 
     @rule("计划量具与GRR/Kappa报告匹配及报告结论与指标")

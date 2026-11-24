@@ -277,10 +277,11 @@ class UaesCapabilityAgentR4(UaesCapabilityAgentR3):
         return "PASS", f"能力汇总共核对{checked}行，" + (f"{low_rows}行低于目标，均有反应计划或备注。" if low_rows else "全部达标，反应计划不适用。")
 
     @staticmethod
-    def identity(sheet, labels):
+    def identities(sheet, labels, *, full_sheet=False):
         wanted = {compact(v) for v in labels}
         values = set()
-        for row in sheet.ws.iter_rows(max_row=min(sheet.ws.max_row, 24), max_col=min(sheet.ws.max_column, 80)):
+        rows = sheet.ws.iter_rows() if full_sheet else sheet.ws.iter_rows(max_row=min(sheet.ws.max_row, 24), max_col=min(sheet.ws.max_column, 80))
+        for row in rows:
             for c in row:
                 if compact(c.value) not in wanted:
                     continue
@@ -289,6 +290,11 @@ class UaesCapabilityAgentR4(UaesCapabilityAgentR3):
                 val = sheet.ws.cell(c.row, end + 1).value
                 if val is not None and compact(val) not in _EMPTY:
                     values.add(str(val).strip())
+        return values
+
+    @classmethod
+    def identity(cls, sheet, labels):
+        values = cls.identities(sheet, labels)
         return values.pop() if len(values) == 1 else None
 
     def directory(self, ctx):
@@ -333,12 +339,13 @@ class UaesCapabilityAgentR4(UaesCapabilityAgentR3):
     def report_studies(self, ctx):
         studies = {}
         for sheet, report in self.native_studies(ctx):
-            names = {compact(sheet.title)}
-            desc = self.identity(sheet, ("特性名称", "Description", "尺寸编号"))
-            if desc:
-                names.add(compact(desc))
-            for name in names:
-                studies.setdefault(name, []).append((sheet, report))
+            names = {compact(name) for name in self.identities(sheet, ("特性名称", "Description", "尺寸编号"), full_sheet=True)}
+            if len(names) > 1:
+                raise unable(f"“{sheet.title}”含有多个研究特性，尚未将每个实测指数对应到具体特性。")
+            # The sheet name can identify a study only when the study itself
+            # does not name its characteristic. One page is not two studies.
+            name = next(iter(names), compact(sheet.title))
+            studies.setdefault(name, []).append((sheet, report))
         return studies
 
     @rule("过程能力报告目录覆盖PGQP1全部特殊特性")
@@ -519,35 +526,28 @@ class UaesCapabilityAgentR4(UaesCapabilityAgentR3):
 
     def research_spec(self, sheet):
         # Label and value may be separated by the merged label, never by a different field.
-        result = []
-        combined = set()
-        for i, aliases in enumerate(_TOL):
-            vals = set()
-            for row in sheet.ws.iter_rows(max_row=min(30, sheet.ws.max_row), max_col=min(40, sheet.ws.max_column)):
-                for cell in row:
-                    label = compact(cell.value)
-                    combo = label in {"规格", "尺寸规格", "specification", "spec"}
-                    if label not in aliases and not combo:
-                        continue
-                    merged = sheet.ctx.ops.get_detailed_merge_info(sheet.ws, cell.row, cell.column)
-                    value_cell = sheet.ws.cell(cell.row, (merged.max_col if merged else cell.column) + 1)
-                    triple = self.compact_spec(value_cell.value) if combo else None
-                    if triple:
-                        combined.add(triple)
-                    if label not in aliases:
-                        continue
-                    val = self.component(value_cell.value, diameter=i == 0)
-                    if val is not None:
-                        # English MINUS labels the amount subtracted by the template, unlike a signed 下公差.
-                        vals.add(-val if label == "minus" else val)
-                        self.cite(sheet, value_cell.row, value_cell.column)
-            result.append(vals.pop() if len(vals) == 1 else None)
-        for i in range(3):
-            values = {t[i] for t in combined} | ({result[i]} if result[i] is not None else set())
-            if len(values) > 1:
-                raise unable(f"“{sheet.title}”同一特性列有矛盾规格。")
-            result[i] = values.pop() if values else None
-        return tuple(result)
+        components = [set(), set(), set()]
+        for row in sheet.ws.iter_rows():
+            for cell in row:
+                label = compact(cell.value)
+                combo = label in {"规格", "尺寸规格", "specification", "spec"}
+                position = next((i for i, aliases in enumerate(_TOL) if label in aliases), None)
+                if not combo and position is None:
+                    continue
+                merged = sheet.ctx.ops.get_detailed_merge_info(sheet.ws, cell.row, cell.column)
+                value = sheet.ws.cell(cell.row, (merged.max_col if merged else cell.column) + 1)
+                if combo and (triple := self.compact_spec(value.value)):
+                    for seen, number in zip(components, triple):
+                        seen.add(number)
+                elif position is not None and (number := self.component(value.value, diameter=position == 0)) is not None:
+                    # English MINUS names the amount subtracted by the template.
+                    components[position].add(-number if label == "minus" else number)
+                else:
+                    continue
+                self.cite(sheet, value.row, value.column)
+        if any(len(seen) > 1 for seen in components):
+            raise unable(f"“{sheet.title}”同一特性列有矛盾规格。")
+        return tuple(next(iter(seen), None) for seen in components)
 
     @rule("图纸定量特殊特性纳入能力研究且规格一致")
     def rule_6(self, ctx: RuleContext):

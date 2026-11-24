@@ -54,9 +54,9 @@ _MSA_FORM = re.compile(
 
 
 def _sheet_heads(text: str) -> Iterator[tuple[str, list[list[tuple[str, str]]]]]:
-    for sheet in re.finditer(r'<SHEET name="([^"]*)"[^>]*>(.*?)</SHEET>', text, re.DOTALL):
+    for sheet in re.finditer(r"""<SHEET name=(["'])(?P<title>.*?)\1>(?P<body>.*?)</SHEET>""", text, re.DOTALL):
         rows = []
-        for row in re.finditer(r"<ROW[^>]*>(.*?)</ROW>", sheet.group(2), re.DOTALL):
+        for row in re.finditer(r"<ROW[^>]*>(.*?)</ROW>", sheet["body"], re.DOTALL):
             found = re.finditer(r'<CELL[^>]*address="([A-Z]+\d+)"[^>]*>(.*?)</CELL>', row.group(1), re.DOTALL)
             cells = [(cell.group(1), value) for cell in found if (value := html.unescape(cell.group(2)).strip())]
             if cells:
@@ -64,16 +64,33 @@ def _sheet_heads(text: str) -> Iterator[tuple[str, list[list[tuple[str, str]]]]]
             if len(rows) == _SHEET_HEAD_ROWS:
                 break
         if rows:
-            yield html.unescape(sheet.group(1)), rows
+            yield html.unescape(sheet["title"]), rows
 
 
-def _compact(sheets: list[tuple[str, list[list[tuple[str, str]]]]]) -> str:
-    """Spreadsheet text as the head of each sheet: only cells with values."""
-    return "\n".join(f"[工作表 {title}]\n" + "\n".join(" | ".join(f"{addr}={value}" for addr, value in row) for row in rows) for title, rows in sheets)
+def _compact(sheets: list[tuple[str, list[list[tuple[str, str]]]]], limit: int) -> tuple[str, bool]:
+    """Share the prompt budget across sheet heads, keeping only complete rows."""
+    blocks = [[f"[工作表 {title}]", *(" | ".join(f"{addr}={value}" for addr, value in row) for row in rows)] for title, rows in sheets]
+    sizes = [sum(len(line) + 1 for line in lines) for lines in blocks]
+    budget, clipped = limit + 1, False  # one newline per line, except the last
+    kept = [""] * len(blocks)
+    for rank, index in enumerate(sorted(range(len(blocks)), key=sizes.__getitem__)):
+        # Short sheets take only what they need; share the rest among the larger ones.
+        room = budget // (len(blocks) - rank)
+        lines = []
+        for line in blocks[index]:
+            if len(line) + 1 > room:
+                clipped = True
+                break
+            lines.append(line)
+            room -= len(line) + 1
+            budget -= len(line) + 1
+        kept[index] = "\n".join(lines)
+    return "\n".join(block for block in kept if block), clipped
 
 
 def _has_msa_heading(sheets: list[tuple[str, list[list[tuple[str, str]]]]]) -> bool:
-    return any(_MSA_FORM.match(unicodedata.normalize("NFKC", value)) for _, rows in sheets for row in rows[:3] for _, value in row)
+    # Read the leading value of the sheet itself; a study named in another form's attachment list is not its title.
+    return any(_MSA_FORM.match(unicodedata.normalize("NFKC", rows[0][0][1])) for _, rows in sheets)
 
 
 def _placeholder(value: str) -> bool:
@@ -135,19 +152,18 @@ def analyze_file(
         notices.append("document_text_unavailable")
 
     # The excerpt is for preparation only; the checker still receives the full file.
-    if len(text) > 20000:
-        notices.append("metadata_uses_excerpt")
-    excerpt = text[:20000]
     sheets = list(_sheet_heads(text)) if "<SHEET" in text else []
-    compact_text = _compact(sheets) if sheets else text
+    metadata_text, clipped = _compact(sheets, _METADATA_EXCERPT) if sheets else (text[:_METADATA_EXCERPT], len(text) > _METADATA_EXCERPT)
+    if clipped or len(text) > 20000:
+        notices.append("metadata_uses_excerpt")
     metadata: dict[str, str | None] = dict.fromkeys(_METADATA_FIELDS)
-    if excerpt.strip():
+    if text.strip():
         try:
             # The file name is no source of these fields (裁定 R-06, R-13): the model reads the content only.
             parsed = ai(
                 "document_metadata_extraction",
                 instructions=PromptManager.get_system_prompt("document_analyst"),
-                prompt=_METADATA_PROMPT + compact_text[:_METADATA_EXCERPT],
+                prompt=_METADATA_PROMPT + metadata_text,
                 max_tokens=_ANSWER_TOKENS,
                 timeout=240,  # every sheet head of a long table takes the model longer than classification
             ).output
@@ -212,7 +228,7 @@ def analyze_file(
     # Prefer an explicit filename alias. If none, a UAES study form's own heading
     # is stronger evidence than model interpretation of raw spreadsheet XML.
     inferred = PpapDocumentType.infer_from_signals(filename=filename, min_margin=1)
-    if not source_type and excerpt.strip() and "metadata_extraction_failed" not in notices:
+    if not source_type and text.strip() and "metadata_extraction_failed" not in notices:
         evidence = PpapDocumentType.rank_from_signals(filename=filename)
         needs_content = inferred == PpapDocumentType.UNKNOWN or not evidence or not evidence[0].alias_hits
         if needs_content and customer_preference == "UAES" and _has_msa_heading(sheets):
@@ -224,7 +240,7 @@ def analyze_file(
                     "document_classification",
                     instructions=PromptManager.get_system_prompt("ppap_expert"),
                     prompt=PromptManager.get_submitted_document_classification_prompt(
-                        compact_text,
+                        _compact(sheets, 4000)[0] if sheets else text,  # the classification prompt admits 4000 characters
                         "\n".join(
                             f"{option}：{described[kind]}" if kind in described else option
                             for option, kind in [*((name, name) for name in document_types()), *((f"{code} {title}", code) for code, title in source_types.items())]

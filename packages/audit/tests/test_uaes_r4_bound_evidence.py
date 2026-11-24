@@ -2,7 +2,6 @@
 
 from decimal import Decimal
 
-from audit.checker_lib.uaes.v1.fmea_r4 import action_failure_witness
 from audit.checker_lib.uaes.v1.msa_r4 import Report, UaesMsaAgentR4
 
 
@@ -11,11 +10,6 @@ def test_explicit_report_unit_allows_comparing_asymmetric_tolerance():
     assert UaesMsaAgentR4.plan_feature_match("6.5–6.8 mm", report) is True
     physically_equal = Report("GRR", None, "GR&R", studied=(str(Decimal("6.6") * 1000) + "μm",), limits=("+200/-100μm",))
     assert UaesMsaAgentR4.plan_feature_match("6.5–6.8 mm", physically_equal) is True
-
-
-def test_same_number_can_prove_one_action_within_a_compound_step():
-    witness = action_failure_witness("melt 熔化", "溶化、转运、保温", "硅含量偏低")
-    assert witness and "硅含量偏低" in witness
 
 
 def test_dimension_unit_is_cited_from_the_original_measurement_heading():

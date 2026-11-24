@@ -9,6 +9,7 @@ from zipfile import BadZipFile
 from openpyxl.utils.cell import get_column_letter
 
 from audit.checker_lib.uaes.flowchart import placed_drawings
+from audit.checker_lib.uaes.identity import pair_identity
 from audit.engine.rule_engine import Decision, RuleContext, Table
 
 from .process_flow import UaesProcessFlowRevision3, compact
@@ -16,8 +17,8 @@ from .process_flow import UaesProcessFlowRevision3, compact
 _AIRTIGHT_NAMES = frozenset({"气密", "气密性检测", "气检"})
 
 
-_DISPOSITION = re.compile(r"(?:(?:不合格|不良)(?:品|件))?(?:隔离|返工|返修|报废|偏差(?:处理|放行))|rework|scrap|quarantine", re.I)
-_FAILED_BRANCH = re.compile(r"不合格|不良|\bNG\b|\bfail(?:ed)?\b", re.I)
+_DISPOSITION = re.compile(r"(?:(?:不合格|不良)(?:品|件))?(?:隔离|返工(?:返修)?|返修|报废|偏差(?:处理|放行))|不(?:合格|良)(?:品|件)(?:处理|处置)|rework|scrap|quarantine", re.I)
+_FAILED_BRANCH = re.compile(r"(?:(?:检测|检验|测试|判定)(?:结果)?[:：]?)?(?:不合格|不良|未通过)(?:品|件)?|(?:(?:test|inspection)(?:result)?[:：]?)?(?:ng|nok|fail(?:ed)?)", re.I)
 _BOX = {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 1000}, "minItems": 4, "maxItems": 4}
 _LOCATE = {"type": "object", "properties": {"box": {"anyOf": [_BOX, {"type": "null"}]}}, "required": ["box"], "additionalProperties": False}
 _BRANCH_SCHEMA = {
@@ -32,7 +33,7 @@ def disposition_text(observation: dict) -> str | None:
     condition, destination = observation.get("condition"), observation.get("destination")
     if not isinstance(condition, str) or not isinstance(destination, str) or observation.get("arrow") is not True:
         return None
-    if len(condition) > 80 or len(destination) > 80 or not _FAILED_BRANCH.search(condition) or not _DISPOSITION.fullmatch(compact(destination)):
+    if len(condition) > 80 or len(destination) > 80 or not _FAILED_BRANCH.fullmatch(compact(condition)) or not _DISPOSITION.fullmatch(compact(destination)):
         return None
     return f"“{condition}” → “{destination}”"
 
@@ -68,7 +69,16 @@ class UaesProcessFlowRevision4(UaesProcessFlowRevision3):
         if compact(source_name) == compact(target_name):
             return not (source_object and target_object) or compact(source_object) == compact(target_object)
         # Different names may identify the same type of test without identifying the same object.
-        return bool(source_object and target_object and compact(source_object) == compact(target_object))
+        source, target = pair_identity(source_object), pair_identity(target_object)
+        return source is not None and source == target and self.station_name_key(source_name) == self.station_name_key(target_name)
+
+    def disposition_node(self, clause, operation):
+        text = compact(clause)
+        # A non-operation annotation must name the affected parts or explicitly connect failure to disposition.
+        if _DISPOSITION.fullmatch(text):
+            return operation or text.startswith(("不合格", "不良"))
+        branch = re.split(r"→|->", text)
+        return len(branch) == 2 and bool(_FAILED_BRANCH.fullmatch(branch[0]) and _DISPOSITION.fullmatch(branch[1]))
 
     def node_annotations(self, ctx: RuleContext):
         path = str(self.audit_file.file_url)
@@ -95,53 +105,62 @@ class UaesProcessFlowRevision4(UaesProcessFlowRevision3):
         if path.suffix.lower() not in {".xlsx", ".xlsm"}:
             return {}
         import fitz
-        from documents.excel.visual import render_xlsx_pdf
-        from PIL import Image
+        from documents.excel.visual import has_region_graphics, render_xlsx_pdf
 
         source = path.read_bytes()
-        # Bound work per rule. A sheet not read here remains outside any absence claim.
-        for sheet in list(Table(ctx).find_sheets("过程流程图", on_missing=Decision.IGNORE))[:2]:
+        remaining = 2  # Maximum full-page model reads, not an assumption about the number of sheets/pages.
+        for sheet in Table(ctx).find_sheets("过程流程图", on_missing=Decision.IGNORE):
             try:
-                if not any(d.picture or d.place is None for d in placed_drawings(str(path), sheet.title)):
+                if not has_region_graphics(source, sheet_name=sheet.title, cell_range=None):
                     continue
                 pdf = render_xlsx_pdf(source, sheet_name=sheet.title, cell_range=None)
                 with fitz.open(stream=pdf, filetype="pdf") as document:
-                    if len(document) != 1:
-                        continue
-                    page = document[0]
-                    image = page.get_pixmap(dpi=min(180, max(36, int(2400 * 72 / max(page.rect.width, page.rect.height))))).tobytes("png")
+                    pages = []
+                    for page in document.pages(0, min(remaining, len(document))):
+                        dpi = min(180, max(36, int(2400 * 72 / max(page.rect.width, page.rect.height))))
+                        pages.append((page.number + 1, page.get_pixmap(dpi=dpi).tobytes("png")))
             except (OSError, ValueError, KeyError, BadZipFile, ParseError, RuntimeError):
                 continue
-            found = self.transcribe(
-                image,
-                "只定位原图中清晰可见的不合格分支到异常处置动作的箭头。用0至1000坐标圈住分支条件、箭头全长、目标文字；没有读到就返回null。只读图，不做审核。",
-                _LOCATE,
-                "异常分支原图定位",
-            )
-            box = found.get("box")
-            if not isinstance(box, list) or len(box) != 4 or any(type(v) is not int or not 0 <= v <= 1000 for v in box):
-                continue
-            left, top, right, bottom = box
-            if left >= right or top >= bottom or (right - left) * (bottom - top) > 600_000:
-                continue
-            img = Image.open(BytesIO(image))
-            selected = img.crop((left * img.width // 1000, top * img.height // 1000, (right * img.width + 999) // 1000, (bottom * img.height + 999) // 1000))
-            out = BytesIO()
-            selected.save(out, format="PNG")
-            read = self.transcribe(
-                out.getvalue(),
-                "只抄此图中同一完整箭头的起点条件和所指目标文字，两个字段逐字写。arrow只在从条件到目标的箭头可完整跟踪时为true。空白或不可读写空字符串。不解释、不判定。",
-                _BRANCH_SCHEMA,
-                "异常分支局部核读",
-            )
-            if not (trace := disposition_text(read)):
-                continue
-            meta = self.audit_file.file_metadata or {}
-            self.legacy().witness(
-                {"kind": "workbook_render_region", "sheet": sheet.title, "page": 1, "bbox": box, "coordinate_system": "render_image_0_to_1000", "engine": "ocr_llm"},
-                trace,
-                str(meta.get("file_version_id") or self.audit_file.audit_id),
-                visual=True,
-            )
-            return {"异常处理": f"异常处理（{sheet.title}原图局部）{trace}"}
+            for page_number, image in pages:
+                remaining -= 1
+                if found := self.read_disposition(image, sheet.title, page_number):
+                    return {"异常处理": found}
+            if not remaining:
+                break
         return {}
+
+    def read_disposition(self, image, sheet, page):
+        from PIL import Image
+
+        found = self.transcribe(
+            image,
+            "只定位实际工艺路线中清晰可见的不合格分支到异常处置动作的箭头，忽略图例、示例和说明性插图。用0至1000坐标圈住分支条件、箭头全长、目标文字；没有读到就返回null。只读图，不做审核。",
+            _LOCATE,
+            "异常分支原图定位",
+        )
+        box = found.get("box")
+        if not isinstance(box, list) or len(box) != 4 or any(type(v) is not int or not 0 <= v <= 1000 for v in box):
+            return None
+        left, top, right, bottom = box
+        if left >= right or top >= bottom or (right - left) * (bottom - top) > 600_000:
+            return None
+        img = Image.open(BytesIO(image))
+        selected = img.crop((left * img.width // 1000, top * img.height // 1000, (right * img.width + 999) // 1000, (bottom * img.height + 999) // 1000))
+        out = BytesIO()
+        selected.save(out, format="PNG")
+        read = self.transcribe(
+            out.getvalue(),
+            "只抄此图中同一完整箭头的起点条件和所指目标文字，两个字段逐字写。arrow只在从条件到目标的箭头可完整跟踪时为true。空白或不可读写空字符串。不解释、不判定。",
+            _BRANCH_SCHEMA,
+            "异常分支局部核读",
+        )
+        if not (trace := disposition_text(read)):
+            return None
+        meta = self.audit_file.file_metadata or {}
+        self.legacy().witness(
+            {"kind": "workbook_render_region", "sheet": sheet, "page": page, "bbox": box, "coordinate_system": "render_image_0_to_1000", "engine": "ocr_llm"},
+            trace,
+            str(meta.get("file_version_id") or self.audit_file.audit_id),
+            visual=True,
+        )
+        return f"异常处理（{sheet}第{page}页原图局部）{trace}"

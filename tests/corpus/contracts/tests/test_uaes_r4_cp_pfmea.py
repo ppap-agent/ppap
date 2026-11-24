@@ -286,3 +286,26 @@ def test_cp_drawing_requires_same_project_and_complete_baseline(tmp_path, rule):
     path, peers = cp_drawing_fixture(tmp_path, freq="X-R图", rows=[], complete=False)
     r = result(tmp_path, "U08", rule, path, peers)
     assert r.status == "UNABLE" and "完整" in r.suggestions, r.suggestions
+
+
+def test_cp12_uses_printed_inventory_title_and_literal_part_identity(tmp_path):
+    from openpyxl import load_workbook
+
+    target, peers = cp_drawing_fixture(tmp_path, freq="每次", rows=[[2, "装配", "目视", "安装方向", None, "箭头朝上", "每次"]])
+    plan = load_workbook(target)
+    plan.active["B1"] = "Ax/１７-b"
+    plan.save(target)
+    source = peers["图纸"]
+    doc = load_workbook(source)
+    doc.active.title = "清单页"
+    doc.active.insert_rows(1)
+    doc.active["A1"] = "图纸全部特殊特性"
+    doc.active["A2"] = "物料编号：Ax/１７-b"
+    doc.active["B2"] = None
+    doc.save(source)
+    doc.active["A2"] = "物料编号：AX/17-b"
+    doc.save(tmp_path / "another.xlsx")
+
+    finding = result(tmp_path, "U08", "CP:12", target, {**peers, "工程图纸": tmp_path / "another.xlsx"})
+
+    assert finding.status == "PASS" and "2项特殊特性" in finding.suggestions, finding.suggestions

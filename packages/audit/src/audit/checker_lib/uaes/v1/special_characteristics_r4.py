@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from audit.checker_lib.excel_agent import rule
+from audit.checker_lib.uaes.materials import related_by_content
 from audit.checker_lib.uaes.special_characteristics import _NAMES, characteristic_rows, combine, compact, filled, resources, unable
 from audit.checker_lib.uaes.v1.special_characteristics import (
     _ORDINARY,
@@ -20,6 +21,7 @@ from audit.checker_lib.uaes.v1.special_characteristics import (
     self_declared_class,
 )
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
+from audit.engine.rule_engine.excel_ops import DefaultExcelOps
 
 _PART = re.compile(r"(?<![A-Za-z0-9_.-])[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?(?![A-Za-z0-9_.-])")
 
@@ -85,40 +87,48 @@ def list_rows(agent: Any, ctx: RuleContext) -> list[tuple[str, Any, dict]]:
     return kept
 
 
-def labelled_parts(path: str) -> set[str]:
-    """Part numbers another original writes beside a part-number label: cells of a workbook, text of a PDF."""
-    found: set[str] = set()
+def labelled_parts(path: str):
+    """Yield a written value together with its original location; never span PDF pages/blocks to find a value."""
     suffix = Path(path).suffix.lower()
     if suffix == ".pdf":
         import fitz
 
         with fitz.open(path) as document:
-            text = "\n".join(page.get_text() for page in document[:2])
-        lines = text.splitlines()
-        for n, line in enumerate(lines):
-            label, _, inline = re.sub("：", ":", line).partition(":")
-            if number_label(label) and _norm(label) != "code":
-                value = inline.strip() or (lines[n + 1].strip() if n + 1 < len(lines) else "")
-                found |= labelled_number(value)
-        return found
+            for page in document:
+                for *bounds, block, _number, kind in page.get_text("blocks"):
+                    if kind != 0:
+                        continue
+                    lines = block.splitlines()
+                    for n, line in enumerate(lines):
+                        label, _, inline = line.replace("：", ":").partition(":")
+                        if number_label(label) and _norm(label) != "code":
+                            value = inline.strip() or (lines[n + 1].strip() if n + 1 < len(lines) else "")
+                            for number in labelled_number(value):
+                                yield number, {"kind": "pdf_region", "page": page.number + 1, "bbox": bounds}
+        return
     if suffix not in {".xlsx", ".xlsm", ".xls"}:
-        return found
+        return
     from audit.checker_lib.excel import load_workbook_auto
 
-    book = load_workbook_auto(path)
+    book, ops = load_workbook_auto(path), DefaultExcelOps()
     for sheet in book.worksheets:
-        for row in sheet.iter_rows(min_row=1, max_row=min(sheet.max_row, 40), max_col=min(sheet.max_column, 40)):
-            for index, cell in enumerate(row):
-                text = str(cell.value or "").strip()
-                # Bilingual labels often print a colon after each language.
-                label, sep, inline = re.sub(r"[:：]\s*\n", "\n", text).replace("：", ":").partition(":")
-                if not number_label(label) or _norm(label) == "code":
+        positions = ops.iter_filled_cell_positions(sheet, row_min=1, row_max=sheet.max_row, col_min=1, col_max=sheet.max_column)
+        for r, c in positions:
+            cell = sheet.cell(r, c)
+            text = str(cell.value or "").strip()
+            # Bilingual labels often print a colon after each language.
+            label, _, inline = re.sub(r"[:：]\s*\n", "\n", text).replace("：", ":").partition(":")
+            if not number_label(label) or _norm(label) == "code":
+                continue
+            source = cell
+            if not inline.strip():
+                merge = ops.get_detailed_merge_info(sheet, r, c)
+                edge = merge.max_col if merge else c
+                if edge >= sheet.max_column:
                     continue
-                value = inline.strip() if sep else ""
-                if not value:
-                    value = next((v.value for v in row[index + 1 : index + 9] if v.value not in (None, "")), "")
-                found |= labelled_number(value)
-    return found
+                source = sheet.cell(r, edge + 1)
+            for number in labelled_number(inline.strip() or source.value):
+                yield number, {"kind": "xlsx_cell", "sheet": sheet.title, "cell": source.coordinate}
 
 
 def _r4_resource():
@@ -153,7 +163,7 @@ class UaesSpecialCharacteristicsRevision4(UaesSpecialCharacteristicsRevision3):
                 found |= labelled_number(inline.strip() or (adjacent.value() if adjacent else ""))
         return found
 
-    def own_part(self, ctx: RuleContext, *, require_consensus: bool = False) -> tuple[str | None, str]:
+    def own_part(self, ctx: RuleContext) -> tuple[str | None, str]:
         """(this part number, how it was found): the list's labelled header, its only per-row part, else the one
         part number the other submitted (not reference) originals of this round state."""
         header = self.header_parts(ctx)
@@ -168,11 +178,7 @@ class UaesSpecialCharacteristicsRevision4(UaesSpecialCharacteristicsRevision3):
         stated = self.batch_parts()
         if len(stated) == 1:
             return next(iter(stated)), "同批次其他提交文件写明的零件号"
-        # The unchanged signature/three-way clauses retain their existing exact corroboration.
-        # For the mixed-list required-columns decision, contradictory target originals instead go to review.
-        corroborated = per_row & stated
-        if not require_consensus and len(corroborated) == 1:
-            return next(iter(corroborated)), "清单行与同批其他提交文件间唯一逐字相同的件号"
+        # A row's existence cannot break a tie between contradictory submitted originals.
         found = "、".join(sorted(header | per_row)) or "无"
         others = "、".join(sorted(stated)) or "无"
         return None, f"清单为多件号混装（读到{found}），同批次其他提交文件写明的零件号为{others}，不能确定本件号"
@@ -180,18 +186,23 @@ class UaesSpecialCharacteristicsRevision4(UaesSpecialCharacteristicsRevision3):
     def batch_parts(self) -> set[str]:
         if self.group_context is None:
             return set()
+        if self.group_context.unavailable_files:
+            raise unable("同批存在未能读取的提交资料，不能据其余文件确定混装清单的本件号。")
         found: set[str] = set()
         for item in self.group_context.by_audit_id.values():
             if item.audit_id == self.audit_file.audit_id or (item.file_metadata or {}).get("role") == "reference":
                 continue
             try:
-                found |= labelled_parts(str(item.file_url))
-            except Exception:
-                continue
+                for number, place in labelled_parts(str(item.file_url)):
+                    version = str((item.file_metadata or {}).get("file_version_id") or item.audit_id)
+                    self.legacy().witness(place, number, version)
+                    found.add(number)
+            except Exception as exc:
+                raise unable("同批提交文件的件号证据读取失败，不能据其余文件选择本件号。") from exc
         return found
 
-    def scoped(self, ctx: RuleContext, *, require_consensus: bool = False) -> tuple[str, list[tuple[str, Any, dict]], str]:
-        part, how = self.own_part(ctx, require_consensus=require_consensus)
+    def scoped(self, ctx: RuleContext) -> tuple[str, list[tuple[str, Any, dict]], str]:
+        part, how = self.own_part(ctx)
         if part is None:
             if reason := self.unreadable():
                 raise unable(f"{reason}，尚不能确定本件号，需人工复核。")
@@ -248,8 +259,6 @@ class UaesSpecialCharacteristicsRevision4(UaesSpecialCharacteristicsRevision3):
             raise unable(f"{reason}，表头与签署尚未读取，需人工复核。")
         if problems:
             return "NG", f"{scope}。" + "；".join(problems) + "。" + ("（各行物料字段待本件号确定后核对）" if open_scope else "")
-        if open_scope:
-            raise unable(f"表头字段齐全；{open_scope}")
         # Signatures: an Excel original without any picture can carry neither a handwritten signature nor a stamp.
         path = str(self.audit_file.file_url)
         if not path.lower().endswith(".pdf"):
@@ -258,7 +267,10 @@ class UaesSpecialCharacteristicsRevision4(UaesSpecialCharacteristicsRevision3):
             except Exception:
                 pictures = True
             if not pictures:
-                return "NG", f"{scope}。物料字段与表头字段齐全；原件没有任何图片，编制、审核、批准栏没有手写签字或电子签名图层，也没有印章，签署不闭环。"
+                material_basis = "各行物料字段待本件号确定后核对" if open_scope else "物料字段与表头字段齐全"
+                return "NG", f"{scope}。{material_basis}；原件没有任何图片，编制、审核、批准栏没有手写签字或电子签名图层，也没有印章，签署不闭环。"
+        if open_scope:
+            raise unable(f"表头字段齐全；{open_scope}")
         fields = {
             "prepared": "供应商编制栏有手写签字（或电子手写签名图层），不是打印体姓名",
             "checked": "供应商审核栏有手写签字（或电子手写签名图层），不是打印体姓名",
@@ -275,7 +287,7 @@ class UaesSpecialCharacteristicsRevision4(UaesSpecialCharacteristicsRevision3):
             if reason := self.unreadable():
                 raise unable(f"{reason}，尚不能确认特殊特性清单的四类列，需人工复核。")
             return "NG", "原件中未见编号/序号、特性名称、特性及公差、特性类型四类列表头，缺列不通过。"
-        part, rows, scope = self.scoped(ctx, require_consensus=True)
+        part, rows, scope = self.scoped(ctx)
         for sheet in sheets:
             if rows and sheet.title not in {title for title, _row, _columns in rows}:
                 continue
@@ -311,3 +323,17 @@ class UaesSpecialCharacteristicsRevision4(UaesSpecialCharacteristicsRevision3):
             return "NG", f"{scope}。" + "；".join(problems[:5]) + (f"等{len(problems)}行" if len(problems) > 5 else "") + "。"
         note = f"；{('、'.join(ordinary[:5]))}为仅作过程参考的普通行，特性类别留空或“/”，按已按规填写计（留痕）" if ordinary else ""
         return "PASS", f"{scope}；四类列齐全，各行编号、特性名称、特性及公差、特性类别均已填写{note}。"
+
+    @rule("特殊特性与图纸、PGQP1三方一致")
+    def rule_3(self, ctx: RuleContext):
+        # A complete batch containing neither required source has no comparison to perform,
+        # independent of which rows of a mixed list would have been in scope.
+        group = self.group_context
+        if not self.batch_files("E12") and not self.drawings():
+            if not group or group.unavailable_files or any(not kind or _norm(kind) in {"unknown", "未知"} for kind in group.by_doc_type):
+                raise unable("本轮资料范围或文件类型未核全，不能确认未提交图纸与PGQP1。")
+            if related_by_content(self, ("图纸", "drawing", "PGQP1", "采购件质量计划")).items:
+                raise unable("有未归类或待核实的比对来源，不能确认未提交图纸与PGQP1。")
+            ctx.record_execution()
+            return "NA", "同批次未提交图纸与PGQP1，无跨表比对对象，本条不适用；未按全表统计，缺件只在包级计一次。"
+        return super().rule_3(ctx)

@@ -421,6 +421,9 @@ class _Revision3(UaesProcessFlowAgent):
 
     # ---- PFD:4 ------------------------------------------------------------------------------------------------
 
+    def disposition_node(self, clause, operation):
+        return operation or re.search(r"不(?:合格|良)(?:品|件).{0,12}(?:隔离|返工|报废|处置)", clause)
+
     def node_annotations(self, ctx: RuleContext):
         return ()
 
@@ -478,7 +481,7 @@ class _Revision3(UaesProcessFlowAgent):
                     if re.search(_DECLARATIONS[node], clause):
                         choices.append((loc, f"{node}按书面说明（{loc}）“{clause[:90]}”"))
                     elif re.search(pattern, clause, re.I) and not re.search(r"不设|无需|不(?:需|进行|涉及)|未设|无独立", clause):
-                        if operation or (node == "异常处理" and re.search(r"不(?:合格|良)(?:品|件).{0,12}(?:隔离|返工|报废|处置)", clause)):
+                        if self.disposition_node(clause, operation) if node == "异常处理" else operation:
                             choices.append((loc, f"{node}（{loc}）“{clause[:90]}”"))
             if choices:
                 loc, why = choices[0]

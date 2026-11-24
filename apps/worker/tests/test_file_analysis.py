@@ -69,7 +69,7 @@ def test_metadata_reads_every_sheet_head_keeps_every_value_and_reports_written_b
     workbook = Workbook()
     workbook.active.title = "history"
     workbook.active.append(("版本", "V03"))
-    kappa = workbook.create_sheet("Kappa")
+    kappa = workbook.create_sheet('Gage "Kappa"')
     for row in [("Gage R&R",), ("零件号 Part Number",), ("F01RD0Y776",), *[("",)] * 300]:
         kappa.append(row)
     content = BytesIO()
@@ -78,10 +78,34 @@ def test_metadata_reads_every_sheet_head_keeps_every_value_and_reports_written_b
     result = analyze_file("776-Kappa.xls.xlsx", content.getvalue(), [], ai=Seen(answer), customer_preference="甲客户")
 
     # Every sheet's head reaches the model as address=value lines; the file name is not offered as a source.
-    assert "[工作表 Kappa]\nA1=Gage R&R\nA2=零件号 Part Number\nA3=F01RD0Y776" in Seen.prompt and "776-Kappa" not in Seen.prompt
+    assert '[工作表 Gage "Kappa"]\nA1=Gage R&R\nA2=零件号 Part Number\nA3=F01RD0Y776' in Seen.prompt and "776-Kappa" not in Seen.prompt
     # 裁定 R-09: several part numbers stay all; R-13 / R-15: placeholders are no value and are reported as written blanks.
     assert result["metadata"] == {"customer": None, "model": None, "project": None, "part": None, "part_number": "F01R20Y574\nF01R10Y527"}
     assert [notice for notice in result["notices"] if notice.startswith("metadata_blank_")] == ["metadata_blank_model", "metadata_blank_project", "metadata_blank_part"]
+
+
+def test_a_long_revision_sheet_leaves_room_for_the_following_sheet_in_both_model_reads() -> None:
+    workbook = Workbook()
+    workbook.active.title = "修订历史"
+    for number in range(40):
+        workbook.active.append((number, "更改说明。" * 65))
+    process = workbook.create_sheet("工艺资料")
+    process.append(("版本", "C"))
+    process.append(("零件号", "PART-9"))
+    content = BytesIO()
+    workbook.save(content)
+    prompts = {}
+
+    def read_original(operation: str, **kwargs) -> AIResult:
+        prompt = kwargs["prompt"]
+        prompts[operation] = prompt
+        return AIResult({"document_type": "控制计划"} if operation == "document_classification" else {"part_number": "PART-9"})
+
+    result = analyze_file("submission.xlsx", content.getvalue(), [rule("cp", ["UAES"])], ai=read_original, customer_preference="UAES")
+    assert (result["matching_status"], result["metadata"]["part_number"]) == ("matched", "PART-9")
+    for prompt in (prompts["document_metadata_extraction"], prompts["document_classification"]):
+        assert "[工作表 修订历史]" in prompt and "[工作表 工艺资料]" in prompt and "A2=零件号 | B2=PART-9" in prompt
+    assert "metadata_uses_excerpt" in result["notices"]
 
 
 def rule(rule_id: str, customers: list[str], document_type: str = "控制计划", **fields) -> dict:
@@ -108,6 +132,17 @@ def test_uaes_study_heading_stably_matches_the_msa_rule(form: str) -> None:
     assert result["matching_status"] == "matched"
     assert result["matched_rule_id"] == "msa"
     assert operations == ["document_metadata_extraction"]
+
+
+def test_control_plan_with_a_study_in_its_attachment_list_matches_control_plan() -> None:
+    result = analyze_file(
+        "submission.xlsx",
+        workbook_bytes(("控制计划", "生产阶段"), ("附：配套文件", "量具重复性与再现性报告"), ("特性", "控制方法")),
+        [rule("cp", ["UAES"]), rule("msa", ["UAES"], "测量系统分析评价")],
+        ai=MetadataAI({}, "控制计划"),
+        customer_preference="UAES",
+    )
+    assert (result["matching_status"], result["matched_rule_id"]) == ("matched", "cp")
 
 
 def test_explicitly_unrestricted_rule_matches_without_inventing_a_customer() -> None:

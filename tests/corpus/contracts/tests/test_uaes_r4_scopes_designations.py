@@ -110,3 +110,38 @@ def test_bilingual_drawing_layouts(tmp_path, field):
     source = drawing(tmp_path, "bearing.xlsx", field, "在用")
     result = run("U04", "MSL:3", material_list(tmp_path, "Rear Hub"), [source])
     assert result["status"] == "PASS" and "Rear Hub" in result["suggestions"], result
+
+
+def test_mixed_list_cites_part_from_submitted_original(tmp_path):
+    target = workbook(tmp_path, "inventory.xlsx", "特殊特性清单", [["序号", "Code", "特性名称", "规格/公差", "分类"], [1, "Rt-17", "孔距", "60±1", "SC"], [2, "RT-17", "外径", "7±0.1", "CC"]])
+    source = workbook(tmp_path, "process.xlsx", "封面", [*([] for _ in range(42)), ["零件号：Rt-17"]])
+
+    finding = run("U12", "SCL:2", target, [(source, "PFD", "target")])
+
+    assert finding["status"] == "PASS" and "本件号Rt-17过滤" in finding["suggestions"]
+    assert any(
+        loc.get("file_version_id") == "file1" and loc.get("sheet") == "封面" and loc.get("cell") == "A43" and src["excerpt"] == "Rt-17"
+        for src in finding["evidence"]["sources"]
+        if (loc := json.loads(src["locator"]))
+    ), finding["evidence"]
+
+
+def test_trial_compares_only_width_spaces_and_hyphens_and_cites_both_fields(tmp_path, monkeypatch):
+    from audit.checker_lib.uaes.native import UaesSourceAgent
+    from audit.checker_lib.uaes.v1.trial_r4 import part_key
+    from docx import Document
+
+    # The clause permits exactly these formatting differences, not case or underscores.
+    assert part_key("ａＺ＿００-８") == "aZ_008"
+    monkeypatch.setattr(UaesSourceAgent, "visual_observation", lambda self, fields: (dict.fromkeys(fields, True), set()))
+    doc = Document()
+    for text in ("流转记录：流程结束，流程完成", "试装结论：☑通过 □未通过", "检验结论：☑合格 □不合格", "UAES工艺工程师", "UAES质量工程师"):
+        doc.add_paragraph(text)
+    table = doc.add_table(rows=1, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "试装零件号", "ａＺ＿００-８"
+    target = tmp_path / "新样式.docx"
+    doc.save(target)
+    psw = workbook(tmp_path, "保证书.xlsx", "封面", [["送审资料"], ["", "客户零件号", "aZ_0 08"]])
+    result = run("U15", "TA:1", target, [(psw, "PSW", "reference")])
+    assert result["status"] == "PASS", result["suggestions"]
+    assert {(v["excerpt"], json.loads(v["locator"]).get("file_version_id")) for v in result["evidence"]["sources"]} >= {("ａＺ＿００-８", "file0"), ("aZ_0 08", "file1")}

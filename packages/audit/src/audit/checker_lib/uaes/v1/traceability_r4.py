@@ -17,7 +17,7 @@ from audit.checker_lib.uaes.v1.traceability import (
     compact,
     placeholder,
 )
-from audit.engine.rule_engine import GuardStop, Sheet
+from audit.engine.rule_engine import GuardStop, RuleContext, Sheet
 
 
 def signature(agent: UaesTraceabilityAgentR3 | UaesTraceabilityDocxAgentR3) -> tuple[str, str]:
@@ -36,6 +36,48 @@ def signature(agent: UaesTraceabilityAgentR3 | UaesTraceabilityDocxAgentR3) -> t
 
 class UaesTraceabilityAgentR4(UaesTraceabilityAgentR3):
     """Reader for signed UAES v1.0 revision 4."""
+
+    @rule("供应商零件追溯表五个区域实质内容与供应商签章")
+    def trace_1(self, ctx: RuleContext):
+        title = compact(self.READER.resources.TRACEABILITY_TITLE)
+        areas = set(self.READER.resources.TRACEABILITY_AREAS)
+        candidates = []
+        for sheet in self.sheets(ctx):
+            cells = self.cells(sheet)
+            labels = [cell for cell in cells if NUMBERING.sub("", self.text(cell)) in areas]
+            first = min((cell.row_index for cell in labels), default=sheet.ws.max_row)
+            printed = next(
+                (cell for cell in cells if cell.row_index <= first and any(compact(line) in {title, title + "表"} for line in str(cell.ws.cell(cell.row_index, cell.col_index).value).splitlines())),
+                None,
+            )
+            if printed is not None or title in compact(sheet.title):
+                # Identify the form by its headings, not by how favorable its outcome is.
+                candidates.append((sheet, labels, printed))
+        if not candidates:
+            return self.absent("“供应商零件追溯”表")
+        if len(candidates) > 1:
+            marked = [candidate for candidate in candidates if candidate[1]]
+            if len(marked) != 1:
+                return "UNABLE", "原件存在多张同标题表，不能唯一确定待核的五个追溯区域。"
+            candidates = marked
+        sheet, labels, printed = candidates[0]
+        if printed is not None:
+            printed.value()
+        if len({cell.row_index for cell in labels}) != len(labels) or len({NUMBERING.sub("", self.text(cell)) for cell in labels}) != len(labels):
+            return "UNABLE", "追溯区域标题同行并列或重复，无法确定各区边界。"
+        whole, holes, fillers, unread = self.area_findings(sheet)
+        status, sign = self.signed()
+        problems = [
+            *([f"区域整块缺失{len(whole)}处（致命）：" + "；".join(whole)] if whole else []),
+            *([f"局部空洞{len(holes)}处（主要）：" + "；".join(holes[:8])] if holes else []),
+            *([f"填占位词{len(fillers)}处：" + "；".join(fillers[:8])] if fillers else []),
+            *([sign] if status == "NG" else []),
+        ]
+        if problems:
+            return "NG", "供应商零件追溯表" + "。".join(problems) + "。"
+        if unread:
+            return "UNABLE", "供应商零件追溯表" + "；".join(unread) + "，需人工复核。"
+        return status, "供应商零件追溯表五个区域均有实质内容，无内部整行或整列空洞及占位词；" + sign + "。"
 
     def signed(self) -> tuple[str, str]:
         return signature(self)

@@ -159,3 +159,12 @@ def test_known_low_ppk_in_named_summary_not_hidden_by_absent_cpk(tmp_path):
     target = book(tmp_path / "p.xlsx", {"能力值汇总": [["特性名称", "目标(PPK)", "结果(PPK)", "备注"], ["直径", 1.67, 1.2]]})
     finding = check(target, "U06", "PCE:3")
     assert finding["status"] == "NG" and "低于目标" in finding["suggestions"]
+
+
+def test_study_characteristic_and_combined_spec_are_bound_to_the_cited_cells(tmp_path):
+    p = book(tmp_path / "delivery.xlsx", {"目次": directory("衬套外径"), "供应商页签047": [[None]] * 34 + [["特性名称", "衬套外径"], [None, None, "规格", "15±0.04"], *report()[1:]]})
+    d = book(tmp_path / "drawing.xlsx", {"图纸全部特殊特性": [["零件号码", "P-0007"], ["特性名称", "类型", "图纸规格"], ["衬套外径", "定量", "⌀15+0.04/-0.04"]]})
+    result = check(p, "U06", "PCE:6", {"图纸": [d]})
+    assert result["status"] == "PASS", result
+    locations = {json.loads(s["locator"]).get("cell") for s in result["evidence"]["sources"]}
+    assert "D36" in locations

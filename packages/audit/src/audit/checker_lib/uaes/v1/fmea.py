@@ -945,6 +945,12 @@ class _Revision3(UaesPfmeaAgent):
 
     # ---- PFMEA:4 ----------------------------------------------------------------------------------------------
 
+    pgqp1_check_table_first = False
+
+    def pgqp1_part_scope(self, sheet, part):
+        numbers = {compact(value).upper() for value in self.labelled(sheet, ("Part No/零件号",)) if compact(value)}
+        return part in numbers, sorted(numbers)
+
     @rule("PGQP1重要特性覆盖与一致")
     def rule_4(self, ctx: RuleContext):
         self.require_readable((_PGQP1,))
@@ -955,15 +961,21 @@ class _Revision3(UaesPfmeaAgent):
             self.need("采购件质量计划（PGQP1）")
             return "NG", "同批次没有提交采购件质量计划（PGQP1），整份未交，不以特殊特性清单或图纸替代比对，判不通过。"
         part, unread = self.part_number(ctx)
-        if part is None:
-            raise unable(f"{unread}，无法确定本文件零件号，尚不能配对同零件号的采购件质量计划，需人工复核。")
-        others, rows, has_table = [], [], False
+        identity_gap = f"{unread}，无法确定本文件零件号，尚不能配对同零件号的采购件质量计划，需人工复核。"
+        if part is None and not self.pgqp1_check_table_first:
+            raise unable(identity_gap)
+        others, rows, has_table, unresolved_parts = [], [], False, []
         for plan in plans:
             with self.reading(ctx, plan, pgqp1):
                 for sheet in Table(ctx).find_sheets("PGQP1", on_missing=Decision.IGNORE):
                     has_table = True
-                    numbers = {compact(value).upper() for value in self.labelled(sheet, ("Part No/零件号",)) if compact(value)}
-                    if part not in numbers:
+                    if part is None:
+                        raise unable(identity_gap)
+                    matches, numbers = self.pgqp1_part_scope(sheet, part)
+                    if matches is None:
+                        unresolved_parts.append(original_name(plan))
+                        continue
+                    if not matches:
                         others.extend(sorted(numbers) or ["未写零件号"])
                         continue
                     section = self.section(sheet, "重要特性区")
@@ -981,6 +993,8 @@ class _Revision3(UaesPfmeaAgent):
         if not has_table:
             self.need("采购件质量计划（PGQP1）")
             return "NG", "同批次采购件质量计划中没有PGQP1表，判不通过。"
+        if unresolved_parts and not rows:
+            raise unable(f"PGQP1“{'、'.join(unresolved_parts)}”没有可唯一识读的零件号，不能断定没有同零件号文件。")
         if not rows:
             if others:
                 self.need("采购件质量计划（PGQP1）", part=part, found=others[0])
@@ -990,6 +1004,8 @@ class _Revision3(UaesPfmeaAgent):
         failures, notes, pending = self.compare("PGQP1", rows, items, causes=True)  # type: ignore[arg-type]
         if failures:
             return "NG", f"PGQP1零件号{part}共{len(rows)}项重要特性：" + "；".join(failures[:5]) + (f"等{len(failures)}处" if len(failures) > 5 else "") + "。"
+        if unresolved_parts:
+            raise unable(f"PGQP1“{'、'.join(unresolved_parts)}”未能确定零件号及覆盖范围，不能确认全部覆盖。")
         if pending:
             raise unable("PGQP1重要特性均已覆盖，但" + "；".join(pending[:3]) + "，需人工复核。")
         unmarked = sum(1 for row in rows if row[3] is None)

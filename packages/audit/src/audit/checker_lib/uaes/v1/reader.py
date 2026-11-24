@@ -278,7 +278,7 @@ class Reader(ExcelAgent):
         source = EvidenceSource(
             kind="visual" if visual else "structure",
             locator=json.dumps({**locator, "file_version_id": version or version_of(self.audit_file)}, ensure_ascii=False, separators=(",", ":")),
-            excerpt=" ".join(str(value or "").split())[:500],
+            excerpt=" ".join(("" if value is None else str(value)).split())[:500],
         )
         cited = self.__dict__.setdefault("_cited", [])
         if source not in cited and len(cited) < 40:

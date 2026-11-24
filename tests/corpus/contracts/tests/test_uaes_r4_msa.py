@@ -137,3 +137,22 @@ def test_local_plan_identifies_part_even_with_another_plan_in_batch():
     scl = book({"清单": [["零件号", "特殊特性名称", "特性值", "测量设备"], [PART, "槽宽", "16±0.01", "卡尺"], [OTHER, "硬度", "40±2", "硬度仪"]]})
     result = run("MSA:6", local, (peer, MSA), (local_report, MSA), (scl, "过程特殊特性清单"))
     assert result["status"] == "PASS" and "全部1项" in result["suggestions"], result
+
+
+def test_same_characteristic_across_independently_stated_units():
+    # New vendor form: nominal in millimetres, both deviations in micrometres.
+    gauge_plan = plan()
+    gauge_plan[1][2] = "12.345–12.390 mm"
+    study = report("可接受", characteristic="12.36 mm") + [["参数规格", "30/-15 μm"]]
+    result = run("MSA:2", book({"新款设备计划": gauge_plan, "重新排版的量具研究": study}))
+    assert result["status"] == "PASS", result
+    locations = {json.loads(s["locator"]).get("cell") for s in result["evidence"]["sources"]}
+    assert {"B4", "B9"} <= locations
+
+
+def test_supplier_part_numbers_are_matched_verbatim_across_a_mixed_list():
+    part = "NX-024_B"
+    target = book({"计划": plan(part=part), "研究": report("OK", part=part)})
+    scl = book({"清单": [["零件号", "特殊特性名称", "特性值", "测量设备"], [part, "槽宽", "16±0.01", "卡尺"], ["NX-024_C", "入料硬度", "40±2", "硬度仪"]]})
+    result = run("MSA:6", target, (scl, "过程特殊特性清单"))
+    assert result["status"] == "PASS" and part in result["suggestions"], result

@@ -484,7 +484,7 @@ class UaesSourceAgent(BaseAgent):
         source = EvidenceSource(
             kind="visual" if visual else "structure",
             locator=json.dumps({**locator, "file_version_id": version or self.audit_file.audit_id}, ensure_ascii=False, separators=(",", ":")),
-            excerpt=str(value or "")[:500],
+            excerpt=("" if value is None else str(value))[:500],
         )
         if source not in self._evidence_sources:
             self._evidence_sources.append(source)

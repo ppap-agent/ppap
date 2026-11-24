@@ -226,3 +226,13 @@ def test_word_trace_uses_only_the_intervals_between_read_entries(monkeypatch, tm
     assert result["status"] == expected, result
     if interior_gap:
         assert "局部空洞1处" in result["suggestions"], result
+
+
+def test_trace_finds_bilingual_title_after_cover_information(monkeypatch, tmp_path):
+    book = trace()
+    sheet = book.active
+    sheet.title = "交付附件"
+    sheet.insert_rows(1, 12)
+    sheet["A13"] = "Supplier component traceability\n供应商零件追溯表"
+    result = run(tmp_path, monkeypatch, "U18", book, TRACE_SIGN)
+    assert result["status"] == "PASS" and "均有实质内容" in result["suggestions"], result

@@ -81,7 +81,9 @@ class WarrantR4(WarrantR3):
             name, ref = external.groups()
             matching = [f for f in refs if f.audit_id != self.audit_file.audit_id and original_name(f) == name]
             if len(matching) != 1:
-                if matching:
+                if not matching and (self.group_context is None or self.group_context.unavailable_files):
+                    audit.unknown.append(f"同批资料未能核全，无法确认说明栏所引《{name}》是否随附")
+                elif matching:
                     audit.unknown.append(f"引用的《{name}》有多个同名原件")
                 else:
                     audit.failed.append(f"说明栏引用的《{name}》未随附")

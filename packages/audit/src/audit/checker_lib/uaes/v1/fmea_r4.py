@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import replace
 
 from audit.checker_lib.excel_agent import rule
-from audit.checker_lib.uaes.fmea import _LISTS, Decision, Table, original_name, own_class, special_list, unable
+from audit.checker_lib.uaes.fmea import _LISTS, _PART_LABELS, Decision, Table, original_name, own_class, special_list, unable
+from audit.checker_lib.uaes.identity import pair_identity
 from audit.engine.rule_engine.contracts import ColumnModel
 
 from .fmea import UaesPfmeaRevision3, characteristic_name, mark_class, mark_tokens, operation_labels, substantive, tolerance, unknown_marks
@@ -18,38 +18,46 @@ _LIST_FIELDS = (
     ColumnModel(canonical_name="过程特性值", section_name="特殊特性区", aliases=("过程特性值", "过程特性规格")),
     ColumnModel(canonical_name="过程特性类别", section_name="特殊特性区", aliases=("过程特殊特性符号", "过程特性符号", "过程特性类别")),
 )
-_FMEA_OPERATION = ColumnModel(canonical_name="分析工序", section_name="PFMEA失效区", aliases=("工序名称", "过程名称", "Process Name"))
+_FMEA_OPERATION = ColumnModel(canonical_name="分析工序", section_name="PFMEA失效区", aliases=("工序名称", "过程名称", "Process Name", "Operation Name"))
 _BASE = UaesPfmeaRevision3.EXTRA_RESOURCE
 
 
-# Process-specific positive evidence, restricted to a matched step and a
-# substantive failure mode. Similar process names alone never match.
-_PROCESS_ACTIONS = (
-    (r"熔化|溶化|\b(?:melt|melting)\b", r"硅|成[分份]|silicon|composition|熔体|炉温|熔炼温度"),
-    (r"激光(?:打码|打标|刻字)|laser\s*(?:marking|engraving)", r"刻字|打码|打标|二维码|追溯码|marking|engraving"),
-)
-
-
 def action_failure_witness(description: str, function: str, mode: str) -> str | None:
-    if not substantive(mode):
-        return None
+    """For an aggregate row, use the source's own action-to-failure attribution, never a process-specific lookup."""
     source = operation_labels(description)
-    actions = {label for token in re.split(r"[，,、；;]", function) for label in operation_labels(token)}
-    for operation, failure in _PROCESS_ACTIONS:
-        if not any(re.fullmatch(operation, name, re.I) for name in source):
-            continue
-        if not any(re.fullmatch(operation, name, re.I) for name in actions) or not re.search(failure, unicodedata.normalize("NFKC", mode), re.I):
-            continue
-        return f"同号工序“{description}”与“{function}”写明同一工艺动作，且该行分析了“{mode}”"
+    actions = set().union(*(operation_labels(label) for label in re.split(r"[，,、；;]", function)))
+    for entry in re.split(r"[；;\n]", mode):
+        match = re.fullmatch(r"\s*([^:：]+)[:：]\s*(.+)", entry)
+        if match and substantive(match[2]) and source & actions & operation_labels(match[1]):
+            return f"PFD“{description}”，PFMEA“{function}”中该工艺的失效模式为“{entry.strip()}”"
     return None
 
 
+def _field_key(text):
+    return re.sub(r"[\s./]", "", str(text)).casefold()
+
+
+_PART_FIELDS = {_field_key(x) for x in (*_PART_LABELS, *special_list.PART_NUMBER, "Part No/零件号", "零件号 Part No.")}
+_PART_ROWS = _PART_FIELDS | {_field_key(x) for x in _BASE.columns["零件"].aliases} | {_field_key("产品名称/零件号 Name / Code")}
+
+
+def _field_heading(raw: str) -> bool:
+    return bool(re.search(r"(?:号|名称|日期|版本|签名|签字|\b(?:no\.?|number|name|date|revision|signature))\s*[:：]?$", raw, re.I))
+
+
+def _number_field(value):
+    raw = str(value or "").strip()
+    return raw if raw and pair_identity(raw) and not _field_heading(raw) and not re.search(r"[:：\n]", raw) else None
+
+
 class UaesPfmeaRevision4(UaesPfmeaRevision3):
+    pgqp1_check_table_first = True
     _section = _BASE.sections["特殊特性区"]
     EXTRA_RESOURCE = replace(
         _BASE,
         columns={
             **_BASE.columns,
+            "零件": _BASE.columns["零件"].model_copy(update={"aliases": (*_BASE.columns["零件"].aliases, *special_list.PART_NUMBER, "Part Number", "Part No.")}),
             "要求": _BASE.columns["要求"].model_copy(update={"aliases": (*_BASE.columns["要求"].aliases, "要求", "Requirement")}),
             **{field.canonical_name: field for field in (*_LIST_FIELDS, _FMEA_OPERATION)},
         },
@@ -68,12 +76,58 @@ class UaesPfmeaRevision4(UaesPfmeaRevision3):
         found = super().process_witness(description, characteristic, item)
         if found is not None:
             return found
-        return action_failure_witness(description, item.values.get("功能", ""), item.values.get("失效模式", ""))
+        mode = item.values.get("失效模式", "")
+        if (sheet := getattr(item, "sheet", None)) is not None and substantive(mode):
+            columns = self.__dict__.setdefault("_operation_columns", {})
+            if id(sheet.ws) not in columns:
+                field = self.section(sheet, "PFMEA失效区").columns(optional=("分析工序",)).get("分析工序")
+                columns[id(sheet.ws)] = field.header_col if field else None
+            if col := columns[id(sheet.ws)]:
+                named = str(self.raw(sheet, item.row, col) or "").strip()
+                if operation_labels(named) & operation_labels(description):
+                    self.cite(sheet, item.row, col)
+                    return f"PFMEA工序名称“{named}”，同行失效模式“{mode}”"
+        return action_failure_witness(description, item.values.get("功能", ""), mode)
+
+    def _header_parts(self, sheet, stop):
+        """Only a part-number field above the actual table, never unrelated codes or values in other files."""
+        _, cols = self.extent(sheet)
+        parts = set()
+        for cell in sheet.scan_non_empty(row_min=1, row_max=stop, col_min=1, col_max=cols):
+            label, *inline = re.split("[:：]", str(cell.value()), maxsplit=1)
+            if _field_key(label) not in _PART_FIELDS:
+                continue
+            row, col = cell.row_index, cell.col_index
+            if inline and inline[0].strip():
+                value = inline[0]
+            else:
+                merge = sheet.ctx.ops.get_detailed_merge_info(sheet.ws, row, col)
+                right = (merge.max_col if merge else col) + 1
+                value = self.raw(sheet, row, right) if right <= cols else None
+                if _field_heading(str(value or "").strip()):
+                    # Adjacent headings form a header row; their respective values are below, not each other.
+                    row = (merge.max_row if merge else row) + 1
+                    value = self.raw(sheet, row, col) if row <= stop and _number_field(self.raw(sheet, row, right)) else None
+                else:
+                    col = right
+            if number := _number_field(value):
+                self.cite(sheet, row, col)
+                parts.add(number)
+        return parts
+
+    def part_number(self, ctx):
+        found = set().union(*(self._header_parts(sheet, self.section(sheet, "PFMEA失效区").resolved.header_row - 1) for sheet in self.sheets(ctx)))
+        if len(found) == 1:
+            return next(iter(found)), ""
+        return None, "PFMEA表头未取得唯一、明确标为零件号或物料编号的原值"
+
+    def pgqp1_part_scope(self, sheet, part):
+        found = self._header_parts(sheet, self.section(sheet, "重要特性区").resolved.header_row - 1)
+        return ((part in found) if len(found) == 1 else None), sorted(found)
 
     def _same_part_lists(self, ctx, part, project):
         classified, unresolved = [], []
         lists = {item.audit_id: item for kind in _LISTS for item in self.batch_files(kind)}
-        identity = re.compile(r"(?<![0-9A-Za-z_-])" + re.escape(part) + r"(?![0-9A-Za-z_-])", re.IGNORECASE)
         for item in lists.values():
             label = f"特殊特性清单“{original_name(item)}”"
             with self.reading(ctx, item, special_list):
@@ -83,7 +137,13 @@ class UaesPfmeaRevision4(UaesPfmeaRevision3):
                 for sheet in sheets:
                     section = self.section(sheet, "特殊特性区")
                     columns = section.columns(optional=("零件", "特性名称", "过程特性名称", "特性值", "特性类别", *(field.canonical_name for field in _LIST_FIELDS)))
-                    stated = self.labelled(sheet, special_list.PART_NUMBER)
+                    header = section.resolved.header_row
+                    if "零件" in columns and _field_key(self.raw(sheet, header, columns["零件"].header_col)) not in _PART_ROWS:
+                        columns = {k: v for k, v in columns.items() if k != "零件"}
+                    stated = self._header_parts(sheet, header - 1)
+                    if "零件" not in columns and len(stated) != 1:
+                        unresolved.append(f"{label}未能从表头确认唯一物料编号，也没有逐行的物料栏")
+                        continue
                     theirs = self.project([sheet])
                     if theirs and project and theirs != project:
                         continue
@@ -93,9 +153,20 @@ class UaesPfmeaRevision4(UaesPfmeaRevision3):
                         # whose identity is stated in its header, can own a characteristic.
                         if "零件" in columns:
                             owner = self.raw(sheet, row.row_index, columns["零件"].header_col)
-                            same = bool(owner and identity.search(str(owner)))
+                            if not pair_identity(owner):
+                                unresolved.append(f"{label}第{row.row_index}行未能确认所属物料")
+                                continue
+                            text = str(owner).strip()
+                            same = text == part
+                            # Only a combined name/code column licenses separating an ID from the part name.
+                            if not same and _field_key(self.raw(sheet, header, columns["零件"].header_col)) not in _PART_FIELDS:
+                                ids = {token for token in re.findall(r"[A-Za-z0-9_.\-/]+", text) if any(char.isdigit() for char in token)}
+                                if len(ids) != 1:
+                                    unresolved.append(f"{label}第{row.row_index}行的名称/编号栏未能分出唯一的完整编号")
+                                    continue
+                                same = ids == {part}
                         else:
-                            same = len(stated) == 1 and bool(identity.search(stated[0]))
+                            same = stated == {part}
                         if not same:
                             continue
                         matched = True

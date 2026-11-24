@@ -15,7 +15,7 @@ from audit.checker_lib.uaes.v1.inspection import (
     bare,
     limits,
 )
-from audit.checker_lib.uaes.v1.reader import Place, compact, original_name, unable, version_of
+from audit.checker_lib.uaes.v1.reader import HOLLOW, PLACEHOLDERS, Place, compact, original_name, unable, version_of
 from audit.engine.rule_engine import RuleContext, Sheet
 
 PICTURE_SCHEMA = {
@@ -42,7 +42,7 @@ PICTURE_PROMPT = (
 class InspectionR4(InspectionR3):
     """Reader for signed UAES v1.0 revision 4."""
 
-    def release(self, item: Any) -> tuple[str, str, str, bool] | None:
+    def release(self, item: Any, report_part: str) -> tuple[str, str, str, bool] | None:
         """Read the *subject* cell of a native, single-page C Sample Release Report, never a name or a remark.
         Other layouts, multiple subjects and scans cannot exclude coverage."""
         import fitz
@@ -85,18 +85,21 @@ class InspectionR4(InspectionR3):
                             approved = True
                             if box := table.rows[index].cells[col]:
                                 self.witness({"kind": "pdf_region", "page": 1, "bbox": list(box)}, label, version_of(item))
-                        if compact(label) != "零件号partno.":
+                        if compact(label).rstrip(".") not in {"零件号", "partno", "partnumber", "零件号partno", "零件号partnumber"}:
                             continue
                         part = (row[col + 1] or "").strip()
                         box = table.rows[index].cells[col + 1]
-                        if not box or not re.fullmatch(r"F[0-9A-Z]{9,}", part):
+                        # Only a single identifier in the labelled field establishes a subject. Keep
+                        # case, punctuation and leading zeros; the clause prescribes no numbering series.
+                        if not box or not re.fullmatch(r"[^\W_]+(?:[-._][^\W_]+)*", part) or compact(part) in PLACEHOLDERS | HOLLOW:
                             return None
                         matches.append((part, box))
             if len(matches) != 1:
                 return None
             part, box = matches[0]
-            # Don't exclude a document that also names another potential subject.
-            if set(re.findall(r"(?<![A-Za-z0-9])F[0-9A-Z]{9,}(?![A-Za-z0-9])", page.get_text())) != {part}:
+            # If the field names a different part but the release also mentions the target,
+            # it may cover more than one part. Don't infer non-coverage from the heading alone.
+            if report_part and report_part != part and re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(report_part)}(?![A-Za-z0-9_.-])", page.get_text()):
                 return None
             self.witness({"kind": "pdf_region", "page": 1, "bbox": list(box)}, part, version_of(item))
             return part, supplier, remark, approved and uaes
@@ -171,7 +174,7 @@ class InspectionR4(InspectionR3):
                     if match and match[1].strip() and match[1].strip() != part:
                         part = ""
             suppliers = {self.supplier(report) for report in reports}
-            releases = [(item, self.release(item)) for item in approvals]
+            releases = [(item, self.release(item, part)) for item in approvals]
             details = []
             states = []
             for index, requirement, inline in exceedances:
