@@ -91,6 +91,20 @@ test('an accepted receipt cannot replace the submitted file snapshot', async () 
   assert.equal(recognition.get('draft-a')!.phase, 'unknown')
   assert.deepEqual(accepted, [])
 })
+test('the receipt task shows where each file came from; the submitted snapshot without it is still matched', async () => {
+  const accepted: Task[] = []
+  const recognition = createTaskRecognition({
+    match: async (_files, _customer, _previous, requestId) => {
+      const next = task(requestId)
+      next.files[0].file.origin = {available: false}
+      return next
+    },
+    readRecognition: async () => {throw new Error('not read')},
+  }, next => accepted.push(next))
+  await recognition.start('draft-a', input())
+  assert.equal(recognition.get('draft-a')!.phase, 'accepted')
+  assert.equal(accepted.length, 1)
+})
 test('recognition receipt must retain the explicit re-audit source and rule choice', async () => {
   const accepted: Task[] = []
   const recognition = createTaskRecognition({
