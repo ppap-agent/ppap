@@ -44,6 +44,8 @@ _SAY = {
     "request_conflict": "这个 request_id 已经用于另一次不同的请求。请为新的请求生成一个新的随机 UUID。",
     "customer_required": "还没有选定审核客户。请让用户从 get_account 列出的客户中选一个，把它的 key 作为 customer 传入。",
     "rulebook_version_required": "规则库版本要写成 v1.0 这样。已有的版本见 get_account 的 rulebooks。",
+    "rule_questionnaire_not_found": "这个客户的这个版本（或修订）还没有发出过问题卡片。已发出的问卷可在 PPAP 网页的规则库里查看。",
+    "rule_question_not_found": "这份问卷里没有这张卡片。请用 get_rule_questions 读出卡片编号。",
     "rulebook_version_not_found": "这个客户没有这个版本的规则库。已有的版本见 get_account 的 rulebooks；新建版本要由平台负责人或受委托的审查方发起。",
     "platform_operator_required": "这一步只有平台负责人能确认。",
     "round_has_errors": "这次审核有检查项没有检查完，不能生成飞书报告。可以对同一份资料复审，结论确定后再交付。",
@@ -427,6 +429,85 @@ def register_tools(mcp, gateway, authority, runtime, clarifications):
             return outcome
         except Exception as exc:
             return failure(exc)
+
+    async def rule_questionnaire(actor, customer: str, version: str, revision: int | None) -> dict:
+        """The questionnaire put to the enterprise on one revision of a customer's rulebook: the latest revision asked when none is named."""
+        registered = by_key(customer)
+        if registered is None:
+            raise workflow.Rejected("customer_required")
+        listed = (await gateway.get(actor, "rulebooks:read", "/rule-questionnaires"))["questionnaires"]
+        asked = [row for row in listed if row["customer_id"] == registered.id and row["rulebook"]["version"] == version and revision in {None, row["rulebook"]["revision"]}]
+        if not asked:
+            raise workflow.Rejected("rule_questionnaire_not_found")
+        head = max(asked, key=lambda row: row["rulebook"]["revision"])
+        return await gateway.get(actor, "rulebooks:read", f"/rule-questionnaires/{head['id']}")
+
+    @mcp.tool(annotations=READ)
+    async def get_rule_questions(
+        customer: Annotated[str, Field(min_length=1, max_length=500, description="The `key` of the customer, from the customers `get_account` lists.")],
+        version: Annotated[str, Field(pattern=r"^v\d+\.\d+$", description="The rulebook version, e.g. v1.0.")],
+        revision: Annotated[int | None, Field(ge=0, description="The revision the cards were asked on; empty reads the latest revision asked.")] = None,
+        status: Literal["", "waiting", "answered"] = "",
+        offset: Offset = 0,
+        limit: Annotated[int, Field(ge=1, le=200)] = 100,
+    ) -> Outcome:
+        """The question cards sent to the enterprise on one revision of a customer's rulebook, word for word: each card's key, the
+        clauses it is about, the question, why it is asked, the options, the clause text it quotes, and every answer with its
+        answerer. Read only. Cards not sent yet are not here; they are in the clarification task's plan. While `next_offset` is set,
+        call again with it as `offset`."""
+        try:
+            actor = await authority()
+            found = await rule_questionnaire(actor, customer, version, revision)
+            cards = [
+                {**{k: q.get(k) for k in ("key", "clauses", "question", "why", "options", "expect", "sources", "follows", "answers")}, "status": "answered" if q["answers"] else "waiting"}
+                for q in found["questions"]
+            ]
+            chosen = [card for card in cards if status in {"", card["status"]}]
+            head = {k: found[k] for k in ("id", "title", "rulebook", "closed", "total", "answered")}
+            head["waiting"] = sum(1 for card in cards if card["status"] == "waiting")
+            room, shown, end = MAX_RESULT_BYTES - 8 * 1024, [], offset
+            for card in chosen[offset : offset + limit]:
+                room -= len(json.dumps(card, ensure_ascii=False).encode())
+                if room < 0 and end > offset:
+                    break
+                shown.append(card)
+                end += 1
+            result = {"questionnaire": head, "matching": len(chosen), "offset": offset, "cards": shown, "next_offset": end if end < len(chosen) else None}
+            return Outcome(result=result, next=DONE)
+        except Exception as exc:
+            return failure(exc)
+
+    @mcp.tool(annotations=UPDATE)
+    async def answer_rule_question(
+        questionnaire_id: UUID,
+        question_key: Annotated[str, Field(min_length=1, max_length=200, description="The card's key, from get_rule_questions.")],
+        request_id: UUID,
+        choice: Annotated[str | None, Field(max_length=64, description="The key of the option the person chose, e.g. A.")] = None,
+        text: Annotated[str | None, Field(max_length=4000, description="The person's own answer in their words, when no option fits or the card asks for one.")] = None,
+        note: Annotated[str | None, Field(max_length=2000, description="Anything the person adds to their answer.")] = None,
+    ) -> Outcome:
+        """Save the person's answer to one question card, exactly as they gave it: call it only with the option they chose or the
+        words they said, never one picked for them. Each person's answers are kept apart; answering again keeps the earlier answer
+        as history. Not a signing moment."""
+        qid, rid = str(questionnaire_id), str(request_id)
+        try:
+            actor = await authority()
+            actor.require("rulebooks:answer")
+            path = f"/rule-questionnaires/{qid}"
+            prior = await runtime.recorded(actor, rid)
+            if prior is not None and prior["tool"] == "answer_rule_question":
+                expected = prior["arguments"]["body"]["expected_revision"]
+            else:
+                question = next((q for q in (await gateway.get(actor, "rulebooks:read", path))["questions"] if q["key"] == question_key), None)
+                if question is None:
+                    raise workflow.Rejected("rule_question_not_found")
+                expected = next((answer["revision"] for answer in question["answers"] if answer["mine"]), 0)
+            body = {"operation_id": rid, "question_key": question_key, "expected_revision": expected, "choice": choice, "text": text, "note": note}
+            reply = await gateway.write(actor, "rulebooks:answer", "answer_rule_question", rid, "POST", path + "/answers", body, probes=[path])
+            arguments = {"questionnaire_id": qid, "question_key": question_key, "request_id": rid, "choice": choice, "text": text, "note": note}
+            return receipt(reply, "answer_rule_question", arguments, task_id=None) or Outcome(request_id=rid, result={"question_key": question_key, "saved": True}, next=DONE)
+        except Exception as exc:
+            return failure(exc, request_id=rid)
 
     @mcp.tool(annotations=READ)
     async def get_task(task_id: UUID, files_offset: Offset = 0, files_limit: Limit = 50) -> Outcome:

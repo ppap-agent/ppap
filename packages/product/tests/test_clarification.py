@@ -285,3 +285,31 @@ def test_a_clause_is_reworded_on_a_platform_ruling_and_reviewed_before_it_is_fro
     body = plan_of(state, found)[0]["body"]
     assert body["changes"]["A:2"] == {"kind": "same", "note": "写明印章口径", "sources": [{"ruling": ruling}]}
     assert rulebooks.revision_problems(body["documents"], body["changes"], r0["documents"]) == []
+
+
+def test_a_finding_added_to_a_frozen_revision_becomes_a_card_the_next_confirmation_sends():
+    state, found = drafted()
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", review([AMBIGUITY]), "A:1")
+    state = act(state, found, "CLAUSE_REVIEW", "submit_review", {**review(), "requirements": [{"quote": "须盖章", "role": "necessary", "scope": "盖章", "meaning": "要盖章。"}]}, "A:2")
+    found = take(found, plan_of(state, found))
+    assert c.project(TASK, state, found)["phase"] == "awaiting_answers"
+    gap = {
+        "id": "G1",
+        "kind": "gap",
+        "quotes": ["须盖章"],
+        "title": "章盖在哪里",
+        "question": "章盖在附页上算不算盖章？",
+        "example": "封面没有章，附页盖了公司章。",
+        "challenge": "原文只写须盖章，没写盖在哪一页；例子中按封面判不通过，按附页判通过，原文没有给出结论。",
+    }
+    # Checked as part of the clause's review: quotes from the frozen text, an ID new to the review, a reason.
+    with pytest.raises(c.Invalid):
+        act(state, found, "CLAUSE_FINDING", "add_finding", {"clause": "A:2", "finding": {**gap, "quotes": ["须签字"]}, "reason": "试跑发现"})
+    with pytest.raises(c.Invalid):
+        act(state, found, "CLAUSE_FINDING", "add_finding", {"clause": "A:1", "finding": {**gap, "id": "1", "quotes": ["已签名"]}, "reason": "试跑发现"})
+    state = act(state, found, "CLAUSE_FINDING", "add_finding", {"clause": "A:2", "finding": gap, "reason": "试跑发现"})
+    # The review as submitted stays; the added finding is one more card, sent alone in the next confirmation.
+    assert state["reviews"]["A:2"]["findings"] == []
+    (step,) = plan_of(state, found)
+    assert step["id"] == "cards" and step["external"] and [card["key"] for card in step["body"]["cards"]] == ["A:2#G1"]
+    assert c.project(TASK, state, take(found, [step]))["result"]["progress"]["cards"]["waiting"] == 2

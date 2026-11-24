@@ -45,6 +45,7 @@ def new_state(customer: str, version: str) -> dict:
         "version": version,
         "draft": None,  # the clauses of a version that has no revision yet
         "reviews": {},  # clause -> {digest, revision, review, findings, by}
+        "added": {},  # clause -> [{digest, revision, finding, reason, by}]: a finding added to a frozen revision's review
         "settled": {},  # card key -> {how, by, ...}: an answered card that has been dealt with
         "follow_ups": {},  # card key -> card: a further question on an answered card
         "proposals": {},  # clause -> {revision, digest, text, kind, note, sources, by}
@@ -63,6 +64,8 @@ def apply(state: dict, event: dict) -> dict:
         state["draft"] = {"documents": event["documents"], "by": event["by"]}
     elif kind == "reviewed":
         state["reviews"][event["clause"]] = {key: event[key] for key in ("digest", "revision", "review", "findings", "by")}
+    elif kind == "finding_added":
+        state.setdefault("added", {}).setdefault(event["clause"], []).append({key: event[key] for key in ("digest", "revision", "finding", "reason", "by")})
     elif kind == "proposed":
         state["proposals"][event["clause"]] = {key: event[key] for key in ("revision", "digest", "text", "kind", "note", "sources", "by")}
         for key in event["cards"]:
@@ -116,7 +119,7 @@ class Invalid(Rejected):
 
 
 CONFIRM = {"confirm_plan"}
-PREPARE = {"submit_clauses", "submit_review", "propose_text", "keep_text", "ask_further", "submit_reading"}
+PREPARE = {"submit_clauses", "submit_review", "propose_text", "keep_text", "ask_further", "submit_reading", "add_finding"}
 
 
 def _words(value: Any, limit: int) -> str:
@@ -155,6 +158,8 @@ def decide(state: dict, facts: dict, issue: dict, action_id: str, value: Any, by
         if problems:
             raise Invalid("reading_rejected", problems)
         return {"type": "read", "clause": clause["id"], "digest": clause["digest"], "reading": reading, "by": by}
+    if action_id == "add_finding":
+        return _added_finding(state, facts, value, by)
     assert revision is not None
     key = issue["subject"]["key"] if issue["subject"]["kind"] == "clause" else value.get("clause")
     found = [row for row in clauses(revision) if row["id"] == key]
@@ -219,6 +224,35 @@ def decide(state: dict, facts: dict, issue: dict, action_id: str, value: Any, by
     raise Rejected("action_not_allowed")
 
 
+def _added_finding(state: dict, facts: dict, value: dict, by: str) -> dict:
+    """One more finding on a clause of the frozen revision being asked, checked as part of the clause's review: its quotes
+    from the frozen text, its ID new to the review. The review as submitted stays as it was."""
+    goal = target(state, facts)
+    if goal is None or not goal["frozen"] or goal["clarified"]:
+        raise Invalid("finding_rejected", ["只能给已冻结、还没澄清的修订补发现"])
+    found = [row for row in clauses(goal) if row["id"] == value.get("clause")]
+    review = reviewed(state, found[0]) if found else None
+    if review is None:
+        raise Invalid("finding_rejected", ["clause 要是这一修订里已经审查过的一条条款"])
+    clause, finding = found[0], value.get("finding")
+    if not isinstance(finding, dict):
+        raise Invalid("finding_rejected", ["finding 要是一条条款检查的发现"])
+    earlier = [row["finding"] for row in _added(state, clause)]
+    known = {str(item.get("id")) for item in review["review"].get("findings", [])} | {row["id"].split("#", 1)[1] for row in earlier}
+    if str(finding.get("id")) in known:
+        raise Invalid("finding_rejected", [f"发现编号 {finding.get('id')} 在这条条款的审查里已经用过"])
+    combined = {**review["review"], "findings": [*review["review"].get("findings", []), finding]}
+    errors, findings = _check_review()(Path("."), combined, {"id": clause["id"], "text": clause["text"]})
+    if errors:
+        raise Invalid("finding_rejected", errors)
+    return {"type": "finding_added", "clause": clause["id"], "digest": clause["digest"], "revision": goal["revision"], "finding": findings[-1], "reason": _words(value.get("reason"), 2000), "by": by}
+
+
+def _added(state: dict, clause: dict) -> list[dict]:
+    """The findings added to this clause's review, on its wording as it reads now."""
+    return [row for row in state.get("added", {}).get(clause["id"], []) if row["digest"] == clause["digest"]]
+
+
 # ---- what the facts say ------------------------------------------------------------------------------
 
 
@@ -250,6 +284,7 @@ def candidate_cards(state: dict, revision: dict) -> list[dict]:
         review = reviewed(state, clause)
         if review is not None:
             cards += [_card(clause, review["revision"], finding) for finding in review["findings"]]
+            cards += [_card(clause, row["revision"], row["finding"]) for row in _added(state, clause)]
     by_clause = {clause["id"] for clause in clauses(revision)}
     cards += [card for card in state["follow_ups"].values() if card["items"][0].split("#", 1)[0] in by_clause]
     return cards
@@ -408,6 +443,18 @@ REWORD_INPUT = {
     "properties": {"clause": {"type": "string", "description": "The clause, e.g. MSA:1."}, **PROPOSAL_INPUT["properties"]},
     "required": ["clause", "text", "kind", "note", "rulings"],
 }
+ADD_FINDING_INPUT = {
+    "type": "object",
+    "description": "One more finding on a clause already reviewed on the frozen revision being asked, as a clause-check finding "
+    "{id, kind: ambiguity|undefined|gap|conflict, quotes, title, question, example, challenge, readings}; its quotes are verbatim "
+    "from that revision's text and its id is new to the clause's review. It becomes a card the next confirmation sends.",
+    "properties": {
+        "clause": {"type": "string", "description": "The clause, e.g. SCL:3."},
+        "finding": {"type": "object", "description": "The finding, in the same form as in submit_review."},
+        "reason": {"type": "string", "description": "Why it is added now, in one or two sentences."},
+    },
+    "required": ["clause", "finding", "reason"],
+}
 KEEP_INPUT = {"type": "object", "properties": {"reason": {"type": "string", "description": "Why the answers need no change to the clause."}}, "required": ["reason"]}
 FOLLOW_UP_INPUT = {
     "type": "object",
@@ -470,6 +517,20 @@ def issues(task_id: str, state: dict, facts: dict) -> list[dict]:
                 "可以按平台已确认的裁定改写条款的写法。",
                 "把条款依赖、但原文没有写进去的口径写进条文；依据写平台裁定的原文。改写后的条款要重新审查。",
                 [_act("propose_text", "按平台裁定改写一条", input_schema=REWORD_INPUT)],
+            )
+        )
+    goal = target(state, facts)
+    if goal is not None and goal["frozen"] and not goal["clarified"] and roles.get("prepare") and all(issue["code"] in {"CLAUSE_READING", "PLAN_READY", "CLAUSE_REWORD"} for issue in found):
+        found.append(
+            _issue(
+                task_id,
+                "CLAUSE_FINDING",
+                "review",
+                "info",
+                "review",
+                f"可以给 {goal['version']} 修订 {goal['revision']} 已审查的条款补一条发现。",
+                "补的发现和审查记录一样校验：引用逐字出自这一修订的条文。它成为一张待发卡片，在下一次确认里由平台负责人勾选发出。",
+                [_act("add_finding", "给一条条款补一条发现", input_schema=ADD_FINDING_INPUT)],
             )
         )
     return found

@@ -19,6 +19,8 @@ TOOLS = {
     "prepare_audit",
     "prepare_rule_clarification",
     "get_rulebook",
+    "get_rule_questions",
+    "answer_rule_question",
     "get_task",
     "get_issue",
     "resolve_issue",

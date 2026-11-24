@@ -48,6 +48,8 @@ TOOLS = {
     "prepare_audit",
     "prepare_rule_clarification",
     "get_rulebook",
+    "get_rule_questions",
+    "answer_rule_question",
     "get_task",
     "get_issue",
     "resolve_issue",
@@ -855,10 +857,10 @@ def test_registry_annotations_and_browser_revoke(mcp_app):
         assert tools["record_review"]["inputSchema"]["properties"]["judgment"]["enum"] == list(JUDGMENTS)
         web = (Path(__file__).resolve().parents[3] / "apps/web/src/journey/judgment-state.ts").read_text(encoding="utf-8")
         assert all(f"{value}: " in web or f"'{value}': " in web for value in JUDGMENTS)
-        for name in ("find_submissions", "get_task", "get_issue", "get_results", "get_finding", "find_audits", "get_operation", "get_account", "get_rulebook"):
+        for name in ("find_submissions", "get_task", "get_issue", "get_results", "get_finding", "find_audits", "get_operation", "get_account", "get_rulebook", "get_rule_questions"):
             assert tools[name]["annotations"]["readOnlyHint"] is True
         # Effects that reach Feishu or start a charged audit cross the provider boundary.
-        for name in ("prepare_audit", "resolve_issue", "confirm_audit", "record_review", "publish_report"):
+        for name in ("prepare_audit", "resolve_issue", "confirm_audit", "record_review", "publish_report", "answer_rule_question"):
             assert tools[name]["annotations"]["readOnlyHint"] is False and tools[name]["annotations"]["openWorldHint"] is True
         management = client.get("/mcp/connections")
         assert management.status_code == 200

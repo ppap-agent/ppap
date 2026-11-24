@@ -40,6 +40,21 @@ class Gateway:
         recorded = self.operations.setdefault(rid, {"tool": tool, "state": "proposed", "arguments": arguments, "required_scope": scope, "request_id": rid, "outcome": "proposed"})
         return await self.operation_reply(actor, recorded)
 
+    async def write(self, actor, scope, tool, rid, method, path, body, *, probes, result_path=None):
+        """A write the grant allows, once under its request_id."""
+        if rid not in self.operations:
+            done = self.client.request(method, path, json=body)
+            arguments = {"method": method, "path": path, "body": body, "probes": probes}
+            self.operations[rid] = {
+                "tool": tool,
+                "state": "succeeded" if done.is_success else "failed",
+                "arguments": arguments,
+                "request_id": rid,
+                "error": None if done.is_success else done.json().get("error"),
+            }
+        recorded = self.operations[rid]
+        return Reply(status="ok" if recorded["state"] == "succeeded" else "failed", error=recorded["error"], request_id=rid)
+
     async def operation_reply(self, actor, operation):
         if operation["outcome"] == "succeeded":
             return Reply(status="ok", data=operation.get("left"), request_id=operation["request_id"])
@@ -214,3 +229,57 @@ def test_a_round_reaches_the_customer_only_through_the_operators_approval(auth_s
     assert [step["id"] for step in plan["steps"]] == ["readings"]
     assert task["result"]["phase"] == "completed" and task["next"]["kind"] == "done"
     assert member.web.get("/rulebooks/uaes/v9.0/1").json()["documents"][0]["clauses"][0]["reading"]["passes"] == ["有签名，手写或电子均可"]
+
+
+GAP = {
+    "id": "G1",
+    "kind": "gap",
+    "quotes": ["须盖章"],
+    "title": "章盖在哪里",
+    "question": "章盖在附页上算不算盖章？",
+    "example": "封面没有章，附页盖了公司章。",
+    "challenge": "原文只写须盖章，没写盖在哪一页；例子中按封面判不通过，按附页判通过，原文没有给出结论。",
+}
+
+
+def test_a_card_is_added_to_a_frozen_revision_and_read_and_answered_through_the_tools(auth_store_factory, tmp_path):
+    rules = tmp_path / "uaes" / "rulebook" / "v9.0" / "m0" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "A.json").write_text(json.dumps({"title": "A 文件", "rules": [{"id": "A:1", "rule_to_check": "须已签名"}, {"id": "A:2", "rule_to_check": "须盖章"}]}), encoding="utf-8")
+    settings = Settings(feishu_app_id="clarify-add", usage_charge_enabled=False, template_root=str(tmp_path), platform_operators="acme-t:ou_owner", clause_reviewers="acme-t:ou_reviewer")
+    store = auth_store_factory(settings)
+    api = build_product_store(store.settings, objects=store.objects, role="api")
+    owner, reviewer, member = (Person(store, api, "acme-t", subject, name) for subject, name in (("ou_owner", "负责人"), ("ou_reviewer", "审查员"), ("ou_member", "客户工程师")))
+    task = reviewer.call("prepare_rule_clarification", customer="UAES", version="v9.0")
+    task = reviewer.resolve(task, issue_of(task, "CLAUSE_REVIEW"), "submit_review", review("须已签名", [FINDING]))
+    task = reviewer.resolve(task, issue_of(task, "CLAUSE_REVIEW"), "submit_review", review("须盖章"))
+    assert member.call("get_rule_questions", customer="UAES", version="v9.0")["next"]["reason"] == "rule_questionnaire_not_found"
+    task, _ = owner.approve(owner.call("get_task", task_id=task["task_id"]), issue_of(owner.call("get_task", task_id=task["task_id"]), "PLAN_READY"))
+    assert task["result"]["phase"] == "awaiting_answers"
+
+    # A finding added to the frozen revision is checked like a review, and reaches the customer only through the operator.
+    task = reviewer.call("get_task", task_id=task["task_id"])
+    refused = reviewer.resolve(task, issue_of(task, "CLAUSE_FINDING"), "add_finding", {"clause": "A:2", "finding": {**GAP, "quotes": ["须签字"]}, "reason": "试跑发现"})
+    assert refused["next"]["reason"] == "finding_rejected"
+    task = reviewer.resolve(task, issue_of(task, "CLAUSE_FINDING"), "add_finding", {"clause": "A:2", "finding": GAP, "reason": "试跑发现"})
+    assert task["result"]["phase"] == "ready_to_confirm" and task["result"]["progress"]["cards"] == {"unsent": 1, "waiting": 1, "answered": 0, "settled": 0}
+    task = owner.call("get_task", task_id=task["task_id"])
+    task, plan = owner.approve(task, issue_of(task, "PLAN_READY"))
+    assert [(step["id"], [card["key"] for card in step["body"]["cards"]]) for step in plan["steps"]] == [("cards", ["A:2#G1"])]
+
+    # Every card sent reads word for word, with where it stands; only what was sent is here.
+    read = member.call("get_rule_questions", customer="UAES", version="v9.0")["result"]
+    assert read["questionnaire"]["total"] == 2 and read["questionnaire"]["waiting"] == 2 and read["next_offset"] is None
+    assert [(card["key"], card["status"], card["question"]) for card in read["cards"]] == [("A:1#1", "waiting", "电子签名算已签名吗？"), ("A:2#G1", "waiting", "章盖在附页上算不算盖章？")]
+    assert [option["label"] for option in read["cards"][0]["options"]] == ["理解一：电子签名也算", "理解二：仅手写算"]
+
+    # The person's own answer is saved once under its request_id; answering again keeps the first as history.
+    qid, rid = read["questionnaire"]["id"], str(uuid4())
+    saved = member.call("answer_rule_question", questionnaire_id=qid, question_key="A:1#1", request_id=rid, choice="A")
+    assert saved["result"] == {"question_key": "A:1#1", "saved": True}
+    assert member.call("answer_rule_question", questionnaire_id=qid, question_key="A:1#1", request_id=rid, choice="A")["result"]["saved"]
+    member.call("answer_rule_question", questionnaire_id=qid, question_key="A:1#1", request_id=str(uuid4()), choice="B", note="再想了一下")
+    (card,) = member.call("get_rule_questions", customer="UAES", version="v9.0", status="answered")["result"]["cards"]
+    (mine,) = card["answers"]
+    assert (card["key"], mine["answerer"], mine["choice"], mine["note"], mine["revision"], [row["choice"] for row in mine["history"]]) == ("A:1#1", "客户工程师", "B", "再想了一下", 2, ["A"])
+    assert member.call("answer_rule_question", questionnaire_id=qid, question_key="A:9#1", request_id=str(uuid4()), choice="A")["next"]["reason"] == "rule_question_not_found"
