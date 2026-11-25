@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -117,6 +118,10 @@ def _start_feishu_session(store, settings: Settings, info: dict, tokens, *, chan
         return None
     principal = store.upsert_feishu_identity(info["tenant_key"], info["subject"], info["display_name"])
     return principal, store.create_session(principal, tokens, ttl_seconds, channel)
+
+
+# The Feishu (Lark) client marks its user agent; the web page detects it the same way.
+FEISHU_CLIENT = re.compile(r"\b(?:Lark|Feishu)/", re.IGNORECASE)
 
 
 def _edition_cookie_kwargs(settings: Settings) -> dict:
@@ -525,6 +530,13 @@ def create_app(
         if not return_to.strip() or target != return_to or urlsplit(target).path in {"/enter-current", "/enter-legacy"}:
             target = default
         principal = principal_of(request)
+        if principal is None and FEISHU_CLIENT.search(request.headers.get("user-agent", "")):
+            # Inside the Feishu client the browser OAuth page does not come back; the page signs in with the
+            # client's own authorization (h5 host login), which applies the tenant allowlist. The edition cookie
+            # only chooses a web app, it grants nothing.
+            response = RedirectResponse(target, status_code=302)
+            response.set_cookie(EDITION_COOKIE, edition, **_edition_cookie_kwargs(settings))
+            return response
         if principal is None:
             dest = settings.canonical_web_url() + "/enter-" + edition
             if return_to:

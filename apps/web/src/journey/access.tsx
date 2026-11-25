@@ -4,7 +4,7 @@ import {createContext, useContext, useEffect, useRef, useState, type ReactNode} 
 import {iconArrowRight, iconChevronDown, iconReceipt, iconRightFromBracket, iconWandMagicSparkles} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import {apiUrl, connect, feishuAppId, request, type HostLoginRequest, type PrincipalPublic} from '../api'
-import {isFeishuHost, requestHostCode} from '../hostLogin'
+import {feishuHostReady, openedInFeishu, requestHostCode} from '../hostLogin'
 import {IntentBanner} from './intent'
 import {ReceiptNotice} from './receipt-notice'
 import {openInPlace, receiptsAddress} from '../audit/routes'
@@ -19,6 +19,7 @@ const loginErrors: Record<string, string> = {
   cancelled: '已取消飞书授权。需要登录后才能继续审核。',
   tenant_not_allowed: '当前企业尚未开通此审核服务，请切换飞书账号或联系管理员。',
 }
+const NOT_RELEASED = loginErrors.tenant_not_allowed
 
 export function AccountMenu({compact = false, className}: {compact?: boolean; className?: string}) {
   const access = useAccess()
@@ -43,6 +44,8 @@ export function ProductAccess({children}: {children: ReactNode}) {
   const [principal, setPrincipal] = useState<PrincipalPublic | null>(null)
   const [ready, setReady] = useState(false), [error, setError] = useState(''), [revision, setRevision] = useState(0)
   const [canSignIn, setCanSignIn] = useState(false)
+  // Inside the Feishu client the browser OAuth page does not come back: signing in there is the client's own authorization.
+  const [inFeishu] = useState(() => openedInFeishu())
   const epoch = useRef(0)
   useEffect(() => {
     const url = new URL(location.href)
@@ -56,23 +59,27 @@ export function ProductAccess({children}: {children: ReactNode}) {
         if (!active || epoch.current !== current) return
         setCanSignIn(config.login === 'feishu')
         let user: PrincipalPublic | null = null
+        let hostError = ''
         try {user = await request<PrincipalPublic>('/me')}
         catch (cause) {
           if (!active || epoch.current !== current) return
           if ((cause as {code?: string}).code !== 'unauthenticated') throw cause
-          if (!loginError && config.login === 'feishu' && isFeishuHost() && feishuAppId && /Lark|Feishu/i.test(navigator.userAgent)) {
+          if (!loginError && config.login === 'feishu' && feishuAppId && await feishuHostReady()) {
             try {
               const code = await requestHostCode(feishuAppId)
               if (!active || epoch.current !== current) return
               user = await request<PrincipalPublic, HostLoginRequest>('/login/feishu/host', 'POST', {code})
-            } catch { /* The browser OAuth entry remains available. */ }
-          }
+            } catch (cause) {
+              if (!active || epoch.current !== current) return
+              hostError = (cause as {code?: string}).code === 'tenant_not_allowed' ? NOT_RELEASED : '飞书内登录未完成，请重试。'
+            }
+          } else if (!loginError && inFeishu) hostError = '飞书登录组件未加载，请重试。'
         }
-        if (active && epoch.current === current) {setPrincipal(user); setError(user ? '' : loginError); setReady(true)}
+        if (active && epoch.current === current) {setPrincipal(user); setError(user ? '' : loginError || hostError); setReady(true)}
       } catch (cause) {if (active && epoch.current === current) {setError(cause instanceof TypeError ? '暂时无法连接审核服务，请重试。' : cause instanceof Error ? cause.message : '无法连接审核服务'); setReady(true)}}
     })()
     return () => {active = false}
-  }, [revision, loginError])
+  }, [revision, loginError, inFeishu])
   useEffect(() => {
     const expired = () => {if (principal) {epoch.current++; setPrincipal(null); setReady(true)}}
     window.addEventListener('ppap-session-expired', expired)
@@ -95,12 +102,19 @@ export function ProductAccess({children}: {children: ReactNode}) {
       {!ready ? null : error ? <>
         <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
         {/* After a cancelled or failed sign-in, signing in again is the way forward; reading the service again is secondary. */}
-        {canSignIn && <Button asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<Icon icon={iconArrowRight}/></a></Button>}
-        <Button variant={canSignIn ? 'outline' : 'default'} onClick={() => setRevision(value => value + 1)}>重试</Button>
-      </> : canSignIn ? <Button asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<Icon icon={iconArrowRight}/></a></Button> : <>
+        {canSignIn && <SignIn inFeishu={inFeishu} retry={() => setRevision(value => value + 1)}/>}
+        {!inFeishu && <Button variant={canSignIn ? 'outline' : 'default'} onClick={() => setRevision(value => value + 1)}>重试</Button>}
+        {/* An enterprise not yet released to this version keeps using the previous one. */}
+        {error === NOT_RELEASED && <Button variant="outline" asChild><a href={`${apiUrl}/enter-legacy`}>回到原版 PPAP</a></Button>}
+      </> : canSignIn ? <SignIn inFeishu={inFeishu} retry={() => setRevision(value => value + 1)}/> : <>
         <Alert><AlertDescription>当前无法使用飞书登录，请稍后重试。</AlertDescription></Alert>
         <Button onClick={() => setRevision(value => value + 1)}>重试</Button>
       </>}
     </main>
   </div>
+}
+
+function SignIn({inFeishu, retry}: {inFeishu: boolean; retry: () => void}) {
+  if (inFeishu) return <Button onClick={retry}>使用飞书登录<Icon icon={iconArrowRight}/></Button>
+  return <Button asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<Icon icon={iconArrowRight}/></a></Button>
 }
