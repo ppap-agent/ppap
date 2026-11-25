@@ -51,6 +51,7 @@ class Drawing:
     place: tuple[int, int, int, int] | None
     connector: bool
     picture: bool = False
+    text: str = ""
 
 
 class FlowChart:
@@ -367,7 +368,9 @@ def _xlsx_drawings(path: str, title: str) -> list[Drawing]:
                 shapes = {element.get("prst") for element in node.iter() if element.tag.endswith("}prstGeom")}
                 connector = any(element.tag.endswith("}cxnSp") for element in node.iter()) or bool(shapes) and shapes <= _CONNECTORS
                 pictures = any(element.tag.endswith(("}pic", "}graphicFrame")) for element in node.iter())
-                found.append(Drawing(place, connector and not pictures, pictures))
+                # Only native shape text, never text in a chart or inferred from a picture.
+                paragraphs = ["".join(t.text or "" for t in para.findall(".//{*}t")) for shape in node.findall(".//xdr:sp", namespaces) for para in shape.findall("xdr:txBody/{*}p", namespaces)]
+                found.append(Drawing(place, connector and not pictures, pictures, "\n".join(filter(None, paragraphs))))
         return found
 
 

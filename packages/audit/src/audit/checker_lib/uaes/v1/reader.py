@@ -235,7 +235,7 @@ class Reader(ExcelAgent):
 
     # ---- the image model reads, code decides ---------------------------------------------------
 
-    def transcribe(self, image: bytes, prompt: str, schema: dict[str, Any], subject: str) -> dict[str, Any]:
+    def transcribe(self, image: bytes, prompt: str, schema: dict[str, Any], subject: str, *, output_correction: str | None = None) -> dict[str, Any]:
         """One image of an original transcribed into `schema` by the image model; the model transcribes, code decides."""
         from documents.ai import AIError
         from documents.model_access import ModelUnavailable
@@ -249,7 +249,13 @@ class Reader(ExcelAgent):
             raise unable(f"当前运行环境不提供原件图像转写，{subject}尚未核实，需人工复核。")
         request = hook if callable(hook) else request_ocr_visual_facts
         try:
-            return request(images=[image], prompt=prompt, response_schema={"name": "transcription", "schema": schema})
+            response_schema = {"name": "transcription", "schema": schema}
+            try:
+                return request(images=[image], prompt=prompt, response_schema=response_schema)
+            except AIError as exc:
+                if exc.code != "invalid_output" or output_correction is None:
+                    raise
+                return request(images=[image], prompt=prompt + "\n" + output_correction, response_schema=response_schema)
         except ModelUnavailable as exc:
             if exc.code in ModelUnavailable.UNGRANTED:
                 raise unable(f"当前没有可用的模型，{subject}尚未核实，需人工复核。") from None
@@ -272,7 +278,7 @@ class Reader(ExcelAgent):
         source = EvidenceSource(
             kind="visual" if visual else "structure",
             locator=json.dumps({**locator, "file_version_id": version or version_of(self.audit_file)}, ensure_ascii=False, separators=(",", ":")),
-            excerpt=" ".join(str(value or "").split())[:500],
+            excerpt=" ".join(("" if value is None else str(value)).split())[:500],
         )
         cited = self.__dict__.setdefault("_cited", [])
         if source not in cited and len(cited) < 40:

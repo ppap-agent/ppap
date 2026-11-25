@@ -86,7 +86,7 @@ uv run --no-sync python -m corpus_contracts.uaes_evaluation .log/samples-report
 本机直接跑样本、候选检查程序或回放读取时，先用 [`in-app-image.sh`](corpus/in-app-image.sh) 放进本地 `ppap-app` 镜像里跑：和线上 Worker 同一个 LibreOffice 与转换沙箱（Excel 原件渲染、EMF 和旧格式转换在 macOS 宿主上会失败），当前代码只读挂载，平台模型取根目录 `.env` 的 `PPAP_MODEL_TEXT_*`、`PPAP_MODEL_VISION_*`，推理强度取 `.env.production`（与线上一致）。镜像依赖要与当前 `uv.lock` 一致，不一致时先重建镜像。
 
 ```sh
-tests/corpus/in-app-image.sh -m corpus_contracts.candidate_run assets/uaes/rulebook/v1.0/candidates/uaes/U18 --part F01R204778_水管内接头 --json
+tests/corpus/in-app-image.sh -m corpus_contracts.candidate_run assets/uaes/rulebook/v1.0/candidates/m4/uaes/U18 --part F01R204778_水管内接头 --json
 ```
 
 回放按完整请求摘要在本测试的记录里查找，没有时再用其他测试为同一请求录下的回答，所以同一份样本被多个测试读取时只问一次模型。

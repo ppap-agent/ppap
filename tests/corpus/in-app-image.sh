@@ -3,7 +3,7 @@
 # the same LibreOffice and converter sandbox (Excel rendering, EMF and legacy-format conversion fail on a macOS host),
 # with this checkout's packages, apps, assets and tests mounted read-only over /app.
 #
-#   tests/corpus/in-app-image.sh -m corpus_contracts.candidate_run assets/uaes/rulebook/v1.0/candidates/uaes/U18 --part F01R204778_水管内接头 --json
+#   tests/corpus/in-app-image.sh -m corpus_contracts.candidate_run assets/uaes/rulebook/v1.0/candidates/m4/uaes/U18 --part F01R204778_水管内接头 --json
 #
 # The image is PPAP_APP_IMAGE, else the newest local ppap-app tag (build one with `docker buildx bake app` when there is none).
 # The platform models are the PPAP_MODEL_TEXT_* / PPAP_MODEL_VISION_* lines of the repository-root .env, passed through a

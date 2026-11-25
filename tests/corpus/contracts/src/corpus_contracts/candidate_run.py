@@ -3,7 +3,7 @@
 A candidate is a checker leaf written against wording that is not frozen or not clarified yet. It is kept outside the
 installed tree, so nothing seeds it as an official Suite or lets it near a customer's audit:
 
-    assets/<customer>/rulebook/<version>/candidates/<customer>/<leaf>/{rules.json, checker.py, resources.py}
+    assets/<customer>/rulebook/<version>/candidates/m<revision>/<customer>/<leaf>/{rules.json, checker.py, resources.py}
 
 It replaces the installed leaf of the same name for this run only; files go through the product path (recognition,
 precheck, the frozen run) exactly as a sample batch does.

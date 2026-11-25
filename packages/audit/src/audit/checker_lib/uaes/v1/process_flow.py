@@ -191,7 +191,7 @@ class _Revision3(UaesProcessFlowAgent):
             inspected = True
             if is_integrated and processing.intersection(op.symbols):
                 self.cite(chart.sheet, op.rows[0], chart.operation)
-                complete, notes = self.station_link(ctx, op, {compact(item.step) for item in chart.operations}, self.station_part(chart.sheet, chart.header))
+                complete, notes = self.station_link(ctx, op, {compact(item.step) for item in chart.operations}, self.station_part(chart.sheet, chart.header), self.station_target(chart, op))
                 (links if complete else gaps).append(f"{where}：{notes}")
             elif not inspections.intersection(op.symbols):
                 if op.unread_lane or is_integrated or len(inspections) > 1:
@@ -209,7 +209,17 @@ class _Revision3(UaesProcessFlowAgent):
             raise unable("全图未定位检验类活动，是否应设检验工序属工程有效性判断，请客户确认。")
         return "PASS", "工序符号均有图例定义，各活动列符号一致，检验活动已核对。" + "；".join(links) + "（单元格及图形解析，请人工复核。）"
 
-    def station_link(self, ctx: RuleContext, op, flow_steps, flow_part) -> tuple[bool, str]:
+    @staticmethod
+    def station_name_key(name: str) -> str:
+        return _text(name)
+
+    def station_target(self, chart, op) -> str:
+        return ""
+
+    def station_target_matches(self, source_name: str, target_name: str, source_object: str, target_object: str) -> bool:
+        return True
+
+    def station_link(self, ctx: RuleContext, op, flow_steps, flow_part, flow_object: str = "") -> tuple[bool, str]:
         """The exception is positive only: retain all three spellings and CP fields, never guess equivalence or missing-file policy."""
         facts, linked = [], bool(compact(op.step))
         for key, label in (("潜在过程失效模式及后果分析", "PFMEA"), ("控制计划", "控制计划")):
@@ -228,21 +238,27 @@ class _Revision3(UaesProcessFlowAgent):
                 matches = []
                 for ws in ctx.workbook.worksheets:
                     matches.extend(self.station_rows(Sheet(ctx, ws), label, op.step, flow_steps))
-                names = {name for name, _param, _method, _proof, _loc, _part in matches}
+                names = {self.station_name_key(name) for name, *_ in matches}
                 if not matches:
                     facts.append(f"{label}未定位到同号工序的表格行")
                     linked = False
                     continue
-                exact = len(names) == 1 and _text(op.description) in names
+                source_name = self.station_name_key(op.description)
+                exact = bool(source_name) and names == {source_name}
+                exact &= all(self.station_target_matches(_text(op.description), name, flow_object, target) for name, _, _, _, _, _, target, _ in matches)
                 if label == "控制计划":
-                    exact &= any(proof and method for _, _p, method, proof, _, _part in matches)
-                different_parts = {part for *_, part in matches if part and flow_part and part != flow_part}
+                    exact &= any(proof and method for _, _p, method, proof, _, _part, _target, _mode in matches)
+                different_parts = {part for _, _, _, _, _, part, _, _ in matches if part and flow_part and part != flow_part}
                 if different_parts:
                     facts.append(f"流程图零件号{flow_part}，{label}零件号{'、'.join(sorted(different_parts))}，来源不一致")
                     exact = False
                 linked &= exact
-                for name, param, method, _proof, loc, _part in matches[:3]:
+                for name, param, method, _proof, loc, _part, target, mode in matches[:3]:
                     detail = f"{label}{loc}同号，工序名“{name or '空白'}”"
+                    if not name and mode:
+                        detail += f"，失效模式栏见“{mode}”（辅助证据，不替代工序名）"
+                    if target:
+                        detail += f"，测试对象“{target}”"
                     if label == "控制计划":
                         detail += f"，测试参数/规格“{param[:90] or '未取到'}”，控制方法“{method[:60] or '未取到'}”"
                     facts.append(detail)
@@ -266,6 +282,12 @@ class _Revision3(UaesProcessFlowAgent):
                         self.cite(sheet, rr, cc)
         return next(iter(values)) if len(values) == 1 else None
 
+    def station_mode_hint(self, mode: str) -> str:
+        return ""
+
+    def station_target_header(self, label: str) -> bool:
+        return False
+
     def station_rows(self, sheet: Sheet, label: str, step, flow_steps):
         roles = _CP_HEADERS if label == "控制计划" else _FMEA_HEADERS
         rows, cols = self.extent(sheet)
@@ -278,6 +300,7 @@ class _Revision3(UaesProcessFlowAgent):
             if label == "PFMEA" and not header["mode"]:
                 continue
             name_col = header["name"][0]
+            targets = [c for c, value in enumerate(values, 1) if self.station_target_header(value)]
             if not header["step"] and label == "PFMEA" and name_col == 2 and not values[0]:
                 # Supplier PFMEA: unlabelled number column directly left of the function field,
                 # distinct numbered rows (not the neighbouring failure-mode column).
@@ -301,6 +324,15 @@ class _Revision3(UaesProcessFlowAgent):
                 name = read(name_col)
                 self.cite(sheet, row, step_col)
                 self.cite(sheet, row, name_col)
+                mode = ""
+                if label == "PFMEA" and not name and header["mode"]:
+                    mode_col = header["mode"][0]
+                    mode = self.station_mode_hint(read(mode_col))
+                    if mode:
+                        self.cite(sheet, row, mode_col)
+                target = read(targets[0]) if len(targets) == 1 else ""
+                if target:
+                    self.cite(sheet, row, targets[0])
                 param, method, proof = "", "", False
                 if label == "控制计划":
                     for key in ("parameter", "method"):
@@ -316,7 +348,7 @@ class _Revision3(UaesProcessFlowAgent):
                             proof = "测试参数" in values[col - 1] or "testparameter" in values[col - 1] or bool(_TEST_SPEC.search(raw) and re.search(r"\d", raw))
                         else:
                             method = raw
-                found.append((name, param, method, proof, f"“{sheet.title}”第{row}行", part))
+                found.append((name, param, method, proof, f"“{sheet.title}”第{row}行", part, target, mode))
             break
         return found
 
@@ -389,6 +421,15 @@ class _Revision3(UaesProcessFlowAgent):
 
     # ---- PFD:4 ------------------------------------------------------------------------------------------------
 
+    def disposition_node(self, clause, operation):
+        return operation or re.search(r"不(?:合格|良)(?:品|件).{0,12}(?:隔离|返工|报废|处置)", clause)
+
+    def node_annotations(self, ctx: RuleContext):
+        return ()
+
+    def visual_node_evidence(self, ctx: RuleContext, missing: list[str]) -> dict[str, str]:
+        return {}
+
     @rule("四类核心控制节点")
     def rule_4(self, ctx: RuleContext):
         pdf = str(self.audit_file.file_url).lower().endswith(".pdf")
@@ -425,6 +466,9 @@ class _Revision3(UaesProcessFlowAgent):
                         text = _text(line)
                         if text and not any(sym in text for sym in self._m.flow_resources.SYMBOLS) and not re.search(r"[《》]|instruction|作业指导", text, re.I):
                             places.append((f"第{page.number + 1}页", text, False))
+        for loc, annotation, source, explicit_node in self.node_annotations(ctx):
+            cells_at[loc] = source
+            places.append((loc, annotation, explicit_node))
         if not places:
             raise unable("过程流程图未能读出任何工序或文字，需人工复核。")
         shown, missing = [], []
@@ -437,7 +481,7 @@ class _Revision3(UaesProcessFlowAgent):
                     if re.search(_DECLARATIONS[node], clause):
                         choices.append((loc, f"{node}按书面说明（{loc}）“{clause[:90]}”"))
                     elif re.search(pattern, clause, re.I) and not re.search(r"不设|无需|不(?:需|进行|涉及)|未设|无独立", clause):
-                        if operation or (node == "异常处理" and re.search(r"不(?:合格|良)(?:品|件).{0,12}(?:隔离|返工|报废|处置)", clause)):
+                        if self.disposition_node(clause, operation) if node == "异常处理" else operation:
                             choices.append((loc, f"{node}（{loc}）“{clause[:90]}”"))
             if choices:
                 loc, why = choices[0]
@@ -446,6 +490,11 @@ class _Revision3(UaesProcessFlowAgent):
                     self.cite(*cells_at[loc])
             else:
                 missing.append(node)
+        if missing:
+            for node, evidence in self.visual_node_evidence(ctx, missing).items():
+                if node in missing:
+                    shown.append(evidence)
+                    missing.remove(node)
         if missing:
             leads = [f"{loc}“{raw[:65]}”" for loc, raw, _ in sorted(places, key=lambda entry: not entry[0].startswith("第")) if re.search(r"分选|sorting", raw, re.I)]
             clue = f"；原件有{leads[0]}，未从该表述确认异常去向" if "异常处理" in missing and leads else ""

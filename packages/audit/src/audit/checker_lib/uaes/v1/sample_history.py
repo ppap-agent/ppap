@@ -1,4 +1,4 @@
-"""UAES U11: sample stage history, UAES v1.0 revision 3 (SSH:1, SSH:2).
+"""UAES U11: sample stage history, UAES v1.0 (SSH:1, SSH:2).
 
 The original is read as tables (a spreadsheet's cells, a PDF's converted tables); every verdict is decided in code
 over the header and row cells it reads. A scanned PDF is not read.
@@ -130,6 +130,9 @@ class SampleHistoryR3(Reader):
         pairs = "；".join(f"{name}：{'、'.join(text for _column, text in columns)}" for name, columns in mapped.items())
         return "PASS", f"{where}含五个字段（{pairs}）。"
 
+    def sign_off_row(self, sheet: Sheet, row: int, mapped: dict[str, list[tuple[int, str]]]) -> bool | None:
+        return any(_hits(compact(self.raw(cell)), SIGN_OFF) for cell in self.cells(sheet, row_min=row, row_max=row))
+
     @rule("送样五维度齐全有效与时间轴")
     def rule_2(self, ctx: RuleContext):
         self.readable()
@@ -155,9 +158,12 @@ class SampleHistoryR3(Reader):
         dated: list[tuple[date, int]] = []
         today = date.today()
         last, _width = self.extent(sheet)
+        unclear_boundary = None
         for index in range(row + 1, last + 1):
-            line = [compact(self.raw(cell)) for cell in self.cells(sheet, row_min=index, row_max=index)]
-            if any(_hits(text, SIGN_OFF) for text in line):
+            sign_off = self.sign_off_row(sheet, index, mapped)
+            if sign_off is not False:
+                if sign_off is None:
+                    unclear_boundary = index
                 break
             entries = [(name, column, sheet.cell(index, column)) for name, columns in mapped.items() for column, _text in columns]
             if not any(cell.has_data() for _name, _column, cell in entries):
@@ -178,7 +184,7 @@ class SampleHistoryR3(Reader):
                     dated.append((day, index))
                     if day > today:
                         future.append(Place.of(f"第{index}行送样日期{day.isoformat()}晚于审核基准日{today.isoformat()}", sheet, index, column))
-        if not rows:
+        if not rows and unclear_boundary is None:
             return "NG", f"{where}下没有有效行。"
         problems = []
         if blank:
@@ -193,4 +199,42 @@ class SampleHistoryR3(Reader):
             problems.append("履历时间轴异常")
         if problems:
             return "NG", f"{where}（{pairs}）：" + "；".join(problems) + "。"
+        if unclear_boundary is not None:
+            raise unable(f"{carrier}“{sheet.title}”第{unclear_boundary}行不能确认是履历记录还是签署区起点，不能确认全部有效行已核完，需人工复核。")
         return "PASS", f"{where}五类维度列齐全（{pairs}），{len(rows)}个有效行均已填写，送样日期按升序重排后无倒退、无晚于审核基准日的日期。"
+
+
+class SampleHistoryR4(SampleHistoryR3):
+    # A caption can contain its signature after punctuation, or be followed by a separate value cell.
+    _signer = re.compile(r"(?P<role>编制|校对|审核|批准|prepared|checked|approved)(?P<qualifier>人|by)?(?:[:;](?P<value>.+))?")
+
+    def sign_off_row(self, sheet: Sheet, row: int, mapped: dict[str, list[tuple[int, str]]]) -> bool | None:
+        cells = self.cells(sheet, row_min=row, row_max=row)
+        roles: set[str] = set()
+        awaiting_value = False
+        explicit_label = False
+        for cell in cells:
+            if caption := self._signer.fullmatch(compact(self.raw(cell))):
+                roles.add(caption["role"])
+                awaiting_value = not caption["value"]
+                explicit_label |= bool(caption["value"] or caption["qualifier"])
+            elif awaiting_value:
+                awaiting_value = False
+            else:
+                return False
+        if not roles:
+            return False
+        # A quantity or delivery date in its own column corroborates a record, not a signature/name pair.
+        if any(re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", self.raw(sheet.cell(row, col))) for col, _ in mapped["数量"]):
+            return False
+        if any(_day(sheet.cell(row, col).value()) is not None for col, _ in mapped["送样日期"]):
+            return False
+        for cell in cells:
+            self.cite(sheet, row, cell.col_index)
+        if len(roles) == 1:
+            in_purpose = cells[0].col_index in {col for col, _ in mapped["交付目的"]}
+            if in_purpose and not explicit_label:
+                return False  # A bare delivery purpose is still data, even if the record is incomplete.
+            if in_purpose or not explicit_label:
+                return None  # One ambiguous caption neither proves a footer nor establishes a deficient record.
+        return True
