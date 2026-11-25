@@ -22,7 +22,7 @@ def run(tmp_path, monkeypatch, leaf, book, observed):
     return frozen(monkeypatch, leaf, path, observed)
 
 
-def frozen(monkeypatch, leaf, path, observed):
+def frozen(monkeypatch, leaf, path, observed, runtime=None):
     def visual(_self, fields, **_):
         return {key: observed[key] for key in fields if key in observed}, set()
 
@@ -41,7 +41,7 @@ def frozen(monkeypatch, leaf, path, observed):
     data = path.read_bytes()
     obj = FrozenInput("f0", hashlib.sha256(data).hexdigest(), "target", path.name, document_type=suite.document_type)
     snap = ExecutionSnapshot("test", "candidate", (obj,), (target,), "test", library_revision(), {})
-    return run_audit(snap, {"f0": data}, {digest: suite.program_files}, runtime=CheckerRuntime())["findings"][0]
+    return run_audit(snap, {"f0": data}, {digest: suite.program_files}, runtime=runtime or CheckerRuntime())["findings"][0]
 
 
 PKG_SIGN = {"sign_0": True, "sign_1": True, "sign_2": True, "seal": True}
@@ -100,6 +100,30 @@ def test_package_blocks_and_supplier_signatures(monkeypatch, tmp_path, change, e
         del marks["seal"]
     out = run(tmp_path, monkeypatch, "U09", book, marks)
     assert (out["status"], reason in out["suggestions"]) == (expected, True), out
+
+
+def test_packaging_reads_equivalent_body_statement_without_a_template_heading(tmp_path, monkeypatch):
+    from documents.ai import AIResult
+
+    book = package()
+    statement = "本件的运输防护条件：阀口只能用无硫隔离纸包裹"
+    book.active["A8"], book.active["A9"] = statement, None
+    path = tmp_path / "设计文件.xlsx"
+    book.save(path)
+    called = []
+
+    def observe(task, *, prompt, **_):
+        assert task == "uaes_packaging_body_facts"
+        sources = json.loads(prompt)
+        assert "备件包装方案" not in prompt and "海湾材料" not in prompt
+        called.append(task)
+        key = next(k for k, v in sources.items() if statement in v)
+        return AIResult({"coverage": "complete", "facts": [{"kind": "part_specific_protection", "source": key, "value": "阀口只能用无硫隔离纸包裹"}]})
+
+    monkeypatch.setattr("documents.ai.run_json", observe)
+    result = frozen(monkeypatch, "U09", path, PKG_SIGN, runtime=CheckerRuntime(allow_model_tools=True))
+    assert (result["status"], len(called)) == ("PASS", 1), result["suggestions"]
+    assert any(s["excerpt"] == statement and json.loads(s["locator"])["cell"] == "A8" for s in result["evidence"]["sources"])
 
 
 def trace():

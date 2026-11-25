@@ -469,9 +469,55 @@ class _Revision3(UaesPfmeaAgent):
             return None
         return int(number)
 
+    BATCH_SCORE_DESCRIPTIONS = False
+
+    def score_description_reader(self, items):
+        def check(item, s, o, d, fail, gaps):
+            where = item.where()
+            effect = item.values.get("失效后果", "")
+            prevention, detection = item.values.get("预防控制", ""), item.values.get("探测控制", "")
+            p, q = _norm(prevention), _norm(detection)
+            # 2. Severity against the effect.
+            if any(term in effect for term in ("安全", "法规")) and s < 9:
+                self.at(item, "严重度")
+                fail("2", f"{where}失效后果“{' '.join(effect.split())[:40]}”涉及安全/法规，S={s}低于9")
+            if "轻微" in effect and "外观" in effect and not 2 <= s <= 4:
+                self.at(item, "严重度")
+                fail("2", f"{where}失效后果仅为轻微外观，S={s}不在2～4")
+            # 3. Occurrence against the prevention control: the clause's hard lines only.
+            no_prevention = not p or placeholder(prevention) or p in {"无", "none", "无预防控制", "无预防措施"}
+            poka = any(word in p for word in _POKA_YOKE)
+            # "仅人工指导书": every measure written is a work instruction ("测量作业指导书"); a second measure is not "仅".
+            measures = [part for part in re.split(r"[、，,;；/和及]|\d+[、.)）]|\n", unicodedata.normalize("NFKC", prevention)) if _norm(part)]
+            manual = bool(measures) and not poka and all(any(word in _norm(part) for word in _MANUAL_INSTRUCTION) for part in measures)
+            if (no_prevention or manual) and o <= 3:
+                self.at(item, "频度")
+                fail("3", f"{where}预防控制{'为空/无' if no_prevention else '仅为人工指导书“' + ' '.join(prevention.split())[:30] + '”'}，O={o}≤3")
+            if poka and o >= 8:
+                self.at(item, "频度")
+                fail("3", f"{where}预防控制有物理防错“{' '.join(prevention.split())[:30]}”，O={o}≥8")
+            if s >= 9 and o == 1 and not poka:
+                self.at(item, "频度")
+                fail("3", f"{where}S={s}≥9，预防控制无物理防错或全自动锁死措施，O却为1")
+            # 4. Detection against the detection control: the three hard lines.
+            no_detection = not q or placeholder(detection) or q in {"无", "none", "无法探测", "无探测措施", "无探测控制"}
+            if no_detection and d < 10:
+                self.at(item, "探测度")
+                fail("4", f"{where}无探测措施，D={d}<10")
+            if _SPOT_CHECK in q and "自动" not in q and d <= 3:
+                self.at(item, "探测度")
+                fail("4", f"{where}探测为人工抽检“{' '.join(detection.split())[:30]}”，D={d}≤3")
+            if any(word in q for word in _POKA_YOKE) and d >= 8:
+                self.at(item, "探测度")
+                fail("4", f"{where}探测为自动防错“{' '.join(detection.split())[:30]}”，D={d}≥8")
+
+        return check
+
     @rule("S/O/D评分合理性七项")
     def rule_2(self, ctx: RuleContext):
         items = self.items(ctx)
+        check_descriptions = None if self.BATCH_SCORE_DESCRIPTIONS else self.score_description_reader(items)
+        deferred_descriptions = []
         found: dict[str, list[str]] = {}
         gaps: list[str] = []
 
@@ -517,42 +563,10 @@ class _Revision3(UaesPfmeaAgent):
             if len(scores) < 3:
                 continue
             s, o, d = scores["严重度"], scores["频度"], scores["探测度"]
-            effect = item.values.get("失效后果", "")
-            prevention, detection = item.values.get("预防控制", ""), item.values.get("探测控制", "")
-            p, q = _norm(prevention), _norm(detection)
-            # 2. Severity against the effect.
-            if any(term in effect for term in ("安全", "法规")) and s < 9:
-                self.at(item, "严重度")
-                fail("2", f"{where}失效后果“{' '.join(effect.split())[:40]}”涉及安全/法规，S={s}低于9")
-            if "轻微" in effect and "外观" in effect and not 2 <= s <= 4:
-                self.at(item, "严重度")
-                fail("2", f"{where}失效后果仅为轻微外观，S={s}不在2～4")
-            # 3. Occurrence against the prevention control: the clause's hard lines only.
-            no_prevention = not p or placeholder(prevention) or p in {"无", "none", "无预防控制", "无预防措施"}
-            poka = any(word in p for word in _POKA_YOKE)
-            # "仅人工指导书": every measure written is a work instruction ("测量作业指导书"); a second measure is not "仅".
-            measures = [part for part in re.split(r"[、，,;；/和及]|\d+[、.)）]|\n", unicodedata.normalize("NFKC", prevention)) if _norm(part)]
-            manual = bool(measures) and not poka and all(any(word in _norm(part) for word in _MANUAL_INSTRUCTION) for part in measures)
-            if (no_prevention or manual) and o <= 3:
-                self.at(item, "频度")
-                fail("3", f"{where}预防控制{'为空/无' if no_prevention else '仅为人工指导书“' + ' '.join(prevention.split())[:30] + '”'}，O={o}≤3")
-            if poka and o >= 8:
-                self.at(item, "频度")
-                fail("3", f"{where}预防控制有物理防错“{' '.join(prevention.split())[:30]}”，O={o}≥8")
-            if s >= 9 and o == 1 and not poka:
-                self.at(item, "频度")
-                fail("3", f"{where}S={s}≥9，预防控制无物理防错或全自动锁死措施，O却为1")
-            # 4. Detection against the detection control: the three hard lines.
-            no_detection = not q or placeholder(detection) or q in {"无", "none", "无法探测", "无探测措施", "无探测控制"}
-            if no_detection and d < 10:
-                self.at(item, "探测度")
-                fail("4", f"{where}无探测措施，D={d}<10")
-            if _SPOT_CHECK in q and "自动" not in q and d <= 3:
-                self.at(item, "探测度")
-                fail("4", f"{where}探测为人工抽检“{' '.join(detection.split())[:30]}”，D={d}≤3")
-            if any(word in q for word in _POKA_YOKE) and d >= 8:
-                self.at(item, "探测度")
-                fail("4", f"{where}探测为自动防错“{' '.join(detection.split())[:30]}”，D={d}≥8")
+            if check_descriptions is not None:
+                check_descriptions(item, s, o, d, fail, gaps)
+            else:
+                deferred_descriptions.append((item, s, o, d))
             # 5. Same failure mode and same controls, same scores.
             condition = tuple(_norm(item.values.get(name, "")) for name in ("失效模式", "失效起因", "预防控制", "探测控制"))
             if condition in by_condition and by_condition[condition][1] != (s, o, d):
@@ -629,6 +643,13 @@ class _Revision3(UaesPfmeaAgent):
                         fail("措施后", f"{where}改进后RPN={s2 * o2 * d2}高于初始RPN={s * o * d}")
                     if s2 < s and "设计" not in _norm(taken) and "design" not in _norm(taken):
                         fail("措施后", f"{where}改进后S′={s2}低于S={s}，采取的措施“{' '.join(str(taken).split())[:30]}”没有设计变更依据")
+        if self.BATCH_SCORE_DESCRIPTIONS and not found:
+            for title, columns in columns_by_sheet.items():
+                if not {"AP", "RPN"}.intersection(columns):
+                    gaps.append(f"工作表“{title}”未定位用于核对风险值的RPN或AP列")
+            check = self.score_description_reader([item for item, _, _, _ in deferred_descriptions])
+            for item, s, o, d in deferred_descriptions:
+                check(item, s, o, d, fail, gaps)
         if found:
             labels = {"1": "第1项", "2": "第2项", "3": "第3项", "4": "第4项", "5": "第5项", "6": "第6项", "7": "第7项", "高风险": "高风险项闭环", "措施后": "措施后评分"}
             parts = [f"{labels[kind]}：{'；'.join(texts[:3])}{f'等{len(texts)}处' if len(texts) > 3 else ''}" for kind, texts in sorted(found.items(), key=lambda pair: list(labels).index(pair[0]))]

@@ -15,6 +15,7 @@ from audit.checker_lib.uaes.v1.inspection import (
     bare,
     limits,
 )
+from audit.checker_lib.uaes.v1.inspection_release_r4 import item_disposition, read_releases
 from audit.checker_lib.uaes.v1.reader import HOLLOW, PLACEHOLDERS, Place, compact, original_name, unable, version_of
 from audit.engine.rule_engine import RuleContext, Sheet
 
@@ -137,6 +138,7 @@ class InspectionR4(InspectionR3):
             return "NG", "缺少尺寸报告。"
         notes, wrong, outside, unknown, skipped = [], [], [], [], 0
         exceedances: list[tuple[str, str, bool]] = []
+        indexes: list[str] = []
         for report in reports:
             filled = [column for column in report.band if any(report.sheet.cell(row.row_index, column).has_data() for row in report.rows)]
             where = f"尺寸报告“{report.sheet.title}”"
@@ -146,6 +148,7 @@ class InspectionR4(InspectionR3):
                 continue
             notes.append(f"{where}实测值有读数的列数为{len(filled)}")
             for row in self.requirement_rows(report):
+                indexes.append(str(row.value(f"{report.title}序号")))
                 over, open_, _values = self.ranges(report, row)
                 requirement = row.value(f"{report.title}要求")
                 if limits(requirement) is None and bare(requirement):
@@ -174,47 +177,57 @@ class InspectionR4(InspectionR3):
                     if match and match[1].strip() and match[1].strip() != part:
                         part = ""
             suppliers = {self.supplier(report) for report in reports}
-            releases = [(item, self.release(item, part)) for item in approvals]
-            details = []
+            details, pending, native = [], [], []
+            unresolved_subject = not part or part == "未写" or "、" in part
+            unverified_release = False
+            for item in approvals:
+                if unresolved_subject:
+                    continue
+                release = self.release(item, part)
+                if not release:
+                    pending.append(item)
+                    continue
+                other, supplier, remark, approved = release
+                summary = f"《{original_name(item)}》第1页零件号{other}"
+                if other != part:
+                    details.append(summary + "，不同零件")
+                    continue
+                if len(suppliers) == 1 and None not in suppliers and supplier and supplier not in suppliers:
+                    details.append(summary + "，供应商不同")
+                    continue
+                broad = re.fullmatch(r"(?:经检验[,，]?)?(?:产品的?)?(?:尺寸(?:[、,，](?:材料|性能|试装))*均?合格[,，]?)?(?:满足使用要求[,，]?)?(?:产品)?(?:完全认可)?[。.]?", compact(remark))
+                if broad and re.search("合格|完全认可", remark):
+                    details.append(summary + "，仅笼统认可、未指向超差项")
+                    continue
+                acceptance = re.fullmatch(r"(?:同意|接受)第([^项]+)项尺寸偏差[，,]要求[:：]([^，,；;]+)[，,](?:本次实测超差予以接受|同意本次实测值)[。.]*", remark.strip())
+                if acceptance and approved and suppliers == {supplier} and supplier:
+                    native.append((acceptance[1].strip(), compact(acceptance[2])))
+                elif not approved:
+                    # The form was read, but its customer authority/sign-off was not established.
+                    unverified_release = True
+                else:
+                    pending.append(item)
+            # At most one extra text request per audited report, regardless of the number of permits/items.
+            observed = read_releases(self, pending)
             states = []
             for index, requirement, inline in exceedances:
-                covered, uncertain = False, inline
-                for item, release in releases:
-                    if not release or not part or part == "未写" or "、" in part:
-                        uncertain = True
-                        continue
-                    other, supplier, remark, approved = release
-                    summary = f"《{original_name(item)}》第1页零件号{other}"
-                    if other != part:
-                        details.append(summary + "，不同零件")
-                        continue
-                    if len(suppliers) == 1 and None not in suppliers and supplier and supplier not in suppliers:
-                        details.append(summary + "，供应商不同")
-                        continue
-                    # A clear global statement cannot waive an item. Other/qualified text stays unresolved.
-                    broad = re.fullmatch(r"(?:经检验[,，]?)?(?:产品的?)?(?:尺寸(?:[、,，](?:材料|性能|试装))*均?合格[,，]?)?(?:满足使用要求[,，]?)?(?:产品)?(?:完全认可)?[。.]?", compact(remark))
-                    if broad and re.search("合格|完全认可", remark):
-                        details.append(summary + "，仅笼统认可、未指向超差项")
-                        continue
-                    # Explicit, unqualified acceptance in the customer's own approval box.
-                    # Restrict positive coverage to the written item AND its requirement on this supplier's part.
-                    acceptance = re.fullmatch(r"(?:同意|接受)第([^项]+)项尺寸偏差[，,]要求[:：]([^，,；;]+)[，,](?:本次实测超差予以接受|同意本次实测值)[。.]*", remark.strip())
-                    if acceptance and approved and suppliers == {supplier} and supplier:
-                        if acceptance[1].strip() == index:
-                            if compact(acceptance[2]) == compact(requirement):
-                                covered = True
-                            else:
-                                uncertain = True  # The item is named but the specification differs.
-                        continue
-                    uncertain = True
-                states.append("covered" if covered and (not uncertain or (inline and len(releases) == 1)) else "unknown" if uncertain else "uncovered")
+                dispositions = {item_disposition(observed.get(version_of(item)), part, suppliers, index, requirement, indexes.count(index) == 1) for item in pending}
+                dispositions.update("covered" if requirement_text == compact(requirement) else "unknown" for item_index, requirement_text in native if item_index == index)
+                if unresolved_subject or unverified_release or "unknown" in dispositions or {"covered", "refused"} <= dispositions:
+                    states.append("unknown")
+                elif "covered" in dispositions:
+                    states.append("covered")
+                elif inline or dispositions == {"other"}:
+                    states.append("unknown")
+                else:
+                    states.append("uncovered")
             suffix = "；".join(dict.fromkeys(details))
             if "uncovered" in states:
                 self.need("覆盖该超差项的顾客工程批准或偏差许可", part=part or None)
                 return "NG", f"{listed}；检验报告零件号{part}；{suffix}；至少一项超差无对应批准。"
             if "unknown" in states:
                 raise unable(f"{listed}；{suffix}；尚不能确定每项是否获顾客明确接受（未明用途的逐项署名不作裁决），需人工复核。")
-            notes.append("本批超差项均有相同零件和供应商、逐项明确接受的顾客批准")
+            notes.append("本批超差项均有明确对应本件和超差项的顾客批准")
         if unknown:
             raise unable("；".join(notes) + "；检查程序未能确认：" + "；".join(map(self.named, unknown[:8])) + ("等" if len(unknown) > 8 else "") + "，需人工复核是否超差。")
         note = f"（{skipped}项要求只写名义值、报告上没有公差，未按区间核对）" if skipped else ""

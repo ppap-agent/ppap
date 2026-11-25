@@ -6,11 +6,16 @@ import re
 import unicodedata
 from pathlib import Path
 from typing import Any
+from zipfile import BadZipFile
 
 from audit.checker_lib.excel_agent import rule
 from audit.checker_lib.uaes.materials import related_by_content
+from audit.checker_lib.uaes.native import MissingFact, NativeFacts, UnknownFact, _kind_matches, header
+from audit.checker_lib.uaes.resources import control_plan
 from audit.checker_lib.uaes.special_characteristics import _NAMES, characteristic_rows, combine, compact, filled, resources, unable
+from audit.checker_lib.uaes.v1.control_plan import _independent_name, _spec_key
 from audit.checker_lib.uaes.v1.special_characteristics import (
+    _KNOWN,
     _ORDINARY,
     _PGQP1,
     _REVISION_LABEL,
@@ -18,8 +23,10 @@ from audit.checker_lib.uaes.v1.special_characteristics import (
     UaesSpecialCharacteristicsRevision3,
     _norm,
     carries_pictures,
+    mark_tokens,
     self_declared_class,
 )
+from audit.document_tools import source_title_location
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 from audit.engine.rule_engine.excel_ops import DefaultExcelOps
 
@@ -129,6 +136,64 @@ def labelled_parts(path: str):
                 source = sheet.cell(r, edge + 1)
             for number in labelled_number(inline.strip() or source.value):
                 yield number, {"kind": "xlsx_cell", "sheet": sheet.title, "cell": source.coordinate}
+
+
+def read_plan_marks(facts, ids, wanted, marked, pending):
+    """Read anchored fields, not operation titles, legend entries or row-wide keyword matches."""
+    roles = {col.canonical_name: col.aliases for col in control_plan.DOCUMENT[2]}
+    spec = roles["CP规格公差"] + ("规格/公差", "specification/tolerance")
+    mark = roles["CP特殊特性"] + ("特性类型", "special characteristic classification")
+    names = (roles["CP产品特性"] + ("特性名称", "product characteristic"), roles["CP过程特性"] + ("process characteristic",))
+    seen = False
+    for table in facts.tables():
+        layouts = []
+        for name in names:
+            try:
+                layouts.append(facts.columns(table, {"name": name, "spec": spec, "mark": mark}))
+            except (MissingFact, UnknownFact):
+                continue
+        if not layouts:
+            values = [cell.get("value") for cell in table["cells"].values() if cell.get("state") == "known"]
+            if any(header(value, mark) for value in values) and any(header(value, spec) for value in values):
+                pending.update(wanted)  # A second, unresolved plan table cannot be discarded as an appendix.
+            continue
+        seen = True
+        reader = facts.readers[table["id"]]
+        for start, cols in layouts:
+            # A part number printed on an unrelated sheet or in a data row is not this table's identity.
+            headers = [(part, place) for part, place in ids if place.get("sheet") == table["id"] and int(re.search(r"\d+$", place["cell"])[0]) < start]
+            if not headers:
+                pending.update(wanted)
+                continue
+            identity_columns = [c for c in range(1, table["cols"] + 1) if number_label(reader.cell(start, c).get("value"))]
+            for r in range(start + 1, table["rows"] + 1):
+                n, s, m = (reader.cell(r, cols[role]) for role in ("name", "spec", "mark"))
+                key = (_independent_name(n.get("value"), s.get("value")), _spec_key(s.get("value")))
+                tag = m.get("value")
+                candidates = {k for k in wanted if k[0] == key[0] or n.get("state") != "known" or (not k[0] or not key[0]) and k[1] == key[1]}
+                if not candidates:
+                    continue
+                if identity_columns:
+                    written = [reader.cell(r, c) for c in identity_columns]
+                    identities = [labelled_number(cell.get("value")) if cell.get("state") == "known" else set() for cell in written]
+                    if not all(len(values) == 1 for values in identities) or len(set.union(*identities)) != 1:
+                        pending.update(candidates)
+                        continue
+                    if headers[0][0] not in identities[0]:
+                        continue
+                complete = all(key) and all(c.get("state") == "known" for c in (n, s, m))
+                if complete and key in wanted:
+                    for c in (*cols.values(), *identity_columns):
+                        facts.cell(table, r, c)
+                    facts.witness(headers[0][1], headers[0][0], facts.version)
+                if m.get("state") == "known" and _norm(tag) in _ORDINARY and (tag or facts.format != ".xls"):
+                    continue
+                if not complete or key not in candidates or not (tokens := set(mark_tokens(tag))) or not tokens <= _KNOWN:
+                    pending.update(candidates)
+                    continue
+                marked[key] = f"控制计划“{table['id']}”第{r}行同一特性标为“{tag}”"
+    if not seen:
+        pending.update(wanted)
 
 
 def _r4_resource():
@@ -280,6 +345,46 @@ class UaesSpecialCharacteristicsRevision4(UaesSpecialCharacteristicsRevision3):
         status, basis = self.visual(fields, "编制、审核、批准签字与印章")
         return status, f"{scope}；物料字段与表头字段齐全；签署：{basis}"
 
+    def plan_marks(self, part, wanted):
+        """Only evidence of the same part, characteristic and requirement can revoke the ordinary-row exemption."""
+        group = self.group_context
+        marked, pending = {}, set()
+        if not group or not wanted:
+            return marked, pending
+        terms = ("控制计划", "control plan", "U08")
+        if any(not kind or _kind_matches(kind, terms) for kind in group.unavailable_files.values()):
+            pending.update(wanted)
+        typed = {item.audit_id for items in group.by_doc_type.values() for item in items}
+        plans = {item.audit_id for kind, items in group.by_doc_type.items() if _kind_matches(kind, terms) for item in items}
+        for item in group.by_audit_id.values():
+            if item.audit_id == self.audit_file.audit_id or item.audit_id in typed - plans:
+                continue
+            path = str(item.file_url)
+            metadata = item.file_metadata or {}
+            version = str(metadata.get("file_version_id") or item.audit_id)
+            try:
+                if Path(path).suffix.lower() not in {".xlsx", ".xlsm", ".xls"}:
+                    pending.update(wanted)
+                    continue
+                facts = NativeFacts(path, version, self.legacy().witness)
+                if (digest := metadata.get("source_sha256") or metadata.get("sha256")) and facts.data["source"]["sha256"] != digest:
+                    raise UnknownFact("冻结原件不一致")
+                if item.audit_id not in plans and not source_title_location(facts.data, terms[:2]):
+                    continue  # An untyped attachment is not a control plan just because it cites one.
+                ids = list(labelled_parts(path))
+                numbers = {number for number, _ in ids}
+                if numbers and part not in numbers:
+                    for other, place in ids:
+                        facts.witness(place, other, version)
+                    continue
+                if numbers != {part}:
+                    pending.update(wanted)
+                    continue
+                read_plan_marks(facts, ids, wanted, marked, pending)
+            except (OSError, ValueError, BadZipFile, MissingFact, UnknownFact):
+                pending.update(wanted)
+        return marked, pending
+
     @rule("四类列与行内必填")
     def rule_2(self, ctx: RuleContext):
         sheets = Table(ctx).find_sheets("特殊特性清单", on_missing=Decision.IGNORE)
@@ -301,26 +406,40 @@ class UaesSpecialCharacteristicsRevision4(UaesSpecialCharacteristicsRevision3):
                 return "NG", f"按本件号{part}过滤。特殊特性清单“{sheet.title}”缺少{'、'.join(missing)}列；按列结构判定，参与逐行必填判定0行（不表示表体无记录）。"
         if not rows:
             return "NG", f"{scope}：清单中没有本件号的特性行，应填内容缺失。"
-        problems, ordinary = [], []
+        problems, ordinary, unresolved, exempt = [], [], [], []
         for title, row, columns in rows:
             name = next((str(row.value(column)).strip() for column in _NAMES if filled(row, column, columns)), "")
             value = str(row.value("特性值")).strip() if filled(row, "特性值", columns) else ""
             mark = str(row.value("特性类别") or "").strip() if "特性类别" in columns else ""
             where = f"“{title}”第{row.row_index}行" + (f"（{name or value}）" if name or value else "")
             blank = [label for present, label in ((filled(row, "特性编号", columns), "编号/序号"), (bool(name), "特性名称"), (bool(value), "特性及公差")) if not present]
-            controlled = bool(self_declared_class(name)) or _norm(mark) not in _ORDINARY
             if _norm(mark) in _ORDINARY:
-                if controlled:
-                    blank.append("特性类型/类别（名称自标类别" + self_declared_class(name) + "）")
-                else:
-                    ordinary.append(f"第{row.row_index}行")
+                if declared := self_declared_class(name):
+                    blank.append("特性类型/类别（名称自标类别" + declared + "）")
+                elif not blank:
+                    exempt.append((row, columns, name, value))
             if blank:
                 column = {"编号/序号": "特性编号", "特性及公差": "特性值"}.get(blank[0], "特性类别" if blank[0].startswith("特性类型") else next((c for c in _NAMES if c in columns), None))
                 if column in columns:
                     self.cite(row.ws, row.row_index, columns[column].header_col)
                 problems.append(f"{where}{'、'.join(blank)}为空")
+        wanted = {(_independent_name(name, value), _spec_key(value)) for _row, _columns, name, value in exempt}
+        marked, pending = self.plan_marks(part, wanted) if not problems else ({}, set())
+        for row, columns, name, value in exempt:
+            key = (_independent_name(name, value), _spec_key(value))
+            if key in marked:
+                for field in (*_NAMES, "特性值", "特性类别"):
+                    if field in columns:
+                        self.cite(row.ws, row.row_index, columns[field].header_col)
+                problems.append(f"清单“{row.ws.title}”第{row.row_index}行“{name}”类别为空或“/”；{marked[key]}，不属于普通行豁免")
+            elif key in pending:
+                unresolved.append(f"第{row.row_index}行“{name}”")
+            else:
+                ordinary.append(f"第{row.row_index}行")
         if problems:
             return "NG", f"{scope}。" + "；".join(problems[:5]) + (f"等{len(problems)}行" if len(problems) > 5 else "") + "。"
+        if unresolved:
+            raise unable(f"{scope}；控制计划的本件号、特性与分类未能完整对应，{'、'.join(unresolved[:5])}暂不能按普通行豁免。")
         note = f"；{('、'.join(ordinary[:5]))}为仅作过程参考的普通行，特性类别留空或“/”，按已按规填写计（留痕）" if ordinary else ""
         return "PASS", f"{scope}；四类列齐全，各行编号、特性名称、特性及公差、特性类别均已填写{note}。"
 

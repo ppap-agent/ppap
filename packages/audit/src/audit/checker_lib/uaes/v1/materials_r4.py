@@ -117,3 +117,9 @@ class UaesMaterialsAgentR4(UaesMaterialsAgentR3):
             raise unable("候选图纸身份、项目或完整名称边界未读全，不能判为名称不一致。")
         names = "；".join(f"{r['where']}：{r['name']}" for r in usable)
         return "NG", f"零件名称不一致：同项目、同号图纸名称“{names}”，清单名称“{name}”。"
+
+    @rule("按材料或外协工序逐项双向溯源")
+    def msl_4(self, ctx: RuleContext):
+        from .material_flow_r4 import check_trace
+
+        return check_trace(self, ctx)

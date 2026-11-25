@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
 from audit.checker_lib.excel_agent import rule
-from audit.engine.rule_engine import RuleContext
+from audit.contracts import EvidenceSource
+from audit.engine.rule_engine import Decision, GuardStop, RuleContext
 
 from .msa import (
     _ACCEPT,
@@ -21,12 +23,10 @@ from .msa import (
     _PGQP1,
     _PLACEHOLDERS,
     _PLAN_END,
-    _REJECT,
     MsaClauses,
     PlanRow,
     UaesMsaAgentR3,
     _c,
-    _number,
     _text,
     compact,
     gauge_family,
@@ -37,6 +37,7 @@ from .msa import (
 from .msa import (
     Report as MsaReport,
 )
+from .scoped_text_r4 import read_facts
 
 _PARAMETER = ("测量参数", "Measure parameter", "Measuring parameter", "特性", "特 性", "Denote Requirement", "标注要求")
 _LIMIT = ("参数规格", "Parameter specification")
@@ -100,32 +101,118 @@ class Report(MsaReport):
 
     result_cells: tuple = ()
     dimension_units: frozenset[str] = frozenset()
-    allowance: bool = False
-    waiver: bool = False
+    supports: dict[str, list[str]] = field(default_factory=dict)
+    pdf_evidence: list[EvidenceSource] = field(default_factory=list)
 
 
-def verdict(text: str, *, grr: bool = False) -> str:
-    """accept, marginal, reject or unknown for one written conclusion (signed MSA:2, or the original Kappa acceptance words)."""
-    raw = unicodedata.normalize("NFKC", text).casefold()
-    words = compact(raw).replace("＆", "&")
-    if not words:
+_SUPPORT = {
+    "客户批准": "approval",
+    "客户认可": "approval",
+    "整改说明": "correction",
+    "整改措施": "correction",
+    "公差带豁免说明": "waiver",
+    "customer approval": "approval",
+    "corrective action": "correction",
+    "tolerance waiver": "waiver",
+}
+_SUPPORT = {compact(k): v for k, v in _SUPPORT.items()}
+_RESULT = {"结论", "conclusion", "conclude", "判定", "judgement", "judgment"}
+_RATINGS = {"accept", "reject", "marginal"}
+
+
+def literal_rating(text: str) -> str | None:
+    """A whole standalone rating needs no model. Never match an embedded result word in prose."""
+    words = compact(text).strip("。.!！")
+    if not words or words == "pending" or words in _PLACEHOLDERS:
         return "unknown"
-    if any(term in words for term in _MARGINAL):
+    if words in _MARGINAL:
         return "marginal"
-    if any(term in words for term in _REJECT) or re.search(r"\bng\b", raw):
+    if words in {"不合格", "不可接受", "不通过", "unacceptable", "fail", "failed", "reject", "rejected", "poor", "bad", "ng"}:
         return "reject"
-    if grr:
-        if any(term in words for term in ("若", "如果", "待", "是否", "尚未", "□", "pending")):
-            return "unknown"
-        # Actual engineering conclusion, not an English word embedded in commentary.
-        ending = re.split("[,;。；]", words.strip("!。."))[-1]
-        if ending in _ACCEPT or re.fullmatch(r"(?:the)?(?:gage|gauge|measurementsystem)(?:is(?:acceptable|ok(?:touse)?)|canaccept(?:it)?|canbeaccepted)", ending):
-            return "accept"
-        if re.fullmatch(r"(?:该|本|此)?(?:测量系统|量具)?(?:可接受|可以接受|能接受|合格|通过|满足要求|符合要求)", ending):
-            return "accept"
-    elif any(term in words for term in _ACCEPT):
+    if (
+        words in _ACCEPT
+        or re.fullmatch(r"(?:该|本|此)?(?:测量系统|量具)(?:可接受|可以接受|能接受|合格|通过|满足要求|符合要求)", words)
+        or re.fullmatch(r"(?:the)?(?:gage|gauge|measurementsystem)(?:is(?:acceptable|ok(?:touse)?)|canaccept(?:it)?|canbeaccepted)", words)
+    ):
         return "accept"
-    return "unknown"
+    return None
+
+
+def literal_support(role: str, value: str) -> str | None:
+    word = compact(value)
+    if not word or word in _DECLARED_NA or word in {"未批准", "未认可", "未豁免", "不批准", "不认可", "notapproved"}:
+        return "absent"
+    if word in _PLACEHOLDERS:
+        return "unknown"
+    if role == "approval" and re.fullmatch(r"(?:授权单|批准单)\s*[:：]?\s*[A-Za-z0-9]+(?:[-./][A-Za-z0-9]+)+", value):
+        return "documented"
+    return None
+
+
+def read_statements(reports: list[MsaReport]) -> dict[tuple[str, str], str]:
+    """One optional read per audited original, irrespective of its number of studies."""
+    candidates: dict[tuple[str, str], None] = {}
+    for report in reports:
+        if not isinstance(report, Report):
+            continue
+        for value in report.conclusions:
+            if literal_rating(value) is None:
+                candidates["conclusion", value] = None
+        roles = (["approval", "correction"] if report.grr is not None and 10 < report.grr <= 30 else []) + (["waiver"] if report.ndc is not None and report.ndc < 5 else [])
+        for role in roles:
+            for value in report.supports.get(role, []):
+                if literal_support(role, value) is None:
+                    candidates[role, value] = None
+    # Never truncate, split into extra requests, or cite a partial quote.
+    if not candidates or len(candidates) > 24:
+        return {}
+    source_ids = {f"{role}:{i}": (role, value) for i, (role, value) in enumerate(candidates)}
+    sources = {key: value for key, (_role, value) in source_ids.items()}
+    properties = {}
+    for key, (role, _v) in source_ids.items():
+        states = _RATINGS if role == "conclusion" else {"documented", "absent"}
+        properties[key] = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["state", "quote"],
+            "properties": {"state": {"type": "string", "enum": sorted(states | {"unknown"})}, "quote": {"type": "string"}},
+        }
+    try:
+        facts = read_facts(
+            "uaes_r4_msa_statements",
+            sources=sources,
+            schema={"type": "object", "additionalProperties": False, "required": list(sources), "properties": properties},
+            instructions="各字段独立，不串用。conclusion 只读本次研究结论栏的最终表态：accept 无条件可接受，reject 明确不接受，marginal 明确临界或有条件接受。"
+            "前次结果、示例、假设或待批不代表当前表态。注意否定的对象，冲突或无法区分时 unknown。approval 指客户确已批准，correction 指有具体整改说明（不要求已完成），"
+            "waiver 指明确写明的公差带豁免。documented 表示本次该材料明确载明；absent 表示明确没有；只有申请、条件、历史信息或不确定则 unknown。"
+            "每个 quote 须原样返回该字段的完整值，包括条件和限定，不得摘词。",
+        )
+    except GuardStop as exc:
+        if exc.decision != Decision.UNABLE:
+            raise
+        return {}
+    if not isinstance(facts, dict) or set(facts) != set(sources):
+        return {}
+    result = {}
+    for key, (role, text) in source_ids.items():
+        fact = facts[key]
+        allowed = _RATINGS if role == "conclusion" else {"documented", "absent"}
+        if isinstance(fact, dict) and set(fact) == {"quote", "state"} and fact["quote"] == text and isinstance(fact["state"], str) and fact["state"] in allowed:
+            result[role, text] = fact["state"]
+    return result
+
+
+def support(report: Report, facts: dict, *roles: str) -> str:
+    outcomes = []
+    for role in roles:
+        values = {literal_support(role, value) or facts.get((role, value), "unknown") for value in report.supports.get(role, [])}
+        if values:
+            outcomes.append(next(iter(values)) if len(values) == 1 else "unknown")
+    if "documented" in outcomes:
+        return "documented"
+    if "unknown" in outcomes or (len(outcomes) < len(roles) and str(report.item.file_url).lower().endswith(".pdf")):
+        return "unknown"
+    return "absent"
 
 
 class UaesMsaAgentR4(UaesMsaAgentR3):
@@ -225,7 +312,7 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
         has = lambda *terms: any(term in word for word in words for term in terms)  # noqa: E731
         if any(word.startswith("cgk=") or word == "cgk" for word in words):
             kind = "Cgk"
-        elif any(word == "kappa" for word in words) or "kappa" in _c(ws.title):
+        elif ("kappa" in _c(ws.title) or "kappa" in words) and (not self.plan_headers(grid) or any(compact(_text(value).partition(":")[0]) in _RESULT for value in grid.values())):
             kind = "Kappa"
         elif has("计数型") and any(_CONCLUSION_LABEL.match(word) for word in words):
             kind = "Attr"
@@ -286,18 +373,25 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
         report.signature = (kind, tuple(_c(p) for p in people), tuple(report.studied))
         # A different file name or gauge number alone does not prove a distinct study.
         report.place = self.READER.Place.of(report.where, ws, 1, 1) if self.mine(item) else None
+
+        def original(row: int, column: int) -> str:
+            raw = ws.cell(row, column).value
+            return raw if isinstance(raw, str) and not raw.startswith("=") else grid.get((row, column), "")
+
         for (row, column), cell in sorted(grid.items()):
             word = _c(cell)
+            fields = re.split("[:：]", original(row, column), maxsplit=1)
+            label, inline = fields[0], fields[1].strip() if len(fields) > 1 else ""
             if kind == "GRR":
-                if _CONCLUSION_LABEL.match(word):
+                if compact(label) in _RESULT:
                     # Read the actual result field, not a rubric or an unselected
                     # checkbox further along the same row.
-                    inline = _text(cell).partition(":")[2].strip()
-                    right = self.right(grid, row, column)
-                    result = inline or (right[0][1] if right else "")
+                    merged = ctx.ops.get_detailed_merge_info(ws, row, column)
+                    next_col = (merged.max_col if merged else column) + 1
+                    result = inline or original(row, next_col)
                     if result and not result.startswith("□"):
                         report.conclusions.append(result)
-                        report.result_cells += ((ws, row, column if inline else right[0][0]),)
+                        report.result_cells += ((ws, row, column if inline else next_col),)
                 elif word in {"%grr", "%r&r", "ndc"} and (value := grid.get((row, column + 1))):
                     if re.fullmatch(r"-?\d+(?:\.\d+)?%?", _c(value)):
                         number = Decimal(_c(value).rstrip("%"))
@@ -313,30 +407,26 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
                 elif re.match(r"^ndc=", word) and report.ndc is None:
                     report.ndc = self.formula_value(grid, row, column)
             elif kind in ("Kappa", "Attr"):
-                if _CONCLUSION_LABEL.match(word):
-                    values = [value for _col, value in self.right(grid, row, column)]
-                    split = re.split(r"[:：]", _text(cell), maxsplit=1)
-                    if len(split) == 2 and split[1].strip() and not _CONCLUSION_LABEL.match(_c(split[1])):
-                        values.insert(0, split[1].strip())
-                    report.conclusions.extend(values)
-                elif word == "kappa":
-                    report.kappas.extend(n for _col, value in self.right(grid, row, column) if (n := _number(value)) is not None and re.fullmatch(r"-?\d+(\.\d+)?", _c(value)))
-                elif "kappa" in word and any(term in word for term in ("总体", "整体", "overall")):
-                    report.overall.extend(n for _col, value in self.right(grid, row, column) if (n := _number(value)) is not None)
-        if kind == "GRR":
-            for labels, attr in [(("客户批准", "客户认可", "整改说明", "整改措施"), "allowance"), (("公差带豁免说明",), "waiver")]:
-                for r, c, value in self.label_cells(grid, labels):
-                    v = _c(value)
-                    if (
-                        v in _PLACEHOLDERS | _DECLARED_NA
-                        or not v
-                        or any(term in v for term in ("未批准", "未认可", "未豁免", "不批准", "不认可", "不适用", "待", "无", "否", "pending", "notapproved", "notapplicable"))
-                    ):
-                        continue
-                    if value.endswith((":", "：")) or self.right(grid, r, c, gap=0) and _c(value) in ("备注", "日期", "责任人"):
-                        continue
-                    setattr(report, attr, True)
-                    report.result_cells += ((ws, r, c),)
+                if compact(label) in _RESULT:
+                    values = [(column, inline)] if inline else self.right(grid, row, column, gap=0)
+                    for c, value in values:
+                        if value.endswith((":", "：")) or compact(value) in _RESULT:
+                            break
+                        report.conclusions.append(inline or original(row, c))
+                        report.result_cells += ((ws, row, c),)
+                elif word == "kappa" or ("kappa" in word and any(term in word for term in ("总体", "整体", "overall"))):
+                    for c, value in self.right(grid, row, column):
+                        if re.fullmatch(r"-?\d+(?:\.\d+)?", _c(value)):
+                            (report.kappas if word == "kappa" else report.overall).append(Decimal(_c(value)))
+                            report.result_cells += ((ws, row, c),)
+            if kind == "GRR":
+                role = _SUPPORT.get(compact(label))
+                if role:
+                    merged = ctx.ops.get_detailed_merge_info(ws, row, column)
+                    c = column if inline.strip() else (merged.max_col if merged else column) + 1
+                    value = inline.strip() or original(row, c)
+                    report.supports.setdefault(role, []).append(value)
+                    report.result_cells += ((ws, row, c if value else column),)
         return report
 
     @staticmethod
@@ -359,8 +449,21 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
         records: dict[str, Report] = {}
         scanned = set(self.scanned(item))
         with fitz.open(str(item.file_url)) as document:
-            pages = [(page.number + 1, [line.strip() for line in page.get_text().splitlines() if line.strip()]) for page in document if page.number + 1 not in scanned]
-        for number, lines in pages:
+            pages = [
+                (
+                    page.number + 1,
+                    [
+                        (line["bbox"], raw)
+                        for block in page.get_text("dict", flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES)["blocks"]
+                        for line in block.get("lines", [])
+                        if (raw := "".join(span["text"] for span in line["spans"]).strip())
+                    ],
+                )
+                for page in document
+                if page.number + 1 not in scanned
+            ]
+        for number, regions in pages:
+            lines = [raw for _box, raw in regions]
             if not lines:
                 continue
             text = " ".join(lines)
@@ -370,21 +473,53 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
                 index = next((i for i, line in enumerate(lines) if _c(line).rstrip(":") == _c(label)), None)
                 return lines[index + offset] if index is not None and index + offset < len(lines) else ""
 
-            if "重复性及再现性分析报告" in head:
+            def row_values(box):
+                # Production PDFs can encode the label and its value as separate text runs.
+                y = (box[1] + box[3]) / 2
+                return sorted(((other, raw) for other, raw in regions if other[0] >= box[2] - 1 and abs((other[1] + other[3]) / 2 - y) <= 0.35 * (box[3] - box[1])), key=lambda entry: entry[0][0])
+
+            def cite_value(report, box, label, raw):
+                version = str((getattr(item, "file_metadata", {}) or {}).get("file_version_id") or getattr(item, "audit_id", ""))
+                locator = {"kind": "pdf_region", "page": number, "bbox": list(box), "file_version_id": version, "fact": label}
+                report.pdf_evidence.append(EvidenceSource(kind="structure", locator=json.dumps(locator, ensure_ascii=False), excerpt=raw[:500]))
+
+            if any("重复性及再现性分析报告" in _c(line) or "gr&r报告" == _c(line) for line in lines):
                 report = Report("GRR", item, f"第{number}页", title=head, text=_c(text))
                 report.parts = set(_PART.findall(text.upper()))
-                subject = after("零件代号")
-                report.subject_codes = frozenset([subject]) if subject else frozenset()
-                report.names = [after("量具名称")] if after("量具名称") else []
-                report.numbers = [after("量具编号")] if after("量具编号") else []
-                report.characteristic = after("特 性") or after("特性")
-                report.studied = (report.characteristic,) if report.characteristic else ()
-                report.conclusions = [after("结论")] if after("结论") else []
-                for index, line in enumerate(lines):
-                    if _c(line) in ("%r&r=", "%grr=") and index + 1 < len(lines) and re.fullmatch(r"\d+(\.\d+)?%", _c(lines[index + 1])):
-                        report.grr = Decimal(_c(lines[index + 1]).rstrip("%"))
-                if values := re.findall(r"NDC\s*=\s*(\d+(?:\.\d+)?)\s*$", "\n".join(lines), re.M):
-                    report.ndc = Decimal(values[-1])
+                for box, raw in regions:
+                    label, _sep, inline = re.split(r"([:：=])", raw, maxsplit=1) if re.search(r"[:：=]", raw) else (raw, "", "")
+                    role = compact(label)
+                    if role not in _RESULT | _SUPPORT.keys() | {"零件代号", "零件号", "量具名称", "量具编号", "特性", "测量参数", "%r&r", "%grr", "ndc"}:
+                        continue
+                    adjacent = row_values(box)
+                    value = inline.strip()
+                    where = box
+                    if not value and adjacent:
+                        where, value = adjacent[0]
+                    if role in _RESULT:
+                        if value:
+                            report.conclusions.append(value)
+                    elif role in _SUPPORT:
+                        if not value:  # The blank or graphical cell is not proof that an attachment does not exist.
+                            continue
+                        report.supports.setdefault(_SUPPORT[role], []).append(value)
+                    elif role in {"零件号", "零件代号"} and value:
+                        report.subject_codes |= {value}
+                    elif role == "量具名称" and value:
+                        report.names.append(value)
+                    elif role == "量具编号" and value:
+                        report.numbers.append(value)
+                    elif role in {"特性", "测量参数"} and value:
+                        report.characteristic = value
+                        report.studied += (value,)
+                    elif role == "ndc" and re.fullmatch(r"\d+(?:\.\d+)?", _c(value)):
+                        report.ndc = Decimal(_c(value))
+                    elif role in {"%grr", "%r&r"} and re.fullmatch(r"\d+(?:\.\d+)?%", _c(value)):
+                        report.grr = Decimal(_c(value).rstrip("%"))
+                    else:
+                        continue
+                    if value:
+                        cite_value(report, where, label, raw if inline.strip() else value)
                 report.signature = ("GRR", tuple(report.numbers), _c(report.characteristic), number)
                 found.append(report)
             elif "Attribute Report" in head:
@@ -405,54 +540,68 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
                 else:
                     report = existing
                 report.text += _c(text)
-                for index, line in enumerate(lines):
+                for box, line in regions:
                     word = _c(line)
-                    if word == "kappa":
-                        for value in lines[index + 1 : index + 4]:
-                            if re.fullmatch(r"-?\d+(\.\d+)?", _c(value)):
-                                report.kappas.append(Decimal(_c(value)))
-                    elif word.startswith("conclude") or word in {"good", "acceptable", "marginal", "unacceptable", "poor", "bad", "ok", "ng", "pass", "fail"}:
-                        rest = _text(line)[8:].strip() if word.startswith("conclude") else _text(line)
-                        if rest:
-                            report.conclusions.append(rest)
-                if report.kappas:
+                    if word in {"kappa", "overallkappa"}:
+                        for where, raw in row_values(box):
+                            if re.fullmatch(r"-?\d+(?:\.\d+)?", _c(raw)):
+                                (report.kappas if word == "kappa" else report.overall).append(Decimal(_c(raw)))
+                                cite_value(report, where, line, raw)
+                    elif match := re.fullmatch(r"conclude(?:[:：]\s*(.+)|(Good|Marginal|Acceptable|Unacceptable|Poor|OK|NG|Pass|Fail))?", line, re.I):
+                        # A PDF can concatenate the heading with the first rating. Never consume unlabelled words elsewhere on the page.
+                        for where, raw in ([(box, match[1] or match[2])] if match[1] or match[2] else []) + row_values(box):
+                            report.conclusions.append(raw)
+                            cite_value(report, where, line, raw)
+                if report.kappas or report.overall:
                     report.kind = "Kappa"
         return found
 
-    def check_report(self, report: MsaReport) -> tuple[str, str] | None:
+    def check_report(self, report: MsaReport, facts: dict | None = None) -> tuple[str, str] | None:
         """A report's own failure (NG), or an UNABLE reason, or None when its conclusion and indices pass."""
         if not isinstance(report, Report):
             return super().check_report(report)
-        verdicts = [verdict(value, grr=report.kind == "GRR") for value in report.conclusions]
+        facts = facts or {}
+        verdicts = [literal_rating(value) or facts.get(("conclusion", value), "unknown") for value in report.conclusions]
         if report.kind == "Cgk":
             return None
+        opens: list[str] = []
         if not report.conclusions:
-            return "UNABLE", f"{report.label}未读到结论"
+            opens.append("未读到结论")
         if "marginal" in verdicts:
             return "NG", f"{report.label}结论为有条件接受/临界类“{'；'.join(report.conclusions)}”，须整改后复评，按不通过处理"
         if "reject" in verdicts:
             return "NG", f"{report.label}结论“{'；'.join(report.conclusions)}”不是可接受"
         if "unknown" in verdicts:
             odd = [value for value, v in zip(report.conclusions, verdicts) if v == "unknown"]
-            return "UNABLE", f"{report.label}结论“{'；'.join(odd)}”不能确定是否为可接受的写法"
+            opens.append(f"结论“{'；'.join(odd)}”不能确定是否为可接受的写法")
         if report.kind == "GRR":
             if report.grr is None:
-                return "UNABLE", f"{report.label}结论可接受，但未能读出%GRR，底层指标是否达标尚未核实"
-            if report.grr > 30:
+                opens.append("未能读出%GRR，底层指标是否达标尚未核实")
+            elif report.grr > 30:
                 return "NG", f"{report.label}%GRR为{report.grr.normalize()}%，大于30%，即使结论写可接受也按数据失真判不通过"
-            if report.grr > 10 and not report.allowance:
-                return "NG", f"{report.label}%GRR为{report.grr.normalize()}%（10%～30%），未附客户批准或整改说明"
+            elif report.grr > 10:
+                answer = support(report, facts, "approval", "correction")
+                if answer != "documented":
+                    if answer == "unknown":
+                        opens.append(f"%GRR为{report.grr}%，未能核实本次研究的客户批准或整改说明")
+                    else:
+                        return "NG", f"{report.label}%GRR为{report.grr}%（10%～30%），未附客户批准或整改说明"
             if report.ndc is None:
-                return "UNABLE", f"{report.label}未能读出ndc，底层指标是否达标尚未核实"
-            if report.ndc < 5 and not report.waiver:
-                return "NG", f"{report.label}ndc为{report.ndc.normalize()}，小于5且无公差带豁免说明"
+                opens.append("未能读出ndc，底层指标是否达标尚未核实")
+            elif report.ndc < 5:
+                answer = support(report, facts, "waiver")
+                if answer != "documented":
+                    if answer == "unknown":
+                        opens.append(f"ndc为{report.ndc}，未能核实本次研究的公差带豁免说明")
+                    else:
+                        return "NG", f"{report.label}ndc为{report.ndc}，小于5且无公差带豁免说明"
         if report.kind == "Kappa":
             values = report.overall or report.kappas
             if not values:
                 return "UNABLE", f"{report.label}未能读出Kappa值，底层指标是否达标尚未核实"
             if low := [value for value in values if value < Decimal("0.75")]:
                 return "NG", f"{report.label}Kappa为{'、'.join(str(v) for v in low)}，低于0.75，即使结论写可接受也按数据失真判不通过"
-        return None
+        return ("UNABLE", report.label + "；".join(opens)) if opens else None
 
     @staticmethod
     def plan_feature_match(feature: str, report: MsaReport) -> bool | None:
@@ -482,11 +631,14 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
         plan, main, scanned = self.suite_plan(ctx)
         underlying = self.reports_of(ctx, self.audit_file)
         own = [report for report in underlying if report.kind != "Cgk"]
+        facts = read_statements(own)
         failures, opens, notes, passed = [], [], [], []
         for report in own:
             for cell in (*report.study_cells, *(report.result_cells if isinstance(report, Report) else ())):
                 self.cite(*cell)
-            result = self.check_report(report)
+            if isinstance(report, Report):
+                self.__dict__.setdefault("_cited", []).extend(report.pdf_evidence)
+            result = self.check_report(report, facts)
             if report.kind in ("GRR", "Kappa"):
                 ctx.record_execution()
             if result is None:

@@ -122,35 +122,52 @@ class LabCore:
             if item.audit_id != own and any(term in str((item.file_metadata or {}).get("original_filename") or Path(str(item.file_url)).name) for term in names)
         ]
 
-    def decide(self, text: str, deadline: date, observe: Any) -> tuple[str, str]:
-        reminder = self.READER._lab_reminder(self.group_context)
-        open_: list[Any]
-        problems, open_ = [], []
+    STOP_ON_EXPIRY = False
+    holder = staticmethod(lab_name)
+
+    def report_names_holder(self, text, name):
+        return compact(name) in compact(text)
+
+    def accreditation(self, text, problems):
         flat = re.sub(r"\s+", "", unicodedata.normalize("NFKC", text))
-        # 1. The deadline, against the audit date.
-        if deadline <= date.today():
-            problems.append(f"证书截止日期{deadline}不晚于当前日期，资质已到期")
-        # 2. ISO/IEC 17025 and one accreditation branch.
         if STANDARD not in flat:
             problems.append("证书中没有ISO/IEC 17025实验室认可字样")
         hit = branch(unicodedata.normalize("NFKC", text))
         if hit is None:
             problems.append("证书中没有CNAS、DAkkS、A2LA、UKAS、ILAC-MRA或其他ILAC互认成员机构的认可标识")
+        return hit, {}
+
+    def read_marks(self, values, unreadable, problems, open_):
+        raise NotImplementedError
+
+    def decide(self, text: str, deadline: date, observe: Any) -> tuple[str, str]:
+        reminder = self.READER._lab_reminder(self.group_context)
+        open_: list[Any]
+        problems, open_ = [], []
+        # 1. The deadline, against the audit date.
+        if deadline <= date.today():
+            problems.append(f"证书截止日期{deadline}不晚于当前日期，资质已到期")
+            if self.STOP_ON_EXPIRY:
+                return "NG", "实验室资质证书" + problems[0] + "。" + reminder
+        hit, mark_fields = self.accreditation(text, problems)
         # 3. The issuing body's seal, and a readable laboratory name.
-        name = lab_name(text)
+        name = self.holder(text)
         fields = {"issuer_seal": "证书上盖有发证机关（认可机构）的印章；只有文字“印章/盖章”或空白不算。"}
         if name is None:
             fields["lab_name"] = "证书上写有被认可实验室（机构）的名称，并且名称清晰可读。"
+        fields.update(mark_fields)
         error = None
         try:
             values, unreadable = observe(fields)
         except GuardStop as stop:
             values, unreadable, error = dict.fromkeys(fields), set(), stop
+        if mark_fields:
+            hit = self.read_marks(values, unreadable, problems, open_)
         if values["issuer_seal"] is False:
             problems.append("证书上没有发证机关印章")
         elif values["issuer_seal"] is None:
             (problems if "issuer_seal" in unreadable else open_).append("发证机关印章无法辨识" if "issuer_seal" in unreadable else "发证机关印章尚未能从原件核实")
-        if name is None and values.get("lab_name") is not True:
+        if "lab_name" in fields and values.get("lab_name") is not True:
             readable = values.get("lab_name") is None and "lab_name" not in unreadable
             (open_ if readable else problems).append("被认可机构名称尚未能从原件核实" if readable else "被认可机构名称不可读")
         # The certificate covers the round's reports only under the same laboratory name and while valid.
@@ -159,7 +176,7 @@ class LabCore:
             title = str((item.file_metadata or {}).get("original_filename") or Path(str(item.file_url)).name)
             if name is None:
                 open_.append(f"同批报告{title}的出具实验室需与证书人工比对（证书上的实验室名称未能读出）")
-            elif compact(name) not in compact(report):
+            elif not self.report_names_holder(report, name):
                 open_.append(f"同批报告{title}中未读到证书上的实验室名称“{name}”，是否为同一实验室（含子公司、事业部对应）需人工比对")
             issued = [day for found in re.findall(REPORT_DATE, re.sub(r"\s+", "", report), re.I) if (day := parse_date(found))]
             if issued and max(issued) > deadline:

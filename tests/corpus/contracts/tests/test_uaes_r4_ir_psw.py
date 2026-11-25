@@ -40,6 +40,62 @@ def finding(leaf, clause, path, refs=(), reader=None):
     return answer
 
 
+def _source_rows(path, sheet, rows):
+    book = Workbook()
+    book.active.title = sheet
+    for row in rows:
+        book.active.append(row)
+    book.save(path)
+    return path
+
+
+def test_repeated_descriptions_batched_once_with_only_actual_effect(monkeypatch, tmp_path):
+    from documents.ai import AIResult
+
+    texts = []
+    effect = "不影响行车安全；仅使内部支架需返工。"
+    header = ["潜在失效模式", "潜在失效原因", "潜在失效后果", "严重度", "频度", "探测度", "目前的探测控制", "RPN"]
+    path = _source_rows(tmp_path / "fixture.xlsx", "PFMEA", [header, *[[f"位置偏移{i}", "定位不准", effect, 5, 4, 4, "在线全数复测", 80] for i in range(5)]])
+
+    def read(task, *, prompt, **_):
+        assert task == "pfmea_score_cell_facts"
+        cells = json.loads(prompt)
+        assert set(cells.values()) == {effect, "在线全数复测"}
+        texts.append(cells)
+        return AIResult({"cells": [{"id": key, "kind": "other", "quote": source} for key, source in cells.items()]})
+
+    monkeypatch.setattr("documents.ai.run_json", read)
+    answer = finding("U07", "PFMEA:2", path, reader=CheckerRuntime(allow_model_tools=True))
+    assert answer["status"] == "PASS" and len(texts) == 1, answer["suggestions"]
+    assert any(effect in source["excerpt"] for source in answer["evidence"]["sources"])
+
+
+def test_certificate_accreditation_in_issuer_role_is_sufficient(monkeypatch, tmp_path):
+    from audit.checker_lib.uaes.native import UaesSourceAgent
+
+    path = _source_rows(
+        tmp_path / "certificate.xlsx",
+        "认可证书",
+        [
+            ["截止日期", "2099-05-10"],
+            ["被认可机构：星港计量实验室"],
+            ["本机构认可依据为ISO/IEC 17025"],
+            ["获得中国合格评定国家认可委员会认可，并非英国UKAS认可。"],
+        ],
+    )
+    seen = []
+
+    def observe(reader, fields, **_):
+        seen.append(fields)
+        assert {"cnas", "ukas", "iso17025", "issuer_seal"} <= fields.keys()
+        reader.witness({"kind": "xlsx_cell", "sheet": "认可证书", "cell": "A4"}, "中国合格评定国家认可委员会", visual=True)
+        return {key: key in {"iso17025", "issuer_seal", "cnas", "lab_name"} for key in fields}, set()
+
+    monkeypatch.setattr(UaesSourceAgent, "visual_observation", observe)
+    answer = finding("U03", "LAB:1", path, reader=CheckerRuntime(allow_model_tools=True))
+    assert answer["status"] == "PASS" and "认可标识：CNAS" in answer["suggestions"] and len(seen) == 1, answer["suggestions"]
+
+
 def test_engineering_approval_reads_only_the_original_cover_remark(monkeypatch):
     from documents.ai import AIResult
 
@@ -242,6 +298,52 @@ def test_specific_acceptance_has_customer_supplier_and_exact_item_scope(tmp_path
     assert result["status"] == expected, result["suggestions"]
     if expected == "PASS":
         assert any(source["excerpt"] == part and json.loads(source["locator"]).get("file_version_id") == "1" for source in result["evidence"]["sources"])
+
+
+def test_ir_reads_item_decisions_in_a_customer_letter_as_one_observation(tmp_path, monkeypatch):
+    from documents.ai import AIResult
+    from docx import Document
+    from openpyxl import load_workbook
+
+    part = "QZ-504"
+    report = reports(tmp_path, part=part)
+    book = load_workbook(report)
+    for col, value in enumerate((42, "2±0.02", 2.04, 2.0, 2.0), 1):
+        book["尺寸报告"].cell(4, col, value)
+    book.save(report)
+    permits = []
+    for index, spec in (("23", "10±0.1"), ("42", "2±0.02")):
+        letter = Document()
+        letter.add_paragraph("工程例外处理通知")
+        letter.add_paragraph("签发单位：UAES")
+        letter.add_paragraph("本次放行件号：" + part)
+        letter.add_paragraph("第" + index + "项偏离原要求" + spec + "，本批实测差异获准放行。")
+        path = tmp_path / f"通知{index}.docx"
+        letter.save(path)
+        permits.append((path, "E11"))
+
+    called = []
+
+    def observe(task, *, prompt, **_):
+        assert task == "uaes_ir_release"
+        sources = json.loads(prompt)
+        called.append(task)
+        decisions = []
+        for index, spec in (("23", "10±0.1"), ("42", "2±0.02")):
+            stem, text = next((k.split(":")[0], v) for k, v in sources.items() if v.startswith("第" + index + "项"))
+
+            def quote(value):
+                return {"source": next(k for k, v in sources.items() if k.startswith(stem + ":") and value in v), "value": value}
+
+            decisions.append(dict(issuer=quote("UAES"), part=quote(part), supplier=None, item=quote(index), specification=quote(spec), statement=quote(text), action="accepted"))
+        return AIResult({"coverage": "complete", "decisions": decisions})
+
+    monkeypatch.setattr("documents.ai.run_json", observe)
+    result = finding("U01", "IR:1", report, permits, reader=CheckerRuntime(allow_model_tools=True))
+    assert (result["status"], len(called)) == ("PASS", 1), result["suggestions"]
+    locations = [json.loads(row["locator"]) for row in result["evidence"]["sources"] if "获准放行" in row["excerpt"]]
+    assert {row["file_version_id"] for row in locations} == {"1", "2"}
+    assert all(row["kind"] == "docx_paragraph" and row["source_sha256"] for row in locations)
 
 
 def test_psw_native_document_header_after_an_annex(tmp_path):

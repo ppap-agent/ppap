@@ -18,6 +18,7 @@ from audit.checker_lib.uaes.resources import drawing_for_materials
 from audit.engine.rule_engine import Decision, GuardStop, Sheet
 
 from .control_plan import _NO_DEVICE_FILLS, _PLAN_NUMBER, UaesControlPlanRevision3, _cjk, _fold, _independent_name, _spec_key
+from .control_plan_requirements_r4 import ControlPlanRequirementsR4
 from .workbook_drawings_r4 import drawing_regions
 
 
@@ -128,7 +129,7 @@ _CP_RESOURCE = UaesControlPlanRevision3.EXTRA_RESOURCE
 _CP_FREQUENCY = _CP_RESOURCE.columns["CP频率"]
 
 
-class UaesControlPlanRevision4(UaesControlPlanRevision3):
+class UaesControlPlanRevision4(ControlPlanRequirementsR4):
     EXTRA_RESOURCE = replace(_CP_RESOURCE, columns={**_CP_RESOURCE.columns, "CP频率": _CP_FREQUENCY.model_copy(update={"aliases": (*_CP_FREQUENCY.aliases, "频次")})})
 
     @rule("逐工序核对独立的生产资源列")

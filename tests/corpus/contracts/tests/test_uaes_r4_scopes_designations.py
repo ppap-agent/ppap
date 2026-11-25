@@ -57,6 +57,15 @@ def test_material_scope_is_established_before_reading_values(tmp_path, label):
     assert run("U12", "SCL:2", unresolved)["status"] == "UNABLE"
 
 
+def test_ordinary_row_exemption_cites_the_matched_control_plan_entry(tmp_path):
+    target = workbook(tmp_path, "list.xlsx", "特殊特性清单", [["Part No.", "Qa-19"], [], ["序号", "特性名称", "规格/公差", "分类"], [1, "端盖深度", "6.00±0.2 mm", "/"]])
+    plan = workbook(tmp_path, "trial.xlsx", "试产阶段", [["零件号", "Qa-19"], ["特殊特性分类", "产品/过程规格/公差", "产品特性"], ["/", "6±0.2 mm", "端盖深度"], ["SC", "6±0.2 mm", "端盖宽度"]])
+    found = run("U12", "SCL:2", target, [(plan, "控制计划", "reference")])
+    assert found["status"] == "PASS" and "普通行" in found["suggestions"], found
+    cited = {src["excerpt"] for src in found["evidence"]["sources"] if json.loads(src["locator"]).get("file_version_id") == "file1"}
+    assert {"Qa-19", "/", "6±0.2 mm", "端盖深度"} <= cited
+
+
 def material_list(tmp, name):
     return workbook(
         tmp,
@@ -163,3 +172,17 @@ def test_sample_history_checks_delivery_rows_through_to_the_signoff(tmp_path, si
     )
     finding = run("U11", "SSH:2", target)
     assert finding["status"] == "PASS" and "3个有效行" in finding["suggestions"], finding
+
+
+def test_unfamiliar_grade_and_source_declared_process_alias(tmp_path):
+    target = workbook(
+        tmp_path,
+        "清单.xlsx",
+        "材料及分供方清单",
+        [["序号", "零件可视图", "材料名称和材料牌号", "工序名称", "加工方式"], [1, None, "黄铜 H62", None, None], [2, None, None, "化学镀镍（简称：化镍）", "外协"]],
+    )
+    flow = workbook(tmp_path, "流程.xlsx", "过程流程图", [["工序名称", "核心原材料牌号", "加工方式"], ["入库", "H62", None], ["化镍", None, "外协"], ["精车", None, "厂内"]])
+    finding = run("U04", "MSL:4", target, [(flow, "PFD", "reference")])
+    assert finding["status"] == "PASS", finding
+    cited = {(loc.get("file_version_id"), loc.get("cell")) for src in finding["evidence"]["sources"] if (loc := json.loads(src["locator"]))}
+    assert cited >= {("file0", "C2"), ("file0", "D3"), ("file1", "B2"), ("file1", "A3")}

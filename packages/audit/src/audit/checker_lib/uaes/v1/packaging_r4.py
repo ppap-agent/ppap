@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from audit.checker_lib.excel_agent import rule
 from audit.checker_lib.uaes.v1.packaging import (
@@ -15,6 +17,7 @@ from audit.checker_lib.uaes.v1.packaging import (
     signer,
     unable,
 )
+from audit.checker_lib.uaes.v1.scoped_text_r4 import read_facts
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext
 
 
@@ -58,14 +61,74 @@ def block_indices(label, index):
     return [i for i, pair in enumerate(SECTIONS) if re.fullmatch(pair[index], label)]
 
 
+_KINDS = ("part_identity", "supplier_identity", "basic_requirements", "part_specific_protection", "packing_configuration", "packaging_materials")
+
+
+class _BodyFact(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    kind: Literal["part_identity", "supplier_identity", "basic_requirements", "part_specific_protection", "packing_configuration", "packaging_materials"]
+    source: str
+    value: str
+
+
+class _BodyReading(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    coverage: Literal["complete", "uncertain"]
+    facts: list[_BodyFact]
+
+
+def read_body_blocks(facts, records, missing):
+    """Read only otherwise-unclassified body records. Each value must occur in its cited row."""
+    sources = {f"r{i}": " | ".join(v for v, _ in row) for i, row in enumerate(records)}
+    if not sources:
+        return set(), True
+    try:
+        result = _BodyReading.model_validate(
+            read_facts(
+                "uaes_packaging_body_facts",
+                sources=sources,
+                schema=_BodyReading.model_json_schema(),
+                instructions=(
+                    "只从这些正文记录提取实际填写或实际规定的内容，按字段含义标识事实；每项单独给出所在记录的source和原文中完整的具体取值或要求句。"
+                    "不从目录、填表说明、示例、模板提示、标题、空栏推测。不得跨行拼接；多个格或段落在同一编号内以 | 分隔。"
+                    "basic_requirements是包装通用要求，part_specific_protection必须是针对该零件的特定包装约束而不是通用建议，"
+                    "packing_configuration是实际包装方案，packaging_materials是实际包材明细。只需提取以下种类：" + ", ".join(_KINDS[i] for i in sorted(missing))
+                ),
+            )
+        )
+    except GuardStop as exc:
+        if exc.status != "UNABLE":
+            raise
+        return set(), False
+    except ValidationError:
+        return set(), False
+    if result.coverage != "complete":
+        return set(), False
+    found = set()
+    for observation in result.facts:
+        kind = _KINDS.index(observation.kind)
+        if kind not in missing or observation.source not in sources or not observation.value.strip() or compact(observation.value) in EMPTY | GENERIC_FIELDS:
+            return set(), False
+        row = records[int(observation.source[1:])]
+        matches = [value for value, _ in row if observation.value.strip() in {value.strip(), re.split("[:：]", value, maxsplit=1)[-1].strip()}]
+        if len(matches) != 1:
+            return set(), False
+        # Retain the original record, including the heading when it identifies the value's role.
+        for value, loc in row:
+            facts.witness(loc, value, facts.version)
+        found.add(kind)
+    # Only an identified substantive record proves presence. Unclassified prose cannot prove absence.
+    return found, missing <= found
+
+
 def package_content(facts, blocks):
     """Read the native document title and local heading/field-value rows, never a flattened keyword list."""
     groups = {}
     for value, loc in facts.observations():
         kind = loc["kind"]
-        if kind not in {"xlsx_cell", "pdf_block", "docx_cell", "docx_paragraph"} or facts.format == ".pdf" and kind != "pdf_block":
+        if kind not in {"xlsx_cell", "xls_cell", "pdf_block", "docx_cell", "docx_paragraph"} or facts.format == ".pdf" and kind != "pdf_block":
             continue
-        if kind == "xlsx_cell":
+        if kind in {"xlsx_cell", "xls_cell"}:
             group, row = ("sheet", loc["sheet"]), int(re.search(r"\d+$", loc["cell"])[0])
         elif kind == "docx_cell":
             group, row = ("table", loc["table"]), loc["row"]
@@ -77,6 +140,7 @@ def package_content(facts, blocks):
             if compact(line):
                 groups.setdefault(group, {}).setdefault((row, n), []).append((line, loc))
     titles, explicit, seen = [], [], set()
+    unresolved = []
 
     def cite(entry):
         value, loc = entry
@@ -92,6 +156,7 @@ def package_content(facts, blocks):
 
     for (kind, number), source_rows in groups.items():
         active = None
+        orphan_heading = None
         positions = sorted(source_rows)
         rows = [source_rows[k] for k in positions]
         claimed = set()
@@ -111,12 +176,12 @@ def package_content(facts, blocks):
                     titles.append((kind, row[0]))
                     continue
             if any(signer(t) or re.fullmatch(r"(?:uaes|客户)(?:签字|审批|批准)", t) for t in texts):
-                active = None
+                active = orphan_heading = None
                 continue
             # A contents/index row naming several sections supplies no block values.
             starts = [(j, ids[0]) for j, t in enumerate(texts) if (ids := block_indices(re.sub(r"^(?:\d+[.、)）]|[一二三四五六]+、)", "", re.split("[:：]", t, maxsplit=1)[0]), 0))]
             if len(starts) > 1:
-                active = None
+                active = orphan_heading = None
                 continue
             if starts:
                 j, active = starts[0]
@@ -124,6 +189,8 @@ def package_content(facts, blocks):
                 suffix = re.split("[:：]", texts[j], maxsplit=1)
                 if len(suffix) == 2 and data(suffix[1]):
                     seen.add(active)
+            # New unrecognised inline labels or later rows are not automatically values of a preceding block.
+            unknown = []
             for j, entry in enumerate(row):
                 if (starts and starts[0][0] == j) or id(entry) in claimed:
                     continue
@@ -142,19 +209,36 @@ def package_content(facts, blocks):
                         seen.update(fields)
                         cite(entry)
                         cite(candidate)
-                elif active is not None and data(t) and not TITLE_FIELD.fullmatch(t):
-                    seen.add(active)
-                    cite(entry)
+                elif data(t) and not TITLE_FIELD.fullmatch(t):
+                    if active is not None and (starts or (active not in seen and not sep)):
+                        seen.add(active)
+                        cite(entry)
+                    else:
+                        unknown.append(entry)
+            if unknown:
+                # A standalone unrecognised heading can introduce the next nearby statement or value.
+                within = pos and positions[pos][0] <= positions[pos - 1][0] + 1
+                if orphan_heading is not None and within:
+                    unresolved.append(orphan_heading + unknown)
+                else:
+                    unresolved.append(unknown)
+                orphan_heading = unknown
+            else:
+                orphan_heading = None
     # A Word document title belongs to its opening body, not to each later table.
     primary = [item for kind, item in titles if kind == "body"]
     allowed_titles = explicit or primary or [item for _kind, item in titles]
     has_title = next((entry for entry in allowed_titles if "包装方案" in compact(entry[0])), None)
     if has_title:
         cite(has_title)
+    complete = True
+    if has_title and len(seen) < len(blocks):
+        supplements, complete = read_body_blocks(facts, unresolved, set(range(len(blocks))) - seen)
+        seen.update(supplements)
     missing = ([] if has_title else ["含“包装方案”的文件内容标题"]) + [f"“{block}”实质内容" for i, block in enumerate(blocks) if i not in seen]
     if missing:
         gaps = "、".join(missing)
-        return ("UNABLE", f"未能在可读取内容中确认{gaps}，原件仍有未读取内容。") if facts.has_unread_content() else ("NG", f"原件缺少{gaps}。")
+        return ("UNABLE", f"未能在可读取内容中确认{gaps}，原件仍有未读取内容。") if not complete or facts.has_unread_content() else ("NG", f"原件缺少{gaps}。")
     return "PASS", "原件标题含“包装方案”，六个内容块均有实际内容。"
 
 

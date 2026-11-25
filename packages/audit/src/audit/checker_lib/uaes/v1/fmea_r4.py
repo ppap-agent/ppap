@@ -52,6 +52,7 @@ def _number_field(value):
 
 class UaesPfmeaRevision4(UaesPfmeaRevision3):
     pgqp1_check_table_first = True
+    BATCH_SCORE_DESCRIPTIONS = True
     _section = _BASE.sections["特殊特性区"]
     EXTRA_RESOURCE = replace(
         _BASE,
@@ -71,6 +72,11 @@ class UaesPfmeaRevision4(UaesPfmeaRevision3):
             ),
         },
     )
+
+    def score_description_reader(self, items):
+        from .score_descriptions_r4 import score_reader
+
+        return score_reader(self, items)
 
     def process_witness(self, description: str, characteristic: str, item):
         found = super().process_witness(description, characteristic, item)
