@@ -1,6 +1,7 @@
 """UAES U19: revision 4 approval evidence. The model reads a remark, never the rule or outcome."""
 
 import re
+import unicodedata
 from datetime import date
 from typing import Any, Literal
 
@@ -41,6 +42,29 @@ def _sentences(text: str) -> set[str]:
     return {s.strip() for s in re.split(r"[。；！？;!?]", text) if s.strip()}
 
 
+def _plain(text: str) -> tuple[str, list[int]]:
+    """The text without layout: width forms unified (NFKC) and whitespace, such as a PDF cell's line wraps, removed.
+    Also, for each character kept, the index of the original character it came from."""
+    kept: list[str] = []
+    origin: list[int] = []
+    for index, char in enumerate(text):
+        for part in unicodedata.normalize("NFKC", char):
+            if not part.isspace():
+                kept.append(part)
+                origin.append(index)
+    return "".join(kept), origin
+
+
+def _original(quote: str, remarks: str) -> str | None:
+    """The remark's own wording that a model quote reproduces, or None when the quote is not the remark's text.
+
+    A quote may join a wrapped line or write a full-width comma half-width; it may not change, drop or add a character."""
+    plain, origin = _plain(remarks)
+    wanted = _plain(quote)[0]
+    at = plain.find(wanted) if wanted else -1
+    return remarks[origin[at] : origin[at + len(wanted) - 1] + 1] if at >= 0 else None
+
+
 def _read(remarks: str) -> list[RemarkFact]:
     from documents.ai import AIError, run_json
     from documents.model_access import ModelUnavailable
@@ -63,15 +87,18 @@ def _read(remarks: str) -> list[RemarkFact]:
     except ValidationError:
         raise unable("封面备注未取得可核对的事实。") from None
 
-    source, covered = _sentences(remarks), set()
+    # Each quote is checked against, and then replaced by, the original wording: later steps read the remark itself.
+    source, covered, facts = _sentences(remarks), set(), []
     for fact in reading.facts:
-        quoted = _sentences(fact.quote)
-        if not quoted or fact.quote not in remarks or not quoted <= source:
+        quote = _original(fact.quote, remarks)
+        quoted = _sentences(quote or "")
+        if quote is None or not quoted or not quoted <= source:
             raise unable("备注引文无法对应原件完整语句，不能据以分路。")
         covered.update(quoted)
-    if reading.coverage != "complete" or not reading.facts or covered != source:
+        facts.append(fact.model_copy(update={"quote": quote}))
+    if reading.coverage != "complete" or not facts or covered != source:
         raise unable("未能逐句核实整段备注；不能把未取得事实当作原件没有认可结论。")
-    return reading.facts
+    return facts
 
 
 def _route(remarks: str) -> tuple[Literal["full", "conditional", "conflict", "unclassified"], str]:

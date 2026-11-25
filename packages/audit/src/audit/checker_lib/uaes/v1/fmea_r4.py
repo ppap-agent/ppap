@@ -22,6 +22,15 @@ _FMEA_OPERATION = ColumnModel(canonical_name="分析工序", section_name="PFMEA
 _BASE = UaesPfmeaRevision3.EXTRA_RESOURCE
 
 
+# Differently written names the product owner confirmed as the same operation (2026-11-24). Only these whole names.
+_SAME_OPERATIONS = tuple(frozenset(operation_labels(name).pop() for name in group) for group in (("原材料检验", "原材料入库检验"), ("冲压", "模具冲压"), ("产品存储", "产品存放")))
+
+
+def confirmed_same_operation(description: str, function: str) -> bool:
+    source, target = operation_labels(description), operation_labels(function)
+    return any(source & group and target & group for group in _SAME_OPERATIONS)
+
+
 def action_failure_witness(description: str, function: str, mode: str) -> str | None:
     """For an aggregate row, use the source's own action-to-failure attribution, never a process-specific lookup."""
     source = operation_labels(description)
@@ -83,6 +92,9 @@ class UaesPfmeaRevision4(UaesPfmeaRevision3):
         if found is not None:
             return found
         mode = item.values.get("失效模式", "")
+        function = item.values.get("功能", "")
+        if substantive(mode) and confirmed_same_operation(description, function):
+            return f"PFMEA“{' '.join(function.split())}”与PFD“{' '.join(description.split())}”经确认为同一工序，同行失效模式“{mode}”"
         if (sheet := getattr(item, "sheet", None)) is not None and substantive(mode):
             columns = self.__dict__.setdefault("_operation_columns", {})
             if id(sheet.ws) not in columns:
@@ -121,11 +133,35 @@ class UaesPfmeaRevision4(UaesPfmeaRevision3):
                 parts.add(number)
         return parts
 
+    def _positional_parts(self, sheet, stop):
+        """A header value standing in the part-number place whose label cell is left blank (product owner, 2026-11-24):
+        a whole code of letters and digits whose cell to the left is empty. Labelled values (an FMEA number, a date)
+        and bare numbers are not it."""
+        _, cols = self.extent(sheet)
+        found = {}
+        for cell in sheet.scan_non_empty(row_min=1, row_max=stop, col_min=2, col_max=cols):
+            value = str(cell.value() or "").strip()
+            if not re.fullmatch(r"(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]+", value):
+                continue
+            row, col = cell.row_index, cell.col_index
+            merge = sheet.ctx.ops.get_detailed_merge_info(sheet.ws, row, col)
+            left = (merge.min_col if merge else col) - 1
+            if str(self.raw(sheet, row, left) or "").strip():
+                continue
+            found[value] = (row, col)
+        if len(found) == 1:
+            value, (row, col) = next(iter(found.items()))
+            self.cite(sheet, row, col)
+            return {value}
+        return set()
+
     def part_number(self, ctx):
         found = set().union(*(self._header_parts(sheet, self.section(sheet, "PFMEA失效区").resolved.header_row - 1) for sheet in self.sheets(ctx)))
+        if not found:
+            found = set().union(*(self._positional_parts(sheet, self.section(sheet, "PFMEA失效区").resolved.header_row - 1) for sheet in self.sheets(ctx)))
         if len(found) == 1:
             return next(iter(found)), ""
-        return None, "PFMEA表头未取得唯一、明确标为零件号或物料编号的原值"
+        return None, "PFMEA表头未取得唯一、明确标为零件号或物料编号的原值，也没有唯一一个处在零件号位置、标签留空的编号"
 
     def pgqp1_part_scope(self, sheet, part):
         found = self._header_parts(sheet, self.section(sheet, "重要特性区").resolved.header_row - 1)

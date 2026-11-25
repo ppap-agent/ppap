@@ -456,3 +456,45 @@ def test_psw_vector_signature_and_stamp_keep_their_original_page(tmp_path):
     marks = [json.loads(s["locator"]) for s in result["evidence"]["sources"] if json.loads(s["locator"]).get("fact") in {"supplier_authorized_signature", "ink_seal"}]
     assert {m["fact"] for m in marks} == {"supplier_authorized_signature", "ink_seal"}
     assert all(m["kind"] == "pdf_region" and m["page"] == 2 and m["engine"] == "ocr_llm" for m in marks)
+
+
+@pytest.mark.parametrize(("mark", "status", "reason"), [("printed_logo", "NG", "原件上未找到印章"), ("uncertain", "UNABLE", "原件上是否有印章")])
+def test_psw_seal_absent_only_when_every_page_was_looked_at_whole(tmp_path, mark, status, reason):
+    path = tmp_path / "signed.pdf"
+    with fitz.open() as doc:
+        doc.new_page().insert_text((32, 64), "Annex: Authorization record")
+        page = doc.new_page(width=400, height=400)
+        page.insert_text((20, 40), "Part Submission Warrant")
+        page.draw_circle((65, 76), 15)
+        page.insert_text((20, 222), "Supplier Authorized Signature")
+        page.draw_polyline([(185, 220), (189, 205), (191, 225), (205, 210)])
+        for row, value in enumerate(("Print Name: A Tester", "Title: Engineer", "Phone: 123456789", "Email: a@example.com", "Date: 2026-02-10")):
+            page.insert_text((30, 240 + row * 18), value)
+        doc.save(path)
+    signs = []
+
+    class Marks(CheckerRuntime):
+        def read_ocr_visual_facts(self, *, response_schema, **unused):
+            fields = response_schema["schema"]["properties"]
+            if "supplier_authorized_signature" in fields:
+                values = {"print_name": "A Tester", "title": "Engineer", "phone": "123456789", "email": "a@example.com", "signed_date": "2026-02-10"}
+                answer = {k: {"present": True, "value": v, "bbox": [65, 565 + i * 45, 525, 612 + i * 45]} for i, (k, v) in enumerate(values.items())}
+                answer["title"]["role_as_written"] = "Engineer"
+                # The line's box is one row low: its crop shows the printed name below the signature.
+                answer["supplier_authorized_signature"] = {"present": True, "field_box": [45, 565, 560, 610], "bbox": [45, 565, 560, 610]}
+                return answer
+            if "entire_field" in fields:
+                signs.append(1)
+                if len(signs) == 1:
+                    return {"label": "Print Name", "entire_field": True, "mark": "printed_text", "detail": "A Tester"}
+                return {"label": "Supplier Authorized Signature", "entire_field": True, "mark": "handwriting", "detail": "签字栏右侧有折线笔迹"}
+            if "fully_examined" in fields:
+                return {"fully_examined": False, "candidates": [[115, 145, 260, 338]]}
+            return {"kind": mark, "detail": "圆形图案"}
+
+    result = finding("U17", "PSW:3", path, reader=Marks())
+    assert (result["status"], reason in result["suggestions"]) == (status, True), result["suggestions"]
+    assert "是否手写" not in result["suggestions"] and len(signs) == 2, result["suggestions"]
+    if status == "NG":
+        notes = [loc for loc in (json.loads(s["locator"]) for s in result["evidence"]["sources"]) if loc.get("fact") == "ink_seal"]
+        assert {note["page"] for note in notes} == {1, 2}, notes

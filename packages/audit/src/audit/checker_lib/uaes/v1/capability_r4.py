@@ -15,6 +15,7 @@ from audit.contracts import AuditInput
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet
 
 from .capability import _CPK, _DRAWING, _EMPTY, _PGQP1, _PPK, UaesCapabilityAgentR3, compact, unable
+from .drawing_title_r4 import drawing_pages
 
 # These are document labels, not inferred classifications of a filename or an operation.
 _NAME = {"特性名称", "特性项目", "工程名", "尺寸编号", "特性编号", "items/项目", "characteristic", "特性"}
@@ -23,6 +24,24 @@ _SET = ("报告组号", "报告套号", "总报告编号", "报告套件编号",
 _PROC = {"过程特性", "processcharacteristic", "过程特性名称"}
 _SC = {"sc/特殊特性", "特殊特性", "特殊特性标识", "特殊特性标记"}
 _MARK = {"√", "✓", "x", "*", "是", "yes", "sc", "cc", "kc", "k", "g", "s", "★", "●"}
+_YELLOW = {"FFFFFF00", "00FFFF00"}
+# A plain white fill (RGB white, or the workbook's background theme colour untinted) is no marking.
+_WHITE = {"FFFFFFFF", "00FFFFFF", "theme:0"}
+
+
+def solid_fill(cell) -> str | None:
+    """The colour of a cell's solid fill as ARGB or "theme:<n>" (untinted theme colour); "" for any other colour, None for no fill."""
+    fill = getattr(cell, "fill", None)
+    if fill is None or fill.fill_type != "solid":
+        return None
+    color = fill.fgColor
+    if getattr(color, "type", None) == "rgb" and isinstance(color.rgb, str):
+        return color.rgb
+    if getattr(color, "type", None) == "theme" and not color.tint:
+        return f"theme:{color.theme}"
+    return ""
+
+
 _QUAL = {"定性", "目视", "纯目视", "外观目视", "qualitative", "visual"}
 _TOL = ({"名义值", "公称值", "nominal", "spec"}, {"上公差", "plus", "uppertol."}, {"下公差", "minus", "lowertol."})
 _SUM_COLS = {
@@ -161,10 +180,12 @@ class UaesCapabilityAgentR4(UaesCapabilityAgentR3):
                 gaps.append(R._placed(f"{report.where}：" + gap, gap, report.where))
             elif ppk < _PPK:
                 failures.append(f"工艺能力认证报告{report.where}Performance index (Ppk)为{ppk}，低于1.67")
+            # The sample size is PCE:1's count; this clause sets none of its own and only reminds where the
+            # prescribed 125 and the readings actually taken differ.
             readings = report.values.get("读数次数")
             if readings is not None and readings < 125:
                 count = f"最多{readings}" if report.bounded else str(readings)
-                notes.append(f"{report.where}实测读数{count}，少于125；样本量按PCE:1核对，和本条的Ppk比较分开列示")
+                notes.append(f"提醒：{report.where}规定样本数125与实际读数{count}不符")
         reminders = self.plan_reminders(ctx, reports)
         tail = "；".join(reminders[:3] + notes[:3])
         try:
@@ -173,10 +194,6 @@ class UaesCapabilityAgentR4(UaesCapabilityAgentR3):
             if tail and stop.decision == Decision.UNABLE:
                 raise unable(f"{stop.message}；{tail}") from None
             raise
-        if status == "PASS" and notes:
-            raise unable(f"{reason.rstrip('。')}；{tail}；样本量不足是否同时影响PCE:2的结论尚待确认。")
-        if status == "PASS" and any(report.values.get("读数次数") is None or report.bounded for report in reports):
-            raise unable(f"{reason.rstrip('。')}；PCE:1所需的实际样本数未能核实，不能确定是否存在少于125的情形。{tail}")
         if status == "PASS" and not self.pdf:
             located = {str(report.where) for report in reports}
             for ws in ctx.workbook.worksheets:
@@ -491,7 +508,13 @@ class UaesCapabilityAgentR4(UaesCapabilityAgentR3):
                 if mark in _EMPTY or mark in _SC or mark in {"否", "no", "普通"}:
                     continue
                 if mark not in _MARK:
-                    raise unable(f"PGQP1 {mc.coordinate}不是可确定的特殊特性标志；规格或填色未经说明不能当作标记。")
+                    # A yellow-filled cell in the SC column marks a special characteristic (product owner, 2026-11-24);
+                    # an unfilled one is an ordinary row. Any other fill is no confirmed convention.
+                    fill = solid_fill(mc)
+                    if fill is None or fill in _WHITE:
+                        continue
+                    if fill not in _YELLOW:
+                        raise unable(f"PGQP1 {mc.coordinate}不是可确定的特殊特性标志；规格或填色未经说明不能当作标记。")
             if not name_cell or compact(name_cell.value) in _EMPTY:
                 raise unable(f"PGQP1 {mc.coordinate}对应特性未读出。")
             name = compact(name_cell.value)
@@ -554,14 +577,31 @@ class UaesCapabilityAgentR4(UaesCapabilityAgentR3):
         group = self.group_context
         drawings: list[AuditInput] = []
         if group is not None:
+            if any(not kind or any(t in compact(kind) for t in _DRAWING) for kind in group.unavailable_files.values()):
+                raise unable("同批次有无法读取的原件，尚不能排除其中有图纸。")
             typed = {item.audit_id for items in group.by_doc_type.values() for item in items}
-            if any(i != self.audit_file.audit_id and i not in typed for i in group.by_audit_id) or any(
-                not kind or any(t in compact(kind) for t in _DRAWING) for kind in group.unavailable_files.values()
-            ):
-                raise unable("同批次有未识别或无法读取的原件，尚不能排除其中有图纸。")
             for kind, items in group.by_doc_type.items():
                 if any(t in compact(kind) for t in _DRAWING):
                     drawings.extend(item for item in items if item.audit_id != self.audit_file.audit_id)
+            # An original of no recognised type is a drawing only when its own page shows a title block with its
+            # drawing number; a titled parts list is not one; anything else stays open.
+            unresolved: list[str] = []
+            for item in group.by_audit_id.values():
+                if item.audit_id == self.audit_file.audit_id or item.audit_id in typed:
+                    continue
+                try:
+                    pages = drawing_pages(self, item, until_drawing=True)
+                except GuardStop as stop:
+                    if stop.decision == Decision.ERR:
+                        raise
+                    pages = [{"kind": "unknown", "where": stop.message}]
+                kinds = {page["kind"] for page in pages}
+                if "drawing" in kinds:
+                    drawings.append(item)
+                elif kinds != {"parts_list"}:
+                    unresolved.extend(page["where"] for page in pages if page["kind"] == "unknown")
+            if unresolved:
+                raise unable("同批次有未识别类型的原件，尚不能从原件确认是否为图纸：" + "、".join(unresolved[:4]) + "；不能排除其中有图纸。")
         if not drawings:
             return "NA", "不适用：同批次未提交图纸，本条无判定对象（缺件仅在包级计数）。"
         # A PDF watermark or OCR numbers cannot establish an exhaustive drawing baseline. The

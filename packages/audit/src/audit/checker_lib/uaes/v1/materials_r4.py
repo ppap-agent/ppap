@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+from typing import Any
 
 from audit.checker_lib.excel_agent import rule
 from audit.checker_lib.uaes.v1.materials import (
@@ -14,6 +16,8 @@ from audit.checker_lib.uaes.v1.materials import (
     unable,
 )
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext
+
+from .drawing_title_r4 import drawing_pages
 
 _HAN = re.compile(r"[\u3400-\u9fff]")
 
@@ -56,6 +60,12 @@ def complete_designations(value: str) -> tuple[set[str], bool]:
 
 class UaesMaterialsAgentR4(UaesMaterialsAgentR3):
     """Reader for signed UAES v1.0 revision 4."""
+
+    def identity_fields(self, ctx: RuleContext, item: Any) -> list[dict]:
+        """A PDF drawing's identity from its own title block (drawing_title_r4); a workbook's as revision 3 reads it."""
+        if Path(str(item.file_url)).suffix.lower() != ".pdf":
+            return super().identity_fields(ctx, item)
+        return drawing_pages(self, item)
 
     @rule("同批图纸的零件名称与零件号一致")
     def msl_3(self, ctx: RuleContext):

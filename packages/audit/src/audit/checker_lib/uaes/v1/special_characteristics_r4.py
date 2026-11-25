@@ -15,6 +15,7 @@ from audit.checker_lib.uaes.resources import control_plan
 from audit.checker_lib.uaes.special_characteristics import _NAMES, characteristic_rows, combine, compact, filled, resources, unable
 from audit.checker_lib.uaes.v1.control_plan import _independent_name, _spec_key
 from audit.checker_lib.uaes.v1.special_characteristics import (
+    _DRAWING_PROMPT,
     _KNOWN,
     _ORDINARY,
     _PGQP1,
@@ -24,11 +25,16 @@ from audit.checker_lib.uaes.v1.special_characteristics import (
     _norm,
     carries_pictures,
     mark_tokens,
+    original_name,
     self_declared_class,
+    source_numbers,
 )
 from audit.document_tools import source_title_location
 from audit.engine.rule_engine import Decision, GuardStop, RuleContext, Sheet, Table
 from audit.engine.rule_engine.excel_ops import DefaultExcelOps
+
+from .drawing_title_r4 import drawing_pages
+from .materials import layout_id
 
 _PART = re.compile(r"(?<![A-Za-z0-9_.-])[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?(?![A-Za-z0-9_.-])")
 
@@ -248,6 +254,69 @@ class UaesSpecialCharacteristicsRevision4(UaesSpecialCharacteristicsRevision3):
         others = "、".join(sorted(stated)) or "无"
         return None, f"清单为多件号混装（读到{found}），同批次其他提交文件写明的零件号为{others}，不能确定本件号"
 
+    def unchosen_mismatch(self, ctx: RuleContext) -> str | None:
+        """SCL:3 without a determinable part number of a mixed list: the reason the cross-source check fails whichever part
+        is chosen (product owner, 2026-11-24: judge the mismatch, never pick a part), with every file's own numbers;
+        None while any source's number is unread or one number could still match them all."""
+        rows = list_rows(self, ctx)
+        listed = set().union(*(row_numbers(row, columns) for _title, row, columns in rows if "零件" in columns)) if rows else set()
+        seen: list[str] = []
+        peers: set[str] = set()
+        for plan in self.batch_files("E12"):
+            with self.reading(ctx, plan, self._pgqp1):
+                sheets = Table(ctx).find_sheets("PGQP1", on_missing=Decision.IGNORE)
+                numbers = set().union(*(source_numbers(v) for sheet in sheets for v in self.labelled(sheet, ("Part No/零件号",))))
+            if len(numbers) != 1:
+                return None
+            peers |= numbers
+            seen.append(f"PGQP1“{original_name(plan)}”表头件号{next(iter(numbers))}")
+        for item, typed in self.drawings():
+            try:
+                kind, numbers, _basis = self.drawing_identity(item, typed)
+            except GuardStop as stop:
+                if stop.decision == Decision.ERR:
+                    raise
+                return None
+            if kind == "other":
+                continue
+            if kind == "open" or len(numbers) != 1:
+                return None
+            peers |= numbers
+            seen.append(f"图纸“{original_name(item)}”图号{next(iter(numbers))}")
+        if not peers or (len(peers) == 1 and peers <= listed):
+            return None
+        stated = self.batch_parts()
+        if stated:
+            seen.append(f"同批其他提交文件写明的零件号{'、'.join(sorted(stated))}")
+        return (
+            f"比对源错配：特殊特性清单为多件号混装（各行件号{'、'.join(sorted(listed)) or '未读出'}），本件号未能从提交资料唯一确定；"
+            + "；".join(seen)
+            + "。无论本件号取哪个，都有比对来源与之不同号，按条文「不同号属比对源错配」判不通过，不逐格比较。"
+        )
+
+    def transcribe(self, image: bytes, prompt: str, schema: dict[str, Any], subject: str) -> dict[str, Any]:
+        """Revision 3 reads every drawing tile twice ("…读取1", "…读取2") and keeps a mark only when both readings agree.
+        The second reading must be a separate observation, not the first answer replayed from this round's cache
+        (product owner, 2026-11-24)."""
+        reading = re.search(r"读取([12])$", subject)
+        if prompt is _DRAWING_PROMPT and reading:
+            from documents.ocr.observation import ocr_observation_scope
+
+            with ocr_observation_scope(int(reading[1])):
+                return super().transcribe(image, prompt, schema, subject)
+        return super().transcribe(image, prompt, schema, subject)
+
+    def drawing_identity(self, item, typed):
+        """A PDF drawing's identity from its first page's title block (drawing_title_r4), as revision 3 reads the first page."""
+        if Path(str(item.file_url)).suffix.lower() != ".pdf":
+            return super().drawing_identity(item, typed)
+        page = drawing_pages(self, item, limit=1)[0]
+        if page["kind"] == "parts_list":
+            return "other", set(), "零件清单，不是零件图"
+        if page["kind"] == "drawing":
+            return "drawing", {layout_id(page["number"])}, "首页标题栏"
+        return "open", set(), f"首页未确认零件图图号：{page['where']}"
+
     def batch_parts(self) -> set[str]:
         if self.group_context is None:
             return set()
@@ -455,4 +524,7 @@ class UaesSpecialCharacteristicsRevision4(UaesSpecialCharacteristicsRevision3):
                 raise unable("有未归类或待核实的比对来源，不能确认未提交图纸与PGQP1。")
             ctx.record_execution()
             return "NA", "同批次未提交图纸与PGQP1，无跨表比对对象，本条不适用；未按全表统计，缺件只在包级计一次。"
+        if self.own_part(ctx)[0] is None and (reason := self.unchosen_mismatch(ctx)):
+            ctx.record_execution()
+            return "NG", reason
         return super().rule_3(ctx)

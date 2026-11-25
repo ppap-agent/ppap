@@ -260,3 +260,22 @@ def test_trace_finds_bilingual_title_after_cover_information(monkeypatch, tmp_pa
     sheet["A13"] = "Supplier component traceability\n供应商零件追溯表"
     result = run(tmp_path, monkeypatch, "U18", book, TRACE_SIGN)
     assert result["status"] == "PASS" and "均有实质内容" in result["suggestions"], result
+
+
+@pytest.mark.parametrize(
+    "observed,expected,reason",
+    [
+        # Every worksheet read and none shows any handwriting or imprint: the original lacks both.
+        ({"any_handwriting": False, "any_imprint": False}, "NG", "缺少手写签字、供应商有效印章：已逐表看过原件全部2个工作表"),
+        ({"any_handwriting": False, "any_imprint": True, **TRACE_SIGN}, "NG", "缺少手写签字："),
+        # Seen somewhere: whether it is the supplier's signing block is read as before.
+        ({"any_handwriting": True, "any_imprint": True, **TRACE_SIGN}, "PASS", "有手写签字和供应商印章"),
+        # A worksheet the reading could not settle keeps the fact open.
+        ({"any_handwriting": None, "any_imprint": None}, "UNABLE", "尚未能从原件核实"),
+    ],
+)
+def test_trace_signing_absent_only_after_every_worksheet_is_read(monkeypatch, tmp_path, observed, expected, reason):
+    book = trace()
+    book.create_sheet("说明").append(["本表由质量部维护"])
+    out = run(tmp_path, monkeypatch, "U18", book, observed)
+    assert (out["status"], reason in out["suggestions"]) == (expected, True), out

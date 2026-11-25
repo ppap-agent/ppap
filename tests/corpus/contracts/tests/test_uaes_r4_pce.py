@@ -114,7 +114,9 @@ def test_real_776_scope_requires_pgqp1_mark_or_parameter_evidence():
     refs = {"过程能力研究": [sibling], "E12": [plan_file]}
     special = check(target, "U06", "PCE:4", refs)
     process = check(target, "U06", "PCE:5", refs)
-    assert special["status"] == "UNABLE" and "D47" in special["suggestions"]
+    # The yellow fill in the PGQP1 SC column marks the special characteristics (product owner, 2026-11-24): the marked
+    # set is read and compared with the catalogues, never left open over the fill.
+    assert special["status"] in {"PASS", "NG"} and "填色" not in special["suggestions"], special
     assert process["status"] == "NG" and "D27" in process["suggestions"] and "铸造压力" in process["suggestions"]
 
 

@@ -100,11 +100,12 @@ def test_strict_report_identity_even_when_notes_name_the_plan_part():
     assert result["status"] == "NG" and "没有零件号" in result["suggestions"]
 
 
-def test_planless_set_reports_missing_fact_without_assigning_it_to_a_child():
+def test_planless_set_fails_in_every_file():
+    # A suite without any plan table fails in each of its files (product owner, 2026-11-24).
     target = book({"研究": report("OK")})
     sibling = book({"研究": report("合格", characteristic="孔径")})
     result = run("MSA:2", target, (sibling, MSA))
-    assert result["status"] == "UNABLE" and "归属" in result["suggestions"]
+    assert result["status"] == "NG" and "没有测量系统分析计划表" in result["suggestions"]
 
 
 @pytest.mark.parametrize(("first", "expected"), [(PART, "PASS"), (PART.lower(), "UNABLE")])

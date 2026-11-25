@@ -5,26 +5,37 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from audit.checker_lib.excel_agent import rule
 from audit.checker_lib.uaes.v1.reader import PLACEHOLDERS, compact, original_name, unable
 from audit.checker_lib.uaes.v1.warrant import (
+    _CHECKBOX,
+    _MARK,
     _NO_POINTER,
     _NO_VALUE,
+    _PICTURE,
+    _TEXT,
+    CONTACT,
     EXPLANATION,
     IDENTITY,
     ORDER,
     PICTURE_SCHEMA,
     SAFETY,
+    SIGNATURE,
+    SIGNED_DATE,
     TOOLING,
     WEIGHT,
     WarrantR3,
+    _object,
     _Reading,
+    _ScanFacts,
+    _Shape,
 )
 from audit.checker_lib.uaes.v1.warrant_pdf_r4 import DocumentPage, WarrantDocument
-from audit.engine.rule_engine import RuleContext
+from audit.engine.rule_engine import Decision, GuardStop, RuleContext
 
 
 def version_of(item: Any) -> str:
@@ -32,6 +43,22 @@ def version_of(item: Any) -> str:
 
 
 _IMAGE_PAGE = object()
+
+# An embedded picture of an Excel warrant is read for two separate things it shows: a seal face and handwriting. Asking
+# for one category that also said whether it was an actual ink impression made the same electronic seal graphic read as
+# imprint, printed logo, digital signature or uncertain from run to run. A seal counts as its impression or its image
+# (公章、专用章等的印迹或其图像), as the other UAES picture readings count it; who stamped it is not asked.
+EMBEDDED_FACTS = _object(seal=_MARK, seal_text=_TEXT, handwriting=_MARK, detail=_TEXT)
+EMBEDDED_READ = (
+    "这是零件提交保证书工作表中嵌入的一张图片。只描述图片本身，不判断是否合格，不推断是谁签字盖章、是否在本文件上亲笔签署或当场盖章。\n"
+    "seal：图中有单位印章的印面图形为 true，即公章、合同章、专用章、受控章等：有圆形、椭圆或方形边框，沿框或框内排着单位名称、章名等文字印文；"
+    "不论它是盖出的印迹、扫描图还是电子章图形。商标或表头标志、打印文字或表格、二维码、没有文字印文的几何符号或图标、手写、勾选框、空白为 false。"
+    "图形残缺或模糊到不能确定为 null。\n"
+    "seal_text：照录印章上的文字印文；读不出或不是印章写 null。\n"
+    "handwriting：图中有手写笔迹（签名或手写字）为 true，没有为 false，看不清为 null。\n"
+    "detail：写出图中具体可见的内容。"
+)
+_EMBEDDED_CORRECTION = "仅输出 JSON 对象，包含 seal、seal_text、handwriting、detail 四个字段；seal 和 handwriting 只能是 true、false 或 null。不加解释或代码块。"
 
 
 def submission_detail(text: str) -> bool:
@@ -77,11 +104,119 @@ class WarrantR4(WarrantR3):
 
     def signature(self) -> dict[str, Any]:
         document = self.transcription()
-        return document.signature() if isinstance(document, WarrantDocument) else super().signature()
+        if isinstance(document, WarrantDocument):
+            return document.signature()
+        if isinstance(document, _ScanFacts) or self._signature_cell is None:
+            return super().signature()
+        # An embedded picture of handwriting on the signature line is the handwritten signature (product owner, 2026-11-24).
+        field = dict(document.get(SIGNATURE[0]) or {})
+        row, column = self._signature_cell
+        boundary = min((c for r, c in self._sheet.labels if r == row and c > column), default=self._sheet.sheet.ncols + 1)
+        values = []
+        for shape in self._sheet.shapes:
+            top, left, bottom, right = shape.anchor
+            if shape.kind in {_CHECKBOX, 0x19} or not (top <= row <= bottom and right > column and left < boundary):
+                continue
+            mark = self._picture(shape)["handwritten_signature"] if shape.kind == _PICTURE else None
+            if mark is True:
+                self.witness(self._range(shape), "供方签署栏有嵌入的手写签名图片", visual=True)
+            values.append(mark)
+        field["handwritten"] = self._any(values)
+        return field
+
+    @rule("供方代表手写签字印章与联系信息")
+    def rule_3(self, ctx: RuleContext):
+        """Revision 3's PSW:3, except that a Title read in full with no job title written in it is an incomplete contact
+        detail (product owner, 2026-11-24); a reading of the role that does not match the original stays open."""
+        reading = _Reading(self)
+        name, label = SIGNATURE
+        if (reading.facts.get(name) or {}).get("present") is False:
+            self.note(name, "未见供方代表签字栏")
+            return "NG", "零件提交保证书中缺少供方代表签字字段。"
+        contact, invalid = [], []
+        for field, words in CONTACT.items():
+            value = reading.field(field, words)
+            if value is None:
+                continue
+            text = unicodedata.normalize("NFKC", value)
+            if field == "title" and isinstance(reading.facts, _ScanFacts):
+                role = reading.facts[field].get("role_as_written")
+                if role is None:
+                    invalid.append(f"职务（Title）只写“{value}”，未见职务")
+                elif not isinstance(role, str) or not role.strip() or compact(role) not in compact(value):
+                    reading.unknown.append(f"Title 原文“{value}”中可辨识的职务")
+            if field == "phone" and len(re.sub(r"\D", "", text)) < 7:
+                invalid.append(f"电话号码“{value}”格式不合法")
+            elif field == "email" and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[A-Za-z]{2,}", text.strip()):
+                invalid.append(f"电子邮箱“{value}”格式不合法")
+            elif field == "signed_date" and not SIGNED_DATE.search(text):
+                invalid.append(f"签署日期“{value}”不是日期")
+            contact.append(f"{words.split('（')[0]}{value}")
+        missing = [failure for failure in reading.failed if failure.startswith("缺少") or failure.endswith("为空")]
+        if missing or invalid:
+            reading.failed[:] = [failure for failure in reading.failed if failure not in missing]
+            reading.failed.insert(0, "联系信息不完整：" + "、".join([*missing, *invalid]))
+        if reading.present(name, label):
+            try:
+                signature = self.signature()
+            except GuardStop as stop:
+                if stop.decision != Decision.UNABLE:
+                    raise
+                signature = {"handwritten": None}
+            signed = signature.get("handwritten")
+            if signed is False:
+                if not isinstance(reading.facts, _ScanFacts):
+                    self.note(name, signature.get("value") or "签署线未见手写笔迹")
+                reading.failed.append(f"{label}没有手写签名")
+            elif signed is None:
+                reading.unknown.append(f"{label}是否手写")
+        try:
+            seen = self.seal()
+        except GuardStop as stop:
+            if stop.decision != Decision.UNABLE:
+                raise
+            seen = None
+        if seen is False:
+            reading.failed.append("原件上未找到印章")
+        elif seen is None:
+            reading.unknown.append("原件上是否有印章")
+        if reading.failed and reading.unknown:
+            return "NG", "零件提交保证书" + "；".join(reading.failed) + "。另未核实：" + "、".join(reading.unknown) + "。"
+        return reading.decided(f"零件提交保证书有供方代表手写签字和印章，签署区{'、'.join(contact)}。")
 
     def seal(self) -> bool | None:
         document = self.transcription()
         return document.seal() if isinstance(document, WarrantDocument) else super().seal()
+
+    def _picture(self, shape: _Shape) -> dict[str, Any]:
+        """One embedded picture, read once per file (at most six): whether it shows a seal face and whether handwriting."""
+        cache = self.__dict__.setdefault("_pictures", {})
+        if shape not in cache:
+            unknown = {"handwritten_signature": None, "ink_seal": None, "detail": ""}
+            if shape.picture is None or len(cache) >= 6:
+                return unknown
+            from PIL import Image
+
+            output = BytesIO()
+            try:
+                with Image.open(BytesIO(shape.picture)) as image:
+                    image.convert("RGB").save(output, format="PNG")
+            except (ValueError, OSError):
+                cache[shape] = unknown
+                return unknown
+            local = self.transcribe(output.getvalue(), EMBEDDED_READ, EMBEDDED_FACTS, "零件提交保证书上的图片", output_correction=_EMBEDDED_CORRECTION)
+            seal, legend, written, detail = (local.get(key) for key in ("seal", "seal_text", "handwriting", "detail"))
+            legend = legend.strip() if isinstance(legend, str) else ""
+            cache[shape] = unknown
+            if isinstance(detail, str) and detail.strip():
+                # A seal face is witnessed by its legend: a seal-like figure whose legend cannot be read is not certified.
+                found = (True if legend else None) if seal is True else seal if seal is False else None
+                cache[shape] = {
+                    "handwritten_signature": written if isinstance(written, bool) else None,
+                    "ink_seal": found,
+                    "detail": f"印文“{legend}”；{detail.strip()}" if found else detail.strip(),
+                }
+        return cache[shape]
 
     def transcribe(self, image: bytes, prompt: str, schema: dict[str, Any], subject: str, *, output_correction: str | None = None) -> dict[str, Any]:
         if schema is PICTURE_SCHEMA:

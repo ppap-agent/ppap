@@ -38,6 +38,7 @@ from .msa import (
     Report as MsaReport,
 )
 from .scoped_text_r4 import read_facts
+from .special_characteristics_r4 import labelled_number, number_label, parts_in
 
 _PARAMETER = ("测量参数", "Measure parameter", "Measuring parameter", "特性", "特 性", "Denote Requirement", "标注要求")
 _LIMIT = ("参数规格", "Parameter specification")
@@ -121,8 +122,13 @@ _RATINGS = {"accept", "reject", "marginal"}
 
 
 def literal_rating(text: str) -> str | None:
-    """A whole standalone rating needs no model. Never match an embedded result word in prose."""
+    """A whole standalone rating needs no model. Never match an embedded result word in prose.
+
+    A result field may restate its acceptance threshold before the verdict ("%R&R<10%，测量系统可以接受！"); the
+    verdict after that stated threshold is the rating."""
     words = compact(text).strip("。.!！")
+    if stated := re.fullmatch(r"%?(?:grr|r&r|gr&r)[<＜≤]\d+(?:\.\d+)?%[,，;；]?(.+)", words):
+        words = stated[1].strip("。.!！")
     if not words or words == "pending" or words in _PLACEHOLDERS:
         return "unknown"
     if words in _MARGINAL:
@@ -245,6 +251,23 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
                         rows.append(PlanRow(item, ws.title, row, values, place))
         return rows, tables
 
+    def list_part_heading(self, ctx: RuleContext, item: Any) -> bool:
+        """Whether the part column `list_rows` reads in this special characteristic list is headed as a combined name and code."""
+        if str(item.file_url).lower().endswith(".pdf"):
+            return False
+        headings = []
+        with self.reading(ctx, item, self.READER.resources):
+            for ws in ctx.workbook.worksheets:
+                grid = self.grid(ctx, ws)
+                for (row, _column), text in sorted(grid.items()):
+                    equipment = any(term in _c(text) for term in ("测量设备", "measuringequipment", "检测设备", "测量工具", "量具"))
+                    if row <= 12 and equipment and not any(term in _c(text) for term in ("能力", "capability")):
+                        # The written heading keeps its line breaks ("产品名称/零件号\nName / Code"); the grid joins them.
+                        heads = [str(ws.cell(r, c).value) for (r, c), t in sorted(grid.items()) if r == row and any(term in _c(t) for term in ("零件号", "件号", "partno", "/code"))]
+                        headings += heads[:1]
+                        break
+        return bool(headings) and number_label(headings[0], combined=True) and not number_label(headings[0])
+
     def coverage(self, ctx: RuleContext, items: list[tuple[str, str, str, str]], parts: list[str], main: Any) -> tuple[list[tuple[str, Any]], dict[str, list[str]], list[str]]:
         defects, gauges, unresolved = super().coverage(ctx, items, parts, main)
         if not defects and not unresolved:
@@ -283,9 +306,18 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
         if not own_part and len(own_codes) == 1:
             own_part = next(iter(own_codes))
 
-        # A number must be the complete value of the part field. Extracting a
-        # familiar-looking token from a compound cell discards other identities.
-        row_parts = [raw.strip() if _c(raw) not in _PLACEHOLDERS | _DECLARED_NA else "" for _, raw, _, _, _ in found]
+        # A number must be the complete value of a dedicated part field. Only a column headed as a combined
+        # name and code ("产品名称/零件号 Name / Code") holds a name beside the part; there the row's part is
+        # its single whole ID atom, and a cell with more than one ID stays unresolved.
+        combined = self.list_part_heading(ctx, lists[0])
+        row_parts = []
+        for _, raw, _, _, _ in found:
+            if _c(raw) in _PLACEHOLDERS | _DECLARED_NA:
+                row_parts.append("")
+            elif combined and not labelled_number(raw) and len(ids := parts_in(raw)) == 1:
+                row_parts.append(next(iter(ids)))
+            else:
+                row_parts.append(raw.strip())
         written = {part for part in row_parts if part}
         items = [(where, feature, value, gauge) for where, _p, feature, value, gauge in found]
         if len(written) > 1:
@@ -652,19 +684,18 @@ class UaesMsaAgentR4(UaesMsaAgentR3):
         suite_level = self.mine(main)
         reports = self.all_reports(ctx)
         elsewhere: list[str] = []  # Defects of other files' gauges: not in this file's scope.
+        # A suite without any plan table fails in every one of its files (product owner, 2026-11-24).
+        if not plan:
+            if scanned:
+                opens.append(f"同批次《{'》《'.join(scanned)}》有没有文字层的页面，尚不能确认是否有测量系统分析计划表")
+            else:
+                failures.append("文件内及同批次文件中没有测量系统分析计划表")
         if suite_level:
-            if not plan:
-                if scanned:
-                    opens.append(f"同批次《{'》《'.join(scanned)}》有没有文字层的页面，尚不能确认是否有测量系统分析计划表")
-                elif len(self.suite()) == 1:
-                    failures.append("文件内及同批次文件中没有测量系统分析计划表")
             if not any(report.kind in ("GRR", "Kappa") for report in reports):
                 if any(self.scanned(item) for item in self.suite()):
                     opens.append("套件包含扫描页，不能仅根据文本提取断定缺少GR&R或Kappa报告")
                 else:
                     failures.append("文件内及同批次文件中没有重复性及再现性（GR&R）报告或Kappa报告")
-        if not plan and len(self.suite()) > 1:
-            opens.append("未能确认套件计划表" if scanned else "同批次缺测量系统分析计划表；缺件归属及各子文件结论尚未裁定")
         groups: dict[tuple[str, str, str], list[PlanRow]] = {}
         for row in plan:
             gauge = row.gauge

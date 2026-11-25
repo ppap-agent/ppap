@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from io import BytesIO
 from pathlib import Path
 
 import fitz
@@ -12,19 +13,30 @@ import fitz
 from audit.checker_lib.uaes.v1.reader import compact, unable
 from audit.checker_lib.uaes.v1.warrant import (
     _BOX,
+    _STAMP_FIND,
+    _STAMP_LOCAL,
+    _STAMP_READ,
+    _STAMP_SEARCH,
     _TEXT,
     IDENTITY,
     ORDER,
     PARTS,
+    SEAL,
     SIGNATURE,
     TOOLING,
     WarrantR3,
+    _local_image,
     _object,
     _ScanFacts,
     _subbox,
     part_request,
 )
 from audit.engine.rule_engine import GuardStop
+
+# Candidate imprints read locally on one page: a bound on model reads, not an assumed number of marks on a warrant.
+_STAMP_CROPS = 8
+# What a candidate's local reading may show instead of an imprint; anything else ("uncertain") leaves the page open.
+_NOT_IMPRINT = frozenset({"printed_logo", "handwriting", "digital_signature", "printed_text", "checkbox"})
 
 # Only a value explicitly printed alongside its own identity label is read natively.
 # Generic "date", "number", stacked fields, graphics and other layouts use the visual field reader.
@@ -184,7 +196,8 @@ class DocumentPage(_ScanFacts):
             raise self.parts[idx]
         field = self.parts[idx].get(name) or {}
         if field.get("present") is True:
-            box = self.normalized_box(field.get("bbox"))
+            # The signature's own line box locates it as well as the box around its label and value.
+            box = self.normalized_box(field.get("bbox")) or self.normalized_box(field.get("field_box"))
             if box is None:
                 return {"present": None}
             self.bounds[name] = box
@@ -211,6 +224,7 @@ class WarrantDocument(_ScanFacts):
             if doc.needs_pass or not 1 <= len(doc) <= 10:
                 raise unable("保证书原件不能打开或超出本次核对的页数范围。")
             pages = [DocumentPage(agent, path, p) for p in doc]
+        self.pages = pages
         self.body = [p for p in pages if p.kind in {"body", "continuation"}]
         # Repeated warrant titles are one body only with a unique and complete printed folio sequence.
         folios = [p.folio for p in self.body]
@@ -253,17 +267,75 @@ class WarrantDocument(_ScanFacts):
     def signature(self):
         field = self.get(SIGNATURE[0])
         page = self.selected.get(SIGNATURE[0])
-        if page and field:
-            page.render()
-            return self.agent._scan_signature(page, dict(field))
-        return {}
+        if not (page and field):
+            return {}
+        page.render()
+        read = self.agent._scan_signature(page, dict(field))
+        boxes = [b for b in (field.get("field_box"), field.get("bbox")) if isinstance(b, list) and len(b) == 4 and all(type(v) is int for v in b)]
+        if read.get("handwritten") is None and boxes:
+            # A signature line's box can miss its line by a row. Its boxes are read once more, joined and grown by one row
+            # above and below; the local reading must still name the supplier's signature line, not a neighbouring row.
+            row = max(10, boxes[0][3] - boxes[0][1])
+            wider = [min(b[0] for b in boxes), max(0, min(b[1] for b in boxes) - row), max(b[2] for b in boxes), min(1000, max(b[3] for b in boxes) + row)]
+            read = self.agent._scan_signature(page, {**field, "field_box": wider})
+        return read
 
     def seal(self):
+        """An ink seal anywhere in the warrant file: one located imprint is enough. Absence needs every page of the file
+        looked at whole, in two overlapping halves, and every candidate located there read on its own crop as something other
+        than an imprint; the product owner decided (2026-11-24) that a completely read original without a seal fails. A page
+        with an unconfirmed candidate, or more candidates than the read budget, keeps the fact open."""
         unknown = False
-        for page in self.body:
-            page.render()
-            result = self.agent._scan_seal(page)
+        # The warrant's own pages first, then its annexes: a seal on any page of the file counts.
+        for page in [*self.body, *(p for p in self.pages if p not in self.body)]:
+            result = self.page_seal(page)
             if result is True:
                 return True
             unknown |= result is None
         return None if unknown else False
+
+    def page_seal(self, page: DocumentPage) -> bool | None:
+        from PIL import Image
+
+        agent = self.agent
+        with Image.open(BytesIO(page.render())) as image:
+            w, h = image.size
+            crops: dict[tuple[int, int, int, int], dict] = {}
+            cleared = True
+            for panel in ((0, 0, w, (h * 55 + 99) // 100), (0, h * 45 // 100, w, h)):
+                result = agent.transcribe(_local_image(image, panel), _STAMP_FIND, _STAMP_SEARCH, "印章全页分区定位")
+                boxes = result.get("candidates")
+                if not isinstance(boxes, list):
+                    cleared = False
+                    continue
+                looked = True
+                for proposal in boxes:
+                    box = _subbox(proposal, panel)
+                    if box is None:
+                        looked = False
+                        continue
+                    # The mark with its surroundings, so it is read whole and in place (a header logo beside the form title,
+                    # an imprint over a signing line), not as a clipped fragment.
+                    pad_x, pad_y = max(16, (box[2] - box[0]) // 2), max(16, (box[3] - box[1]) // 2)
+                    box = (max(0, box[0] - pad_x), max(0, box[1] - pad_y), min(w, box[2] + pad_x), min(h, box[3] + pad_y))
+                    if len(set(image.crop(box).convert("L").getextrema())) == 1:
+                        continue  # Blank paper: nothing is drawn there, so no imprint either.
+                    if box not in crops:
+                        if len(crops) >= _STAMP_CROPS:
+                            looked = False
+                            continue
+                        crops[box] = agent.transcribe(_local_image(image, box), _STAMP_READ, _STAMP_LOCAL, "疑似印迹的原件局部")
+                    local = crops[box]
+                    kind, detail = local.get("kind"), local.get("detail")
+                    if not isinstance(detail, str) or not detail.strip():
+                        looked = False
+                        continue
+                    agent._scan_note(page, image, box, SEAL[0], f"{kind}：{detail}")
+                    if kind == "imprint":
+                        return True
+                    if kind not in _NOT_IMPRINT:
+                        looked = False
+                if looked:
+                    agent._scan_note(page, image, panel, SEAL[0], "本图区域已看过，所定位的图形均不是盖章印迹")
+                cleared = cleared and looked
+        return False if cleared else None

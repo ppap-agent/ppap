@@ -129,8 +129,55 @@ _CP_RESOURCE = UaesControlPlanRevision3.EXTRA_RESOURCE
 _CP_FREQUENCY = _CP_RESOURCE.columns["CP频率"]
 
 
+# CP:4 names the column headings it accepts; a near heading outside them is for manual confirmation.
+# 特殊特性分类 is the same column (product owner, 2026-11-24).
+_MARK_HEADINGS = {"特性类型", "特殊特性", "特殊特性分类", "特殊特性特性类型", "特性类型特殊特性"}
+
+
 class UaesControlPlanRevision4(ControlPlanRequirementsR4):
     EXTRA_RESOURCE = replace(_CP_RESOURCE, columns={**_CP_RESOURCE.columns, "CP频率": _CP_FREQUENCY.model_copy(update={"aliases": (*_CP_FREQUENCY.aliases, "频次")})})
+
+    def mark_heading(self, ctx, sheet) -> str | None:
+        """The written heading of the located 特性类型/特殊特性 column of a control plan sheet, or None when not located."""
+        section = self.section(sheet, "控制计划区").resolved
+        column = ctx.optional_column(section, "CP特殊特性")
+        if column is None:
+            return None
+        for row in range(section.header_row, max(0, section.header_row - 3), -1):
+            merged = ctx.ops.get_detailed_merge_info(sheet.ws, row, column.header_col)
+            raw = sheet.cell(merged.min_row, merged.min_col).value() if merged else sheet.cell(row, column.header_col).value()
+            value = str(raw or "").strip()
+            if value:
+                return value
+        return ""
+
+    @rule("特性类型列实际特性标记")
+    def rule_4(self, ctx):
+        for sheet in self.plan_sheets(ctx):
+            heading = self.mark_heading(ctx, sheet)
+            if heading is None:
+                continue
+            # Only the Chinese wording names the column: the English gloss, slashes and line breaks do not.
+            if "".join(re.findall(r"[一-鿿]", heading)) not in _MARK_HEADINGS:
+                ctx.record_execution()
+                raise unable(f"控制计划的特性标记列名为“{' '.join(heading.split())}”，与条文的“特性类型”“特殊特性”相近但未登记，按条文交人工确认，不直接当作该列已具备。")
+        return super().rule_4(ctx)
+
+    def sources_r3(self, ctx, *, plan_required):
+        """A missing required counterpart decides the clause even when the plan's own part number cannot be read."""
+        m = self._m
+        wanted = [(m._PFD, "过程流程图"), (m._PFMEA, "PFMEA"), (m._PGQP1, "采购件质量计划")]
+        absent = [label for kind, label in wanted if not self.batch_files(kind) and (plan_required or kind != m._PGQP1)]
+        if absent:
+            try:
+                self.part_number(ctx)
+            except GuardStop as stop:
+                if stop.decision != Decision.UNABLE:
+                    raise
+                self.need("》《".join(absent))
+                notes = [] if plan_required or self.batch_files(m._PGQP1) else ["同批次没有采购件质量计划，PGQP1缺件只在包级计一次，本条不重复计"]
+                return {}, [f"同批次没有{'、'.join(absent)}独立文件"], notes
+        return super().sources_r3(ctx, plan_required=plan_required)
 
     @rule("逐工序核对独立的生产资源列")
     def rule_1(self, ctx):

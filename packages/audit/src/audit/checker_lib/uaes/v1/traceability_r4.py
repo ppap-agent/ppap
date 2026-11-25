@@ -20,15 +20,62 @@ from audit.checker_lib.uaes.v1.traceability import (
 from audit.engine.rule_engine import GuardStop, RuleContext, Sheet
 
 
+def read_scope(path: str) -> str:
+    """What a whole-original image reading looked at: every worksheet with its cells and drawing layer, or every page."""
+    suffix = Path(path).suffix.lower()
+    if suffix == ".pdf":
+        import fitz
+
+        with fitz.open(path) as document:
+            return f"已逐页看过原件全部{len(document)}页"
+    if suffix == ".xls":
+        import xlrd
+
+        with xlrd.open_workbook(path, on_demand=True) as book:
+            count = len(book.sheet_names())
+    else:
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(path, read_only=True)
+        count = len(workbook.sheetnames)
+        workbook.close()
+    return f"已逐表看过原件全部{count}个工作表（单元格及图片、图形等绘图层）"
+
+
+# What an image of a worksheet or page shows anywhere, asked of every worksheet or page. A plain visual fact: a sheet without
+# any signing block answers "no", where the signing-block facts (SIGN_FIELDS) can only answer "cannot tell".
+ANYWHERE = {
+    "any_handwriting": "图中任何位置（单元格、图片或图形内）有手写笔迹的签名，包括嵌入的手写签名图片；打印或印刷的文字和姓名、照片、产品图、标签、二维码、印刷标志都不算。",
+    "any_imprint": "图中任何位置有实际盖上的印章印迹或电子签章图形；印刷标志、照片、产品图、标签、二维码以及“盖章处”等文字都不算。",
+}
+
+
 def signature(agent: UaesTraceabilityAgentR3 | UaesTraceabilityDocxAgentR3) -> tuple[str, str]:
-    """The supplier's handwritten signature and seal, read from the image of the original."""
+    """The supplier's handwritten signature and seal, looked for in the whole original.
+
+    Every worksheet (its cells and drawing layer, printed whole) or page is read, and one sighting anywhere is enough. When
+    every one was read and none shows any handwritten signature, or any imprint, the original lacks it: the product owner
+    decided (2026-11-24) that a complete reading which finds no signature or seal fails the clause. Only what is seen
+    somewhere is then read again as the supplier's signing block. A worksheet or page that could not be read, or a reading
+    the two observations do not agree on, keeps the fact open for a person."""
+
+    def scope() -> str:
+        try:
+            return "：" + read_scope(str(agent.audit_file.file_url)) + "，均未见"
+        except Exception:
+            return ""
+
     try:
-        values, _unreadable = agent._from_legacy(lambda agent: agent.visual_observation(SIGN_FIELDS))
+        seen, _unreadable = agent._from_legacy(lambda agent: agent.visual_observation(ANYWHERE, existential_fields=tuple(ANYWHERE)))
+        absent = [name for name, field in (("手写签字", "any_handwriting"), ("供应商有效印章", "any_imprint")) if seen.get(field) is False]
+        if absent:
+            return "NG", "代表供应商的签署栏缺少" + "、".join(absent) + scope() + "（原件图像目视识读，请对照原件核实）"
+        values, _unreadable = agent._from_legacy(lambda agent: agent.visual_observation(SIGN_FIELDS, existential_fields=tuple(SIGN_FIELDS)))
     except GuardStop as stop:
         return stop.status, "供应商签署栏的签字和印章未能读取：" + stop.message.rstrip("。")
     missing = [name for name, value in (("手写签字", values.get("supplier_signature")), ("供应商有效印章", values.get("supplier_seal"))) if value is False]
     if missing:
-        return "NG", "代表供应商的签署栏缺少" + "、".join(missing)
+        return "NG", "代表供应商的签署栏缺少" + "、".join(missing) + scope() + "（原件图像目视识读，请对照原件核实）"
     if any(values.get(field) is not True for field in SIGN_FIELDS):
         return "UNABLE", "供应商签署栏的签字或印章尚未能从原件核实，需人工复核"
     return "PASS", "代表供应商的签署栏有手写签字和供应商印章"

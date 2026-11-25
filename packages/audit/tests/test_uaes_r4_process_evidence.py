@@ -73,10 +73,84 @@ def test_rendered_branch_evidence_can_come_from_second_printed_page(tmp_path, mo
     monkeypatch.setattr(visual, "render_xlsx_pdf", lambda *a, **kw: pdf)
     pages = []
 
-    def read(image, title, number):
-        pages.append((title, number))
-        return "第二页原图的来源" if number == 2 else None
+    def read(image):
+        pages.append(image)
+        return ("“检测不合格” → “隔离”", [100, 100, 600, 400]) if len(pages) == 2 else None
 
     monkeypatch.setattr(reader, "read_disposition", read)
-    assert reader.visual_node_evidence(None, ["异常处理"]) == {"异常处理": "第二页原图的来源"}
-    assert pages == [("流程图", 1), ("流程图", 2)]
+    assert reader.visual_node_evidence(None, ["异常处理"]) == {"异常处理": "异常处理（流程图第2页原图局部）“检测不合格” → “隔离”"}
+    assert len(pages) == 2
+
+
+def flow_pdf(path, rotation=0):
+    with fitz.open() as document:
+        page = document.new_page(width=600, height=400)
+        page.insert_text((40, 60), "1 原材料检验")
+        page.set_rotation(rotation)
+        document.save(path)
+    return path
+
+
+@pytest.mark.parametrize("found", [None, "unconfirmed"])
+def test_pdf_chart_read_page_by_page_is_complete_only_without_an_unconfirmed_branch(tmp_path, monkeypatch, found):
+    from audit.checker_lib.uaes.v1 import process_flow_r4 as flow
+
+    path = flow_pdf(tmp_path / "flow.pdf")
+    reader = UaesProcessFlowRevision4(AuditInput(audit_id="flow", file_url=str(path)), RuleInput.of(preset_rule_body("UAES", "U16"), rule_id="u16"))
+    monkeypatch.setattr(reader, "read_disposition", lambda image: flow._UNCONFIRMED if found else None)
+    assert reader.visual_node_evidence(None, ["异常处理"]) == {}
+    reading = reader.__dict__["_node_reading"]
+    assert reading["complete"] is (found is None), reading
+    if found is None:
+        assert reading["scope"] == "已读完原件全部1页的工序与文字，并逐页看过原图（共1页）", reading
+        (page,) = [s.locator for s in reader.legacy()._evidence_sources]
+        assert '"kind":"pdf_region"' in page and '"page":1' in page
+
+
+@pytest.mark.parametrize(
+    ("located", "local", "expected"),
+    [
+        (None, None, None),
+        ([100, 100, 600, 400], {"condition": "检测不合格", "destination": "隔离", "arrow": True}, ("“检测不合格” → “隔离”", [100, 100, 600, 400])),
+        # The arrow it pointed at is an ordinary process step: no failed branch there.
+        ([5, 120, 752, 845], {"condition": "加工", "destination": "熔化", "arrow": True}, None),
+        # A failed branch going somewhere not confirmed as a disposition, or an unreadable condition, stays open.
+        ([100, 100, 600, 400], {"condition": "不合格", "destination": "返工区", "arrow": True}, "unconfirmed"),
+        ([100, 100, 600, 400], {"condition": "", "destination": "", "arrow": False}, "unconfirmed"),
+        ([0, 0, 1000, 1000], None, "unconfirmed"),
+    ],
+)
+def test_located_branch_is_settled_by_its_local_reading(monkeypatch, located, local, expected):
+    import io
+
+    from audit.checker_lib.uaes.v1 import process_flow_r4 as flow
+    from PIL import Image
+
+    image = io.BytesIO()
+    Image.new("RGB", (200, 100), "white").save(image, format="PNG")
+    reader = UaesProcessFlowRevision4(AuditInput(audit_id="flow", file_url="flow.pdf"), RuleInput.of(preset_rule_body("UAES", "U16"), rule_id="u16"))
+    answers = iter([{"box": located}, local])
+    monkeypatch.setattr(reader, "transcribe", lambda *a, **kw: next(answers))
+    found = reader.read_disposition(image.getvalue())
+    assert (found is flow._UNCONFIRMED) if expected == "unconfirmed" else found == expected
+
+
+def test_pdf_chart_never_completes_another_missing_node_class(tmp_path, monkeypatch):
+    path = flow_pdf(tmp_path / "flow.pdf")
+    reader = UaesProcessFlowRevision4(AuditInput(audit_id="flow", file_url=str(path)), RuleInput.of(preset_rule_body("UAES", "U16"), rule_id="u16"))
+    monkeypatch.setattr(reader, "read_disposition", lambda image: None)
+    assert reader.visual_node_evidence(None, ["来料控制", "异常处理"]) == {}
+    assert reader.__dict__["_node_reading"]["complete"] is False
+
+
+def test_pdf_branch_on_a_rotated_page_is_located_in_unrotated_page_points(tmp_path, monkeypatch):
+    import json
+
+    path = flow_pdf(tmp_path / "flow.pdf", rotation=90)
+    reader = UaesProcessFlowRevision4(AuditInput(audit_id="flow", file_url=str(path)), RuleInput.of(preset_rule_body("UAES", "U16"), rule_id="u16"))
+    # The upper left quarter of the page as displayed (rotated to 400 x 600).
+    monkeypatch.setattr(reader, "read_disposition", lambda image: ("“不合格” → “返工”", [0, 0, 500, 500]))
+    assert reader.visual_node_evidence(None, ["异常处理"]) == {"异常处理": "异常处理（第1页原图局部）“不合格” → “返工”"}
+    (source,) = reader.legacy()._evidence_sources
+    locator = json.loads(source.locator)
+    assert (locator["kind"], locator["coordinate_system"], locator["bbox"]) == ("pdf_region", "pdf_points_unrotated", [0.0, 200.0, 300.0, 400.0])
