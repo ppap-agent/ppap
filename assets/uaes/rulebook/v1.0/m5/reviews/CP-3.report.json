@@ -1,0 +1,14 @@
+{
+  "schema": "clause-check-report-v1",
+  "clause": {
+    "id": "CP:3",
+    "title": "控制计划（CP）",
+    "category": "量产受控-受控章",
+    "text": "控制计划文件的类型必须为“量产”或“SOP”，且文件中必须存在受控章；任一条件不满足即不通过。",
+    "source": "条文/CP.json#CP:3",
+    "source_sha256": "57a6bace88ae7b81707f9729615a9223f17e888b090e8b76449d11b817f9de8c"
+  },
+  "review_sha256": "504dd65541f56f1b9c01c504e8dd55dc82ec2ac6440b92fe8f1a95ce7c014bdf",
+  "findings": [],
+  "excluded": []
+}

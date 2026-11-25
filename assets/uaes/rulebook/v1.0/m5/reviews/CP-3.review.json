@@ -1,0 +1,26 @@
+{
+  "schema": "clause-check-review-v1",
+  "source": "条文/CP.json#CP:3",
+  "requirements": [
+    {
+      "quote": "控制计划文件的类型必须为“量产”或“SOP”",
+      "role": "necessary",
+      "scope": "文件阶段",
+      "meaning": "按阶段的实际选择确认量产或 SOP。"
+    },
+    {
+      "quote": "且文件中必须存在受控章",
+      "role": "necessary",
+      "scope": "文件受控状态",
+      "meaning": "独立确认该文件具有受控章；阶段信息与印章不互相代替。"
+    },
+    {
+      "quote": "任一条件不满足即不通过",
+      "role": "outcome",
+      "scope": "整条",
+      "meaning": "阶段不符或受控章不符，均不能通过。"
+    }
+  ],
+  "findings": [],
+  "excluded": []
+}

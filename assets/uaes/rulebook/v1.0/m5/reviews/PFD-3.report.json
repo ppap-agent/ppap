@@ -1,0 +1,20 @@
+{
+  "schema": "clause-check-report-v1",
+  "clause": {
+    "id": "PFD:3",
+    "title": "过程流程图（PFD）",
+    "category": "受控章-存在性",
+    "text": "过程流程图中必须包含受控章；没有受控章即不通过。存在疑似印章图形但章内文字或受控标识无法辨认的，按不通过处理并提示人工复核。",
+    "source": "条文/PFD.json#PFD:3",
+    "source_sha256": "4524deb2315c4c3602da84acb65f44fde8a8ec35f340887e9579d8f4ed096796"
+  },
+  "review_sha256": "4251abe5cb117034d26c70db7763604d46a2bf4adda0d28d17e7f01fbae398e4",
+  "findings": [],
+  "excluded": [
+    {
+      "quote": "存在疑似印章图形但章内文字或受控标识无法辨认的",
+      "issue": "能否套用流程图规则2不可辨记未审",
+      "reason": "规则2的例外指工序分类图形。受控章有自己的明确结论：疑似章不可辨时不通过，并请人工复核；不能仅凭文本没提取到就说无章。"
+    }
+  ]
+}
