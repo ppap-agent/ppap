@@ -23,9 +23,12 @@ data:
   PPAP_S3_REGION: us-east-1
   PPAP_S3_BUCKET: ppap-objects
   # Each model is written once; containers point their TEXT / VISION / CODING variables at a model.
-  # The deepseek model's endpoint and key are in Secret ppap-current.
+  # Keys are in Secret ppap-current. Vision uses DeepSeek's own API: ppap-test egresses from mainland
+  # China, where OpenRouter refuses chat requests ("Request path cannot be relayed", 2026-11-25).
   PPAP_MODEL_GROK_4_7_MODEL: grok-4.7
   PPAP_MODEL_GROK_4_7_BASE_URL: https://grok.trustedtunnel.app/v1
+  PPAP_MODEL_DEEPSEEK_MODEL: deepseek-flash
+  PPAP_MODEL_DEEPSEEK_BASE_URL: https://api.deepseek.com
   PPAP_MODEL_CODING_REASONING_EFFORT: medium
   PPAP_MODEL_VISION_REASONING_EFFORT: "none"
   PPAP_TENANT_MODEL_ALLOWED_BASE_URLS: https://grok.trustedtunnel.app/v1
@@ -431,19 +434,19 @@ spec:
           env:
             - name: PPAP_MODEL_VISION_BASE_URL
               valueFrom:
-                secretKeyRef:
+                configMapKeyRef:
                   name: ppap-current
-                  key: PPAP_MODEL_DEEPSEEK_FLASH_4_1_BASE_URL
+                  key: PPAP_MODEL_DEEPSEEK_BASE_URL
             - name: PPAP_MODEL_VISION_MODEL
               valueFrom:
-                secretKeyRef:
+                configMapKeyRef:
                   name: ppap-current
-                  key: PPAP_MODEL_DEEPSEEK_FLASH_4_1_MODEL
+                  key: PPAP_MODEL_DEEPSEEK_MODEL
             - name: PPAP_MODEL_VISION_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: ppap-current
-                  key: PPAP_MODEL_DEEPSEEK_FLASH_4_1_API_KEY
+                  key: PPAP_MODEL_DEEPSEEK_API_KEY
             - name: PPAP_PG_API_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -598,14 +601,14 @@ spec:
           env:
             - name: PPAP_MODEL_VISION_BASE_URL
               valueFrom:
-                secretKeyRef:
+                configMapKeyRef:
                   name: ppap-current
-                  key: PPAP_MODEL_DEEPSEEK_FLASH_4_1_BASE_URL
+                  key: PPAP_MODEL_DEEPSEEK_BASE_URL
             - name: PPAP_MODEL_VISION_MODEL
               valueFrom:
-                secretKeyRef:
+                configMapKeyRef:
                   name: ppap-current
-                  key: PPAP_MODEL_DEEPSEEK_FLASH_4_1_MODEL
+                  key: PPAP_MODEL_DEEPSEEK_MODEL
             - name: PPAP_PG_WORKER_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -632,7 +635,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: ppap-current
-                  key: PPAP_MODEL_DEEPSEEK_FLASH_4_1_API_KEY
+                  key: PPAP_MODEL_DEEPSEEK_API_KEY
             - name: PPAP_MODEL_TEXT_BASE_URL
               valueFrom:
                 configMapKeyRef:
@@ -675,19 +678,19 @@ spec:
           env:
             - name: PPAP_MODEL_VISION_BASE_URL
               valueFrom:
-                secretKeyRef:
+                configMapKeyRef:
                   name: ppap-current
-                  key: PPAP_MODEL_DEEPSEEK_FLASH_4_1_BASE_URL
+                  key: PPAP_MODEL_DEEPSEEK_BASE_URL
             - name: PPAP_MODEL_VISION_MODEL
               valueFrom:
-                secretKeyRef:
+                configMapKeyRef:
                   name: ppap-current
-                  key: PPAP_MODEL_DEEPSEEK_FLASH_4_1_MODEL
+                  key: PPAP_MODEL_DEEPSEEK_MODEL
             - name: PPAP_MODEL_VISION_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: ppap-current
-                  key: PPAP_MODEL_DEEPSEEK_FLASH_4_1_API_KEY
+                  key: PPAP_MODEL_DEEPSEEK_API_KEY
             - name: PPAP_PG_WORKER_PASSWORD
               valueFrom:
                 secretKeyRef:

@@ -50,7 +50,7 @@ ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `
 
 ## Apply current stack
 
-Secret `ppap-current` is not in git. Create it when absent, then update its managed keys from the confirmed production configuration on each release; creating it once is insufficient. It also contains passwords, Feishu secret and S3 keys, so never replace the entire Secret to update one capability. Host fields in the ConfigMap already point at in-cluster Services. Models are configured once per model, named after it (`PPAP_MODEL_GROK_4_7_*`, `PPAP_MODEL_DEEPSEEK_FLASH_4_1_*`); each container points its `PPAP_MODEL_TEXT_*` / `PPAP_MODEL_VISION_*` variables at a model through explicit `configMapKeyRef` / `secretKeyRef` entries, and the code reads only those. Changing a model's key or endpoint is one edit; switching a use to another model changes its references. Existing images support the Codex Responses endpoint; model configuration changes require a process restart, not an image rebuild.
+Secret `ppap-current` is not in git. Create it when absent, then update its managed keys from the confirmed production configuration on each release; creating it once is insufficient. It also contains passwords, Feishu secret and S3 keys, so never replace the entire Secret to update one capability. Host fields in the ConfigMap already point at in-cluster Services. Models are configured once per model, named after it (`PPAP_MODEL_GROK_4_7_*`, `PPAP_MODEL_DEEPSEEK_*`); each container points its `PPAP_MODEL_TEXT_*` / `PPAP_MODEL_VISION_*` variables at a model through explicit `configMapKeyRef` / `secretKeyRef` entries, and the code reads only those. Changing a model's key or endpoint is one edit; switching a use to another model changes its references. Existing images support the Codex Responses endpoint; model configuration changes require a process restart, not an image rebuild.
 
 API reads only its API database password; Worker and Deep read only the Worker password. Runtime containers must use explicit `secretKeyRef` entries, not `envFrom` for the whole Secret. Bootstrap and migrator credentials belong to database initialization, not application processes. Adding a new secret setting requires an explicit reference in its owning container.
 
@@ -103,8 +103,8 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 | `PPAP_MODEL_GROK_4_7_MODEL`、`PPAP_MODEL_GROK_4_7_BASE_URL` | ConfigMap `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_TEXT_MODEL`、`PPAP_MODEL_TEXT_BASE_URL` |
 | `PPAP_MODEL_GROK_4_7_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_TEXT_API_KEY`（Suite 程序的文本调用经本地网关）|
 | `PPAP_MODEL_CODING_*` | 当前未设置，Deep 沿用文本模型 | 见下文「Deep 配置」 |
-| `PPAP_MODEL_DEEPSEEK_FLASH_4_1_MODEL`、`PPAP_MODEL_DEEPSEEK_FLASH_4_1_BASE_URL` | Secret `ppap-current` | API、Worker、Deep 的 `PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_BASE_URL` |
-| `PPAP_MODEL_DEEPSEEK_FLASH_4_1_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_VISION_API_KEY`；不向 Deep guest 注入 |
+| `PPAP_MODEL_DEEPSEEK_MODEL`、`PPAP_MODEL_DEEPSEEK_BASE_URL`（`deepseek-flash`、`https://api.deepseek.com`，DeepSeek 官方 OpenAI 兼容接口；集群出口在中国大陆，OpenRouter 拒绝对话请求） | ConfigMap `ppap-current` | API、Worker、Deep 的 `PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_BASE_URL` |
+| `PPAP_MODEL_DEEPSEEK_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_VISION_API_KEY`；不向 Deep guest 注入 |
 | `PPAP_MODEL_{TEXT,VISION,CODING}_REASONING_EFFORT` | ConfigMap `ppap-current` | 各用途的推理强度，取值见 `current.yaml`，含义见 [AGENTS.md](../../AGENTS.md#开发)「模型来源」 |
 | `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS`、`PPAP_DEEP_MODEL_MAX_REQUESTS` | ConfigMap `ppap-current` | API、Worker、Deep（企业 Key 的允许地址；每个 Deep Attempt 的请求次数熔断）|
 | 企业 Key（企业 BYOK） | 表 `product.tenant_model_credentials`（密文） | 运营用 `python -m product.tenant_models` 设置；无客户接口 |
