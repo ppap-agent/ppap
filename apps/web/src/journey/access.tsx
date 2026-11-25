@@ -71,7 +71,8 @@ export function ProductAccess({children}: {children: ReactNode}) {
               user = await request<PrincipalPublic, HostLoginRequest>('/login/feishu/host', 'POST', {code})
             } catch (cause) {
               if (!active || epoch.current !== current) return
-              hostError = (cause as {code?: string}).code === 'tenant_not_allowed' ? NOT_RELEASED : '飞书内登录未完成，请重试。'
+              // The reason stays on the page: a refusal inside the Feishu client cannot be read anywhere else.
+              hostError = (cause as {code?: string}).code === 'tenant_not_allowed' ? NOT_RELEASED : `飞书内登录未完成，请重试。原因：${cause instanceof Error ? cause.message : String(cause)}`
             }
           } else if (!loginError && inFeishu) hostError = '飞书登录组件未加载，请重试。'
         }

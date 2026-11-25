@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {feishuHostReady, isFeishuHost, openedInFeishu} from './hostLogin.ts'
+import {feishuFailure, feishuHostReady, isFeishuHost, openedInFeishu} from './hostLogin.ts'
 
 test('isFeishuHost recognizes the Feishu H5 SDK and the test stub', () => {
   assert.equal(isFeishuHost({} as Window), false)
@@ -30,4 +30,11 @@ test('feishuHostReady waits for the SDK only inside the Feishu client', async ()
   const never = {navigator: {userAgent: lark}, setTimeout: (fn: () => void) => setTimeout(fn, 1)} as unknown as Window
   assert.equal(await feishuHostReady(never, 20, 1), false)
   assert.equal(await feishuHostReady({navigator: {userAgent: 'Chrome'}} as unknown as Window), false)
+})
+
+test('feishuFailure keeps what Feishu said when it refused', () => {
+  assert.equal(feishuFailure({errno: 2700005, errString: 'no permission'}), '2700005 no permission')
+  assert.equal(feishuFailure({errMsg: 'requestAccess:fail'}), 'requestAccess:fail')
+  assert.equal(feishuFailure(new Error('飞书登录初始化超时，请稍后重试')), '飞书登录初始化超时，请稍后重试')
+  assert.equal(feishuFailure({other: 1}), '{"other":1}')
 })

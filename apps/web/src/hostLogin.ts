@@ -84,10 +84,24 @@ export async function requestHostCode(appId: string, win: Window = window): Prom
           if (!code) { reject(new Error('未获取到飞书授权码，请重试')); return }
           resolve(code)
         },
-        fail() { reject(new Error('飞书授权失败，请稍后重试')) },
+        fail(err) { reject(new Error(`飞书授权失败（${feishuFailure(err)}）`)) },
       })
-    } catch {
-      reject(new Error('飞书授权失败，请稍后重试'))
+    } catch (err) {
+      reject(new Error(`飞书授权失败（${feishuFailure(err)}）`))
     }
   })
+}
+
+/** What Feishu said when it refused: its error code and message, shown so a failure can be diagnosed. */
+export function feishuFailure(err: unknown): string {
+  if (err instanceof Error) return err.message || err.name
+  if (err && typeof err === 'object') {
+    const value = err as Record<string, unknown>
+    const code = value.errno ?? value.errCode ?? value.code
+    const message = value.errString ?? value.errMsg ?? value.message
+    const text = [code, message].filter(part => part !== undefined && part !== null && part !== '').join(' ')
+    if (text) return text
+    try { return JSON.stringify(err).slice(0, 200) } catch { /* fall through */ }
+  }
+  return String(err ?? '未知错误')
 }
