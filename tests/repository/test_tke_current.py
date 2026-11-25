@@ -73,7 +73,7 @@ class TkeCurrentDeployTests(unittest.TestCase):
         self.assertEqual(list(_find(docs, "nodeSelector")), [])
         config = next(doc for doc in docs if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"] == "ppap-current")
         self.assertEqual(config["metadata"]["namespace"], "ppap-test")
-        self.assertEqual(config["data"]["PPAP_USAGE_CHARGE_ENABLED"], "false")
+        self.assertEqual(config["data"]["PPAP_USAGE_CHARGE_ENABLED"], "true")
         images = [container["image"] for doc in docs for container in _containers(doc) if container.get("image")]
         app_containers = [container for doc in docs for container in _containers(doc) if container.get("name") in {"api", "worker", "deep", "web", "seed-suites"}]
         self.assertRegex(config["data"]["PPAP_BUILD_SHA"], r"^[0-9a-f]{40}$")
