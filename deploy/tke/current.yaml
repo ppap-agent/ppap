@@ -36,10 +36,11 @@ data:
   FEISHU_FREE_TRIAL_QUOTA_POINTS: "10000"
   # Task notifications (待确认 / 开始审核 / 审核完成) go out from the API; the queued backlog is sent too (decided 2026-11-21).
   PPAP_FEISHU_NOTIFICATIONS_ENABLED: "true"
-  # 海岸线 (PPAP's own developer tenant) gets a larger trial for acceptance runs with charging on.
+  # 海岸线 (PPAP's own developer tenant) gets a larger trial for acceptance runs.
   FEISHU_TRIAL_QUOTA_OVERRIDES: '{"2caeb428f08e175d": 200000}'
-  PPAP_CURRENT_TENANT_ALLOWLIST: 2caeb428f08e175d,16e7179eb1abd75d,16fad24b7282175e,175b8362d5ce575f
-  PPAP_USAGE_CHARGE_ENABLED: "false"
+  # Released tenants: coastline's four and 联合汽车电子 (联电). Acceptance charges points.
+  PPAP_CURRENT_TENANT_ALLOWLIST: 2caeb428f08e175d,16e7179eb1abd75d,16fad24b7282175e,175b8362d5ce575f,11c1ad08115b175e
+  PPAP_USAGE_CHARGE_ENABLED: "true"
   PPAP_MCP_ENABLED: "true"
   PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
   PPAP_DEEP_EXECUTOR_REVISION: ppap-deep-v2
