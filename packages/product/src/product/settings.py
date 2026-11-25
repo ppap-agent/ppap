@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     feishu_notifications_enabled: bool = Field(default=False, alias="PPAP_FEISHU_NOTIFICATIONS_ENABLED")
     feishu_verification_token: str = Field(default="", alias="FEISHU_VERIFICATION_TOKEN")
     feishu_ai_item_id: str = Field(default="", alias="FEISHU_AI_ITEM_ID")
+    # Feishu's usage reconciliation query (ai_item_uses/search): the Ed25519 seed (base64, 32 bytes) that signs answers, and
+    # the key Feishu sends in X-feishu-api-key when one is agreed (empty: not checked, as legacy UAC).
+    feishu_usage_search_signing_key: str = Field(default="", alias="PPAP_FEISHU_USAGE_SEARCH_SIGNING_KEY")
+    feishu_usage_search_api_key: str = Field(default="", alias="PPAP_FEISHU_USAGE_SEARCH_API_KEY")
+    # Legacy UAC's own query, answered after current's records until legacy retires; empty: current's records only.
+    legacy_usage_search_url: str = Field(default="", alias="PPAP_LEGACY_USAGE_SEARCH_URL")
     feishu_free_trial_quota_points: int = Field(default=10000, alias="FEISHU_FREE_TRIAL_QUOTA_POINTS")
     # Feishu tenant key -> trial points for that tenant; tenants not listed get the shared amount above.
     feishu_trial_quota_overrides: dict[str, int] = Field(default_factory=dict, alias="FEISHU_TRIAL_QUOTA_OVERRIDES")

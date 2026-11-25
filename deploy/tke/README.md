@@ -108,6 +108,8 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 | `PPAP_MODEL_{TEXT,VISION,CODING}_REASONING_EFFORT` | ConfigMap `ppap-current` | 各用途的推理强度，取值见 `current.yaml`，含义见 [AGENTS.md](../../AGENTS.md#开发)「模型来源」 |
 | `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS`、`PPAP_DEEP_MODEL_MAX_REQUESTS` | ConfigMap `ppap-current` | API、Worker、Deep（企业 Key 的允许地址；每个 Deep Attempt 的请求次数熔断）|
 | 企业 Key（企业 BYOK） | 表 `product.tenant_model_credentials`（密文） | 运营用 `python -m product.tenant_models` 设置；无客户接口 |
+| `PPAP_FEISHU_USAGE_SEARCH_SIGNING_KEY` | Secret `ppap-current`（值记在仓库根目录不入 Git 的 `.env`；与旧版 UAC 签名用的是同一把） | API（飞书用量对账查询的响应签名）|
+| `PPAP_LEGACY_USAGE_SEARCH_URL` | ConfigMap `ppap-current` | API（对账查询转查旧版 UAC；旧版退役时删除）|
 | `PPAP_MEEGO_AI_NODE_PLUGIN_ID`、`PPAP_MEEGO_AI_NODE_TOKEN`、`PPAP_MEEGO_AI_NODE_PLUGIN_SECRET` | Secret `ppap-current`（值记在仓库根目录不入 Git 的 `.env`） | API（飞书项目 AI 节点：事件验签、完成节点）|
 
 已有 Secret 使用按 key 合并更新，保留其余数据。例如，`PPAP_SECRET_ENV_FILE` 指向权限为 `0600`、不入 Git 的生产文件，且**只包含本次已确认要更新到 `ppap-current` 的 key**。下面的管道自动更新这些 key，不将密钥放入命令参数或输出：

@@ -44,6 +44,8 @@ data:
   # Open to every Feishu tenant; acceptance charges points (legacy trial use: migration 0098).
   PPAP_CURRENT_TENANT_ALLOWLIST: ""
   PPAP_USAGE_CHARGE_ENABLED: "true"
+  # Feishu's usage reconciliation query also answers legacy UAC's records until legacy retires.
+  PPAP_LEGACY_USAGE_SEARCH_URL: http://uac/feishu/partner_ai/ai_item_uses/search
   PPAP_MCP_ENABLED: "true"
   PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
   PPAP_DEEP_EXECUTOR_REVISION: ppap-deep-v2
@@ -488,6 +490,12 @@ spec:
                   name: ppap-current
                   key: FEISHU_VERIFICATION_TOKEN
                   optional: true
+            # Signs answers to Feishu's usage reconciliation query; the same seed legacy UAC signs with.
+            - name: PPAP_FEISHU_USAGE_SEARCH_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_FEISHU_USAGE_SEARCH_SIGNING_KEY
             - name: PPAP_MEEGO_PLUGIN_SECRET
               valueFrom:
                 secretKeyRef:

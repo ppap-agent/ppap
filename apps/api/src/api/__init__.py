@@ -97,6 +97,7 @@ from api.support_routes import register_support_routes
 from api.task_events import register_task_event_routes
 from api.template_routes import register_template_routes
 from api.usage_reporting import run_pending_usage
+from api.usage_search import register_usage_search_route
 
 Probe = Callable[[Settings], dict[str, str]]
 
@@ -1019,6 +1020,7 @@ def create_app(
     register_feishu_jsapi_routes(app, store, session_of, http, settings)
     register_intent_routes(app, session_of)
     register_receipt_routes(app, store, session_of)
+    register_usage_search_route(app, store, settings)
     wc.add_ui_contract(app)
     if settings.mcp_enabled:
         from api.mcp_server import install_mcp

@@ -4899,6 +4899,44 @@ class AuthStore:
             ).fetchone()
         return claim if row else None
 
+    def reported_usage(
+        self,
+        app_id: str,
+        ai_item_id: str,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        tenant_key: str | None = None,
+        trace_ids: list[str] | None = None,
+    ) -> list[dict]:
+        """Paid usage Feishu acknowledged receiving, newest first: what Feishu reconciles against this ISV."""
+        where = ["u.ai_item_id = %s", "NOT u.is_free_trial", "u.external_status = 'confirmed'"]
+        params: list[Any] = [app_id, ai_item_id]
+        if start is not None:
+            where.append("u.external_confirmed_at >= %s")
+            params.append(start)
+        if end is not None:
+            where.append("u.external_confirmed_at <= %s")
+            params.append(end)
+        if tenant_key is not None:
+            where.append("t.external_key = %s")
+            params.append(tenant_key)
+        if trace_ids:
+            where.append("u.trace_id = ANY(%s)")
+            params.append(trace_ids)
+        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"""SELECT u.id, u.trace_id, u.consumed_points, u.external_confirmed_at, t.external_key AS tenant_key, i.subject
+                FROM product.usage_events u
+                JOIN product.tenants t ON t.id = u.tenant_id AND t.provider = 'feishu'
+                LEFT JOIN product.identities i ON i.user_id = u.user_id AND i.provider = t.provider
+                    AND i.tenant_key = t.external_key AND i.app_id = %s
+                WHERE {" AND ".join(where)}
+                ORDER BY u.external_confirmed_at DESC, u.id""",
+                params,
+            )
+            return list(cur.fetchall())
+
     def pending_usage_sessions(self, app_id: str) -> Iterator[tuple[str, Session]]:
         # A viewer's session is never used to pay another user's obligation.
         # Expired/revoked authorization waits for that owner to sign in again.
