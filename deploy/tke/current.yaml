@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: 367b0cab68f11028e1371034cba80a91caa6401a
+  PPAP_BUILD_SHA: 1f105b17caeda5c8a9733f4028c5c1ad8ca9119d
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_ONLYOFFICE_URL: https://ppap.icoastline.com/office
@@ -41,8 +41,8 @@ data:
   PPAP_FEISHU_NOTIFICATIONS_ENABLED: "true"
   # 海岸线 (PPAP's own developer tenant) gets a larger trial for acceptance runs.
   FEISHU_TRIAL_QUOTA_OVERRIDES: '{"2caeb428f08e175d": 200000}'
-  # Open to every Feishu tenant; acceptance charges points (legacy trial use: migration 0098).
-  PPAP_CURRENT_TENANT_ALLOWLIST: ""
+  # Released tenants: coastline's four and 联合汽车电子 (联电). Acceptance charges points.
+  PPAP_CURRENT_TENANT_ALLOWLIST: 2caeb428f08e175d,16e7179eb1abd75d,16fad24b7282175e,175b8362d5ce575f,11c1ad08115b175e
   PPAP_USAGE_CHARGE_ENABLED: "true"
   # Feishu's usage reconciliation query also answers legacy UAC's records until legacy retires.
   PPAP_LEGACY_USAGE_SEARCH_URL: http://uac/feishu/partner_ai/ai_item_uses/search
@@ -426,7 +426,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:84bb0e602a2a2cbef1a184512d85931cf43d6944964e0f5a4acc8689a6a52b10
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:3e32f5d6a7d5c961453c13b784fcb29fcf0498708ba9b3eb318d04f8c0b14b1a
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -601,7 +601,7 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-deep@sha256:8a19c530a871a8e3e160124c97cbf050c3a175f897ca503f79bdfe138b991d6c
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-deep@sha256:bf65ef5daab778ea74b9f8620c1adbc13e9471ef81a5199544632f90f0082233
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -678,7 +678,7 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
         - name: worker
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:84bb0e602a2a2cbef1a184512d85931cf43d6944964e0f5a4acc8689a6a52b10
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:3e32f5d6a7d5c961453c13b784fcb29fcf0498708ba9b3eb318d04f8c0b14b1a
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -781,7 +781,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-web@sha256:760f608af9d97136c1b659ab4dfae14c31f2deb863f0ba1613ca2b5851ea8e8c
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-web@sha256:6736dbf31073dc3b978377d9ca542902c5884095269868b987d8b35e95d69472
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 4173
@@ -838,7 +838,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: sync
-              image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:84bb0e602a2a2cbef1a184512d85931cf43d6944964e0f5a4acc8689a6a52b10
+              image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:3e32f5d6a7d5c961453c13b784fcb29fcf0498708ba9b3eb318d04f8c0b14b1a
               imagePullPolicy: IfNotPresent
               command: ["python", "/sync/legacy-ticket-sync.py"]
               envFrom:
@@ -927,7 +927,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: seed-suites
-          image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:84bb0e602a2a2cbef1a184512d85931cf43d6944964e0f5a4acc8689a6a52b10
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-app@sha256:3e32f5d6a7d5c961453c13b784fcb29fcf0498708ba9b3eb318d04f8c0b14b1a
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "product.seed_standard_suites", "--apply", "--publish-defaults"]
           envFrom:
