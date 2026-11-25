@@ -37,16 +37,6 @@ export function openedInFeishu(win: Window = window): boolean {
   return /\b(?:Lark|Feishu)\//i.test(win.navigator.userAgent) || isFeishuHost(win)
 }
 
-/** Inside the Feishu client, waits for the asynchronously loaded web SDK; resolves false when it never arrives. */
-export async function feishuHostReady(win: Window = window, timeoutMs = 5000, stepMs = 100): Promise<boolean> {
-  if (!openedInFeishu(win)) return false
-  for (let waited = 0; !isFeishuHost(win); waited += stepMs) {
-    if (waited >= timeoutMs) return false
-    await new Promise(resolve => win.setTimeout(resolve, stepMs))
-  }
-  return true
-}
-
 function hostUnavailable(): Error {
   return new Error('当前环境不是飞书宿主')
 }

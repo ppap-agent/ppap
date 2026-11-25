@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {feishuFailure, feishuHostReady, isFeishuHost, openedInFeishu} from './hostLogin.ts'
+import {feishuFailure, isFeishuHost, openedInFeishu} from './hostLogin.ts'
 
 test('isFeishuHost recognizes the Feishu H5 SDK and the test stub', () => {
   assert.equal(isFeishuHost({} as Window), false)
@@ -20,16 +20,6 @@ test('openedInFeishu knows the Feishu client from its user agent before the SDK 
   assert.equal(openedInFeishu(browser('Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/120.0 Safari/537.36 Lark/7.30.5 LarkLocale/zh_CN')), true)
   assert.equal(openedInFeishu(browser('Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 Feishu/7.30.0')), true)
   assert.equal(openedInFeishu({navigator: {userAgent: 'Chrome'}, __PPAP_FEISHU_HOST__: {login: async () => 'code'}} as unknown as Window), true)
-})
-
-test('feishuHostReady waits for the SDK only inside the Feishu client', async () => {
-  const lark = 'Mozilla/5.0 Chrome/120.0 Lark/7.30.5'
-  const later = {navigator: {userAgent: lark}, setTimeout: (fn: () => void) => setTimeout(fn, 1)} as unknown as Window & {h5sdk?: object; tt?: object}
-  setTimeout(() => {later.h5sdk = {}; later.tt = {requestAccess() {}}}, 5)
-  assert.equal(await feishuHostReady(later, 1000, 1), true)
-  const never = {navigator: {userAgent: lark}, setTimeout: (fn: () => void) => setTimeout(fn, 1)} as unknown as Window
-  assert.equal(await feishuHostReady(never, 20, 1), false)
-  assert.equal(await feishuHostReady({navigator: {userAgent: 'Chrome'}} as unknown as Window), false)
 })
 
 test('feishuFailure keeps what Feishu said when it refused', () => {

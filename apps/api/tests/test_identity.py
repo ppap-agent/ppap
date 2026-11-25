@@ -305,30 +305,6 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(legacy.headers["location"], "http://127.0.0.1:4173/")
         self.assertEqual(legacy.cookies.get("ppap_edition"), "legacy")
 
-    def test_enter_edition_in_the_feishu_client_leaves_sign_in_to_the_page(self):
-        with _clean_env(
-            FEISHU_APP_ID="cli_test",
-            FEISHU_APP_SECRET="secret",
-            PPAP_CURRENT_TENANT_ALLOWLIST="tk-live",
-            PPAP_WEB_URL="http://127.0.0.1:4173",
-            PPAP_PUBLIC_API_URL="http://127.0.0.1:8080",
-            PPAP_BUILD_SHA="a" * 40,
-        ):
-            settings = Settings()
-        client = self._oauth_client(_TokenHttp(), settings)
-        feishu = {"user-agent": "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/120.0 Safari/537.36 Lark/7.30.5 LarkLocale/zh_CN"}
-        target = "http://127.0.0.1:4173/tasks/task-1?round=round-1"
-        current = client.get("/enter-current", params={"return_to": target}, headers=feishu, follow_redirects=False)
-        self.assertEqual(current.status_code, 302)
-        self.assertEqual(current.headers["location"], target)
-        self.assertEqual(current.cookies.get("ppap_edition"), "current")
-        legacy = client.get("/enter-legacy", headers=feishu, follow_redirects=False)
-        self.assertEqual(legacy.headers["location"], "http://127.0.0.1:4173/")
-        self.assertEqual(legacy.cookies.get("ppap_edition"), "legacy")
-        browser = client.get("/enter-current", headers={"user-agent": "Mozilla/5.0 Chrome/120.0 Safari/537.36"}, follow_redirects=False)
-        self.assertIn("/login/feishu", browser.headers["location"])
-        self.assertFalse(browser.cookies.get("ppap_edition"))
-
     def test_enter_current_preserves_deep_links_through_oauth(self):
         from urllib.parse import parse_qs, urlsplit
 

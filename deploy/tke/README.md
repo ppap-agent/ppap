@@ -15,7 +15,7 @@ TKE qcloud Ingress only accepts NodePort / LoadBalancer Service. `edition-proxy`
 
 ## 版本入口
 
-ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `default legacy` 改为 current。新版选择入口 `/enter-current` 在登录和租户校验通过后，默认返回 `/tasks/new`；在飞书客户端里（User-Agent 带 `Lark/` 或 `Feishu/`）不走浏览器 OAuth，直接设版本 cookie 并回到页面，由页面用飞书内免登登录，租户名单在免登时校验，未放行的企业看到提示和回到原版的入口。可用 `return_to=<同源完整地址>` 保留任务、报告或历史轮次深链；外部地址及指回版本选择入口的地址回退到 `/tasks/new`。旧 `/audit` 和合法 Draft／Round／报告深链继续兼容。`/enter-legacy` 仍选择旧版并返回 `/`。版本 cookie 不是任务或报告的授权凭据。
+ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `default legacy` 改为 current。新版选择入口 `/enter-current` 在登录和租户校验通过后，默认返回 `/tasks/new`。未放行的企业在登录页看到提示和回到原版的入口。可用 `return_to=<同源完整地址>` 保留任务、报告或历史轮次深链；外部地址及指回版本选择入口的地址回退到 `/tasks/new`。旧 `/audit` 和合法 Draft／Round／报告深链继续兼容。`/enter-legacy` 仍选择旧版并返回 `/`。版本 cookie 不是任务或报告的授权凭据。
 
 ## 飞书票据：暂以旧版为来源
 
