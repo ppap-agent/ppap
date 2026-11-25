@@ -15,12 +15,13 @@ runs:
         set -euo pipefail
         debs="$HOME/.cache/excel-converter-debs"
         mkdir -p "$debs"
-        # A stale or partial cache only costs the normal apt install below.
-        if ! { compgen -G "$debs/*.deb" >/dev/null && sudo dpkg -i "$debs"/*.deb && command -v soffice >/dev/null; }; then
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libreoffice-calc fonts-noto-cjk
-          cp /var/cache/apt/archives/*.deb "$debs"/ 2>/dev/null || true
+        # Reuse downloads, not another runner's dependency selection. Apt fills any gaps.
+        if compgen -G "$debs/*.deb" >/dev/null; then
+          sudo cp "$debs"/*.deb /var/cache/apt/archives/
         fi
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends libreoffice-calc fonts-noto-cjk
+        cp /var/cache/apt/archives/*.deb "$debs"/ 2>/dev/null || true
         cc -O2 -Wall -Wextra -Werror packages/documents/native/legacy_doc_sandbox.c \
           -o "$RUNNER_TEMP/ppap-local-converter-sandbox"
         echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
