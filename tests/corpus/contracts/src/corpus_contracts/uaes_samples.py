@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -106,7 +107,7 @@ def precheck_actual(precheck: dict[str, Any], metadata: dict[str, Any], file_ver
 
 
 def run_batch(batch: Batch, suites: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """按产品路径提交一批，返回本批 ``files`` 的报告行：每份文件一行预检，每个条款一行审核结论。
+    """按产品路径提交一批，返回报告行：每份提交文件一行识别；本批 ``files`` 每份一行预检、一行检查用时，每个条款一行审核结论。
 
     ``suites`` 按目录叶子路径给出要运行的检查程序；不给时用人工真值所对应的冻结版本。"""
     from agent.execution.audit_runtime import run_audit
@@ -165,8 +166,8 @@ def run_batch(batch: Batch, suites: dict[str, Any] | None = None) -> list[dict[s
     metadata = {row["file"]["id"]: dict((row["match"] or {}).get("metadata") or {}) for row in rows}
 
     reported = {identity for identity, path in sources.items() if path in batch.files}
-    # Every submitted file recognition left out of the audit, and why (its notices), so a missing result has a cause to read.
-    missed: list[dict[str, Any]] = [
+    # How recognition took each submitted file, with its notices, so a missing result has a cause to read.
+    recognitions: list[dict[str, Any]] = [
         {
             "kind": "recognition",
             "batch": batch.label,
@@ -176,9 +177,8 @@ def run_batch(batch: Batch, suites: dict[str, Any] | None = None) -> list[dict[s
             "notices": (row["match"] or {}).get("gaps") or [],
         }
         for row in rows
-        if (row["match"] or {}).get("state") not in {"matched", "reference"}
     ]
-    report: list[dict[str, Any]] = missed + [
+    report: list[dict[str, Any]] = recognitions + [
         {"kind": "precheck", "batch": batch.label, "source": str(sources[identity].relative_to(REPO_ROOT)), "actual": precheck_actual(precheck, metadata[identity], identity)}
         for identity in sorted(reported)
     ]
@@ -220,7 +220,20 @@ def run_batch(batch: Batch, suites: dict[str, Any] | None = None) -> list[dict[s
     snapshot = ExecutionSnapshot("corpus", "uaes-sample-runner", tuple(inputs), tuple(targets), "corpus-source", library_revision(), {}, round_id=batch.id)
     by_digest = {"sha256:" + suite.revision_digest: suite for suite in suites.values()}
     programs = {target.binding.checker_digest: by_digest[target.suite_revision_id].program_files for target in targets}
-    result = run_audit(snapshot, {item.file_version_id: blobs[item.file_version_id] for item in inputs}, programs)
+    # When each target started, so each file's checking time can be set against the production budget per file.
+    starts: list[tuple[str, float]] = []
+    result = run_audit(
+        snapshot,
+        {item.file_version_id: blobs[item.file_version_id] for item in inputs},
+        programs,
+        on_task=lambda index: starts.append((targets[index].file_version_id, time.monotonic())),
+    )
+    ends = [at for _, at in starts[1:]] + [time.monotonic()]
+    report += [
+        {"kind": "timing", "batch": batch.label, "source": str(sources[identity].relative_to(REPO_ROOT)), "seconds": round(end - start, 1)}
+        for (identity, start), end in zip(starts, ends, strict=True)
+        if identity in reported
+    ]
     severity = {(target.file_version_id, str(rule["id"])): rule.get("severity") for target in targets for rule in target.rules["rules"]}
     for finding in result["findings"]:
         identity, clause = finding["file_version_id"], str(finding["clause_id"])
