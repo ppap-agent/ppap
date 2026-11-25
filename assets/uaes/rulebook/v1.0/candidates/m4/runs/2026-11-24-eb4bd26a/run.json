@@ -1,0 +1,66 @@
+{
+ "date": "2026-11-24",
+ "commit": "eb4bd26a1b82976ce663aafc441d5a638988090c",
+ "candidates": {
+  "path": "assets/uaes/rulebook/v1.0/candidates/m4/uaes",
+  "tree": "fbd7c4d97eac21e81a3046a84d885ac816de6430"
+ },
+ "benchmark": "assets/uaes/rulebook/v1.0/candidates/m4/benchmark",
+ "image": {
+  "tag": "ppap-app:b40cfd8816a4198241c1644d03eb3a80b2469aee",
+  "id": "sha256:d005759ca41a7eba9e501bcac90817799a84f351ffc7476b0aed0243e5e415cb"
+ },
+ "models": {
+  "text": "grok-4.7",
+  "text_reasoning_effort": "low",
+  "vision": "deepseek/deepseek-v4.1-flash-1017",
+  "vision_reasoning_effort": "none"
+ },
+ "command": "tests/corpus/in-app-image.sh -m corpus_contracts.candidate_run assets/uaes/rulebook/v1.0/candidates/m4/uaes --benchmark assets/uaes/rulebook/v1.0/candidates/m4/benchmark --batch <批次> ... --json",
+ "groups": [
+  {
+   "batches": [
+    "F01R20V040_磁性罩",
+    "F01RD0YA40_机加工壳体",
+    "F01RD0YA40_机加工壳体/MSA-test-缺少Kappa、粗糙度仪的Cgk不合格、缺少粗糙度仪的GRR"
+   ],
+   "seconds": 731
+  },
+  {
+   "batches": [
+    "F01R10Y527_节气门壳体",
+    "F01R20Y574_节气门壳体",
+    "F01RD0YA40_机加工壳体/A40 CPK-机加工 - test-缺32号关键尺寸、2号尺寸出错、16号尺寸NG.xlsx",
+    "F01RD0YA40_机加工壳体/控制计划-A40 -test-缺少清洗工序、125号关键尺寸无SPC管控、关键尺寸14.9遗漏 .xlsx"
+   ],
+   "seconds": 894
+  },
+  {
+   "batches": [
+    "F01R10Y776_机加壳体",
+    "F01RD0YA40_机加工壳体/F-PU-206_零件提交保证书_PartSubmissionWarrant_V03 -test-零件名称无、零件号错误、无签字盖章.xls"
+   ],
+   "seconds": 680
+  },
+  {
+   "batches": [
+    "F01R10DP4Z_名称待确认",
+    "F01R10Y777_毛坯壳体",
+    "F01R204778_水管内接头",
+    "F01RD0YC50_机加工壳体",
+    "F01RL0Y033_节气门壳体",
+    "通用文件/其他通用文件/6.2 分供方清单受控.xlsx",
+    "通用文件/其他通用文件/PFMEA_脱敏版.pdf",
+    "通用文件/其他通用文件/CPO-45薄膜电容器控制计划.xlsx",
+    "通用文件/其他通用文件/PSW_Bosch signed.pdf",
+    "通用文件/通用规范/1.3  原材料规范N28_AS0715_S004_2019-05-06 (2).pdf"
+   ],
+   "seconds": 390
+  }
+ ],
+ "alignment": {
+  "command": "uv run --no-sync python -m corpus_contracts.benchmark_diff assets/uaes/rulebook/v1.0/candidates/m4/benchmark assets/uaes/rulebook/v1.0/candidates/m4/runs/2026-11-24-eb4bd26a/results.jsonl",
+  "reference_commit": "748aaa1e",
+  "reference_blob": "fe64f5823b434ae171177f1af9091ecd423118c9"
+ }
+}
