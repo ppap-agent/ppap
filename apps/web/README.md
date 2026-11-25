@@ -21,7 +21,7 @@ DocumentServer 仅绑定本机 8082；生产需使用受信任的 DocumentServer
 
 ## 飞书授权
 
-普通登录请求 `offline_access`；需要创建报告文档时（`/login/feishu?purpose=report`）显式请求 `docx:document:create`、`docx:document:write_only`、`docx:document:readonly`、`docs:permission.setting:write_only`、`docs:permission.setting:read` 与 `docs:document.media:upload`（建文档并写入、读回、设为企业内只读并读回、附报告 PDF），普通登录不请求写权限；缺这些授权的旧登录在报告文档对话框里得到「重新登录飞书」。Cookie 与数据库会话上限 12 小时；会话内的飞书 access token 由 API 刷新，日志不输出凭据。
+普通登录请求 `offline_access`；需要创建报告文档时（`/login/feishu?purpose=report`）显式请求报告文档所需的用户授权（清单见 [apps/api/README](../api/README.md#飞书外部事实)），普通登录不请求写权限；缺这些授权的旧登录在报告文档对话框里得到「重新登录飞书」。Cookie 与数据库会话上限 12 小时；会话内的飞书 access token 由 API 刷新，日志不输出凭据。
 
 云文档插件（`/addon`）运行在飞书文档的内嵌框架里，浏览器不会带上本站 Cookie：它用 `POST /login/feishu/addon` 换取 2 小时的 Bearer 会话（只存在内存里，不能当作 Cookie 使用），页面的脚本、样式和 `runtime-config.json` 都从 `/addon/` 下加载。
 

@@ -7,7 +7,7 @@
 ## 工作方式
 
 - **资产**：`ppap-agent` GitHub 组织中的代码、配置、文档、测试、样本，以及我们能访问的远程环境，默认都是本项目可直接使用的授权资产，除非产品负责人明确排除。这不改变运行时边界：Secret 不能泄露，租户和对象访问必须经过产品授权，真实外部写操作按业务影响处理。
-- **权威**：产品目标是本文件与当前 owning Issue；当前行为是源码、数据库约束和测试；配置是 typed Settings、[`.env.dev`](.env.dev) / [`.env.production`](.env.production) 默认值与 [`.env.example`](.env.example)。Issue 是验收合同，不是实施顺序；一个 PR 可以推进多个 Issue。
+- **权威**：产品目标是本文件与当前 owning Issue；当前行为是源码、数据库约束和测试；配置是 typed Settings、[`.env.dev`](.env.dev) 默认值、[`.env.example`](.env.example) 与线上取值 [`deploy/tke/current.yaml`](deploy/tke/current.yaml)。Issue 是验收合同，不是实施顺序；一个 PR 可以推进多个 Issue。
 - **目标**：尽快完成迁移和开发，让客户尽早使用。走最短正确路径：复用现成资产 → 迁入本仓 → 跑 owning Issue 定义的测试 → 修 regression 或产品缺口 → 打通客户路径。一个内聚的包、测试集或配置整体迁入更快时就整体迁入，再删除无消费者部分。
 - **删除**：删除或替换功能时，同时删除只为它存在的测试、文档和配置。不新增 roadmap、CURRENT、Story/proof/evidence registry、manifest 或第二套状态台账；历史在 Git 和已关闭 Issue 里。
 - **最小上下文**：按 [context-reduce](https://github.com/ronhuafeng/skills-release/tree/main/catalog/engineering/context-reduce) 执行：只读本次需要的源码、测试和本文件相关一节；非必要不读旧分支、历史设计、旧 Issue、agent 日志或迁移记录。消除无当前消费者的代码、兼容层、重复概念和文档；用小范围测试守住真实不变量，重要外部效应必须读回验证。
@@ -76,7 +76,7 @@ PostgreSQL  对象存储
 - **执行**：Worker 用短事务领取工作（含过期租约重试，同一轮只增加 attempt），事务外执行，用当前 attempt 提交。审核执行 job 中冻结的 `ppap-checker-core` 与 Suite 快照；深度模式在一个 guest 里按文件执行，同组上下文共享，每份文件各自计时（`agent.execution.budget`：检查程序 3 分钟，深度复核 6 分钟），guest 每开始一个任务就报告进度，宿主每次再给一个任务时长（两者取大再加 1 分钟，即 7 分钟），超过它没有新进度才判定卡死，Worker 侧再多等 30 秒；一轮没有总时限。Worker 经有界 UDS 调 Controller，不持有 Docker socket；协议 `extra=forbid`，不接受路径、命令、挂载、镜像或环境变量。整次失败写结构化 failure，不伪造判定、不回退。生产要求 `PPAP_DEEP_RUNTIME=container-only` 与 `PPAP_DEEP_SANDBOX_PROFILE`（`off` 是降权容器，不是 gVisor/VM）；细节见 [deploy/deep](deploy/deep/README.md)。
 - 深度与标准受理都把实际执行配置的摘要写进 job（`DeepExecutionPolicy`、`standard-v1:`），执行前由真实 runtime 再核对，配置变化不替换旧轮次的策略；摘要不证明远端模型权重不变。
 - 原件预览可用 OnlyOffice（只读、单文件单租户十分钟凭证，Document Server 属于可信边界），没有时回退到有上限的摘录；`.doc` 在 Worker 里经受限的 LibreOffice 转换，没有运行时就明确失败。
-- **通知**（审核任务、报告 ZIP、规则问卷卡片、规则答复提醒）复用 `engine.jobs`，意图与业务事务一起提交，只由 API 进程领取和发送；Worker 不领取通知，也不持有飞书凭据。发送前以当前 claim 持久化发送边界；越过边界后超时不能证明未送达，未知保留，不自动重发。有效消息 ID 才算发送成功，不代表已读。待确认卡片能列全文件、规则与点数，且配置了卡片回调、未开启收费时，带「确认规则并开始审核」按钮：回调核实点击人后，在同一进程以本人身份调用网页同一个签字接口（带修订与依据摘要前提），结果写回卡片；其余卡片只放打开页面的链接（#355）。并发模型见 [NotificationDispatch](docs/models/NotificationDispatch.tla)（只证明安全性，不证明送达）。
+- **通知**（审核任务、报告 ZIP、规则问卷卡片、规则答复提醒）复用 `engine.jobs`，意图与业务事务一起提交，只由 API 进程领取和发送；Worker 不领取通知，也不持有飞书凭据。发送前以当前 claim 持久化发送边界；越过边界后超时不能证明未送达，未知保留，不自动重发。有效消息 ID 才算发送成功，不代表已读。待确认卡片能列全文件、规则与点数，且配置了卡片回调、未开启收费时（读飞书 AI 包要本人令牌，卡片点击不带），带「确认规则并开始审核」按钮：回调核实点击人后，在同一进程以本人身份调用网页同一个签字接口（带修订与依据摘要前提），结果写回卡片；其余卡片只放打开页面的链接（#355）。并发模型见 [NotificationDispatch](docs/models/NotificationDispatch.tla)（只证明安全性，不证明送达）。
 - 外部能力（飞书、Partner AI 计费、LLM/OCR、Deep Controller）都是可选能力，不成为 Core 启动或普通 CI 的前置。只有当前需求证明价值时才新增服务、框架或隔离层。
 
 ## 数据
@@ -105,7 +105,7 @@ audit_round
 - **重审**：读取 `GET /rounds/{id}/reaudit-inputs` 不新建业务；新任务经 `predecessor_id` 关联来源，不复制人工判断或机器结果；原文件可沿用原已发布规则，有新版时默认用新的并提醒；替换文件用 `replacement_of_file_version_id` 对应原输入；改选客户须重新识别。
 - **标准执行映射**：标准审核把用户确认的条款按原顺序绑定到该类型、该 profile 的固定顺序检查器，不做条款全文或语义裁决；超出可用检查器的条款标为未覆盖。只影响新受理。
 - **结果**：实际 PASS/NG 决定计数、文件结论和报告；证据核验标记、定位和范围说明是独立信息。不标「证据已验证」，机器证据一律提示对照原件核实；可执行或可重放不证明解释正确。显示更正按 Task、Round、FileVersion 共同定范围，与原始识别分开保存，不改冻结结果或报告。
-- **报告**：完成事务中为每个文件结果创建唯一 `report_pdf` 工作，固定本轮文件、规则、机器结果，不含人工记录；对象按工作与 attempt 隔离，只有获胜 attempt 可发布。ZIP 复用 `engine.jobs`（`report_zip_request` / `report_zip`），同一规范化集合只关联一个工作，恢复绑定原请求。报告分享冻结已授权报告，只在同组织已登录成员内可读。飞书报告文档以交付人身份建在其云空间，同一交付里设为企业内只读（凭链接可读、不能编辑、不对外分享），文首逐份写「以 PPAP 原件为准 · 查看原件 · 指纹」（报告 PDF 的 SHA-256 前 12 位，与报告页显示的一致，链接回报告页），文末附本轮冻结的报告 PDF，所以每份 PDF 都生成后才能交付；设只读或附 PDF 失败时文档照样交付，记录与回执写明，由交付人在结果页重试，不删除、不重发，附件不重复。
+- **报告**：完成事务中为每个文件结果创建唯一 `report_pdf` 工作，固定本轮文件、规则、机器结果，不含人工记录；对象按工作与 attempt 隔离，只有获胜 attempt 可发布。ZIP 复用 `engine.jobs`（`report_zip_request` / `report_zip`），同一规范化集合只关联一个工作，恢复绑定原请求。报告分享冻结已授权报告，只在同组织已登录成员内可读。飞书报告文档以交付人身份建在其云空间，同一交付里设为企业内只读（权限参数见 [apps/api/README](apps/api/README.md#飞书外部事实)），文首逐份写「以 PPAP 原件为准 · 查看原件 · 指纹」（报告 PDF 的 SHA-256 前 12 位，与报告页显示的一致，链接回报告页），文末附本轮冻结的报告 PDF，所以每份 PDF 都生成后才能交付；设只读或附 PDF 失败时文档照样交付，记录与回执写明，由交付人在结果页重试，不删除、不重发，附件不重复。
 - **授权**：同一企业成员都能查看该企业的任务、轮次、原件和历史；只有创建人能修改它以及挂在上面的一切（确认与开始审核、人工复核、事实确认、显示更正、报告重生成、写回与放行、文件新版本）。创建人取自各表的 `created_by`，不另存授权表；他人可基于同一结果发起自己的重审。UUID 不代表授权。未提交的上传准备只列给创建人；暂存上传完成前不能被受理。「补充模板」记在 `template_submissions`，同一 `request_id` 重放返回同一记录。
 - **用量与计费**：收费开启时，受理按选中的待审文件数 × 500 点生成用量（参考文件不计费，深度与标准同价）；显式重审产生新消费，技术重试和受理回放不产生；外部回执未知时保持未知、不自动重发。原件事实确认、深度模式数据与用量细则见 [docs/audit.md](docs/audit.md#数据细则)。
 
@@ -136,9 +136,9 @@ audit_round
 
 ## 开发
 
-- **配置**：按显式 `Settings(...)` 参数、进程环境、指定 dotenv、默认值依次取值，显式 `False`、空字符串不被低优先级覆盖。`.env.dev` 是 isolated-dev 默认（平台运营默认是测试身份 alice、carol），`.env.production` 是生产可沿用的默认（口令、S3、公开地址、LLM 留空）。收费开关 `PPAP_USAGE_CHARGE_ENABLED` 在 Settings、`.env.dev` 与 `.env.production` 默认开启，isolated-dev Compose 默认关闭，验证收费时显式打开。新增配置项前先确认它是独立运行决策。可选能力缺配置只影响该能力：Deep 由 `PPAP_DEEP_CONTROLLER_SOCKET` 表示是否配置，未配置时审核执行明确失败。放行企业用 `PPAP_CURRENT_TENANT_ALLOWLIST`（飞书 tenant_key，空即不限）。
-- **模型来源**：客户不选模型。平台模型分文本 `PPAP_MODEL_TEXT_*`、视觉 `PPAP_MODEL_VISION_*`（缺少时不借用文本配置）、Deep 编码 `PPAP_MODEL_CODING_*`（未配时沿用文本，base URL 与 model 须同时给）；企业 Key 存在时三种用途全部改用它。推理强度 `PPAP_MODEL_{TEXT,VISION,CODING}_REASONING_EFFORT`（编码默认 `medium`，部署取值见 `.env.production` 与 `deploy/tke/current.yaml`）。普通模型请求统一经 `documents.ai.run_json`：最多一次输出校正，不做传输重试，失败只返回代码；Schema 合法不等于业务正确。Deep 的每个 Attempt 只有请求次数熔断 `PPAP_DEEP_MODEL_MAX_REQUESTS`（默认 200）。
-- **命令**：提交前执行一次 `uv run --no-sync pre-commit install`（ruff check/format、mypy，以及 commit-msg 阶段的旧迁移、受保护资产与密钥检查；确有必要的例外在提交说明里写 `Protected-Change:`）。测试归属与运行见 [tests/README](tests/README.md)，CI 以 [Tests workflow](.github/workflows/tests.yml) 为准；数据库迁移见 [migrations/README](migrations/README.md)；部署见 [deploy/tke/README](deploy/tke/README.md)；isolated-dev 见 [deploy/isolated-dev](deploy/isolated-dev/README.md)。GitHub Actions 的外部模型测试用 `CI_LLM_API_KEY`、`CI_LLM_BASE_URL`、`CI_LLM_MODEL`。
+- **配置**：按显式 `Settings(...)` 参数、进程环境、指定 dotenv、默认值依次取值，显式 `False`、空字符串不被低优先级覆盖。`.env.dev` 是 isolated-dev 默认（平台运营默认是测试身份 alice、carol）；线上取值只在 `deploy/tke/current.yaml`（非秘密项）与 Secret `ppap-current`，本机工具要线上取值时用 `deploy/tke/configmap-env.sh` 读取。收费开关 `PPAP_USAGE_CHARGE_ENABLED` 在 Settings 与 `.env.dev` 默认开启，isolated-dev Compose 默认关闭，验证收费时显式打开。新增配置项前先确认它是独立运行决策。可选能力缺配置只影响该能力：Deep 由 `PPAP_DEEP_CONTROLLER_SOCKET` 表示是否配置，未配置时审核执行明确失败。放行企业用 `PPAP_CURRENT_TENANT_ALLOWLIST`（飞书 tenant_key，空即不限）。
+- **模型来源**：客户不选模型。平台模型分文本 `PPAP_MODEL_TEXT_*`、视觉 `PPAP_MODEL_VISION_*`（缺少时不借用文本配置）、Deep 编码 `PPAP_MODEL_CODING_*`（回退规则见 [deploy/deep](deploy/deep/README.md)）；企业 Key 存在时三种用途全部改用它。推理强度 `PPAP_MODEL_{TEXT,VISION,CODING}_REASONING_EFFORT`（编码默认 `medium`，线上取值见 `deploy/tke/current.yaml`）。普通模型请求统一经 `documents.ai.run_json`：最多一次输出校正，不做传输重试，失败只返回代码；Schema 合法不等于业务正确。Deep 的每个 Attempt 只有请求次数熔断 `PPAP_DEEP_MODEL_MAX_REQUESTS`（默认 200）。
+- **命令**：提交前执行一次 `uv run --no-sync pre-commit install`（ruff check/format、mypy，以及 commit-msg 阶段的旧迁移、受保护资产与密钥检查；确有必要的例外在提交说明里写 `Protected-Change:`）。测试归属与运行见 [tests/README](tests/README.md)，CI 以 [Tests workflow](.github/workflows/tests.yml) 为准；数据库迁移见 [migrations/README](migrations/README.md)；部署见 [deploy/tke/README](deploy/tke/README.md)；isolated-dev 见 [deploy/isolated-dev](deploy/isolated-dev/README.md)。外部模型测试用的 GitHub Secrets 见该 workflow。
 - **工具链**：Python 3.12（`.python-version`）、uv workspace（每个 owner 一份 `pyproject.toml`，`uv.lock` 是依赖权威，安装后用 `uv run --no-sync`）；Node 22（`.node-version`）、pnpm 由 `apps/web/package.json` 的 `packageManager` 决定；镜像图以 `docker-bake.hcl` 为准，Compose 只消费镜像；Actions 钉到不可变 commit SHA，只用托管的 `ubuntu-24.04`。生产镜像用 `uv sync --frozen --no-dev` 并以 editable 方式安装工作区包。
 - **Web 接口类型**：FastAPI 的 OpenAPI 是 Web JSON 形状的唯一权威；在 `apps/web` 运行 `pnpm api-types` 生成 `src/generated/openapi.ts`，CI 拒绝差异。生成物只拥有类型，重试、文案、缓存和视图状态手写。没有运行时操作的界面合同标 `x-contract-stage: ui-draft`。
 - **本地连现网**：本地 Web 或候选 API 可以连现网数据做联调，但写入是真实业务操作；不运行初始化、迁移、测试重置或额外 Worker，会收费、通知或受理的动作按联调范围控制。

@@ -137,7 +137,7 @@ run() {
   tunnel_pids+=("$!")
   (
     cd "$repo_dir"
-    docker buildx bake api web
+    docker buildx bake app web
   )
   "${compose[@]}" up --no-build -d --wait
   "${kctl[@]}" -n ppap-remote-dev exec ppap-remote-dev-bridge -- \

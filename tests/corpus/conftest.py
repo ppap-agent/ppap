@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,11 +20,10 @@ _active: list[Recorder] = []
 def pytest_configure(config: Any) -> None:
     """Send what production sends: recordings were made with the deployed vision effort."""
     name = "PPAP_MODEL_VISION_REASONING_EFFORT"
-    deployed = REPO_ROOT / ".env.production"
-    if name not in os.environ and deployed.is_file():
-        for line in deployed.read_text(encoding="utf-8").splitlines():
-            if line.startswith(name + "="):
-                os.environ[name] = line.split("=", 1)[1].strip()
+    if name not in os.environ:
+        deployed = subprocess.run([REPO_ROOT / "deploy/tke/configmap-env.sh", f"^{name}$"], capture_output=True, text=True, check=True).stdout
+        if deployed:
+            os.environ[name] = deployed.split("=", 1)[1].strip()
 
 
 def pytest_addoption(parser: Any) -> None:

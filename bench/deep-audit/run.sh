@@ -3,7 +3,7 @@
 #
 #   bench/deep-audit/run.sh [--name NAME] [--jobs N] [--effort low|medium|high|xhigh] [-- deep_eval.py run options]
 #
-# Non-secret deep configuration comes from .env.production (as deployed); the model endpoints
+# Non-secret deep configuration is the deployed one (deploy/tke/current.yaml); the model endpoints
 # and keys come from the repository-root .env. The models are the configured ones; only the
 # review's reasoning effort can change (--effort). Results go to bench/deep-audit/runs/<name>/.
 set -euo pipefail
@@ -44,7 +44,7 @@ chmod 0777 "$OUT"
 
 ENV_FILE=$(mktemp)
 trap 'rm -f "$ENV_FILE" "$ENV_FILE.next"' EXIT
-grep -E '^PPAP_(MODEL_[A-Z_]+_REASONING_EFFORT|DEEP_SANDBOX_PROFILE|DEEP_MODEL_MAX_REQUESTS|DEEP_EXECUTOR_REVISION)=' .env.production >"$ENV_FILE"
+deploy/tke/configmap-env.sh '^PPAP_(MODEL_[A-Z_]+_REASONING_EFFORT|DEEP_SANDBOX_PROFILE|DEEP_MODEL_MAX_REQUESTS|DEEP_EXECUTOR_REVISION)$' >"$ENV_FILE"
 grep -E '^PPAP_MODEL_(TEXT|VISION|CODING)_(API_KEY|BASE_URL|MODEL)=' .env >>"$ENV_FILE"
 echo "PPAP_BUILD_SHA=$SHA" >>"$ENV_FILE"
 if [[ -n "$EFFORT" ]]; then

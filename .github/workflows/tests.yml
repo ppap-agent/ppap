@@ -282,7 +282,7 @@ jobs:
     timeout-minutes: 120
     env:
       PPAP_MODEL_TEXT_REASONING_EFFORT: low
-      # As deployed: the OCR model reads with reasoning off (.env.production); recordings were made so.
+      # As deployed: the OCR model reads with reasoning off (deploy/tke/current.yaml); recordings were made so.
       PPAP_MODEL_VISION_REASONING_EFFORT: none
     strategy:
       fail-fast: false

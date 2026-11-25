@@ -13,7 +13,7 @@ TKE qcloud Ingress only accepts NodePort / LoadBalancer Service. `edition-proxy`
 
 `kustomization.yaml` owns the Kubernetes manifests. CI renders them with the Kustomize version pinned in `render-current.sh` and validates them with kubeconform. Operators deploy with the native commands below.
 
-## Alpha 入口边界
+## 版本入口
 
 ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `default legacy` 改为 current。新版选择入口 `/enter-current` 在登录和租户校验通过后，默认返回 `/tasks/new`。可用 `return_to=<同源完整地址>` 保留任务、报告或历史轮次深链；外部地址及指回版本选择入口的地址回退到 `/tasks/new`。旧 `/audit` 和合法 Draft／Round／报告深链继续兼容。`/enter-legacy` 仍选择旧版并返回 `/`。版本 cookie 不是任务或报告的授权凭据。
 
@@ -73,7 +73,7 @@ is needed. Only preview caches are ephemeral; originals remain in PPAP storage.
 
 - **推送前**：在本机跑受影响范围的 CI 等效测试，通过再推：`python3 -m scripts.ci_shards integration`（需要 Docker），`distributions --shard <n>`，以及相关单元测试。本地 API 测试用的开发数据库要先起来。
 - **构建**：`deploy/tke/build-current.py <完整 SHA>` 在云效流水线构建，本机只是发起和等待（细节见下文「构建镜像」）。并发由云效自己排队；中断后用 `--run-id` 续读原运行，不盲目重发。构建期间不改 `deploy/tke/current.yaml`。改 `pyproject.toml` 或 `uv.lock` 会让依赖基础层失效、要求先重建基础层，非依赖改动不要碰这两个文件。
-- **部署**（ppap-test，整套一起）：有新迁移时先更新 ConfigMap `ppap-current-migrations` 并重跑 Job `ppap-current-init-db`，读回 `product.schema_migrations`；再按下文「更新镜像或应用清单」应用 ConfigMap、Deployment 和 CronJob，等滚动更新完成，再运行 Job `ppap-current-seed-suites` 把本次的检查程序叶子写入 Suite（见下文）；提交 `current.yaml` 的镜像版本。个人标识和密钥只放根目录 `.env` 与 Secret `ppap-current`，容器只按 key 引用，不进 git。
+- **部署**（ppap-test，整套一起）：有新迁移时先更新 ConfigMap `ppap-current-migrations` 并重跑 Job `ppap-current-init-db`，读回 `product.schema_migrations`；再按下文「更新镜像或应用清单」应用 ConfigMap 和 Deployment，等滚动更新完成，再运行 Job `ppap-current-seed-suites` 把本次的检查程序叶子写入 Suite（见下文）；提交 `current.yaml` 的镜像版本。个人标识和密钥只放根目录 `.env` 与 Secret `ppap-current`，容器只按 key 引用，不进 git。
 - **线上验证**：用真实客户端走真实路径，读回页面上看得到的结果；授权页和签字类提议的网页在内置浏览器里点。会改动真实客户数据、且无法撤回的步骤（如关闭真实问卷、往里加卡片），改在单独的测试版本上验证，并告诉产品负责人留下了哪些测试数据。扣点数的操作先说明点数。
 
 ## Authoritative release procedure
@@ -102,7 +102,7 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 |---|---|---|
 | `PPAP_MODEL_GROK_4_7_MODEL`、`PPAP_MODEL_GROK_4_7_BASE_URL` | ConfigMap `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_TEXT_MODEL`、`PPAP_MODEL_TEXT_BASE_URL` |
 | `PPAP_MODEL_GROK_4_7_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_TEXT_API_KEY`（Suite 程序的文本调用经本地网关）|
-| `PPAP_MODEL_CODING_*` | 当前未设置：Coding 使用文本模型（grok-4.7） | 需要 Deep 专用模型时，在所有容器把 `PPAP_MODEL_CODING_*` 指向那个模型的分组 |
+| `PPAP_MODEL_CODING_*` | 当前未设置，Deep 沿用文本模型 | 见下文「Deep 配置」 |
 | `PPAP_MODEL_DEEPSEEK_FLASH_4_1_MODEL`、`PPAP_MODEL_DEEPSEEK_FLASH_4_1_BASE_URL` | Secret `ppap-current` | API、Worker、Deep 的 `PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_BASE_URL` |
 | `PPAP_MODEL_DEEPSEEK_FLASH_4_1_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_VISION_API_KEY`；不向 Deep guest 注入 |
 | `PPAP_MODEL_{TEXT,VISION,CODING}_REASONING_EFFORT` | ConfigMap `ppap-current` | 各用途的推理强度，取值见 `current.yaml`，含义见 [AGENTS.md](../../AGENTS.md#开发)「模型来源」 |
@@ -202,7 +202,7 @@ kubectl -n ppap-test logs deployment/ppap-current-api -c api --since=10m --tail=
 
 ### 构建镜像
 
-构建工具只负责构建和写入四个镜像 pin，不操作部署。源文件与测试由正常 CI 负责，不在每次部署前同步重跑。
+构建工具只负责构建和写入三个镜像 pin，不操作部署。源文件与测试由正常 CI 负责，不在每次部署前同步重跑。
 
 默认使用云效 Flow 5339663，在香港 Runner 构建并发布到私有 TCR。只在操作进程中注入 `ALIYUN_DEV_OPS_TOKEN`，凭据来源见 hax 环境配置。
 
@@ -212,7 +212,7 @@ python3 deploy/tke/build-current.py <full-source-sha>
 python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 ```
 
-构建使用固定 Codeup 分支 `codex/ppap-current-release`；完整 SHA 通过单次运行参数传入，作业检出该 commit 后再构建。分支后续移动不改变本次源码，流水线允许并发，不按提交创建分支。`yunxiao.yaml` 变更时同步云效定义一次；普通构建只启动和读取自己的运行，不修改共享流水线。构建复用 `docker-bake.hcl` 的四目标图和缓存，核对构建回执与镜像源码身份、digest 后写入 `current.yaml`；若清单在构建期间被改动则保留新内容，不覆盖其他操作的选择。提交这些 pin 后，使用上面的原生部署命令。
+构建使用固定 Codeup 分支 `codex/ppap-current-release`；完整 SHA 通过单次运行参数传入，作业检出该 commit 后再构建。分支后续移动不改变本次源码，流水线允许并发，不按提交创建分支。`yunxiao.yaml` 变更时同步云效定义一次；普通构建只启动和读取自己的运行，不修改共享流水线。构建复用 `docker-bake.hcl` 的三目标图和缓存，核对构建回执与镜像源码身份、digest 后写入 `current.yaml`；若清单在构建期间被改动则保留新内容，不覆盖其他操作的选择。提交这些 pin 后，使用上面的原生部署命令。
 
 依赖层单独构建（基础镜像，三级）：依赖层分三级，各自只在自己的输入（或下一级）变化时构建一次，推送为 `current-system`、`current-deps`、`current-deep-base`，标签是该级的输入摘要（`deploy/tke/bases.py`）；`deploy/tke/base-images.json` 记录每级的输入摘要与镜像 digest。
 
@@ -228,11 +228,11 @@ python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 - 任一级记录与源码输入不一致时，`build-current.py` 和流水线都拒绝正式构建。
 - 本地与 GitHub CI 仍按 Dockerfile 内的阶段原地构建（`PPAP_SYSTEM_BASE`、`PPAP_DEPS_BASE`、`PPAP_APP_BASE` 的默认值），不需要镜像仓库。
 
-构建保持四组件统一源码 SHA，一次 Bake 共享步骤并按依赖调度；不增加按文件选择组件的发布分支。API、Worker、Deep 出自同一个 `deploy/app/Dockerfile`：基础镜像（按 digest 固定）→ uv → 系统包（`system`）→ 第三方依赖（`deps`，只随 `uv.lock` 变）→ Deep 的 Node/Pi（`deep-base`，只随 `deploy/deep` 的锁文件和 runner 变）→ 源码。转换沙箱在 `deps` 级编译放入（流水线的 inline 缓存不保存中间阶段，放在源码阶段会让每次发布都重装 gcc），只随它的 C 源码变。只改源码的发布只重推源码层。依赖校验和打包后的 import 检查继续保留。
+构建保持三组件统一源码 SHA，一次 Bake 共享步骤并按依赖调度；不增加按文件选择组件的发布分支。API、Worker、Deep 出自同一个 `deploy/app/Dockerfile`：基础镜像（按 digest 固定）→ uv → 系统包（`system`）→ 第三方依赖（`deps`，只随 `uv.lock` 变）→ Deep 的 Node/Pi（`deep-base`，只随 `deploy/deep` 的锁文件和 runner 变）→ 源码。转换沙箱在 `deps` 级编译放入（流水线的 inline 缓存不保存中间阶段，放在源码阶段会让每次发布都重装 gcc），只随它的 C 源码变。只改源码的发布只重推源码层。依赖校验和打包后的 import 检查继续保留。
 
 云效公共 Runner 使用原生 Docker 驱动和 inline 缓存，导出到现有各组件的 `:build-cache` 镜像；缓存 tag 不能作为部署 pin。该节点实际拒绝 `docker-container` BuildKit 启动（`flow not support`），因此不启用依赖该驱动的 registry `mode=max` 中间阶段缓存，也不为缓存新增构建服务。中间阶段（转换沙箱编译、Pi 的 npm 安装、Web 的 pnpm 安装）每次重新执行，但它们的产物都放在依赖层之上，不会引起大层重推。镜像站或仓库连接中断时，构建在流水线内最多重试两次，已完成的步骤走缓存。临时 Runner 的本地 uv cache mount 不保证跨运行持久化；实际缓存收益由构建步骤耗时确认。
 
-默认入口先验证该 SHA 的四个镜像；全部存在且身份正确则直接复用，不读取历史成功运行。仅有镜像明确缺失时直接发起构建，不查询其他运行：云效自己排队并发。历史运行通过 `--run-id` 显式恢复，不逐条读取成功历史。
+默认入口先验证该 SHA 的三个镜像；全部存在且身份正确则直接复用，不读取历史成功运行。仅有镜像明确缺失时直接发起构建，不查询其他运行：云效自己排队并发。历史运行通过 `--run-id` 显式恢复，不逐条读取成功历史。
 
 每次保留 digest／config 字节、平台及源码身份验证；仓库匿名访问检查移至 TCR 创建或访问权限变更时，由权限维护者确认仓库及镜像不能匿名拉取。日常构建只执行正常认证拉取，不重复申请匿名 token、探测公开权限。网络、认证或身份验证失败不当作“镜像不存在”，不能据此重新触发构建。
 
@@ -240,6 +240,6 @@ python3 deploy/tke/build-current.py <full-source-sha> --run-id <run-id>
 
 ## Deep 配置
 
-现网 Deep 沿用文本模型（`PPAP_MODEL_TEXT_*`，即 grok-4.7）。需要 Deep 专用模型时，在每个容器把 `PPAP_MODEL_CODING_BASE_URL`、`PPAP_MODEL_CODING_MODEL`、`PPAP_MODEL_CODING_API_KEY` 指向那个模型的分组；端点与模型须同时设置，只设其一或只给 Deep 密钥都会在调用时报 Deep 模型配置不完整（`deep_model_config_incomplete`），不会改用文本模型。`PPAP_MODEL_CODING_REASONING_EFFORT` 属于 Deep。
+现网 Deep 沿用文本模型（`PPAP_MODEL_TEXT_*`）。要换 Deep 专用模型时，在每个容器把 `PPAP_MODEL_CODING_*` 指向那个模型的分组；回退与配置不完整的规则见 [deploy/deep](../deep/README.md)。
 
 Worker 与 Deep Controller 共享 `/run/ppap-deep` 的 UDS。配置变更后直接重启其 Deployment；UDS 可用只表示进程连通，不证明真实 Deep 审核成功。当前 `container-only` / sandbox `off` 的能力边界仍见 `deploy/deep/README.md`。

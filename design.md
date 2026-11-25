@@ -196,10 +196,8 @@ Typography prioritizes tabular alignment, compact tracking, and vertical rhythm.
 
 The layout is built on a condensed 12-column fluid grid tailored for maximum dashboard efficiency and operational visibility.
 
-- **Breakpoints**: Desktop (≥1280px), Tablet (768px–1279px), Mobile (<768px).
+- **Viewport**: desktop only, at least 1280px wide (see apps/web/README).
 - **Desktop & Workstations**: Layout leverages side-by-side split panes and persistent audit trails. Gutters sit at `1rem`, with tight element clusters using `0.5rem` and `0.75rem`.
-- **Vertical Rhythm**: Compact table row heights (36px default, 32px dense) allow high-volume scanning of line items without scroll exhaustion.
-- **Reflow Rules**: On viewports below 1024px, secondary inspector panels collapse into sliding drawer sheets; tables shift to horizontally scrollable viewports with frozen primary identifier columns.
 
 ## Page Frame
 
@@ -261,12 +259,6 @@ Depth comes from the page tone, not from shadows or heavy lines.
 ### Form Inputs & Checkboxes
 - **Inputs**: Height 36px, background `#FFFFFF`, border 1px solid `#DEE0E3`, padding 0 12px, 6px radius. Focus: border `#1456F0`, box-shadow `0 0 0 1px #1456F0`.
 - **Checkboxes**: 16px square, 4px radius, border 1px solid `#DEE0E3`. Checked state: `#1456F0` background with white checkmark icon.
-
-### Inspection Cards
-- Structured 3-tier card layout:
-  1. *Header*: 12px top/bottom padding, subtle background `#F5F6F7`, border-bottom 1px `#E4E6E9`, housing part ID, revision code, and status badge.
-  2. *Body*: White `#FFFFFF`, standard 16px padding, organized into key-value specification pairs with vertical divider lines.
-  3. *Action Footer*: 8px padding, right-aligned micro-actions (Audit, Sign-off, Reject).
 
 ### Notices
 - A notice is a quiet bar, not a card: `#F2F3F5` (or a red tint for a failure), 6px corners, no outline, a medium title and 14px muted text. Copy-confirmations and other passing results are one line of status text, not a block.

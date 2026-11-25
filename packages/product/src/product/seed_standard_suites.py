@@ -137,7 +137,7 @@ def publish_repository_defaults(releases: Any, seeded: list[dict[str, str]]) -> 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Write official revisions using configured migrator and object storage credentials.")
-    parser.add_argument("--publish-defaults", action="store_true", help="With --apply: make each leaf the official default where no official head exists.")
+    parser.add_argument("--publish-defaults", action="store_true", help="With --apply: make each leaf the official default where no official head exists or the head is still a repository default.")
     args = parser.parse_args()
     if args.publish_defaults and not args.apply:
         parser.error("--publish-defaults requires --apply")

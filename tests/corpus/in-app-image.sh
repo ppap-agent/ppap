@@ -7,7 +7,7 @@
 #
 # The image is PPAP_APP_IMAGE, else the newest local ppap-app tag (build one with `docker buildx bake app` when there is none).
 # The platform models are the PPAP_MODEL_TEXT_* / PPAP_MODEL_VISION_* lines of the repository-root .env, passed through a
-# temporary env file that is removed afterwards and never printed; their reasoning effort is production's, from .env.production. Output goes to this shell; nothing in the checkout is written.
+# temporary env file that is removed afterwards and never printed; their reasoning effort is the deployed one, from deploy/tke/current.yaml. Output goes to this shell; nothing in the checkout is written.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 image=${PPAP_APP_IMAGE:-$(docker images ppap-app --format '{{.Repository}}:{{.Tag}}' | head -1)}
@@ -15,7 +15,7 @@ image=${PPAP_APP_IMAGE:-$(docker images ppap-app --format '{{.Repository}}:{{.Ta
 envfile=$(mktemp)
 trap 'rm -f "$envfile"' EXIT
 chmod 600 "$envfile"
-grep -E '^PPAP_MODEL_(TEXT|VISION)_REASONING_EFFORT=' "$root/.env.production" > "$envfile"
+"$root/deploy/tke/configmap-env.sh" '^PPAP_MODEL_(TEXT|VISION)_REASONING_EFFORT$' > "$envfile"
 [ -f "$root/.env" ] && grep -E '^PPAP_MODEL_(TEXT|VISION)_' "$root/.env" >> "$envfile" || true
 docker run --rm --env-file "$envfile" -e PYTHONPATH=/app/tests/corpus/contracts/src \
   -v "$root/packages:/app/packages:ro" -v "$root/apps:/app/apps:ro" -v "$root/assets:/app/assets:ro" -v "$root/tests:/app/tests:ro" \

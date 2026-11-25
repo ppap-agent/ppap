@@ -897,10 +897,7 @@ spec:
               configMap:
                 name: legacy-ticket-sync
 ---
-# The checkers new rounds run are the Suite rows in the database, not the image's files. Each deploy loads
-# the release's checker leaves (rules.json, checker.py, resources.py) and makes them the official default
-# where the head is a repository default; a head published with a corpus proof, or a tenant's pinned
-# revision, is never replaced. Frozen rounds keep their revisions. Re-run per deploy (README 发布 SOP).
+# Loads this release's checker leaves into Suites; re-run per deploy (README「更新镜像或应用清单」).
 apiVersion: batch/v1
 kind: Job
 metadata:

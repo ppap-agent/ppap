@@ -3,7 +3,6 @@
 .env.*
 !.env.example
 !.env.dev
-!.env.production
 node_modules/
 **/.pnpm-store/
 dist/

@@ -7,7 +7,7 @@
 | 是什么 | 权威 | 谁改、怎么改 |
 |---|---|---|
 | 审核用的规则（受理时冻结进轮次） | 检查程序目录叶子的 `packages/audit/src/audit/checkers/<公司>/<叶子>/rules.json` → `scripts/compile_v4_presets.py` 编译成 `packages/audit/src/audit/preset_rules.json`（CI 用 `--check` 防漂移）→ 企业成员登录时装进 `product.rule_versions` | 线下改叶子并编译，随发布生效；产品内没有入口 |
-| 检查程序 | 目录叶子的 `checker.py`/`resources.py`，按客户成组；官方版本经 `product.seed_standard_suites` 与 `python -m scripts.official_suites` 验证、发布（见 [tests/README](../tests/README.md#官方-suite-验证与发布)） | 线下改叶子，每次部署由 Job `ppap-current-seed-suites` 写入（仓库默认的官方指针随之更新，经语料证明发布的不被替换）；企业采用版本经 `PUT /suites/{key}/active`（只给平台运营，无网页入口；成员可用 `GET` 读当前版本；无指针时返回 `candidate_only`，未验证候选须确认风险；发布回执未知只读回） |
+| 检查程序 | 目录叶子的 `checker.py`/`resources.py`，按客户成组；官方版本经 `product.seed_standard_suites` 与 `python -m scripts.official_suites` 验证、发布（见 [tests/README](../tests/README.md#官方-suite-验证与发布)） | 线下改叶子，每次部署由 Job `ppap-current-seed-suites` 写入（哪些指针随之切换见 [deploy/tke/README](../deploy/tke/README.md#更新镜像或应用清单)）；企业采用版本经 `PUT /suites/{key}/active`（只给平台运营，无网页入口；成员可用 `GET` 读当前版本；无指针时返回 `candidate_only`，未验证候选须确认风险；发布回执未知只读回） |
 | 规则库修订（澄清中的客户规则） | `product.rulebook_revisions`（每个企业一份；条款存在 `rule_versions`，带 `rulebook_revision_id`，不进入审核匹配） | 规则澄清循环（MCP）或导入命令；写入后冻结 |
 
 另外两条独立路径：企业自定义规则经 `POST /rules`、`/rules/parse`（只给平台运营，无网页入口；发布为企业自己的不可变 Suite，条款先全部为未检查，检查程序由平台线下准备后作为新修订提供；同一前置规则已有后继时返回 `suite_head_conflict`），数据标准化预检（`product.precheck*`）不读规则、不调检查程序。网页规则页对这些都只读，唯一的写是客户成员作答问卷。MCP 的审核流程只按客户 key 选规则组，不改规则。
@@ -19,7 +19,7 @@
 - 确认人是产品负责人（平台运营身份 `PPAP_PLATFORM_OPERATORS`，格式 `tenant_key:open_id`，空即无人可写）。受委托的审查方（`PPAP_CLAUSE_REVIEWERS`）只准备、不确认、不作答。
 
 **澄清一轮怎么走**
-1. **收规则**：客户规则线下发来。平台按原件拆成修订目录 `<客户>/rulebook/<版本>/m<修订>/rules/<缩写>.json`，用 `python -m product.rulebook_import check <目录> --original <原件>` 逐句核对原文（不调模型；Markdown 排版与空白不计）；通过后 `bundle` 输出请求体（stderr 给出路径），平台运营身份登录 PPAP 后在同一站点把它 POST 到 `/ppap/rulebooks/<客户>/revisions`（Cookie 会话）。也可由 Claude 经 MCP 提交拆好的条款，审查、解读在冻结前就准备（见下）。不做在线导入。随产品发布的规则库目录（`assets/<客户>/rulebook`）在企业成员登录时原样写入。
+1. **收规则**：客户规则线下发来。平台按原件拆成修订目录 `<客户>/rulebook/<版本>/m<修订>/rules/<缩写>.json`（线下导入用 `rules/`；经 MCP 冻结的修订目录是 `条文/`），用 `python -m product.rulebook_import check <目录> --original <原件>` 逐句核对原文（不调模型；Markdown 排版与空白不计）；通过后 `bundle` 输出请求体（stderr 给出路径），平台运营身份登录 PPAP 后在同一站点把它 POST 到 `/ppap/rulebooks/<客户>/revisions`（Cookie 会话）。也可由 Claude 经 MCP 提交拆好的条款，审查、解读在冻结前就准备（见下）。不做在线导入。随产品发布的规则库目录（`assets/<客户>/rulebook`）在企业成员登录时原样写入。
 2. **审查**：经 MCP `prepare_rule_clarification` 打开这个版本的澄清任务（一个企业对一个客户的一个版本只有一个），按 `next` 走。审查的是下一次确认要冻结的写法：草稿、改写后的下一修订，或当前修订。每条条款用 [`clause-check`](../.agents/skills/clause-check/SKILL.md) 审查并提交审查记录，没有问题也要提交；服务端用该技能的 `check.py` 校验，不合格之处一次列全。效果用 [`bench/clause-check`](../bench/clause-check/README.md) 对比。
 3. **发问卷**：发现由该技能 `questionnaire.py` 的同一个函数做成卡片（修订 0 的卡片编号是发现编号如 `CP:8#1`，之后的修订带修订号如 `CP:8#r1.1`）。卡片在下一次确认里作为单独一步，标着「会发给客户」，默认不勾，平台负责人勾选并确认后才进入问卷，可分批追加；修订冻结后、标记已澄清前，准备人还可以给已审查的条款补一条发现（`add_finding`，和审查记录一样校验引用，原审查记录不改），它成为下一次确认里的一张待发卡片；发卡不通知任何人，需要作答的人由团队另行告知。要让另一个企业也作答，用 `questionnaire.py` 以迁移身份线下导入，各企业答复分开保存。答复按人分开、追加保存，不设最终答复。客户成员保存答复时（#354），这个版本澄清任务的准备人和平台负责人收到飞书通知（答复人自己除外），点开是规则页上那张卡片；同一修订每人 10 分钟最多一条，其间的答复到点合并成下一条。没有澄清任务的问卷不通知；规则页上可按人、按版本点「这个版本不再提醒」，答复仍在规则页可看。MCP 等答复时的 `next.wait` 也这样说明，客户端不必反复查看。
 4. **处理答复**：对有答复的条款，按答复改写并写明依据的卡片，或说明不需要改，或追问（`follows` 指向原卡片）。答复不一致由产品负责人取舍。条款依赖平台已确认、但条文没有写进去的口径时，也可以按平台裁定改写，依据写裁定原文；只在没有待处理的答复时可用，同样在冻结前重新审查。改写按 [`clause-rewrite`](../.agents/skills/clause-rewrite/SKILL.md) 做；改写和改写后的审查记录都由 agent 逐条读原文、答复或裁定后亲手写出，不用脚本批量生成、套用、分发或沿用；脚本只做格式校验、提交、导入导出这类流程，不参与语义。
@@ -46,7 +46,7 @@
 
    人工真值不是切换的前提：先发布，让人看到新修订的真实结果，再由他们给出对着这一修订的真值。旧修订的真值仍绑定它判定时的修订，回归通过不等于新修订验收。
 
-   切换离线进行：把对着这一修订写的候选叶子换进已安装目录（候选目录留作历史），在 `scripts/compile_v4_presets.py` 的 `REVISIONS` 指向这一修订的 `条文/` 目录并重编预置规则；部署后 Job `ppap-current-seed-suites` 把新叶子写成 Suite，官方指针仍是仓库默认的随之切换，其余按官方流程发布或由企业改选。
+   切换离线进行：把对着这一修订写的候选叶子换进已安装目录（候选目录留作历史），在 `scripts/compile_v4_presets.py` 的 `REVISIONS` 指向这一修订的 `条文/` 目录并重编预置规则；部署后 Job `ppap-current-seed-suites` 把新叶子写成 Suite（指针切换见 [deploy/tke/README](../deploy/tke/README.md#更新镜像或应用清单)）。
 
 **用户看到什么**：规则页按客户列出修订（「v1.0 修订 1」），标出已澄清、每条相对上一修订的改动与依据（可跳到对应卡片）、解读和待确认问题。
 

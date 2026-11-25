@@ -83,7 +83,7 @@ PPAP_CORPUS_REPORT_DIR=.log/samples-report uv run --no-sync pytest tests/corpus/
 uv run --no-sync python -m corpus_contracts.uaes_evaluation .log/samples-report
 ```
 
-本机直接跑样本、候选检查程序或回放读取时，先用 [`in-app-image.sh`](corpus/in-app-image.sh) 放进本地 `ppap-app` 镜像里跑：和线上 Worker 同一个 LibreOffice 与转换沙箱（Excel 原件渲染、EMF 和旧格式转换在 macOS 宿主上会失败），当前代码只读挂载，平台模型取根目录 `.env` 的 `PPAP_MODEL_TEXT_*`、`PPAP_MODEL_VISION_*`，推理强度取 `.env.production`（与线上一致）。镜像依赖要与当前 `uv.lock` 一致，不一致时先重建镜像。
+本机直接跑样本、候选检查程序或回放读取时，先用 [`in-app-image.sh`](corpus/in-app-image.sh) 放进本地 `ppap-app` 镜像里跑：和线上 Worker 同一个 LibreOffice 与转换沙箱（Excel 原件渲染、EMF 和旧格式转换在 macOS 宿主上会失败），当前代码只读挂载，平台模型取根目录 `.env` 的 `PPAP_MODEL_TEXT_*`、`PPAP_MODEL_VISION_*`，推理强度取 `deploy/tke/current.yaml`（与线上一致）。镜像依赖要与当前 `uv.lock` 一致，不一致时先重建镜像。
 
 ```sh
 tests/corpus/in-app-image.sh -m corpus_contracts.candidate_run assets/uaes/rulebook/v1.0/candidates/m4/uaes/U18 --part F01R204778_水管内接头 --json
@@ -99,7 +99,7 @@ tests/corpus/in-app-image.sh -m corpus_contracts.candidate_run assets/uaes/ruleb
 
 ### 官方 Suite 验证与发布
 
-官方 Suite 的安装、回归与发布是三个动作。仓库自带的目录叶子已离线验证，`product.seed_standard_suites --apply --publish-defaults` 在入库后直接把每个叶子设为官方默认（`repository_default`，不需要语料证明行），已有官方指针的规则组不会被覆盖，关联叶子先发布；企业未自选时自动跟随，显示为已验证。`product.seed_standard_suites --apply` 只保存 `checkers/<客户>/<规则组>/` 目录叶子的不可变候选。平台以 migrator 角色调用 `SuiteReleaseStore.record_official_validation` 保存独立回归证明，再调用 `publish_official(revision_id, expected_revision=..., expected_validation_revision=...)` 发布；发布前用 `official_active(suite_key)` 读取官方指针修订（首次为 0）。发布在同一事务内重查证明、当前关联 Suite、共享库版本及对象字节，并以 CAS 更新唯一官方指针。验证或保存新候选不会替换当前官方版本；回滚也须显式发布准确旧版本。
+官方 Suite 的安装、回归与发布是三个动作。仓库自带的目录叶子已离线验证，`product.seed_standard_suites --apply --publish-defaults` 在入库后把叶子设为官方默认（`repository_default`，不需要语料证明行；哪些指针随部署切换见 [deploy/tke/README](../deploy/tke/README.md#更新镜像或应用清单)），关联叶子先发布；企业未自选时自动跟随，显示为已验证。`product.seed_standard_suites --apply` 只保存 `checkers/<客户>/<规则组>/` 目录叶子的不可变候选。平台以 migrator 角色调用 `SuiteReleaseStore.record_official_validation` 保存独立回归证明，再调用 `publish_official(revision_id, expected_revision=..., expected_validation_revision=...)` 发布；发布前用 `official_active(suite_key)` 读取官方指针修订（首次为 0）。发布在同一事务内重查证明、当前关联 Suite、共享库版本及对象字节，并以 CAS 更新唯一官方指针。验证或保存新候选不会替换当前官方版本；回滚也须显式发布准确旧版本。
 
 首次启用先按关联依赖顺序验证并发布官方 Suite，再受理跟随官方版本的审核。既有 latest 或验证记录不被当作发布批准，未激活的官方源仍可按 revision 查看。没有固定企业版本的租户仅跟随已发布官方指针，企业明确固定某个官方或企业 revision 后不会被后续官方发布覆盖。显式发布只影响之后的新 Round，已冻结 Round 继续使用原修订。
 
@@ -140,7 +140,7 @@ CI 和开发环境的模型用量属于开发预算，不设限额。每个样�
 
 ### 模型回答
 
-默认回放：完整请求摘要与录制一致才复用回答，摘要包括图片内容、提示词、Schema、预算、视觉请求选项和独立观察编号；图片尺寸只用于可读展示。视觉选项是配置的推理强度 `PPAP_MODEL_VISION_REASONING_EFFORT`（语义见 [AGENTS.md](../AGENTS.md#开发)「模型来源」；本地未设置时语料入口取 `.env.production` 的值），严格离线、带 Key 回放、CI 与线上一致。缺少匹配录制时，只有显式配置测试模型才真实调用，用例通过后记录回答。用例失败时不记录，下次重新询问；因此通过用例的录制仅作逻辑回归样本，不作为准确率或稳定性统计。测试通过独立的 ModelAccess scope 授权 Core，优先使用完整 PPAP_MODEL_VISION_* 配置，其次完整 PPAP_MODEL_TEXT_* 配置，同一测试的文本和视觉工具共享该凭据、endpoint 和模型。生产无凭据 scope 不受此测试逻辑影响。
+默认回放：完整请求摘要与录制一致才复用回答，摘要包括图片内容、提示词、Schema、预算、视觉请求选项和独立观察编号；图片尺寸只用于可读展示。视觉选项是配置的推理强度 `PPAP_MODEL_VISION_REASONING_EFFORT`（语义见 [AGENTS.md](../AGENTS.md#开发)「模型来源」；本地未设置时语料入口取 `deploy/tke/current.yaml` 的值），严格离线、带 Key 回放、CI 与线上一致。缺少匹配录制时，只有显式配置测试模型才真实调用，用例通过后记录回答。用例失败时不记录，下次重新询问；因此通过用例的录制仅作逻辑回归样本，不作为准确率或稳定性统计。测试通过独立的 ModelAccess scope 授权 Core，优先使用完整 PPAP_MODEL_VISION_* 配置，其次完整 PPAP_MODEL_TEXT_* 配置，同一测试的文本和视觉工具共享该凭据、endpoint 和模型。生产无凭据 scope 不受此测试逻辑影响。
 
 本地无付费验证使用 `PPAP_CORPUS_OFFLINE=1`；即使环境已有 Key，也只回放缓存，任何缺失记录都令测试失败且不会调用提供方。没有测试凭据时同样只读回放。`PPAP_CORPUS_MODEL=live` 必须有完整测试配置，不能与 offline 同时使用。回放验证取证和判定逻辑，不验证新模型或部署的能力；真实视觉验收使用预先固定的样本和运行次数，并保留全部运行结果。
 

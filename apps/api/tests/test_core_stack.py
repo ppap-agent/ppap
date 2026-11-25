@@ -40,15 +40,6 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(values["PPAP_MODEL_TEXT_API_KEY"] == "", "Development template PPAP_MODEL_TEXT_API_KEY must be empty")
         self.assertTrue(values["FEISHU_APP_ID"] == "", "Development template FEISHU_APP_ID must be empty")
 
-    def test_env_production_records_safe_defaults_without_isolated_dev_secrets(self):
-        path = ROOT / ".env.production"
-        values = dotenv_values(path)
-        self.assertTrue(ISOLATED_DEV_SECRET not in set(values.values()), "Production template must not contain the isolated-dev secret")
-        self.assertEqual(values["PPAP_PROFILE"], "production")
-        self.assertTrue(values["PPAP_PG_API_PASSWORD"] == "", "Production template PPAP_PG_API_PASSWORD must be empty")
-        self.assertTrue(values["PPAP_S3_ACCESS_KEY"] == "", "Production template PPAP_S3_ACCESS_KEY must be empty")
-        self.assertTrue(values["FEISHU_APP_ID"] == "", "Production template FEISHU_APP_ID must be empty")
-
     def test_isolated_dev_with_only_api_key_uses_repository_defaults(self):
         with _clean_env(PPAP_MODEL_TEXT_API_KEY="sk-test"):
             settings = Settings()
