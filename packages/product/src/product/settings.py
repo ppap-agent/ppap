@@ -6,7 +6,7 @@ from functools import lru_cache
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from audit.policy import DeepExecutionPolicy
+from audit.policy import DEEP_REVIEW_SECONDS, DEEP_REVIEW_SECONDS_RANGE, DeepExecutionPolicy
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # A Deep attempt stops after this many model requests. It only halts a runaway loop:
     # it is not a cost settlement and never decides whether an artifact is valid.
     deep_model_max_requests: int = Field(default=200, ge=1, le=1000, alias="PPAP_DEEP_MODEL_MAX_REQUESTS")
+    deep_review_seconds: int = Field(default=DEEP_REVIEW_SECONDS, ge=DEEP_REVIEW_SECONDS_RANGE[0], le=DEEP_REVIEW_SECONDS_RANGE[1], alias="PPAP_DEEP_REVIEW_SECONDS")
 
     # Platform models, one group per use (documents.model_access reads the same names per call).
     model_text_api_key: str = Field(default="", alias="PPAP_MODEL_TEXT_API_KEY")
@@ -194,6 +195,7 @@ class Settings(BaseSettings):
                     {
                         "identity": identity,
                         "max_requests": self.deep_model_max_requests,
+                        "review_seconds": self.deep_review_seconds,
                     }
                 ),
                 "sandbox_profile": self.deep_sandbox_profile,

@@ -309,13 +309,13 @@ def review_targets(
     runner: Any,
     work: Path,
     unavailable: frozenset[str],
+    review_seconds: int,
     on_task: Callable[[int], None] = lambda _index: None,
 ) -> dict[str, dict[str, Any]]:
-    """Review every target in order, each one a task of DEEP_TOTAL_SECONDS; one target's failure never stops the others.
+    """Review every target in order, each one a task of ``review_seconds``; one target's failure never stops the others.
 
     The originals of the round are read once for all targets. ``on_task(index)`` reports each task as it starts.
     """
-    from agent.execution.budget import DEEP_TOTAL_SECONDS
     from agent.execution.guest_model import ModelProtocolError
 
     states: dict[str, dict[str, Any]] = {}
@@ -336,7 +336,7 @@ def review_targets(
             started, before = time.monotonic(), (runner.input_tokens, runner.output_tokens)
             # Live steps name the file they belong to.
             runner.activity_target = target.file_version_id
-            deadline = started + DEEP_TOTAL_SECONDS
+            deadline = started + review_seconds
             feedback: str | None = None
             state: dict[str, Any] = {"state": "degraded", "reason": "deep_review_failed"}
             for attempt in range(REVIEW_ATTEMPTS):

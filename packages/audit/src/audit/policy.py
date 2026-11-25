@@ -11,6 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from audit.audits import DEEP_PROTOCOL_REVISION
 
 GUEST_UID = 10001
+# The deep review time of one file, in seconds (PPAP_DEEP_REVIEW_SECONDS). The host reads it and hands it to the guest.
+DEEP_REVIEW_SECONDS = 600
+DEEP_REVIEW_SECONDS_RANGE = (60, 1800)
 PI_VERSION = "1.5.0"
 
 

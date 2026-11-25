@@ -394,3 +394,27 @@ def test_a_corrected_technical_failure_shows_no_diagnostic_text():
     record = {"program_status": "ERR", "status": "NG", "reason": "A2 勾选量产，原件无受控章", "evidence": evidence}
     item = _corrected_item(finding, record, "cp.xlsx")
     assert item["suggestions"] == CORRECTED_PREFIX + "（程序原结论 技术错误）：A2 勾选量产，原件无受控章"
+
+
+def test_the_host_review_time_reaches_the_guest_through_the_job_spec(monkeypatch):
+    import importlib
+
+    import agent.execution.budget as budget
+    from agent.core_program import AuditJobSpec
+
+    snapshot, *_ = build()
+    try:
+        monkeypatch.setenv("PPAP_DEEP_REVIEW_SECONDS", "900")
+        importlib.reload(budget)
+        # The host's configured time, and the task time derived from it.
+        assert (budget.DEEP_TOTAL_SECONDS, budget.TASK_SECONDS) == (900, 960)
+        job = AuditJobSpec.from_snapshot(snapshot, analysis_mode="deep", review_seconds=budget.DEEP_TOTAL_SECONDS)
+        # The guest reads no configuration: the spec carries the time, and the guest's own check keeps it.
+        assert job.review_seconds == 900
+        assert job == AuditJobSpec.from_snapshot(snapshot, job.allow_model_calls, frozenset(job.unavailable_sources), job.analysis_mode, job.review_seconds)
+        monkeypatch.setenv("PPAP_DEEP_REVIEW_SECONDS", "1801")
+        with pytest.raises(ValueError):
+            importlib.reload(budget)
+    finally:
+        monkeypatch.delenv("PPAP_DEEP_REVIEW_SECONDS", raising=False)
+        importlib.reload(budget)

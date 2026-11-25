@@ -21,7 +21,7 @@ def test_deep_revision_changes_with_effective_policy_not_provider_credentials(mo
     original = settings.deep_execution_revision()
     assert len(original) == 64
     assert original != "release-a"
-    for field, value in (("git_sha", "b" * 40), ("deep_executor_revision", "release-b"), ("deep_sandbox_profile", "ppap")):
+    for field, value in (("git_sha", "b" * 40), ("deep_executor_revision", "release-b"), ("deep_sandbox_profile", "ppap"), ("deep_review_seconds", 900)):
         changed = settings.model_copy(update={field: value})
         assert changed.deep_execution_revision() != original
     settings.model_text_api_key = "rotated-provider-credential"
@@ -41,3 +41,14 @@ def test_default_and_explicit_protocol_labels_have_the_same_policy(monkeypatch):
     settings = Settings(git_sha="a" * 40, deep_executor_revision="")
     explicit = settings.model_copy(update={"deep_executor_revision": DEEP_PROTOCOL_REVISION})
     assert settings.deep_execution_revision() == explicit.deep_execution_revision()
+
+
+def test_deep_review_time_is_a_bounded_setting(monkeypatch):
+    monkeypatch.setenv("PPAP_PROFILE", "isolated-dev")
+    assert Settings().deep_review_seconds == deep_policy.DEEP_REVIEW_SECONDS
+    monkeypatch.setenv("PPAP_DEEP_REVIEW_SECONDS", "900")
+    assert Settings().deep_review_seconds == 900
+    for wrong in ("0", "59", "1801"):
+        monkeypatch.setenv("PPAP_DEEP_REVIEW_SECONDS", wrong)
+        with pytest.raises(ValueError):
+            Settings()

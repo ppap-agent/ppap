@@ -15,11 +15,12 @@ from typing import Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from audit.checker_core import ExecutionSnapshot, checker_digest
+from audit.policy import DEEP_REVIEW_SECONDS_RANGE
 from audit.protocol import ControllerFault
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.client import DeepError
-from agent.execution.budget import CHECK_SECONDS, MAX_INPUT_FILES, MAX_INPUT_TOTAL, TASK_SECONDS
+from agent.execution.budget import CHECK_SECONDS, DEEP_TOTAL_SECONDS, MAX_INPUT_FILES, MAX_INPUT_TOTAL, TASK_SECONDS
 from agent.execution.secure_files import read_json, read_regular
 from agent.run import ExecutionContext
 
@@ -51,9 +52,18 @@ class AuditJobSpec(BaseModel):
     unavailable_sources: tuple[str, ...] = ()
     # Tasks in the round: each file checked, and in deep mode each file reviewed. The host renews time for at most these.
     tasks: int = Field(default=1, ge=1, le=1024)
+    # One file's deep review time, from the host's configuration; the guest has no configuration of its own.
+    review_seconds: int = Field(default=DEEP_TOTAL_SECONDS, ge=DEEP_REVIEW_SECONDS_RANGE[0], le=DEEP_REVIEW_SECONDS_RANGE[1])
 
     @classmethod
-    def from_snapshot(cls, snapshot: ExecutionSnapshot, allow_model_calls: bool = True, unavailable_sources: frozenset[str] = frozenset(), analysis_mode: AnalysisMode = "standard") -> AuditJobSpec:
+    def from_snapshot(
+        cls,
+        snapshot: ExecutionSnapshot,
+        allow_model_calls: bool = True,
+        unavailable_sources: frozenset[str] = frozenset(),
+        analysis_mode: AnalysisMode = "standard",
+        review_seconds: int = DEEP_TOTAL_SECONDS,
+    ) -> AuditJobSpec:
         unavailable = tuple(sorted(unavailable_sources))
         # A restored object cannot replay the outcome of an unavailable attempt.
         availability = ":" + json.dumps(unavailable, separators=(",", ":")) if unavailable else ""
@@ -66,6 +76,7 @@ class AuditJobSpec(BaseModel):
             allow_model_calls=allow_model_calls,
             unavailable_sources=unavailable,
             tasks=len(snapshot.targets) * (2 if analysis_mode == "deep" else 1),
+            review_seconds=review_seconds,
         )
 
 
@@ -139,7 +150,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     snapshot = ExecutionSnapshot.from_dict(manifest["snapshot"])
     job = AuditJobSpec.model_validate(manifest["spec"])
     unavailable = frozenset(job.unavailable_sources)
-    if job != AuditJobSpec.from_snapshot(snapshot, job.allow_model_calls, unavailable, job.analysis_mode):
+    if job != AuditJobSpec.from_snapshot(snapshot, job.allow_model_calls, unavailable, job.analysis_mode, job.review_seconds):
         raise ValueError("audit_manifest_identity_mismatch")
     total = 0
 
@@ -196,7 +207,17 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         # Live steps for viewers; the Controller forwards them and nothing stores them.
         runner.activity = work / ACTIVITY_FILE
         runner.activity_originals = shown_names(item.filename for item in snapshot.inputs)
-        deep = review_targets(snapshot, sources, programs, result["findings"], runner=runner, work=work / "deep-review", unavailable=unavailable, on_task=lambda index: started("review", index))
+        deep = review_targets(
+            snapshot,
+            sources,
+            programs,
+            result["findings"],
+            runner=runner,
+            work=work / "deep-review",
+            unavailable=unavailable,
+            review_seconds=job.review_seconds,
+            on_task=lambda index: started("review", index),
+        )
     _write_progress(work, Progress(phase="validating", completed_count=tasks, total_count=tasks))
     payload = {
         **result,
