@@ -1,5 +1,3 @@
-"""Implementation and clause methods this leaf runs."""
-
 RESOURCE = {
     "customer": "UAES",
     "preset_key": "U10",

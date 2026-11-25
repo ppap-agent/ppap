@@ -26,7 +26,7 @@ OUTPUT = ROOT / "packages/audit/src/audit/preset_rules.json"
 LEAVES = ROOT / "packages/audit/src/audit/checkers"
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 # Customers whose audits switched to a clarified rulebook revision: one clause file per abbreviation.
-REVISIONS = {"UAES": ASSETS / "uaes/rulebook/v1.0/m3/条文"}
+REVISIONS = {"UAES": ASSETS / "uaes/rulebook/v1.0/m4/条文"}
 # Explicit source identity. Sorting filenames would swap L02/L03 and U07/U08.
 FILES = {
     "UAES": [

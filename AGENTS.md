@@ -12,7 +12,7 @@
 - **删除**：删除或替换功能时，同时删除只为它存在的测试、文档和配置。不新增 roadmap、CURRENT、Story/proof/evidence registry、manifest 或第二套状态台账；历史在 Git 和已关闭 Issue 里。
 - **最小上下文**：按 [context-reduce](https://github.com/ronhuafeng/skills-release/tree/main/catalog/engineering/context-reduce) 执行：只读本次需要的源码、测试和本文件相关一节；非必要不读旧分支、历史设计、旧 Issue、agent 日志或迁移记录。消除无当前消费者的代码、兼容层、重复概念和文档；用小范围测试守住真实不变量，重要外部效应必须读回验证。
 - **协作**：面向用户的文字用中文。直接在 main 上提交和推送，不开分支或 worktree；别人未提交的改动原样留着，不覆盖、不移动、不 stash，也不一起提交。提问只回答和提方案，明确要求实现才动手；产品取舍或约定未定时列出来问，不自行决定。只跑受影响的测试（找调用方），不跑全量。
-- **受保护资产**：检查程序按公司组织，目录叶子在 `audit/checkers/<公司>/`（`uaes`、`li`、`nio`），各自运行 `audit/checker_lib/<公司>/` 的读取实现；叶子只通过声明的资源调用本公司实现，判定代码写在共享库（写法见 [packages/audit/README.md](packages/audit/README.md)）。数据标准化预检（`product.precheck*`）独立于检查程序，规则数据对齐 `assets/uaes/prechecks` 并由测试核对原文摘要。这些源码、规则、资源，以及对应的测试、fixtures、样本（`assets/<公司>/`）和人工 Oracle（`assets/corpus/`）都必须保留，不得删除、清空或篡改，也不得改写已入库的不可变 Revision。清理只限有证据表明无当前必要性的旧执行基础设施、隐式 fallback、重复注册、无效兼容层及其过期说明。
+- **受保护资产**：检查程序按公司组织，目录叶子在 `audit/checkers/<公司>/`（`uaes`、`li`、`nio`），各自运行 `audit/checker_lib/<公司>/` 的读取实现；叶子只通过声明的资源调用本公司实现，判定代码写在共享库（写法见 [packages/audit/README.md](packages/audit/README.md)）。数据标准化预检（`product.precheck*`）独立于检查程序，规则数据对齐 `assets/uaes/prechecks` 并由测试核对原文摘要。这些源码、规则、资源，以及对应的测试、fixtures、样本（`assets/<公司>/`）和人工 Oracle（`assets/corpus/`）都必须保留，不得删除、清空或篡改，也不得改写已入库的不可变 Revision。规则库某一修订的检查程序靠对着真实样本的基准运行验证（`rulebook/<版本>/candidates/m<修订>/benchmark` 与 `runs/`），不另写只为这一修订存在的合同测试。清理只限有证据表明无当前必要性的旧执行基础设施、隐式 fallback、重复注册、无效兼容层及其过期说明。
 
 ## 必须保持
 
