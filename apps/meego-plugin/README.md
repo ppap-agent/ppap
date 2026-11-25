@@ -30,7 +30,7 @@ API 进程需要以下配置（见 `.env.example`）：
 
 - `PPAP_MEEGO_PLUGIN_ID`、`PPAP_MEEGO_PLUGIN_SECRET`：插件凭证。Secret 只注入 API。
 - `PPAP_MEEGO_TENANT_MAP`：飞书项目 `saas_tenant_key` 到同一企业飞书 `tenant_key` 的显式映射。没有映射的空间一律拒绝。
-- 该飞书租户还必须在 `PPAP_CURRENT_TENANT_ALLOWLIST` 中。
+- 名单 `PPAP_CURRENT_TENANT_ALLOWLIST` 非空时，该飞书租户还必须在名单中。
 
 插件需要在开放平台“权限管理”中申请读取工作项、读取附件、读写评论和读取用户的权限，并在空间中安装。
 

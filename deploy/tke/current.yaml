@@ -41,8 +41,8 @@ data:
   PPAP_FEISHU_NOTIFICATIONS_ENABLED: "true"
   # 海岸线 (PPAP's own developer tenant) gets a larger trial for acceptance runs.
   FEISHU_TRIAL_QUOTA_OVERRIDES: '{"2caeb428f08e175d": 200000}'
-  # Released tenants: coastline's four and 联合汽车电子 (联电). Acceptance charges points.
-  PPAP_CURRENT_TENANT_ALLOWLIST: 2caeb428f08e175d,16e7179eb1abd75d,16fad24b7282175e,175b8362d5ce575f,11c1ad08115b175e
+  # Open to every Feishu tenant; acceptance charges points (legacy trial use: migration 0098).
+  PPAP_CURRENT_TENANT_ALLOWLIST: ""
   PPAP_USAGE_CHARGE_ENABLED: "true"
   PPAP_MCP_ENABLED: "true"
   PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
