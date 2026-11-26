@@ -7,7 +7,7 @@ Applies to `packages/audit/src/audit/engine/rule_engine/`. Product entry: reposi
 - Keep `DefaultExcelOps` and fluent APIs minimal.
 - Do not keep public APIs with zero call sites.
 - Do not add compatibility aliases unless a current caller requires them.
-- Fail closed: "unable to verify" is never PASS; NG only when the original is confirmed to lack the required field, column or cross-file evidence; a field, anchor or evidence the program could not locate is UNABLE; ERR is only for runtime/system exceptions.
+- Fail closed, with result statuses as defined in the root `AGENTS.md`「术语」: a field, anchor or evidence the program could not locate is UNABLE, not NG; ERR is only for runtime/system exceptions.
 - No file-, company- or sample-specific special cases.
 
 ## Regression
