@@ -113,6 +113,9 @@ class UiA11yTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_context().new_page()
             route_api_address(page)
+            # An unrouted read would reach the real API unauthenticated, and its 401 would replace the denial with a login error.
+            page.route("**/api/**", lambda route: route.fulfill(status=404, json={"error": "unexpected_test_request"}))
+            page.route("**/api/rule-questionnaires", lambda route: route.fulfill(json={"questionnaires": []}))
             page.route(
                 "**/api/public-config",
                 lambda route: route.fulfill(
