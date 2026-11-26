@@ -1,4 +1,5 @@
-"""bench/deep-audit scoring, through its report command: what counts as right, fixed, broken and an unsafe PASS."""
+"""bench/deep-audit scoring, through its report command: the program's and the reviewed verdicts beside a revision's
+reference judgments, over the benchmark's fixed rows."""
 
 import json
 import subprocess
@@ -6,48 +7,68 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+BENCHMARK = ROOT / "assets/uaes/rulebook/v1.0/candidates/m4/benchmark"
 
 
-def _row(truth, program, deep, *, state="completed", decision=None):
-    return {"case": "c", "file": "f.xlsx", "clause": f"{truth}{program}{deep}", "truth": truth, "program": program, "deep": deep, "target_state": state, "target_reason": "", "decision": decision}
+def _lines(name: str) -> list[dict]:
+    return [json.loads(line) for line in (BENCHMARK / name).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def _report(tmp_path, lines, meta=None) -> dict:
-    (tmp_path / "cases.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
-    if meta is not None:
-        (tmp_path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
-    subprocess.run([sys.executable, str(ROOT / "bench" / "deep-audit" / "deep_eval.py"), "report", str(tmp_path)], check=True, capture_output=True)
-    return json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+def _ng_rows() -> tuple[str, list[dict], list[dict]]:
+    """A benchmark batch and its expected rows whose reference is NG; the scoring reads the real reference."""
+    reference = {(row["batch"], row["file"], row["clause"]): row["verdict"] for row in _lines("reference-judgments.jsonl")}
+    by_batch: dict[str, list[dict]] = {}
+    for row in _lines("expected-rows.jsonl"):
+        by_batch.setdefault(row["batch"], []).append(row)
+    batch, rows = next((batch, rows) for batch, rows in by_batch.items() if sum(reference[(r["batch"], r["file"], r["clause"])] == "NG" for r in rows) >= 3)
+    return batch, rows, [row for row in rows if reference[(row["batch"], row["file"], row["clause"])] == "NG"]
 
 
-def test_review_outcomes_are_scored_against_the_human_truth(tmp_path):
-    rows = [
-        _row("NG", "NG", "NG", decision="confirmed"),
-        _row("NG", "UNABLE", "NG", decision="corrected"),
-        _row("PASS", "PASS", "NG", decision="corrected"),
-        _row("NG", "UNABLE", "PASS", decision="corrected"),
-        _row("PASS", "NG", "UNABLE", decision="corrected"),
-    ]
-    summary = _report(tmp_path, [{"case": "c", "seconds": 10, "rows": rows}])
-    assert (summary["rows"], summary["program_right"], summary["deep_right"]) == (5, 2, 2)
-    assert (summary["fixed"], summary["broke"], summary["wrong_to_wrong"]) == (1, 1, 2)
-    # Only a changed verdict that becomes PASS against the truth is the unsafe direction.
-    assert summary["new_pass_against_truth"] == 1
-    assert summary["by_truth"]["NG"] == {"rows": 3, "program_right": 1, "deep_right": 2}
+def _finding(row: dict, program: str, deep: str, *, state: str = "completed", decision: str = "confirmed") -> dict:
+    return {"kind": "finding", "batch": row["batch"], "source": row["file"], "clause": row["clause"], "status": deep, "program": program, "decision": decision, "target_state": state}
 
 
-def test_unreviewed_targets_and_errors_are_reported_not_hidden(tmp_path):
+def _report(tmp_path, lines, meta=None, *, check=True):
+    (tmp_path / "results.jsonl").write_text("".join(json.dumps(line, ensure_ascii=False) + "\n" for line in lines), encoding="utf-8")
+    (tmp_path / "meta.json").write_text(json.dumps(meta or {"revision": "m4"}, ensure_ascii=False), encoding="utf-8")
+    done = subprocess.run([sys.executable, str(ROOT / "bench" / "deep-audit" / "deep_eval.py"), "report", str(tmp_path)], check=check, capture_output=True, text=True)
+    return json.loads((tmp_path / "summary.json").read_text(encoding="utf-8")) if check else done
+
+
+def test_review_outcomes_are_set_against_the_reference_over_every_expected_row(tmp_path):
+    batch, rows, ng = _ng_rows()
     lines = [
-        {"case": "a", "seconds": 5, "rows": [_row("NG", "NG", "NG", state="degraded")]},
-        {"case": "b", "seconds": 1, "error": "OSError: missing", "rows": []},
+        _finding(ng[0], "NG", "NG"),
+        _finding(ng[1], "UNABLE", "NG", decision="corrected"),
+        _finding(ng[2], "NG", "PASS", decision="corrected"),
+        {"kind": "deep", "batch": batch, "seconds": 10, "targets": [], "requests": []},
     ]
     summary = _report(tmp_path, lines)
+    assert summary["rows"] == len(rows)
+    assert (summary["program_agrees"], summary["deep_agrees"]) == (2, 2)
+    assert (summary["fixed"], summary["broke"], summary["unable_settled_agrees"]) == (1, 1, 1)
+    # Reviewing an NG into PASS against the reference is the direction deep mode must not take.
+    assert summary["new_pass_against_reference"] == 1
+    # Rows without a conclusion stay in the comparison.
+    assert summary["categories"]["没有输出"]["deep"] == len(rows) - 3
+
+
+def test_unreviewed_targets_and_batch_errors_are_reported_not_hidden(tmp_path):
+    batch, _rows, ng = _ng_rows()
+    lines = [_finding(ng[0], "NG", "NG", state="degraded"), {"kind": "deep", "batch": batch, "seconds": 5, "error": "OSError: missing", "targets": [], "requests": []}]
+    summary = _report(tmp_path, lines)
     assert summary["rows_not_reviewed"] == 1
-    assert summary["case_errors"] == {"b": "OSError: missing"}
-    assert summary["seconds_per_case"]["max"] == 5
+    assert summary["batch_errors"] == {batch: "OSError: missing"}
 
 
-def test_report_writes_a_readable_summary(tmp_path):
-    _report(tmp_path, [{"case": "c", "seconds": 3, "rows": [_row("NG", "UNABLE", "NG")]}], {"name": "trial", "commit": "abc"})
+def test_summary_names_the_revision_and_the_clauses_whose_text_differs(tmp_path):
+    batch, _rows, ng = _ng_rows()
+    meta = {"name": "trial", "revision": "m4", "commit": "abc", "clauses": {"revision": "m4", "leaves": {"uaes/U08": "x"}, "changed": [ng[0]["clause"]]}}
+    _report(tmp_path, [_finding(ng[0], "NG", "NG"), {"kind": "deep", "batch": batch, "seconds": 3, "targets": [], "requests": []}], meta)
     text = (tmp_path / "summary.md").read_text(encoding="utf-8")
-    assert "深度审核评估 trial" in text and "commit：abc" in text
+    assert "深度审核评估 trial" in text and "commit：abc" in text and "对照修订 m4" in text and ng[0]["clause"] in text
+
+
+def test_a_revision_without_a_benchmark_is_refused(tmp_path):
+    done = _report(tmp_path, [], {"revision": "m99"}, check=False)
+    assert done.returncode != 0 and "修订 m99 没有基准" in done.stderr

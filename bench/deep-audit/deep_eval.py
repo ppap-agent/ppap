@@ -1,24 +1,27 @@
-"""Deep mode against the UAES human oracle, through the production deep execution path.
+"""Deep mode on a UAES rulebook revision's benchmark, with the installed checkers, through the production deep path.
 
-    run     inside the deep image, as root (bench/deep-audit/run.sh starts it); one JSON line per case
+    run     inside the deep image, as root (bench/deep-audit/run.sh starts it); JSON lines per batch
     report  anywhere; summarizes one run directory into summary.json and summary.md
 
-`run` builds each case's frozen round as the corpus does, freezes the platform model selection
-as a tenant without its own key does, and executes it the way the Controller does: the bound
-local gateway, ContainerRuntime (the guest runs as uid 10001 under prlimit), then
-CoreRuntime.execute_snapshot in deep mode: one guest for the round, each file checked and then
-reviewed with its own time; a review that does not finish leaves that file with its program result.
+The checkers are always the installed leaves (packages/audit/src/audit/checkers/uaes), what customers run. The revision
+names only what they are read against: the benchmark of that revision (candidates/m<N>/benchmark: its batches, originals
+and model reference judgments) and its signed clause text (m<N>/条文). Installed clause text that differs from the
+revision's is listed and its rows marked; nothing falls back to another revision.
 
-References are recognized as an upload does, answered from the corpus recordings (live only on a
-miss, nothing saved), so two runs differ only in the audit itself. Every model request of the
-audit passes the gateway this process hosts; each is recorded with its use, model, effort and
-provider usage, and charged to the file and stage (check or review) under way when it was sent.
+Each benchmark batch is resubmitted from its originals and submission roles alone, through the product path
+(recognition, precheck) as a sample batch is; only the audit runs the way the Controller does: the bound local gateway,
+ContainerRuntime (the guest runs as uid 10001 under prlimit), then CoreRuntime.execute_snapshot in deep mode: one guest
+for the round, each file checked and then reviewed with its own time. A review that does not finish leaves that file
+with its program result. Every model request of the audit passes the gateway this process hosts; each is recorded with
+its use, model, effort and provider usage, and charged to the file and stage (check or review) under way when it was
+sent. The reference judgments are a model's, not human truth: the report lays differences out and computes no accuracy.
 """
 
 from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import statistics
 import sys
@@ -28,16 +31,47 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-DATASET = "uaes"
+ROOT = Path(__file__).resolve().parents[2]
+RULEBOOK = ROOT / "assets/uaes/rulebook/v1.0"
 PRICES = Path(__file__).with_name("prices.json")
 
+
+def revision_paths(revision: str) -> tuple[Path, Path]:
+    """The revision's benchmark and signed clause text; a revision without either cannot be benched."""
+    benchmark, clauses = RULEBOOK / "candidates" / revision / "benchmark", RULEBOOK / revision / "条文"
+    for path, what in ((benchmark / "reference-judgments.jsonl", "基准"), (clauses, "签署条文")):
+        if not path.exists():
+            raise SystemExit(f"修订 {revision} 没有{what}：{path.relative_to(ROOT)}")
+    return benchmark, clauses
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def clause_check(revision: str) -> dict[str, Any]:
+    """Installed clause text against the revision's: clauses whose wording differs are listed, never hidden."""
+    from audit.standard_suites import predefined_directory_suites
+
+    _benchmark, clauses = revision_paths(revision)
+    signed = {str(rule["id"]): _digest(rule["rule_to_check"]) for path in sorted(clauses.glob("*.json")) for rule in json.loads(path.read_text(encoding="utf-8"))["rules"]}
+    installed: dict[str, str] = {}
+    leaves: dict[str, str] = {}
+    for suite in predefined_directory_suites():
+        if suite.source_path.startswith("uaes/"):
+            leaves[suite.source_path] = suite.revision_digest
+            for rule in json.loads(suite.files["rules.json"])["rules"]:
+                installed[str(rule["id"])] = _digest(rule["rule_to_check"])
+    return {
+        "revision": revision,
+        "leaves": dict(sorted(leaves.items())),
+        "changed": sorted(clause for clause in installed.keys() & signed.keys() if installed[clause] != signed[clause]),
+        "not_in_revision": sorted(installed.keys() - signed.keys()),
+        "not_installed": sorted(signed.keys() - installed.keys()),
+    }
+
+
 # ---- run (inside the deep image) ------------------------------------------------------------
-
-
-def _cases():
-    from corpus_contracts import oracle
-
-    return oracle.load_oracle(DATASET)
 
 
 class _Patch:
@@ -148,69 +182,30 @@ class _Requests:
         return out
 
 
-def _targets(case, deep: dict, spans: dict) -> list[dict]:
-    return [
-        {
-            "file_id": file.file_id,
-            "file": file.filename,
-            "document_type": file.suite().document_type,
-            "state": deep[file.file_id].get("state"),
-            "reason": deep[file.file_id].get("reason", ""),
-            "check_seconds": spans.get(("check", file.file_id)),
-            "review_seconds": spans.get(("review", file.file_id)),
-        }
-        for file in case.files
-        if file.role == "target"
-    ]
-
-
-def _rows(case, result: dict, deep: dict, reviews: dict) -> list[dict]:
-    final = {(item["file_version_id"], str(item["clause_id"])): item for item in result["findings"]}
-    rows = []
-    for file in case.files:
-        if file.role != "target":
-            continue
-        state = deep[file.file_id]
-        for clause, expected in file.expected.items():
-            key = (file.file_id, clause)
-            record = reviews.get(key, {})
-            deep_status = final.get(key, {}).get("status")
-            rows.append(
-                {
-                    "case": case.case_id,
-                    "file": file.filename,
-                    "document_type": file.suite().document_type,
-                    "clause": clause,
-                    "truth": expected.status,
-                    # A clause the reviewer did not record kept the program verdict.
-                    "program": record.get("program_status") or deep_status,
-                    "deep": deep_status,
-                    "target_state": state.get("state"),
-                    "target_reason": state.get("reason", ""),
-                    "decision": record.get("decision"),
-                    "proposed": record.get("proposed_status") or record.get("status"),
-                    "rejection": record.get("rejection"),
-                    "reason": str(record.get("reason") or "")[:400],
-                }
-            )
-    return rows
-
-
-def run_cases(indexes: list[int], out: Path) -> int:
+def run_batches(revision: str, names: list[str], shard: tuple[int, int], out: Path) -> int:
+    import agent.execution.audit_runtime as audit_runtime
     from agent.core_program import CoreRuntime
     from agent.execution.isolation import ContainerRuntime, RuntimeConfig, local_gateway
     from agent.run import ExecutionContext
-    from corpus_contracts import oracle
+    from audit.standard_suites import predefined_directory_suites
+    from corpus_contracts.candidate_run import benchmark_batches
     from corpus_contracts.replay import Recorder, install
+    from corpus_contracts.uaes_samples import run_batch
     from documents.model_access import ModelUnavailable, model_access_scope
     from product.settings import load_settings
     from product.store.model_credentials import platform_selection
 
+    benchmark, _clauses = revision_paths(revision)
     settings = load_settings()
     selection = platform_selection()
     identity = selection.identity
     policy = settings.deep_execution_policy(identity)
-    cases = _cases()
+    suites = {suite.source_path: suite for suite in predefined_directory_suites()}
+    runs = benchmark_batches(benchmark)
+    unknown = set(names) - {name for name, _ in runs}
+    if unknown:
+        raise SystemExit(f"基准里没有这些批次：{'、'.join(sorted(unknown))}")
+    runs = [(name, batch) for index, (name, batch) in enumerate(runs) if (not names or name in names) and index % shard[1] == shard[0]]
     out.mkdir(parents=True, exist_ok=True)
     state = Path("/run/ppap-isolation")
     requests = _Requests()
@@ -225,50 +220,100 @@ def run_cases(indexes: list[int], out: Path) -> int:
     with local_gateway(
         state / "gateway.sock", upstream="https://unconfigured.invalid", model="unconfigured", provider_key=unavailable, require_binding=True, requests=settings.deep_model_max_requests
     ) as gateway:
-        for index in indexes:
-            case = cases[index]
+        for name, batch in runs:
             started = time.monotonic()
-            line: dict[str, Any] = {"index": index, "case": case.case_id, "engine_revision": policy.engine_revision()}
-            try:
-                # References get their pipeline type and facts as an upload freezes them, from the recordings.
-                patch = _Patch()
-                recorder = Recorder(case.id, output=out / "unsaved-replay")
-                try:
-                    install(patch, recorder)
-                    with model_access_scope(selection.access):
-                        recognized = oracle.recognize_references(case)
-                finally:
-                    patch.undo()
-                line["recognition_live_calls"] = len(recorder.pending)
-                recorder.finish(keep=False)
-                snapshot, sources, _totals = oracle.build_round(case, recognized)
-                snapshot = dataclasses.replace(snapshot, model_identity=identity)
-                programs = oracle.programs_for(snapshot)
+            # run_batch names files f01, f02, … in this order; rows report each by its repository path.
+            sources = {f"f{index:02d}": str(path.relative_to(ROOT)) for index, path in enumerate((*batch.others, *batch.files, *batch.references), 1)}
+            current: dict[str, Any] = {}
+
+            def deep_audit(snapshot, blobs, programs, *, on_task=None, **_options):
+                """The production deep execution in place of the sample runner's standard one."""
+                timeline = _Timeline()
+                order = [target.file_version_id for target in snapshot.targets]
+                begun: list[str] = []
+
+                def progress(update: dict) -> None:
+                    timeline(update)
+                    # The sample runner times each file's check from these calls, one per target in order.
+                    if update.get("stage") == "check" and update.get("target") in order and update["target"] not in begun:
+                        begun.append(update["target"])
+                        if on_task is not None:
+                            on_task(order.index(update["target"]))
+
                 runtime = ContainerRuntime(
                     RuntimeConfig(state=state, gateway_socket=gateway.socket_path, gateway_host="127.0.0.1", **policy.model_dump()),
                     model_grant_binding=lambda execution_id: gateway.http.grants.bind(execution_id, identity, selection.access),
                 )
-                core = CoreRuntime(runtime, None, None)
-                timeline = _Timeline()
                 audit_started = time.monotonic()
                 try:
-                    result, deep, reviews = core.execute_snapshot(snapshot, sources, programs, ExecutionContext(on_progress=timeline), analysis_mode="deep")
+                    result, deep, reviews = CoreRuntime(runtime, None, None).execute_snapshot(
+                        dataclasses.replace(snapshot, model_identity=identity), blobs, programs, ExecutionContext(on_progress=progress), analysis_mode="deep"
+                    )
                 finally:
                     gateway.http.grants.revoke_all()
-                line.update(
-                    seconds=round(time.monotonic() - started, 1),
+                    for target in order:
+                        if target not in begun and on_task is not None:
+                            begun.append(target)
+                            on_task(order.index(target))
+                spans = timeline.seconds(time.monotonic())
+                current.update(
                     audit_seconds=round(time.monotonic() - audit_started, 1),
-                    targets=_targets(case, deep or {}, timeline.seconds(time.monotonic())),
-                    requests=requests.take(timeline),
-                    rows=_rows(case, result, deep or {}, reviews),
+                    deep=deep or {},
+                    reviews=reviews,
+                    targets=[
+                        {
+                            "source": sources[target],
+                            "state": (deep or {}).get(target, {}).get("state"),
+                            "reason": (deep or {}).get(target, {}).get("reason", ""),
+                            "check_seconds": spans.get(("check", target)),
+                            "review_seconds": spans.get(("review", target)),
+                        }
+                        for target in order
+                    ],
+                    requests=[{**request, "target": sources.get(request["target"], "")} for request in requests.take(timeline)],
                 )
-            except Exception as exc:  # noqa: BLE001 — one case never stops the others.
+                return result
+
+            line: dict[str, Any] = {"kind": "deep", "batch": name}
+            rows: list[dict[str, Any]] = []
+            patch = _Patch()
+            recorder = Recorder(batch.id, output=out / "unsaved-replay")
+            try:
+                # Recognition and precheck answer from the corpus recordings where one matches, live otherwise; nothing is saved.
+                install(patch, recorder)
+                patch.setattr(audit_runtime, "run_audit", deep_audit)
+                with model_access_scope(selection.access):
+                    found = run_batch(batch, suites)
+                for row in found:
+                    row = {**row, "batch": name}
+                    if row["kind"] == "finding":
+                        version = next(key for key, path in sources.items() if path == row["source"])
+                        record = current.get("reviews", {}).get((version, row["clause"]), {})
+                        target = current.get("deep", {}).get(version, {})
+                        row.update(
+                            # A clause the reviewer did not record kept the program verdict.
+                            program=record.get("program_status") or row["status"],
+                            decision=record.get("decision"),
+                            proposed=record.get("proposed_status") or record.get("status"),
+                            rejection=record.get("rejection"),
+                            review_reason=str(record.get("reason") or "")[:400],
+                            target_state=target.get("state"),
+                            target_reason=target.get("reason", ""),
+                        )
+                    if row["kind"] in {"finding", "recognition", "timing"}:
+                        rows.append(row)
+            except Exception as exc:  # noqa: BLE001 — one batch never stops the others; its rows stay "没有输出".
                 failures += 1
                 requests.take(_Timeline())
-                line.update(seconds=round(time.monotonic() - started, 1), error=f"{type(exc).__name__}: {str(exc)[:300]}", trace=traceback.format_exc()[-2000:], rows=[])
-            with (out / "cases.jsonl").open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(line, ensure_ascii=False) + "\n")
-            print(f"case {index} {case.case_id}: {line.get('error') or 'ok'} ({line['seconds']}s)", flush=True)
+                line.update(error=f"{type(exc).__name__}: {str(exc)[:300]}", trace=traceback.format_exc()[-2000:])
+            finally:
+                patch.undo()
+                line["recognition_live_calls"] = len(recorder.pending)
+                recorder.finish(keep=False)
+            line.update(seconds=round(time.monotonic() - started, 1), **{key: current[key] for key in ("audit_seconds", "targets", "requests") if key in current})
+            with (out / "results.jsonl").open("a", encoding="utf-8") as stream:
+                stream.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in [*rows, line])
+            print(f"{name}: {line.get('error') or 'ok'} ({line['seconds']}s)", flush=True)
     observing.undo()
     return 1 if failures else 0
 
@@ -311,80 +356,98 @@ def _usage(requests: list[dict], prices: dict) -> dict:
     }
 
 
-def summarize(lines: list[dict], prices: dict) -> dict:
-    """Scores, time and spend of one run. A row is right when its verdict equals the human truth."""
-    rows = [row for line in lines for row in line.get("rows", [])]
-    targets = [target for line in lines for target in line.get("targets", [])]
-    requests = [request for line in lines for request in line.get("requests", [])]
-    transitions: Counter[str] = Counter()
-    by_truth: dict[str, Counter[str]] = {}
-    by_type: dict[str, Counter[str]] = {}
+def _jsonl(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def summarize(lines: list[dict], benchmark: Path, changed: set[str], prices: dict) -> dict:
+    """The program's and the reviewed verdicts beside the reference judgments, over the benchmark's fixed expected rows."""
+    from corpus_contracts.benchmark_diff import CATEGORIES, category
+
+    expected = _jsonl(benchmark / "expected-rows.jsonl")
+    reference = {(row["batch"], row["file"], row["clause"]): row for row in _jsonl(benchmark / "reference-judgments.jsonl")}
+    findings = {(row["batch"], row["source"], row["clause"]): row for row in lines if row.get("kind") == "finding"}
+    deep_lines = [line for line in lines if line.get("kind") == "deep"]
+    ran = {line["batch"] for line in deep_lines}
+    targets = [target for line in deep_lines for target in line.get("targets", [])]
+    requests = [request for line in deep_lines for request in line.get("requests", [])]
     totals: Counter[str] = Counter()
-    details: dict[str, list[dict]] = {"new_pass_against_truth": [], "broke": [], "rejected": []}
-    for row in rows:
-        truth, program, deep = row["truth"], row["program"], row["deep"]
-        program_right, deep_right = program == truth, deep == truth
-        for counter in (totals, by_truth.setdefault(truth, Counter()), by_type.setdefault(row.get("document_type") or "?", Counter())):
+    program_categories: Counter[str] = Counter()
+    deep_categories: Counter[str] = Counter()
+    by_type: dict[str, Counter[str]] = {}
+    transitions: Counter[str] = Counter()
+    details: dict[str, list[dict]] = {"new_pass_against_reference": [], "broke": [], "rejected": []}
+    for row in expected:
+        if row["batch"] not in ran:
+            continue
+        key = (row["batch"], row["file"], row["clause"])
+        found = findings.get(key) or {}
+        verdict = reference[key]["verdict"]
+        deep = found.get("status")
+        program = found.get("program") or deep
+        detail = {**row, "reference": verdict, "program": program, "deep": deep, **{k: found.get(k) for k in ("decision", "proposed", "rejection", "review_reason", "target_state")}}
+        program_categories[category(program, verdict)] += 1
+        deep_categories[category(deep, verdict)] += 1
+        for counter in (totals, by_type.setdefault(row.get("document_type") or "?", Counter())):
             counter["rows"] += 1
-            counter["program_right"] += program_right
-            counter["deep_right"] += deep_right
+            counter["program_agrees"] += program == verdict
+            counter["deep_agrees"] += deep == verdict
+        totals["clause_changed"] += row["clause"] in changed
         if program != deep:
-            kind = "fixed" if deep_right else "broke" if program_right else "wrong_to_wrong"
+            kind = "fixed" if deep == verdict else "broke" if program == verdict else "wrong_to_wrong"
             totals[kind] += 1
             transitions[f"{program}->{deep} {kind}"] += 1
             if kind == "broke":
-                details["broke"].append(row)
-            # The one direction deep mode must never take: a new PASS the human did not give.
-            if deep == "PASS" and truth != "PASS":
-                totals["new_pass_against_truth"] += 1
-                details["new_pass_against_truth"].append(row)
-        # A clause the program could not decide: did the review settle it, and settle it right?
+                details["broke"].append(detail)
+            # The direction deep mode must not take: a new PASS the reference does not give.
+            if deep == "PASS" and verdict != "PASS":
+                totals["new_pass_against_reference"] += 1
+                details["new_pass_against_reference"].append(detail)
         if program == "UNABLE":
             totals["program_unable"] += 1
-            totals["unable_settled"] += deep != "UNABLE"
-            totals["unable_settled_right"] += deep != "UNABLE" and deep_right
-        if row["target_state"] != "completed":
+            totals["unable_settled"] += deep not in {None, "UNABLE"}
+            totals["unable_settled_agrees"] += deep not in {None, "UNABLE"} and deep == verdict
+        if found and found.get("target_state") != "completed":
             totals["rows_not_reviewed"] += 1
-        if row["decision"] == "rejected":
+        if found.get("decision") == "rejected":
             totals["corrections_rejected"] += 1
-            details["rejected"].append(row)
+            details["rejected"].append(detail)
     # Spend per file and stage: what one target file costs to check and to review.
     per_file: dict[tuple[str, str], dict[str, list[dict]]] = {}
-    for line in lines:
+    for line in deep_lines:
         for request in line.get("requests", []):
-            per_file.setdefault((line["case"], request["target"]), {"check": [], "review": []}).setdefault(request["stage"] or "check", []).append(request)
-    file_usd = {stage: [_usage(stages.get(stage, []), prices)["usd"] for stages in per_file.values()] for stage in ("check", "review")}
-    file_requests = [len(stages.get("check", [])) + len(stages.get("review", [])) for stages in per_file.values()]
-    seconds = [float(line["seconds"]) for line in lines if not line.get("error")]
+            per_file.setdefault((line["batch"], request["target"]), {"check": [], "review": []}).setdefault(request["stage"] or "check", []).append(request)
+    seconds = [float(line["seconds"]) for line in deep_lines if not line.get("error")]
     return {
-        "cases": len(lines),
-        "case_errors": {line["case"]: line["error"] for line in lines if line.get("error")},
+        "batches": len(deep_lines),
+        "batch_errors": {line["batch"]: line["error"] for line in deep_lines if line.get("error")},
         "targets": len(targets),
         "targets_not_reviewed": dict(Counter(target["reason"] for target in targets if target["state"] != "completed")),
         **{
             key: totals[key]
             for key in (
                 "rows",
-                "program_right",
-                "deep_right",
+                "program_agrees",
+                "deep_agrees",
                 "fixed",
                 "broke",
                 "wrong_to_wrong",
-                "new_pass_against_truth",
+                "new_pass_against_reference",
                 "program_unable",
                 "unable_settled",
-                "unable_settled_right",
+                "unable_settled_agrees",
                 "rows_not_reviewed",
                 "corrections_rejected",
+                "clause_changed",
             )
         },
+        "categories": {name: {"program": program_categories[name], "deep": deep_categories[name]} for name in CATEGORIES},
         "transitions": dict(sorted(transitions.items())),
-        "by_truth": {truth: dict(counter) for truth, counter in sorted(by_truth.items())},
         "by_document_type": {kind: dict(counter) for kind, counter in sorted(by_type.items())},
-        "seconds_per_case": _spread(seconds),
+        "seconds_per_batch": _spread(seconds),
         "check_seconds_per_file": _spread([target["check_seconds"] for target in targets if target.get("check_seconds") is not None]),
         "review_seconds_per_file": _spread([target["review_seconds"] for target in targets if target.get("review_seconds") is not None]),
-        "recognition_live_calls": sum(line.get("recognition_live_calls") or 0 for line in lines),
+        "recognition_live_calls": sum(line.get("recognition_live_calls") or 0 for line in deep_lines),
         "usage": {
             "all": _usage(requests, prices),
             "by_stage": {stage: _usage([request for request in requests if (request["stage"] or "check") == stage], prices) for stage in ("check", "review")},
@@ -393,16 +456,15 @@ def summarize(lines: list[dict], prices: dict) -> dict:
                 for model, effort in sorted({(r["model"] or "", r["effort"] or "") for r in requests})
             },
         },
-        "usd_per_file": {stage: _spread(values) for stage, values in file_usd.items()},
-        "requests_per_file": _spread([float(value) for value in file_requests]),
-        "requests_per_case_max": max((len(line.get("requests", [])) for line in lines), default=0),
+        "usd_per_file": {stage: _spread([_usage(stages.get(stage, []), prices)["usd"] for stages in per_file.values()]) for stage in ("check", "review")},
+        "requests_per_batch_max": max((len(line.get("requests", [])) for line in deep_lines), default=0),
         "details": details,
     }
 
 
 def _detail(row: dict) -> str:
     proposed = f"，提议 {row.get('proposed')}（{row.get('rejection')}）" if row.get("decision") == "rejected" else ""
-    return f"- {row['case']} 《{row['file']}》 {row['clause']}：真值 {row['truth']}，程序 {row['program']}，复核后 {row['deep']}{proposed}。{row.get('reason') or ''}"
+    return f"- {row['batch']} 《{Path(row['file']).name}》 {row['clause']}：参考 {row['reference']}，程序 {row['program']}，复核后 {row['deep']}{proposed}。{row.get('review_reason') or ''}"
 
 
 def _usage_row(name: str, usage: dict) -> str:
@@ -414,31 +476,47 @@ def _usage_row(name: str, usage: dict) -> str:
 
 
 def render(summary: dict, meta: dict) -> str:
+    clauses = meta.get("clauses") or {}
     lines = [f"# 深度审核评估 {meta.get('name', '')}", ""]
-    lines += [f"- {key}：{value}" for key, value in meta.items() if key != "name"]
+    lines += [f"- {key}：{value}" for key, value in meta.items() if key not in {"name", "clauses"}]
+    lines += [
+        "",
+        f"检查程序：已安装的 UAES 叶子（{len(clauses.get('leaves', {}))} 个）。对照修订 {clauses.get('revision', '?')} 的基准与签署条文；参考判定是模型判定，不是人工真值，只看差异。",
+    ]
+    if clauses.get("changed"):
+        lines.append(f"已安装条文与该修订写法不同的条款（{len(clauses['changed'])} 条，涉及 {summary['clause_changed']} 行，仍参与对照）：{'、'.join(clauses['changed'])}。")
+    for key, label in (("not_in_revision", "该修订没有的已安装条款"), ("not_installed", "该修订有、未安装的条款")):
+        if clauses.get(key):
+            lines.append(f"{label}：{'、'.join(clauses[key])}。")
     rows = summary["rows"] or 1
-    check, review, case = summary["check_seconds_per_file"], summary["review_seconds_per_file"], summary["seconds_per_case"]
+    check, review, batch = summary["check_seconds_per_file"], summary["review_seconds_per_file"], summary["seconds_per_batch"]
     usage, per_file = summary["usage"], summary["usd_per_file"]
     lines += [
         "",
-        "| 用例 | 目标文件 | 条款 | 程序正确 | 复核后正确 | 改对 | 改错 | 错改错 | 新增与真值不符的 PASS | 未复核条款 |",
+        "| 批次 | 目标文件 | 条款行 | 程序与参考一致 | 复核后与参考一致 | 改成一致 | 改成不一致 | 改了仍不一致 | 新增与参考不符的 PASS | 未复核条款 |",
         "|---|---|---|---|---|---|---|---|---|---|",
-        f"| {summary['cases']} | {summary['targets']} | {summary['rows']} | {summary['program_right']}（{summary['program_right'] / rows:.1%}） | "
-        f"{summary['deep_right']}（{summary['deep_right'] / rows:.1%}） | {summary['fixed']} | {summary['broke']} | {summary['wrong_to_wrong']} | "
-        f"{summary['new_pass_against_truth']} | {summary['rows_not_reviewed']} |",
+        f"| {summary['batches']} | {summary['targets']} | {summary['rows']} | {summary['program_agrees']}（{summary['program_agrees'] / rows:.1%}） | "
+        f"{summary['deep_agrees']}（{summary['deep_agrees'] / rows:.1%}） | {summary['fixed']} | {summary['broke']} | {summary['wrong_to_wrong']} | "
+        f"{summary['new_pass_against_reference']} | {summary['rows_not_reviewed']} |",
         "",
-        f"程序无法判断 {summary['program_unable']} 条，复核后给出结论 {summary['unable_settled']} 条，"
-        f"其中与真值一致 {summary['unable_settled_right']} 条；订正被拒 {summary['corrections_rejected']} 条。",
+        f"程序待确认 {summary['program_unable']} 条，复核后给出结论 {summary['unable_settled']} 条，"
+        f"其中与参考一致 {summary['unable_settled_agrees']} 条；订正被拒 {summary['corrections_rejected']} 条。",
+        "",
+        "## 与参考的分歧",
+        "",
+        "| 类别 | 程序 | 复核后 |",
+        "|---|---|---|",
+        *[f"| {name} | {item['program']} | {item['deep']} |" for name, item in summary["categories"].items()],
         "",
         "## 时间",
         "",
         "| 中位 / P90 / 最大（秒） | |",
         "|---|---|",
-        f"| 每份检查（时限 180） | {check['median']:.0f} / {check['p90']:.0f} / {check['max']:.0f} |",
-        f"| 每份复核（时限 360） | {review['median']:.0f} / {review['p90']:.0f} / {review['max']:.0f} |",
-        f"| 每例（含引用识别） | {case['median']:.0f} / {case['p90']:.0f} / {case['max']:.0f} |",
+        f"| 每份检查 | {check['median']:.0f} / {check['p90']:.0f} / {check['max']:.0f} |",
+        f"| 每份复核 | {review['median']:.0f} / {review['p90']:.0f} / {review['max']:.0f} |",
+        f"| 每批（含识别与预检） | {batch['median']:.0f} / {batch['p90']:.0f} / {batch['max']:.0f} |",
         "",
-        f"未复核目标：{json.dumps(summary['targets_not_reviewed'], ensure_ascii=False)}；引用识别未命中录音、现调模型 {summary['recognition_live_calls']} 次。",
+        f"未复核目标：{json.dumps(summary['targets_not_reviewed'], ensure_ascii=False)}；识别与预检未命中录音、现调模型 {summary['recognition_live_calls']} 次。",
         "",
         "## 费用（公开价，美元）",
         "",
@@ -450,30 +528,26 @@ def render(summary: dict, meta: dict) -> str:
         *[_usage_row(name, item) for name, item in usage["by_model"].items()],
         "",
         f"每份文件（中位 / P90 / 最大）：检查 ${per_file['check']['median']:.3f} / ${per_file['check']['p90']:.3f} / ${per_file['check']['max']:.3f}，"
-        f"复核 ${per_file['review']['median']:.3f} / ${per_file['review']['p90']:.3f} / ${per_file['review']['max']:.3f}；"
-        f"请求数 {summary['requests_per_file']['median']:.0f} / {summary['requests_per_file']['p90']:.0f} / {summary['requests_per_file']['max']:.0f}，"
-        f"单轮最多 {summary['requests_per_case_max']} 次。",
+        f"复核 ${per_file['review']['median']:.3f} / ${per_file['review']['p90']:.3f} / ${per_file['review']['max']:.3f}；单批最多 {summary['requests_per_batch_max']} 次请求。",
         "",
-        "## 按人工真值",
+        "## 按文档类型",
         "",
-        "| 真值 | 条款 | 程序正确 | 复核后正确 |",
+        "| 类型 | 条款行 | 程序与参考一致 | 复核后与参考一致 |",
         "|---|---|---|---|",
     ]
-    lines += [f"| {truth} | {item.get('rows', 0)} | {item.get('program_right', 0)} | {item.get('deep_right', 0)} |" for truth, item in summary["by_truth"].items()]
-    lines += ["", "## 按文档类型", "", "| 类型 | 条款 | 程序正确 | 复核后正确 |", "|---|---|---|---|"]
-    lines += [f"| {kind} | {item.get('rows', 0)} | {item.get('program_right', 0)} | {item.get('deep_right', 0)} |" for kind, item in summary["by_document_type"].items()]
+    lines += [f"| {kind} | {item.get('rows', 0)} | {item.get('program_agrees', 0)} | {item.get('deep_agrees', 0)} |" for kind, item in summary["by_document_type"].items()]
     lines += ["", "## 结论变化", ""] + ([f"- {key}：{value}" for key, value in summary["transitions"].items()] or ["- 无"])
-    for key, title in (("new_pass_against_truth", "新增与真值不符的 PASS"), ("broke", "改错"), ("rejected", "订正被拒")):
+    for key, title in (("new_pass_against_reference", "新增与参考不符的 PASS"), ("broke", "改成不一致"), ("rejected", "订正被拒")):
         lines += ["", f"## {title}", ""] + ([_detail(row) for row in summary["details"][key]] or ["- 无"])
-    if summary["case_errors"]:
-        lines += ["", "## 用例错误", ""] + [f"- {case}：{error}" for case, error in summary["case_errors"].items()]
+    if summary["batch_errors"]:
+        lines += ["", "## 批次错误", ""] + [f"- {name}：{error}" for name, error in summary["batch_errors"].items()]
     return "\n".join(lines) + "\n"
 
 
 def report(run: Path) -> dict:
-    lines = [json.loads(line) for line in (run / "cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
-    meta = json.loads((run / "meta.json").read_text(encoding="utf-8")) if (run / "meta.json").is_file() else {}
-    summary = summarize(lines, json.loads(PRICES.read_text(encoding="utf-8"))["models"])
+    meta = json.loads((run / "meta.json").read_text(encoding="utf-8"))
+    benchmark, _clauses = revision_paths(meta["revision"])
+    summary = summarize(_jsonl(run / "results.jsonl"), benchmark, set((meta.get("clauses") or {}).get("changed", [])), json.loads(PRICES.read_text(encoding="utf-8"))["models"])
     (run / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     (run / "summary.md").write_text(render(summary, meta), encoding="utf-8")
     return summary
@@ -482,26 +556,25 @@ def report(run: Path) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    run = commands.add_parser("run", help="execute cases inside the deep image")
+    run = commands.add_parser("run", help="execute benchmark batches inside the deep image")
+    run.add_argument("--revision", required=True, help="the rulebook revision read against, e.g. m4: its benchmark and signed clauses")
     run.add_argument("--out", type=Path, required=True)
-    run.add_argument("--shard", default="0/1", help="k/n: run cases whose position modulo n is k")
-    run.add_argument("--case", type=int, action="append", help="only this case index (repeatable)")
-    run.add_argument("--list", action="store_true", help="print the selected cases and stop")
+    run.add_argument("--shard", default="0/1", help="k/n: run batches whose position modulo n is k")
+    run.add_argument("--batch", action="append", default=[], help="only this benchmark batch (repeatable)")
+    clauses = commands.add_parser("clauses", help="print installed clause text against the revision's, as JSON")
+    clauses.add_argument("--revision", required=True)
     summary = commands.add_parser("report", help="summarize one run directory")
     summary.add_argument("run", type=Path)
     args = parser.parse_args(argv)
     if args.command == "report":
-        summary = report(args.run)
-        print(json.dumps({key: value for key, value in summary.items() if key != "details"}, ensure_ascii=False, indent=1))
+        result = report(args.run)
+        print(json.dumps({key: value for key, value in result.items() if key != "details"}, ensure_ascii=False, indent=1))
         return 0
-    cases = _cases()
-    if args.list:
-        for index, case in enumerate(cases):
-            print(index, case.id)
+    if args.command == "clauses":
+        print(json.dumps(clause_check(args.revision), ensure_ascii=False))
         return 0
     shard, shards = (int(part) for part in args.shard.split("/"))
-    indexes = [index for index in (args.case or range(len(cases))) if index % shards == shard]
-    return run_cases(indexes, args.out)
+    return run_batches(args.revision, args.batch, (shard, shards), args.out)
 
 
 if __name__ == "__main__":

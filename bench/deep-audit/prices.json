@@ -1,7 +1,26 @@
 {
-  "source": "OpenRouter 公开价（GET https://openrouter.ai/api/v1/models），2026-11-20 读取；美元 / 百万 token。deepseek 取标准时段价，不计闲时折扣；grok 单次请求输入超过 long_prompt_tokens 时按 long 计价。",
+  "source": "OpenRouter 公开价（GET https://openrouter.ai/api/v1/models），2026-11-20 读取；美元 / 百万 token。deepseek 取标准时段价，不计闲时折扣；grok 单次请求输入超过 long_prompt_tokens 时按 long 计价。 deepseek-flash（DeepSeek 官方接口，即 V4.1-Flash）取 https://api-docs.deepseek.com/quick_start/pricing/ 的高峰价，2026-11-26 读取。",
   "models": {
-    "grok-4.7": {"input": 2.0, "cached_input": 0.5, "output": 6.0, "long_prompt_tokens": 200000, "long": {"input": 4.0, "cached_input": 1.0, "output": 12.0}},
-    "deepseek/deepseek-v4.1-flash-1017": {"input": 0.3, "cached_input": 0.006, "output": 1.2}
+    "grok-4.7": {
+      "input": 2.0,
+      "cached_input": 0.5,
+      "output": 6.0,
+      "long_prompt_tokens": 200000,
+      "long": {
+        "input": 4.0,
+        "cached_input": 1.0,
+        "output": 12.0
+      }
+    },
+    "deepseek/deepseek-v4.1-flash-1017": {
+      "input": 0.3,
+      "cached_input": 0.006,
+      "output": 1.2
+    },
+    "deepseek-flash": {
+      "input": 0.3,
+      "cached_input": 0.006,
+      "output": 1.2
+    }
   }
 }
