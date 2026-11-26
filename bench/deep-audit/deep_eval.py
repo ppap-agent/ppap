@@ -245,6 +245,8 @@ def run_batches(revision: str, names: list[str], shard: tuple[int, int], out: Pa
                     model_grant_binding=lambda execution_id: gateway.http.grants.bind(execution_id, identity, selection.access),
                 )
                 audit_started = time.monotonic()
+                deep: dict[str, Any] | None = None
+                reviews: dict[Any, Any] = {}
                 try:
                     result, deep, reviews = CoreRuntime(runtime, None, None).execute_snapshot(
                         dataclasses.replace(snapshot, model_identity=identity), blobs, programs, ExecutionContext(on_progress=progress), analysis_mode="deep"
@@ -255,23 +257,24 @@ def run_batches(revision: str, names: list[str], shard: tuple[int, int], out: Pa
                         if target not in begun and on_task is not None:
                             begun.append(target)
                             on_task(order.index(target))
-                spans = timeline.seconds(time.monotonic())
-                current.update(
-                    audit_seconds=round(time.monotonic() - audit_started, 1),
-                    deep=deep or {},
-                    reviews=reviews,
-                    targets=[
-                        {
-                            "source": sources[target],
-                            "state": (deep or {}).get(target, {}).get("state"),
-                            "reason": (deep or {}).get(target, {}).get("reason", ""),
-                            "check_seconds": spans.get(("check", target)),
-                            "review_seconds": spans.get(("review", target)),
-                        }
-                        for target in order
-                    ],
-                    requests=[{**request, "target": sources.get(request["target"], "")} for request in requests.take(timeline)],
-                )
+                    # A round that fails still spent its requests and time; they are recorded, not dropped.
+                    spans = timeline.seconds(time.monotonic())
+                    current.update(
+                        audit_seconds=round(time.monotonic() - audit_started, 1),
+                        deep=deep or {},
+                        reviews=reviews,
+                        targets=[
+                            {
+                                "source": sources[target],
+                                "state": (deep or {}).get(target, {}).get("state"),
+                                "reason": (deep or {}).get(target, {}).get("reason", ""),
+                                "check_seconds": spans.get(("check", target)),
+                                "review_seconds": spans.get(("review", target)),
+                            }
+                            for target in order
+                        ],
+                        requests=[{**request, "target": sources.get(request["target"], "")} for request in requests.take(timeline)],
+                    )
                 return result
 
             line: dict[str, Any] = {"kind": "deep", "batch": name}
@@ -368,7 +371,9 @@ def summarize(lines: list[dict], benchmark: Path, changed: set[str], prices: dic
     reference = {(row["batch"], row["file"], row["clause"]): row for row in _jsonl(benchmark / "reference-judgments.jsonl")}
     findings = {(row["batch"], row["source"], row["clause"]): row for row in lines if row.get("kind") == "finding"}
     deep_lines = [line for line in lines if line.get("kind") == "deep"]
-    ran = {line["batch"] for line in deep_lines}
+    failed = [line for line in deep_lines if line.get("error")]
+    # A failed round has no verdicts to compare; its rows are counted apart, its spend stays in the totals.
+    ran = {line["batch"] for line in deep_lines if not line.get("error")}
     targets = [target for line in deep_lines for target in line.get("targets", [])]
     requests = [request for line in deep_lines for request in line.get("requests", [])]
     totals: Counter[str] = Counter()
@@ -415,12 +420,18 @@ def summarize(lines: list[dict], benchmark: Path, changed: set[str], prices: dic
     # Spend per file and stage: what one target file costs to check and to review.
     per_file: dict[tuple[str, str], dict[str, list[dict]]] = {}
     for line in deep_lines:
+        if line.get("error"):
+            continue
         for request in line.get("requests", []):
             per_file.setdefault((line["batch"], request["target"]), {"check": [], "review": []}).setdefault(request["stage"] or "check", []).append(request)
     seconds = [float(line["seconds"]) for line in deep_lines if not line.get("error")]
     return {
-        "batches": len(deep_lines),
-        "batch_errors": {line["batch"]: line["error"] for line in deep_lines if line.get("error")},
+        "batches": len(ran),
+        "batch_errors": {
+            line["batch"]: {"error": line["error"], "seconds": line.get("seconds"), "requests": len(line.get("requests", [])), "usd": _usage(line.get("requests", []), prices)["usd"]}
+            for line in failed
+        },
+        "failed_batch_rows": sum(row["batch"] in {line["batch"] for line in failed} for row in expected),
         "targets": len(targets),
         "targets_not_reviewed": dict(Counter(target["reason"] for target in targets if target["state"] != "completed")),
         **{
@@ -450,6 +461,7 @@ def summarize(lines: list[dict], benchmark: Path, changed: set[str], prices: dic
         "recognition_live_calls": sum(line.get("recognition_live_calls") or 0 for line in deep_lines),
         "usage": {
             "all": _usage(requests, prices),
+            "failed_batches": _usage([request for line in failed for request in line.get("requests", [])], prices),
             "by_stage": {stage: _usage([request for request in requests if (request["stage"] or "check") == stage], prices) for stage in ("check", "review")},
             "by_model": {
                 f"{model} / {effort or '默认'}": _usage([r for r in requests if (r["model"], r["effort"]) == (model, effort)], prices)
@@ -493,12 +505,21 @@ def render(summary: dict, meta: dict) -> str:
     usage, per_file = summary["usage"], summary["usd_per_file"]
     lines += [
         "",
-        "| 批次 | 目标文件 | 条款行 | 程序与参考一致 | 复核后与参考一致 | 改成一致 | 改成不一致 | 改了仍不一致 | 新增与参考不符的 PASS | 未复核条款 |",
+        "| 完成的批次 | 目标文件 | 条款行 | 程序与参考一致 | 复核后与参考一致 | 改成一致 | 改成不一致 | 改了仍不一致 | 新增与参考不符的 PASS | 未复核条款 |",
         "|---|---|---|---|---|---|---|---|---|---|",
         f"| {summary['batches']} | {summary['targets']} | {summary['rows']} | {summary['program_agrees']}（{summary['program_agrees'] / rows:.1%}） | "
         f"{summary['deep_agrees']}（{summary['deep_agrees'] / rows:.1%}） | {summary['fixed']} | {summary['broke']} | {summary['wrong_to_wrong']} | "
         f"{summary['new_pass_against_reference']} | {summary['rows_not_reviewed']} |",
         "",
+        *(
+            [
+                f"整轮失败 {len(summary['batch_errors'])} 批（{summary['failed_batch_rows']} 行），没有结论可对照，不计入上表；"
+                f"它们已花的请求与费用计入下方费用合计（${usage['failed_batches']['usd']:.2f}）。",
+                "",
+            ]
+            if summary["batch_errors"]
+            else []
+        ),
         f"程序待确认 {summary['program_unable']} 条，复核后给出结论 {summary['unable_settled']} 条，"
         f"其中与参考一致 {summary['unable_settled_agrees']} 条；订正被拒 {summary['corrections_rejected']} 条。",
         "",
@@ -540,7 +561,7 @@ def render(summary: dict, meta: dict) -> str:
     for key, title in (("new_pass_against_reference", "新增与参考不符的 PASS"), ("broke", "改成不一致"), ("rejected", "订正被拒")):
         lines += ["", f"## {title}", ""] + ([_detail(row) for row in summary["details"][key]] or ["- 无"])
     if summary["batch_errors"]:
-        lines += ["", "## 批次错误", ""] + [f"- {name}：{error}" for name, error in summary["batch_errors"].items()]
+        lines += ["", "## 批次错误", ""] + [f"- {name}：{item['error']}，{item['seconds']} 秒，{item['requests']} 次请求，${item['usd']:.2f}" for name, item in summary["batch_errors"].items()]
     return "\n".join(lines) + "\n"
 
 

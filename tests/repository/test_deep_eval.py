@@ -53,12 +53,22 @@ def test_review_outcomes_are_set_against_the_reference_over_every_expected_row(t
     assert summary["categories"]["没有输出"]["deep"] == len(rows) - 3
 
 
-def test_unreviewed_targets_and_batch_errors_are_reported_not_hidden(tmp_path):
+def test_failed_rounds_are_counted_apart_and_their_spend_is_kept(tmp_path):
     batch, _rows, ng = _ng_rows()
-    lines = [_finding(ng[0], "NG", "NG", state="degraded"), {"kind": "deep", "batch": batch, "seconds": 5, "error": "OSError: missing", "targets": [], "requests": []}]
+    failed = next(row["batch"] for row in _lines("expected-rows.jsonl") if row["batch"] != batch)
+    request = {"stage": "review", "target": "", "model": "grok-4.7", "effort": "medium", "input_tokens": 1000, "cached_tokens": 0, "output_tokens": 100, "reasoning_tokens": 0}
+    lines = [
+        _finding(ng[0], "NG", "NG", state="degraded"),
+        {"kind": "deep", "batch": batch, "seconds": 5, "targets": [], "requests": []},
+        {"kind": "deep", "batch": failed, "seconds": 9, "error": "DeepError: deep_budget_exhausted", "targets": [], "requests": [request]},
+    ]
     summary = _report(tmp_path, lines)
     assert summary["rows_not_reviewed"] == 1
-    assert summary["batch_errors"] == {batch: "OSError: missing"}
+    # A failed round has no verdicts: its rows leave the comparison, its spend stays in the totals.
+    assert summary["batches"] == 1 and summary["rows"] == sum(row["batch"] == batch for row in _lines("expected-rows.jsonl"))
+    assert summary["failed_batch_rows"] == sum(row["batch"] == failed for row in _lines("expected-rows.jsonl"))
+    assert summary["batch_errors"][failed]["requests"] == 1 and summary["usage"]["all"]["requests"] == 1
+    assert summary["usage"]["failed_batches"]["usd"] > 0
 
 
 def test_summary_names_the_revision_and_the_clauses_whose_text_differs(tmp_path):
