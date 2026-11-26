@@ -17,6 +17,7 @@ import {resultLabel, resultTone} from './status-labels'
 import {writeAuditAddress} from './routes'
 import {signoffChanged} from './signoff-contract'
 import {Disclosure} from '../components/disclosure'
+import {host} from '../host'
 
 type FileVersion = components['schemas']['FileVersion']
 type MachineFinding = Pick<components['schemas']['Finding'], 'item_key' | 'item' | 'status'>
@@ -132,7 +133,7 @@ export function FactQuestions({roundId, files, findings = [], fileVersionId, edi
       const clause = questions.find(row => row.item_keys.includes(result.item_key))?.clause_ids.join('、')
       return <article key={result.item_key} className="space-y-2 border-l-2 pl-3 text-sm"><h4 className="font-medium">{machine?.item || clause || '未命名条款'}</h4><p>原机器结果：{machine ? resultLabel[machine.status] : '请在原审核记录中查看'}</p><div className="flex items-center gap-2"><Badge variant="outline">人工确认</Badge><Badge variant={resultTone(result.status)}>{resultLabel[result.status]}</Badge></div><p className="whitespace-pre-wrap">{result.suggestions}</p><p className="text-xs text-muted-foreground">回答人：{result.confirmed_by.join('、')} · <time dateTime={result.confirmed_at}>{displayTime(result.confirmed_at)}</time></p>{result.sources.map(source => <p key={`${source.file_version_id}:${source.field}`} className="break-words text-xs text-muted-foreground">依据：{filename(source.file_version_id)}{place(source)} · {answers.find(answer => answer.field === source.field && answer.file_version_id === source.file_version_id)?.prompt || '未命名事实'}：{factValueLabel(source.value)}</p>)}</article>
     })}</section>}
-    {answers.length > 0 && <Button variant="outline" asChild><a href={`${apiUrl}/audit-rounds/${encodeURIComponent(roundId)}/fact-answers/report`} download="original-fact-confirmations.pdf">下载人工确认报告</a></Button>}
+    {answers.length > 0 && host.browserDownload && <Button variant="outline" asChild><a href={`${apiUrl}/audit-rounds/${encodeURIComponent(roundId)}/fact-answers/report`} download="original-fact-confirmations.pdf">下载人工确认报告</a></Button>}
     {answers.length > 0 && <Disclosure className="border-t pt-3 text-sm" summary={<>已记录的原件回答（{answers.length}）</>}><div className="space-y-3">{answers.map(answer => <article key={answer.operation_id} className="space-y-1"><p>{answer.prompt}：{factValueLabel(answer.value)}</p><p className="text-xs text-muted-foreground">{filename(answer.file_version_id)}{place(answer)} · {answer.answered_by} · <time dateTime={answer.answered_at}>{displayTime(answer.answered_at)}</time></p></article>)}</div></Disclosure>}
     </div>
     </Disclosure>

@@ -29,6 +29,7 @@ import {sameSnapshot} from './result-projection'
 import {readAuditRoute} from './routes'
 import {conclusionLabel, resultTone} from './status-labels'
 import type {ArchiveDocument, ArchiveQuery, AuditArchiveAdapter} from './archive-contract'
+import {host} from '../host'
 
 const initialQuery: ArchiveQuery = {search: '', category_id: null, document_type: null, customer: null, initiator: null, from_date: null, through_date: null, result: null, page: 1, page_size: 10}
 
@@ -148,6 +149,8 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
     const timer = window.setTimeout(() => filter({search: words}), 300)
     return () => window.clearTimeout(timer)
   }, [search, query.search])
+  // On a narrow screen the categories and filters fold away above the list until asked for.
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const current = page && sameSnapshot(page.query, query) ? page : null
   // Customers lead the tree; the vehicle and part levels open under the chosen customer and vehicle.
   // A count shows only once the read has said it; no placeholder stands in for it.
@@ -172,15 +175,15 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
   const applied = ([['search', '搜索', query.search], ['category_id', '分类', query.category_id ? categoryLabel || '已选分类' : null], ['document_type', '文件类型', query.document_type && documentTypeLabel(query.document_type)], ['customer', '客户', query.customer], ['result', '审核结果', resultName(query.result)], ['initiator', '发起人', query.initiator]] as const).filter(([, , value]) => Boolean(value))
   const clearFilters = () => {setSearch(''); setQuery(initialQuery)}
   const status = (document: ArchiveDocument) => <div className="space-y-1">{document.latest_completed ? <Badge variant={resultTone(document.latest_completed.conclusion)}>{document.latest_completed.conclusion ? conclusionLabel[document.latest_completed.conclusion] ?? '结果未知' : '结果未知'}</Badge> : <span className="text-xs text-muted-foreground">尚无完成审核</span>}{document.latest_completed && <p className="text-xs text-muted-foreground">第 {document.latest_completed.sequence} 次审核</p>}{document.latest_activity && ['queued', 'running'].includes(document.latest_activity.execution) && <p className="text-xs text-muted-foreground">第 {document.latest_activity.sequence} 次审核{document.latest_activity.execution === 'queued' ? '排队中' : '中'}</p>}</div>
-  const selection = chosen.length > 0 && <section aria-label="已选固定报告" className="space-y-3"><div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-sm font-medium">已选择 {chosen.length} 份报告</span>{chosen.length > 1 ? <Button variant="outline" size="sm" disabled={!packaging.canCreatePackage(chosenReferences)} onClick={() => void packaging.createPackage(chosenReferences)}>打包所选 {chosen.length} 份历史报告</Button> : <Button variant="outline" size="sm" disabled={downloading} onClick={() => void download()}>下载所选 1 份历史报告</Button>}<Button variant="ghost" size="sm" onClick={() => setChecked({})}>清空选择</Button></div><div className="flex flex-wrap gap-2">{chosen.map(item => <Badge variant="outline" className="max-w-full whitespace-normal text-left" key={resultKey(item.entry.reference)}>{item.title} · 第 {item.entry.sequence} 次审核</Badge>)}</div></section>
+  const selection = chosen.length > 0 && <section aria-label="已选固定报告" className="space-y-3"><div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-sm font-medium">已选择 {chosen.length} 份报告</span>{chosen.length > 1 ? <Button variant="outline" size="sm" disabled={!packaging.canCreatePackage(chosenReferences)} onClick={() => void packaging.createPackage(chosenReferences)}>打包所选 {chosen.length} 份历史报告</Button> : host.browserDownload && <Button variant="outline" size="sm" disabled={downloading} onClick={() => void download()}>下载所选 1 份历史报告</Button>}<Button variant="ghost" size="sm" onClick={() => setChecked({})}>清空选择</Button></div><div className="flex flex-wrap gap-2">{chosen.map(item => <Badge variant="outline" className="max-w-full whitespace-normal text-left" key={resultKey(item.entry.reference)}>{item.title} · 第 {item.entry.sequence} 次审核</Badge>)}</div></section>
   if (!active) return null
   if (!address.documentId && (address.reference || address.invalid || address.report)) return <Alert><AlertTitle>无法打开这次审核</AlertTitle><AlertDescription><p>链接缺少有效的文件或审核信息。</p><Button variant="outline" size="sm" onClick={closeDocument}>返回审核文件</Button></AlertDescription></Alert>
   // A history read that settles after the person left this document must not write it back into the address.
   if (address.documentId) return <ArchiveHistory headerTitle={headerTitle} key={`${address.documentId}:${restore}`} documentId={address.documentId} document={page?.documents.find(row => row.document_id === address.documentId) || null} initialAddress={address} onNavigate={(reference, report, replace) => {if (activeRef.current && readArchiveAddress(location.search).documentId === address.documentId) writeArchiveAddress(address.documentId, reference, report, replace)}} adapter={adapter} renderOriginal={renderOriginal} onBack={closeDocument} onOpenTask={onOpenTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} precheckAdapter={precheckAdapter}/>
   const time = (document: ArchiveDocument) => (document.latest_completed ?? document.latest_activity)?.audited_at
   return <section className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden" aria-label="审核文件">
-    <div className="grid min-h-0 flex-1 grid-cols-[15rem_minmax(0,1fr)] grid-rows-1 overflow-hidden rounded-lg bg-card">
-    <aside aria-label="文件分类" className="min-h-0 space-y-4 overflow-y-auto border-r p-3">
+    <div className="grid min-h-0 flex-1 grid-cols-[15rem_minmax(0,1fr)] grid-rows-1 overflow-hidden rounded-lg bg-card max-xl:grid-cols-1 max-xl:grid-rows-[auto_minmax(0,1fr)]">
+    <aside aria-label="文件分类" className={cn('min-h-0 space-y-4 overflow-y-auto border-r p-3 max-xl:max-h-[50dvh] max-xl:border-r-0 max-xl:border-b', !filtersOpen && 'max-xl:hidden')}>
       {tree}
       <section aria-label="表格筛选" className="grid gap-3 border-t pt-3">
         <div className="grid gap-2"><span className="text-sm font-medium">结果</span><Select value={query.result || 'all'} onValueChange={value => filter({result: results.find(([key]) => key === value)?.[0] ?? null})}><SelectTrigger aria-label="全部结果" className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部结果</SelectItem>{results.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
@@ -189,29 +192,30 @@ export function AuditArchive({adapter, renderOriginal, onOpenTask, reportAdapter
       </section>
     </aside>
     <div className="flex min-h-0 min-w-0 flex-col gap-3 py-3">
-    <div role="search" aria-label="筛选审核文件" className="flex flex-nowrap items-center gap-1.5 px-4">
+    <div role="search" aria-label="筛选审核文件" className="flex flex-nowrap items-center gap-1.5 px-4 max-xl:flex-wrap">
+      <Button type="button" variant="outline" size="sm" className="xl:hidden" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(open => !open)}>{filtersOpen ? '收起分类与筛选' : '分类与筛选'}</Button>
       <div className="flex min-w-0 flex-1"><div className={`relative transition-all duration-200 ease-out ${searchOpen || search.trim() ? 'w-full' : 'w-44'}`}><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Icon icon={iconMagnifyingGlass} aria-hidden="true" className="size-3.5"/></span><Input type="search" aria-label="搜索文件或零件号" placeholder="搜索文件 / 零件号" iconStart value={search} onChange={event => setSearch(event.target.value)} onFocus={() => setSearchOpen(true)} onBlur={() => setSearchOpen(false)} onKeyDown={event => {if (event.key === 'Escape') {event.preventDefault(); if (search) {setSearch(''); filter({search: ''}); return}; setSearchOpen(false); event.currentTarget.blur(); return}; if (event.key === 'Enter') {event.preventDefault(); filter({search: search.trim()})}}}/></div></div>
-      <div className="ml-auto flex shrink-0 items-center gap-2"><Segmented label="审核时间范围" value={range} options={ranges} onChange={days => filter({from_date: days === 'all' ? null : rangeStart(Number(days)), through_date: null})}/><Tooltip><TooltipTrigger asChild><Button type="button" variant="outline" size="icon-sm" aria-label="刷新审核文件" disabled={loading} onClick={() => setReload(value => value + 1)}><Icon icon={iconArrowsRotate} className={cn(loading && 'animate-spin motion-reduce:animate-none')}/></Button></TooltipTrigger><TooltipContent>{readAt ? <>数据更新于 <time dateTime={readAt.toISOString()}>{displayTime(readAt)}</time></> : '尚未读取审核文件'}</TooltipContent></Tooltip></div>
+      <div className="ml-auto flex shrink-0 items-center gap-2 max-xl:ml-0"><Segmented label="审核时间范围" value={range} options={ranges} onChange={days => filter({from_date: days === 'all' ? null : rangeStart(Number(days)), through_date: null})}/><Tooltip><TooltipTrigger asChild><Button type="button" variant="outline" size="icon-sm" aria-label="刷新审核文件" disabled={loading} onClick={() => setReload(value => value + 1)}><Icon icon={iconArrowsRotate} className={cn(loading && 'animate-spin motion-reduce:animate-none')}/></Button></TooltipTrigger><TooltipContent>{readAt ? <>数据更新于 <time dateTime={readAt.toISOString()}>{displayTime(readAt)}</time></> : '尚未读取审核文件'}</TooltipContent></Tooltip></div>
     </div>
     {applied.length > 0 && <div className="flex flex-wrap items-center gap-2 px-4" aria-label="已应用筛选">{applied.map(([key, label, value]) => <Button key={key} variant="secondary" size="sm" aria-label={`移除${label}筛选`} className="h-auto min-h-7 whitespace-normal text-left" onClick={() => {if (key === 'search') setSearch(''); filter({[key]: key === 'search' ? '' : null})}}>{label}：{value}<Icon icon={iconXmark}/></Button>)}<Button variant="ghost" size="sm" onClick={clearFilters}>清除筛选</Button></div>}
     {loading && <ReadSkeleton label="正在读取审核文件…" kind={current ? 'inline' : 'table'}/>}
     {error && <Alert variant="destructive" className="mx-4 w-auto"><AlertTitle>审核文件读取未完成</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" size="sm" onClick={() => setReload(value => value + 1)}>重新读取审核文件</Button></AlertDescription></Alert>}
-    {current && <div className="-mb-3 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-t">
+    {current && <div className="-mb-3 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-t max-xl:px-3 max-xl:pt-3">
       {/* Wide rows scroll inside this card. Column names and the pager stay in view. */}
-      <Table aria-label="审核文件列表" containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead className="w-10"><span className="sr-only">选择报告</span></TableHead><TableHead>文档名称</TableHead><TableHead>审核规则</TableHead><TableHead>审核结果</TableHead><TableHead>文件类型</TableHead><TableHead>发起人</TableHead><TableHead>发起时间</TableHead><TableHead>客户名称</TableHead><TableHead>车型</TableHead><TableHead>零件号</TableHead><TableHead>零件名称</TableHead></TableRow></TableHeader><TableBody>{current.documents.map(document => {
+      <Table stack aria-label="审核文件列表" containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead className="w-10"><span className="sr-only">选择报告</span></TableHead><TableHead>文档名称</TableHead><TableHead>审核规则</TableHead><TableHead>审核结果</TableHead><TableHead>文件类型</TableHead><TableHead>发起人</TableHead><TableHead>发起时间</TableHead><TableHead>客户名称</TableHead><TableHead>车型</TableHead><TableHead>零件号</TableHead><TableHead>零件名称</TableHead></TableRow></TableHeader><TableBody>{current.documents.map(document => {
         const initiator = document.latest_completed?.initiator ?? document.latest_activity?.initiator, rule = document.latest_completed?.rule_title ?? document.latest_activity?.rule_title, at = time(document), customer = document.metadata.customer
         return <TableRow key={document.document_id} data-state={checked[document.document_id] ? 'selected' : undefined} className="cursor-pointer" onClick={event => {if (event.target instanceof Element && event.currentTarget.contains(event.target) && !event.target.closest('button, a, [role="checkbox"]')) openDocument(document)}}>
         <TableCell><Checkbox aria-label={`选择 ${document.title}`} checked={Boolean(checked[document.document_id])} disabled={!checked[document.document_id] && (!document.latest_completed || !historyReportReady(document.latest_completed))} onCheckedChange={value => toggle(document, value === true)}/></TableCell>
-        <TableCell className="whitespace-normal"><div className="min-w-48 max-w-96"><button type="button" className="rounded-sm text-left text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50" onClick={() => openDocument(document)}><FileName name={document.title} colored/></button></div></TableCell>
-        <TableCell className="whitespace-normal"><div className="min-w-32 max-w-56">{rule || unset}</div></TableCell>
-        <TableCell>{status(document)}</TableCell>
-        <TableCell>{document.document_type ? documentTypeLabel(document.document_type) : unset}</TableCell>
-        <TableCell>{initiator || unset}</TableCell>
-        <TableCell>{at ? <time className="text-muted-foreground tabular-nums" dateTime={at}>{displayTime(at)}</time> : unset}</TableCell>
-        <TableCell>{customer ? <div className="max-w-40 truncate" title={customer}>{customer}</div> : unset}</TableCell>
-        <TableCell>{document.metadata.model || unset}</TableCell>
-        <TableCell>{document.metadata.part_number ? <span className="tabular-nums">{document.metadata.part_number}</span> : unset}</TableCell>
-        <TableCell>{document.metadata.part || unset}</TableCell>
+        <TableCell lead className="whitespace-normal"><div className="min-w-48 max-w-96 max-xl:min-w-0"><button type="button" className="rounded-sm text-left text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50" onClick={() => openDocument(document)}><FileName name={document.title} colored/></button></div></TableCell>
+        <TableCell label="审核规则" className="whitespace-normal"><div className="min-w-32 max-w-56 max-xl:min-w-0 max-xl:inline">{rule || unset}</div></TableCell>
+        <TableCell label="审核结果">{status(document)}</TableCell>
+        <TableCell label="文件类型">{document.document_type ? documentTypeLabel(document.document_type) : unset}</TableCell>
+        <TableCell label="发起人">{initiator || unset}</TableCell>
+        <TableCell label="发起时间">{at ? <time className="text-muted-foreground tabular-nums" dateTime={at}>{displayTime(at)}</time> : unset}</TableCell>
+        <TableCell label="客户名称">{customer ? <div className="max-w-40 truncate max-xl:inline max-xl:whitespace-normal" title={customer}>{customer}</div> : unset}</TableCell>
+        <TableCell label="车型">{document.metadata.model || unset}</TableCell>
+        <TableCell label="零件号">{document.metadata.part_number ? <span className="tabular-nums">{document.metadata.part_number}</span> : unset}</TableCell>
+        <TableCell label="零件名称">{document.metadata.part || unset}</TableCell>
       </TableRow>})}{!current.documents.length && <TableRow interactive={false}><TableCell colSpan={12} className="text-center whitespace-normal"><div className="grid justify-items-center py-12 gap-3"><p className="text-sm text-muted-foreground">没有符合条件的文件</p></div></TableCell></TableRow>}</TableBody></Table>
       <footer className="space-y-3 border-t px-3 py-3">
         {selection}

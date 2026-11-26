@@ -65,7 +65,7 @@ function DialogContent({
           "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 bg-popover text-sm text-popover-foreground shadow-lg duration-100 outline-none sm:max-w-md data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           layout === "file-picker" ? "gap-0 rounded-lg p-0" : layout === "page" ? "" : "gap-4 rounded-lg p-6",
           // On a phone a dialog is a page of its own (design.md「Viewport」): what it asks is read whole, its actions stay at hand.
-          layout !== "page" && "max-sm:top-0 max-sm:left-0 max-sm:h-dvh max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:content-start max-sm:overflow-y-auto max-sm:rounded-none max-sm:pb-safe-6 max-sm:data-open:zoom-in-100 max-sm:data-closed:zoom-out-100",
+          layout !== "page" && "max-sm:top-0 max-sm:left-0 max-sm:h-dvh max-sm:max-h-dvh max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:content-start max-sm:overflow-y-auto max-sm:rounded-none max-sm:pb-safe-6 max-sm:data-open:zoom-in-100 max-sm:data-closed:zoom-out-100",
           // A whole page that takes over the screen (the rule-clarification confirmation): canvas, no frame, own scroll.
           layout === "page" && "top-0 left-0 block h-dvh w-screen max-w-none translate-x-0 translate-y-0 overflow-y-auto rounded-none bg-canvas p-0 shadow-none sm:max-w-none data-open:zoom-in-100 data-closed:zoom-out-100",
           className

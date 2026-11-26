@@ -3,7 +3,11 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
-function Table({ className, containerClassName, ...props }: React.ComponentProps<"table"> & {containerClassName?: string}) {
+/**
+ * `stack`: a list of records. Below 1280px each row becomes a card and each cell a line named by its `label`
+ * (index.css); the record's name cell is `lead`. A grid of data to be read as a grid (an original workbook) does not stack.
+ */
+function Table({ className, containerClassName, stack = false, ...props }: React.ComponentProps<"table"> & {containerClassName?: string; stack?: boolean}) {
   return (
     <div
       data-slot="table-container"
@@ -11,6 +15,7 @@ function Table({ className, containerClassName, ...props }: React.ComponentProps
     >
       <table
         data-slot="table"
+        data-stack={stack || undefined}
         className={cn("w-full caption-bottom text-sm", className)}
         {...props}
       />
@@ -79,10 +84,12 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   )
 }
 
-function TableCell({ className, ...props }: React.ComponentProps<"td">) {
+function TableCell({ className, label, lead = false, ...props }: React.ComponentProps<"td"> & {label?: string; lead?: boolean}) {
   return (
     <td
       data-slot="table-cell"
+      data-label={label}
+      data-lead={lead || undefined}
       className={cn(
         "px-3 py-2.5 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0 data-[selected=true]:bg-muted data-[selected=true]:outline data-[selected=true]:outline-1 data-[selected=true]:outline-ring",
         className

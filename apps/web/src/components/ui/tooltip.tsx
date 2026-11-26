@@ -17,16 +17,33 @@ function TooltipProvider({
   )
 }
 
+// A touch screen has no hover: a tip whose trigger is not itself an action (a value with an explanation) opens and closes
+// on tap; a tap elsewhere closes it. Buttons and links keep doing what they do (apps/web/README「窄屏不另起一套」).
+const Toggle = React.createContext<(() => void) | null>(null)
+
 function Tooltip({
+  open,
+  defaultOpen,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Root>) {
-  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+  const [own, setOwn] = React.useState(defaultOpen ?? false)
+  const shown = open ?? own
+  const change = (next: boolean) => {if (open === undefined) setOwn(next); onOpenChange?.(next)}
+  return <Toggle.Provider value={() => change(!shown)}><TooltipPrimitive.Root data-slot="tooltip" open={shown} onOpenChange={change} {...props} /></Toggle.Provider>
 }
 
+const isAction = (element: EventTarget) => element instanceof Element && element.matches("button, a, [role=button]")
+
 function TooltipTrigger({
+  onPointerDown,
+  onClick,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />
+  const toggle = React.useContext(Toggle), touch = React.useRef(false)
+  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props}
+    onPointerDown={event => {onPointerDown?.(event); touch.current = event.pointerType === "touch"; if (touch.current && !isAction(event.currentTarget)) event.preventDefault()}}
+    onClick={event => {onClick?.(event); if (touch.current && !isAction(event.currentTarget)) {event.preventDefault(); toggle?.()}}} />
 }
 
 function TooltipContent({

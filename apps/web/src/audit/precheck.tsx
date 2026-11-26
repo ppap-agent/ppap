@@ -6,6 +6,7 @@ import {Button} from '../components/ui/button'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {precheckReportChapters} from './report-chapters'
+import {host} from '../host'
 
 const ReportReader = lazy(() => import('./report-reader').then(module => ({default: module.ReportReader})))
 
@@ -75,7 +76,7 @@ export function PrecheckReport({adapter, taskId, result}: {adapter: PrecheckAdap
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className={`text-sm font-semibold ${result.conclusion === 'fail' ? 'text-destructive' : ''}`}>预检报告 · {conclusion}</h2>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" disabled={busy} onClick={() => void open(0)}>{busy ? <Icon icon={iconCircleNotch} className="animate-spin motion-reduce:animate-none"/> : <Icon icon={iconEye}/>}预览预检报告</Button>
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => void download()}><Icon icon={iconDownload}/>下载预检报告(PDF)</Button>
+        {host.browserDownload && <Button variant="outline" size="sm" disabled={busy} onClick={() => void download()}><Icon icon={iconDownload}/>下载预检报告(PDF)</Button>}
       </div></div>
     <ol aria-label="预检报告目录" className="flex flex-wrap gap-1.5">{precheckReportChapters.map((title, index) => <li key={title} className="min-w-0"><button type="button" disabled={busy} title={title} className="max-w-full truncate rounded-md border bg-header px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-ring disabled:opacity-60" onClick={() => void open(index)}>{title}</button></li>)}</ol>
     {busy && <p role="status" className="text-xs text-muted-foreground">正在生成预检报告…</p>}

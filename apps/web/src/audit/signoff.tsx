@@ -90,16 +90,16 @@ function SignContent({content}: {content: SignoffContent}) {
   const summary = signoffSummary(content)
   return <div className="space-y-3">
     <p className="flex flex-wrap items-center gap-x-3 gap-y-1"><span className="flex items-center gap-1.5"><span className="text-muted-foreground">本轮结论</span><Badge shape="square" variant={tone(summary.conclusion)}>{conclusionText(summary.conclusion)}</Badge></span><span className="tabular-nums">{summary.line}</span></p>
-    <Table aria-label="签发的文件">
+    <Table stack aria-label="签发的文件">
       <TableHeader variant="muted"><TableRow interactive={false}><TableHead>文件</TableHead><TableHead className="w-24">结论</TableHead><TableHead className="w-20 text-right">人工确认</TableHead><TableHead className="w-28 text-right">按机器结论接受</TableHead><TableHead className="w-20 text-right">待审核</TableHead></TableRow></TableHeader>
       <TableBody>{content.files.map(file => {
         const conclusion = fileConclusion(file)
         return <TableRow key={file.file_version_id} interactive={false}>
-          <TableCell className="w-full max-w-0"><FileName truncate name={file.filename}/></TableCell>
-          <TableCell><Badge shape="square" variant={tone(conclusion)}>{conclusionText(conclusion)}</Badge></TableCell>
-          <TableCell className="text-right"><span className="tabular-nums">{file.reviewed_count}</span></TableCell>
-          <TableCell className="text-right"><span className="tabular-nums">{file.accepted_count}</span></TableCell>
-          <TableCell className="text-right"><span className={file.pending_count ? 'font-medium tabular-nums text-warning' : 'tabular-nums text-muted-foreground'}>{file.pending_count}</span></TableCell>
+          <TableCell lead className="w-full max-w-0"><FileName truncate name={file.filename}/></TableCell>
+          <TableCell label="结论"><Badge shape="square" variant={tone(conclusion)}>{conclusionText(conclusion)}</Badge></TableCell>
+          <TableCell label="人工确认" className="text-right"><span className="tabular-nums">{file.reviewed_count}</span></TableCell>
+          <TableCell label="按机器结论接受" className="text-right"><span className="tabular-nums">{file.accepted_count}</span></TableCell>
+          <TableCell label="待审核" className="text-right"><span className={file.pending_count ? 'font-medium tabular-nums text-warning' : 'tabular-nums text-muted-foreground'}>{file.pending_count}</span></TableCell>
         </TableRow>
       })}</TableBody>
     </Table>

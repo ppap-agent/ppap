@@ -62,7 +62,7 @@ export function CustomerMode({value, ready, options, adapter, onChange, onInitia
       catch {setCurrent(null); setMessage('保存结果待确认，请重新读取企业默认。')}
     } finally {setSaving(false)}
   }
-  return <div className="grid gap-2">
+  return <div className="grid grid-cols-1 gap-2">
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><Label htmlFor="audit-customer">审核客户</Label></div>
     <div className="flex flex-wrap items-center gap-2">
       <Select value={ready && chosen ? value : ''} onValueChange={onChange} onOpenChange={open => {if (open) onRefresh?.()}}><SelectTrigger id="audit-customer" className="h-10 w-80 max-w-full"><SelectValue placeholder="请选择审核客户"/></SelectTrigger><SelectContent><CustomerListNote count={choices.length}/>{choices.map(option => <CustomerItem key={option.value} value={option.value} label={option.label} coverage={coverage?.(option.value)} typeSetMissing={typeSetMissing?.(option.value)}/>)}</SelectContent></Select>

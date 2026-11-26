@@ -11,6 +11,7 @@ import {reportShortLabel as labels} from './status-labels'
 import {readReportPdf, type AuditReportAdapter, type AuditReportReference} from './report-contract'
 import {auditReportFilename} from './result-projection'
 import {displayTime} from '../helpers'
+import {host} from '../host'
 
 const ReportReader = lazy(() => import('./report-reader').then(module => ({default: module.ReportReader})))
 
@@ -53,7 +54,7 @@ export function ReportPreview({name, rule, reference, report, ready, issue, adap
           </dl>
         </div>
       </DialogContent></Dialog>
-      {actions}{share && <ReportShareButton {...share}/>}<Button size="sm" variant="outline" disabled={!currentPdf?.url} onClick={download}><Icon icon={iconDownload}/>下载当前报告</Button>
+      {actions}{share && <ReportShareButton {...share}/>}{host.browserDownload && <Button size="sm" variant="outline" disabled={!currentPdf?.url} onClick={download}><Icon icon={iconDownload}/>下载当前报告</Button>}
     </div>
     </header>
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">

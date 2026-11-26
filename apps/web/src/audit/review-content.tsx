@@ -231,7 +231,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
   // The overview grid names the file and its rule, so the lines below do not repeat them.
   const overview = !focus && (file.match !== undefined || file.display_info !== undefined)
   return <section aria-label="审核详情" className={`min-w-0 transition-all duration-300 motion-reduce:transition-none ${originalOpen ? 'pr-168' : ''}`}>
-    <header className="min-w-0 space-y-1.5 border-b bg-card px-6 py-3">
+    <header className="min-w-0 space-y-1.5 border-b bg-card px-6 max-xl:px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
       {heading}
@@ -247,7 +247,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       {/* The file's facts in one compact grid, as on the prototype's detail panel; the pencil is the one place to correct the displayed values. */}
       {overview && <section aria-label="文件信息概览" className="flex items-start gap-2 py-0.5">
         <h3 className="sr-only">文件信息</h3>
-        <dl className={`grid min-w-0 flex-1 ${originalOpen ? 'grid-cols-2' : 'grid-cols-4'} gap-x-5 gap-y-1 text-xs [&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-1.5 [&_dd]:min-w-0 [&_dd]:truncate [&_dt]:shrink-0 [&_dt]:text-muted-foreground`}>
+        <dl className={`grid min-w-0 flex-1 ${originalOpen ? 'grid-cols-2' : 'grid-cols-4 max-xl:grid-cols-2 max-sm:grid-cols-1'} gap-x-5 gap-y-1 text-xs [&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-1.5 [&_dd]:min-w-0 [&_dd]:truncate [&_dt]:shrink-0 [&_dt]:text-muted-foreground`}>
           {([['匹配规则', rule?.title || ''], ['文件类型', file.match?.document_type && !file.file.original_filename.includes(documentTypeName(catalog?.type_names, file.match.document_type)) ? documentTypeName(catalog?.type_names, file.match.document_type) : ''], ['客户名称', displayValues.customer || ''], ['车型', displayValues.model || ''], ['项目名称', displayValues.project || ''], ['零件号', displayValues.part_number || ''], ['零件名称', displayValues.part || ''], ...facts.map(fact => [fact.label, fact.value] as [string, string])].filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd title={value}>{label === '匹配规则' && rule ? <Button variant="link" size="xs" className="h-auto max-w-full" title={rule.title} onClick={() => setInfoOpen(true)}><span className="truncate">{rule.title}</span></Button> : value}</dd></div>))}
         </dl>
         {onEditDisplay && <Button variant="ghost" size="icon-xs" aria-label="更正显示信息" title="更正显示信息" disabled={!validDisplayInfo(file.display_info)} onClick={onEditDisplay}><Icon icon={iconPen}/></Button>}
@@ -255,30 +255,30 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       {/* Rule and report status share one quiet line under the verdict. */}
       <p className="break-words text-xs text-muted-foreground empty:hidden">{rule && !overview && <>本轮规则：{rule.title}</>}{rule && !overview && audit && (issue || audit.report.state !== 'ready') && ' · '}{audit && (issue || audit.report.state !== 'ready') && <>{issue ? '报告资格待确认。' : (audit.report.state === 'not_eligible' && audit.counts.unknown_count + audit.counts.not_covered_count + audit.counts.error_count > 0 ? '部分审核项尚未取得明确结果，不生成完整报告。' : ['pending', 'generating'].includes(audit.report.state) ? reportLabel[audit.report.state] : audit.report.reason || reportLabel[audit.report.state])}</>}</p>
     </header>
-    {issue && <div className="px-6 pt-4"><Alert variant="destructive"><AlertTitle>结果数据需要核对</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert></div>}
-    {!audit ? <p role="status" className="px-6 py-8 text-sm text-muted-foreground">还没有这份文件的审核结果，请点右上角的刷新按钮重新读取。</p> : <>
-      {audit.execution === 'review_failed' && <div className="px-6 pt-4"><Alert variant="destructive"><AlertTitle>本文件审核异常，未取得完整结果。</AlertTitle><AlertDescription>{audit.failure?.message || '没有可用结果。'}</AlertDescription></Alert></div>}
+    {issue && <div className="px-6 max-xl:px-4 pt-4"><Alert variant="destructive"><AlertTitle>结果数据需要核对</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert></div>}
+    {!audit ? <p role="status" className="px-6 max-xl:px-4 py-8 text-sm text-muted-foreground">还没有这份文件的审核结果，请点右上角的刷新按钮重新读取。</p> : <>
+      {audit.execution === 'review_failed' && <div className="px-6 max-xl:px-4 pt-4"><Alert variant="destructive"><AlertTitle>本文件审核异常，未取得完整结果。</AlertTitle><AlertDescription>{audit.failure?.message || '没有可用结果。'}</AlertDescription></Alert></div>}
       <div hidden={focus}>
         {/* One row: what is shown and how it compares on the left; finding a clause and the originals on the right. */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-header px-6 py-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-header px-6 max-xl:px-4 py-3">
           <div role="group" aria-label="审核结果筛选" className="flex min-w-0 flex-wrap items-center gap-0.5 rounded-lg bg-secondary p-0.5">{[filterChips.filter(chip => !reviewChips.includes(chip.value)), filterChips.filter(chip => reviewChips.includes(chip.value))].map((chips, group) => chips.length > 0 && <Fragment key={group}>{group > 0 && <span aria-hidden="true" className="mx-1 h-4 w-px bg-border"/>}{chips.map(({value, label, count}) => <Button key={value} variant={activeFilter === value ? 'default' : 'ghost'} size="xs" aria-pressed={activeFilter === value} aria-label={label} aria-describedby={`${filterId}-${value}`} onClick={() => chooseFilter(value)}><span className="tabular-nums">{label} <span id={`${filterId}-${value}`}>{count}</span></span></Button>)}</Fragment>)}</div>
           {diff ? <section aria-label="与上次审核对比" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span>与{previous!.label}相比，{diff.added.length || diff.resolved.length ? '有变化' : diff.uncomparable ? '可对比项相同' : '结果相同'}{diff.uncomparable > 0 ? `，${diff.uncomparable} 项无法对比` : ''}。</span>{diff.added.length > 0 && <Button variant={filter === 'added' ? 'secondary' : 'ghost'} size="xs" aria-pressed={filter === 'added'} onClick={() => chooseFilter('added')}><Icon icon={iconArrowTrendUp} aria-hidden="true"/><span className="tabular-nums text-destructive">新增问题 {diff.added.length}</span></Button>}{diff.resolved.length > 0 && <Button variant={filter === 'resolved' ? 'secondary' : 'ghost'} size="xs" aria-pressed={filter === 'resolved'} onClick={() => chooseFilter('resolved')}><Icon icon={iconArrowTrendDown} aria-hidden="true"/><span className="tabular-nums text-success">已解决 {diff.resolved.length}</span></Button>}</section> : null}
           <div className="ml-auto flex flex-wrap items-center gap-2"><div className="relative w-56 min-w-0"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Icon icon={iconMagnifyingGlass} className="size-3.5"/></span><Input aria-label="搜索审核项" placeholder="搜索审核项、要求或依据" value={query} onChange={event => setQuery(event.target.value)} iconStart/></div><div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" onClick={() => openOriginal(null, null)}><Icon icon={iconEye}/>查看原件</Button>{audit && <Button variant="outline" size="sm" onClick={() => navigateClause(check?.rule_item.id || "", true)}>{editable && !reviewLock ? '逐条复核' : '逐条查看'}</Button>}</div></div>
         </div>
         {/* Four columns only; the basis is read in place, and a location in it opens the original. */}
-        <section aria-label="审核项" className="min-w-0 border-t bg-card"><Table className="min-w-[40rem] table-fixed">
+        <section aria-label="审核项" className="min-w-0 border-t bg-card"><Table stack className="min-w-[40rem] table-fixed max-xl:min-w-0">
             <TableHeader variant="muted"><TableRow><TableHead className="w-14">序号</TableHead><TableHead className="w-[30%]">审核项</TableHead><TableHead className={originalOpen ? 'w-20' : 'w-24'}>审核结果</TableHead><TableHead>判定依据</TableHead></TableRow></TableHeader>
             <TableBody>{filtered.map(row => {
               const linked = clause === row.rule_item.id
               return <TableRow key={row.rule_item.id} ref={linked ? linkedRow : undefined} data-state={linked ? 'selected' : undefined}>
-                <TableCell className="align-top"><span className="text-xs tabular-nums text-muted-foreground" title={`来源编号 ${row.rule_item.id}`}>{audit.checks.indexOf(row) + 1}</span></TableCell>
-                <TableCell className="whitespace-normal align-top"><p className="break-words font-medium" title={row.rule_item.category}><HighlightText text={row.rule_item.category} query={query}/></p>{query.trim() && row.rule_item.rule_to_check.toLowerCase().includes(query.trim().toLowerCase()) && <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground"><HighlightText text={row.rule_item.rule_to_check} query={query}/></p>}</TableCell>
-                <TableCell className="align-top"><div className="flex flex-col items-start gap-1"><Badge shape="square" variant={checkTone(row)}>{checkStatusLabel(row)}</Badge>{diff?.added.includes(row) && <Badge shape="square" variant="outline">新增问题</Badge>}{diff?.resolved.includes(row) && <Badge shape="square" variant="outline">已解决</Badge>}</div></TableCell>
-                <TableCell className="whitespace-normal align-top">{basisCell(row)}</TableCell>
+                <TableCell label="序号" className="align-top"><span className="text-xs tabular-nums text-muted-foreground" title={`来源编号 ${row.rule_item.id}`}>{audit.checks.indexOf(row) + 1}</span></TableCell>
+                <TableCell lead className="whitespace-normal align-top"><p className="break-words font-medium" title={row.rule_item.category}><HighlightText text={row.rule_item.category} query={query}/></p>{query.trim() && row.rule_item.rule_to_check.toLowerCase().includes(query.trim().toLowerCase()) && <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground"><HighlightText text={row.rule_item.rule_to_check} query={query}/></p>}</TableCell>
+                <TableCell className="align-top"><div className="flex flex-col items-start gap-1 max-xl:flex-row max-xl:flex-wrap"><Badge shape="square" variant={checkTone(row)}>{checkStatusLabel(row)}</Badge>{diff?.added.includes(row) && <Badge shape="square" variant="outline">新增问题</Badge>}{diff?.resolved.includes(row) && <Badge shape="square" variant="outline">已解决</Badge>}</div></TableCell>
+                <TableCell label="判定依据" className="whitespace-normal align-top">{basisCell(row)}</TableCell>
               </TableRow>
             })}</TableBody>
           </Table>
-          {!filtered.length && <div className="flex flex-wrap items-center gap-3 px-6 py-4"><p className="text-sm text-muted-foreground">{filter === 'attention' && !query ? '没有需关注的审核项。' : '没有符合条件的审核项。'}</p>{(query || filter !== 'all') && <Button variant="outline" size="sm" onClick={clearFilters}>{filter === 'attention' && !query ? '查看全部审核项' : '清除筛选'}</Button>}</div>}
+          {!filtered.length && <div className="flex flex-wrap items-center gap-3 px-6 max-xl:px-4 py-4"><p className="text-sm text-muted-foreground">{filter === 'attention' && !query ? '没有需关注的审核项。' : '没有符合条件的审核项。'}</p>{(query || filter !== 'all') && <Button variant="outline" size="sm" onClick={clearFilters}>{filter === 'attention' && !query ? '查看全部审核项' : '清除筛选'}</Button>}</div>}
         </section>
       </div>
     </>}

@@ -9,6 +9,7 @@ import {Button} from '../components/ui/button'
 import {Input} from '../components/ui/input'
 import {ReadSkeleton} from '../components/read-skeleton'
 import {chapterAt, outlineChapters, searchOrder, textIncludes, type ReportChapter} from './report-chapters'
+import {narrowNow} from '../components/narrow'
 
 GlobalWorkerOptions.workerSrc = workerUrl
 const assetRoot = import.meta.env.DEV ? '/node_modules/pdfjs-dist' : '/pdfjs'
@@ -18,7 +19,7 @@ const assets = (folder: string) => new URL(`${assetRoot}/${folder}/`, location.o
 export function ReportReader({url, name, kind, target}: {url: string; name: string; kind: string; target?: {index: number; nonce: number} | null}) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null), [error, setError] = useState('')
   const [chapters, setChapters] = useState<ReportChapter[]>([]), [ratio, setRatio] = useState(842 / 595)
-  const [open, setOpen] = useState(true), [page, setPage] = useState(1), [zoom, setZoom] = useState(1), [width, setWidth] = useState(0)
+  const [open, setOpen] = useState(() => !narrowNow()), [page, setPage] = useState(1), [zoom, setZoom] = useState(1), [width, setWidth] = useState(0)
   const [query, setQuery] = useState(''), [found, setFound] = useState('')
   const scroller = useRef<HTMLDivElement>(null), texts = useRef(new Map<number, string>())
   useEffect(() => {
@@ -82,11 +83,12 @@ export function ReportReader({url, name, kind, target}: {url: string; name: stri
   const current = chapterAt(chapters, page)
   if (error) return <div className="grid min-h-55 place-content-center gap-3 p-6"><h3 className="text-lg font-semibold">PDF 无法显示</h3><p role="alert" className="text-muted-foreground">{error}</p></div>
   if (!pdf) return <ReadSkeleton label="正在加载报告…" kind="document" className="min-h-96 p-4"/>
-  return <div className="flex h-full min-h-0 min-w-0">
-    {chapters.length > 0 && open && <nav aria-label="报告目录" className="flex w-56 shrink-0 flex-col border-r bg-card">
+  // Below 1280px the contents open over the page as a drawer and close once a chapter is chosen.
+  return <div className="relative flex h-full min-h-0 min-w-0">
+    {chapters.length > 0 && open && <nav aria-label="报告目录" className="flex w-56 shrink-0 flex-col border-r bg-card max-xl:absolute max-xl:inset-y-0 max-xl:left-0 max-xl:z-20 max-xl:w-64 max-xl:shadow-lg">
       <div className="flex items-center justify-between gap-2 border-b px-3 py-2"><span className="text-sm font-semibold">目录</span><Button variant="ghost" size="xs" onClick={() => setOpen(false)}><Icon icon={iconAnglesLeft} aria-hidden="true"/>收起目录</Button></div>
       <ol className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2 text-sm">{chapters.map((chapter, index) => <li key={`${index}-${chapter.title}`}>
-        <button type="button" aria-current={index === current ? 'location' : undefined} title={chapter.title} onClick={() => goToPage(chapter.page)} className="w-full truncate rounded-sm px-2 py-1.5 text-left text-muted-foreground hover:bg-muted aria-[current=location]:bg-primary-soft aria-[current=location]:font-medium aria-[current=location]:text-primary focus-visible:outline-ring">{chapter.title}</button>
+        <button type="button" aria-current={index === current ? 'location' : undefined} title={chapter.title} onClick={() => {goToPage(chapter.page); if (narrowNow()) setOpen(false)}} className="w-full truncate rounded-sm px-2 py-1.5 text-left text-muted-foreground hover:bg-muted aria-[current=location]:bg-primary-soft aria-[current=location]:font-medium aria-[current=location]:text-primary focus-visible:outline-ring">{chapter.title}</button>
       </li>)}</ol>
     </nav>}
     <div className="flex min-w-0 flex-1 flex-col">

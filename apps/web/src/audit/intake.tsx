@@ -24,6 +24,7 @@ import {FileIcon, FileName} from '../journey/file-name'
 import {FileTypeBadge} from './file-type-badge'
 import {AccountMenu, useAccess} from '../journey/access'
 import {openedInFeishu} from '../hostLogin'
+import {hostCapabilities} from '../host'
 import {pickFeishuDocuments} from '../feishu-native'
 import {FeishuPicker, FeishuFolderPicker, type DrivePickerSource} from './feishu-picker'
 import {checkerSuiteUnavailable, confirmationScope, submittedCount, suiteAdmissionBlocks, useTaskAcceptance, zeroTargetNote, type AuditAcceptanceAdapter} from './task-acceptance'
@@ -161,6 +162,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
   const [surface, setSurface] = useState<ProductSurface>(readSurface)
   // Fixed for the page's life: the frame never switches shells while someone works.
   const [inFeishu] = useState(() => openedInFeishu())
+  const [host] = useState(() => hostCapabilities())
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [rulesOpened, setRulesOpened] = useState(surface === 'requirements')
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
@@ -1123,10 +1125,10 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
       <Tooltip><TooltipTrigger asChild><button type="button" className={railItem} aria-label="联系支持" onClick={() => openSupport({scenario: supportScenario})}><Icon icon={iconCircleQuestion} aria-hidden="true" className="size-4.5"/></button></TooltipTrigger><TooltipContent side="right">联系支持</TooltipContent></Tooltip>
     </aside>}
     <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-      {inFeishu && <div className="flex h-12 shrink-0 items-center gap-4 border-b bg-card px-4">
-        <span className="flex shrink-0 items-center gap-2 text-base font-semibold"><span aria-hidden="true" className="flex size-6 items-center justify-center rounded-md bg-linear-135 from-brand-light to-primary text-primary-foreground"><Icon icon={iconWandMagicSparkles} className="size-3"/></span>PPAP Audit</span>
+      {inFeishu && <div className="flex h-12 shrink-0 items-center gap-4 border-b bg-card px-4 max-xl:gap-2 max-xl:px-3">
+        <span className="flex shrink-0 items-center gap-2 text-base font-semibold"><span aria-hidden="true" className="flex size-6 items-center justify-center rounded-md bg-linear-135 from-brand-light to-primary text-primary-foreground"><Icon icon={iconWandMagicSparkles} className="size-3"/></span><span className="max-xl:sr-only">PPAP Audit</span></span>
         {topNavigation}
-        <div ref={setPageActions} role="group" aria-label="页面操作" className="ml-auto flex min-w-0 items-center gap-2"/>
+        <div ref={setPageActions} role="group" aria-label="页面操作" className="ml-auto flex min-w-0 items-center gap-2 max-xl:overflow-x-auto"/>
         <Button variant="ghost" size="icon-sm" className="shrink-0" aria-label="联系支持" onClick={() => openSupport({scenario: supportScenario})}><Icon icon={iconCircleQuestion} className="text-muted-foreground"/></Button>
       </div>}
       {inFeishu && quietHeader ? <h1 className="sr-only">{pageContext}</h1> : <header className={`flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-6 py-2 max-xl:px-4 ${surface === 'audit' && taskListPage ? 'max-xl:hidden' : ''}`}><div className="flex min-w-0 items-center gap-3">
@@ -1136,7 +1138,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
           <li className="flex min-w-0 items-center gap-1">{task && !recovery ? <a href={taskResultsAddress().href} aria-label="返回审核结果" className="font-medium hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showTaskResults()}}}>{task.number}</a> : <span className="text-muted-foreground">审核任务</span>}</li>
           <li aria-hidden="true" className="text-muted-foreground">/</li><li aria-current="page" className="font-medium">审核报告</li>
         </ol></nav> : <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-3 gap-y-1">{surface === 'audit' && task && !recovery && <><li className="text-xs text-muted-foreground">任务详情</li><li aria-hidden="true" className="text-muted-foreground/60">/</li></>}<li aria-current="page" className="flex min-w-0 items-center gap-1 font-medium">{surface === 'requirements' && ruleDetailOpen ? <a href="/requirements" className="min-w-0 truncate hover:underline" onClick={event => {if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); const url = new URL(location.href); for (const key of rulesAddressKeys) url.searchParams.delete(key); url.pathname = surfaceAddress('requirements'); url.searchParams.delete('view'); writeAuditAddress(url)}}>{pageContext}</a> : (surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) || surface === 'audit' && !task && !recovery && step === 'upload') ? <h1 className={`min-w-0 truncate ${surface === 'audit' && step === 'upload' ? 'text-base font-semibold' : 'text-sm font-medium'}`}>{pageContext}</h1> : surface === 'audit' && task && !recovery ? <span className="min-w-0 truncate font-semibold">{task.number}</span> : surface === 'archive' ? <button type="button" className="min-w-0 truncate hover:underline" onClick={() => showSurface('archive')}>{pageContext}</button> : <span className="min-w-0 truncate">{pageContext}</span>}</li>{surface === 'archive' && <li ref={setPageTitle} className="flex min-w-0 items-center gap-2 empty:hidden"/>}{surface === 'audit' && task && !recovery && !workbench && <li><span role="status"><Badge variant={taskStateTone(task.state)}>{task.state === 'matching' ? `识别中 ${matchingFiles.filter(row => row.match && ['matched', 'unmatched', 'reference', 'failed'].includes(row.match.state)).length}/${matchingFiles.length}` : taskLabels[task.state]}</Badge></span></li>}</ol></nav>}
-      </div>{!inFeishu && <div className="flex shrink-0 items-center gap-4"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && <AccountMenu compact/>}</div>}</header>}
+      </div>{!inFeishu && <div className="flex shrink-0 items-center gap-4"><div ref={setPageActions} role="group" aria-label="页面操作" className="flex min-w-0 flex-wrap items-center gap-2"/>{access?.principal && <div className={libraryTop ? 'contents' : 'contents max-xl:hidden'}><AccountMenu compact/></div>}</div>}</header>}
       {/* PPAP Audit keeps its task list on the left, on the new-audit page and on every task. */}
       <main id="audit-main" tabIndex={-1} className="flex min-h-0 w-full flex-1 overflow-hidden">
         {taskRail}
@@ -1172,12 +1174,12 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
         </>}>
         {notices}
         {step === 'upload' && <section aria-label="上传文件" data-dragging={dragging} className="rounded-lg border border-transparent bg-card transition-colors data-[dragging=true]:border-primary" onDragOver={event => {event.preventDefault(); setDragging(true)}} onDragLeave={event => {if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false)}} onDrop={event => {event.preventDefault(); setDragging(false); receive(Array.from(event.dataTransfer.files))}}>
-          <fieldset disabled={recognizing} className="min-w-0 space-y-5 p-6">
+          <fieldset disabled={recognizing} className="min-w-0 space-y-5 p-6 max-xl:p-4">
           {surface === 'audit' && <CustomerMode key={draftEpoch.current} value={customer} ready={customerReady} options={customerChoices} adapter={adapter.customerDefaults} onInitialDefault={initializeCustomer} onRefresh={onRefreshCustomers} onChange={changeCustomer} coverage={coverageOf} typeSetMissing={value => customerTypeSetMissing(coverageSource, value)}/>}
           <div className={compactUpload ? 'flex flex-wrap items-center gap-3 rounded-md border border-dashed border-primary-line px-4 py-3' : 'flex flex-col items-center gap-3 rounded-md border border-dashed border-primary-line bg-primary-soft/40 px-4 py-8 text-center'}>
             <div className="flex flex-wrap items-center gap-2">
               {compactUpload && hasUploadWork && <span className="text-sm font-medium">继续添加</span>}
-              <Button variant="outline" disabled={!customerReady} onClick={() => input.current?.click()}>选择本地文件</Button>
+              {host.localFiles && <Button variant="outline" disabled={!customerReady} onClick={() => input.current?.click()}>选择本地文件</Button>}
               {driveButton}
               {adapter.samples && <Button variant="ghost" onClick={() => {setFiles(rows => [...rows, ...adapter.samples!()]); setError('')}}>使用三类文件示例</Button>}
             </div>

@@ -50,10 +50,10 @@ export function CustomerRulesBrowser({entries, selectedId, loading, questions}: 
   // A search that names a rule narrows the chosen customer's types to it; a search that names the customer shows them all.
   const focus = needle && entry && !matches(needle, entry.customer.name) ? needle : ''
   // One surface split by a divider (Feishu master-detail): the list chooses, the table shows; the choice is not repeated as a heading.
-  return <div className="grid min-h-0 flex-1 grid-cols-[17.5rem_minmax(0,1fr)] grid-rows-1 overflow-hidden rounded-lg bg-card">
-    <aside aria-label="客户" className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden border-r p-3">
+  return <div className="grid min-h-0 flex-1 grid-cols-[17.5rem_minmax(0,1fr)] grid-rows-1 overflow-hidden rounded-lg bg-card max-xl:grid-cols-1 max-xl:grid-rows-[auto_minmax(0,1fr)]">
+    <aside aria-label="客户" className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden border-r p-3 max-xl:border-r-0 max-xl:border-b">
       <div role="search" className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Icon icon={iconMagnifyingGlass} aria-hidden="true" className="size-3.5"/></span><Input aria-label="搜索客户" type="search" iconStart placeholder="搜索客户" maxLength={200} value={query} onChange={event => setQuery(event.target.value)}/></div>
-      <ul className="grid min-h-0 flex-1 content-start gap-1 overflow-y-auto">{shown.map(item => {
+      <ul className="grid min-h-0 flex-1 content-start gap-1 overflow-y-auto max-xl:flex-none max-xl:auto-cols-max max-xl:grid-flow-col max-xl:overflow-x-auto">{shown.map(item => {
         const {customer} = item, href = rulesAddress({template: customer.customer_id}), current = customer.customer_id === entry?.customer.customer_id, ratio = ruleCoverage(customer), described = `rules-customer-${customer.customer_id}`
         return <li key={customer.customer_id}><a aria-current={current ? 'page' : undefined} aria-describedby={described} href={href} onClick={event => followRulesLink(event, href)} className={`flex min-w-0 items-center gap-3 rounded-md px-3 py-2 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${current ? 'bg-primary-soft text-primary' : 'hover:bg-muted'}`}>
           <CustomerAvatar name={customer.name}/>
@@ -87,13 +87,13 @@ function CustomerRulesDetail({entry, focus, questions}: {entry: CustomerRules; f
     {/* Revisions and questionnaires grow with every clarification round: they scroll in their own band, the rules stay in view. */}
     {questions && <div className="max-h-[40vh] min-h-0 shrink-0 overflow-y-auto">{questions}</div>}
     {entry.types === null ? <Alert className="m-4 w-auto"><Icon icon={iconCircleExclamation} aria-hidden="true"/><AlertTitle>这个客户的文件类型范围尚未配置</AlertTitle><AlertDescription>暂不显示规则覆盖。请联系我们配置后再查看。</AlertDescription></Alert> : <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      {rows.length ? <Table aria-label={`${customer.name} 的规则列表`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>文件类型</TableHead><TableHead>规则</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead></TableRow></TableHeader><TableBody>{rows.map(({type, rule, first}) => {
+      {rows.length ? <Table stack aria-label={`${customer.name} 的规则列表`} containerClassName="min-h-0 min-w-0 flex-1 overflow-auto"><TableHeader variant="muted" sticky><TableRow><TableHead>文件类型</TableHead><TableHead>规则</TableHead><TableHead>审核项</TableHead><TableHead>最近更新</TableHead></TableRow></TableHeader><TableBody>{rows.map(({type, rule, first}) => {
         const href = rule && rulesAddress({systemRule: rule.id}), updated = rule ? day(rule.updatedAt) : ''
         return <TableRow key={rule ? rule.id : `type:${type.code}`}>
-          <TableCell className="whitespace-normal">{first ? type.label : <span className="sr-only">{type.label}</span>}</TableCell>
-          <TableCell className="whitespace-normal">{rule && href ? <a className="rounded-sm text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50" href={href} onClick={event => followRulesLink(event, href)}>{rule.title}</a> : <span className="text-muted-foreground">暂无生效规则</span>}</TableCell>
-          <TableCell>{rule?.clauses != null ? <span className="tabular-nums">{rule.clauses} 条</span> : <span className="text-muted-foreground">—</span>}</TableCell>
-          <TableCell>{updated ? <span className="text-muted-foreground tabular-nums">{updated}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
+          <TableCell label="文件类型" className="whitespace-normal">{first ? type.label : <span className="xl:sr-only">{type.label}</span>}</TableCell>
+          <TableCell lead className="whitespace-normal">{rule && href ? <a className="rounded-sm text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50" href={href} onClick={event => followRulesLink(event, href)}>{rule.title}</a> : <span className="text-muted-foreground">暂无生效规则</span>}</TableCell>
+          <TableCell label="审核项">{rule?.clauses != null ? <span className="tabular-nums">{rule.clauses} 条</span> : <span className="text-muted-foreground">—</span>}</TableCell>
+          <TableCell label="最近更新">{updated ? <span className="text-muted-foreground tabular-nums">{updated}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
         </TableRow>
       })}</TableBody></Table> : <p className="grid flex-1 place-items-center py-12 text-center text-sm text-muted-foreground">这个客户没有匹配的规则。</p>}
     </div>}

@@ -102,6 +102,24 @@
   padding-bottom: max(--spacing(--value(integer)), env(safe-area-inset-bottom));
 }
 
+/*
+ * A list table that stacks below 1280px (design.md「Viewport」, apps/web/README「窄屏不另起一套」): one card per row, the
+ * record's name first, then each cell on its own line with its column's name. Columns are still written once, in the
+ * table. Outside the cascade layers so the cells' own desktop utilities (alignment, widths, nowrap) give way.
+ */
+@media (width < 80rem) {
+  table[data-stack] > thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table[data-stack], table[data-stack] > tbody { display: block; min-width: 0; }
+  table[data-stack] > tbody > tr { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.5rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
+  table[data-stack] > tbody > tr > td { display: block; max-width: none; min-width: 0; padding: 0; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+  table[data-stack] > tbody > tr > td:empty { display: none; }
+  table[data-stack] > tbody > tr > td[data-label]::before { content: attr(data-label) "："; color: var(--muted-foreground); }
+  table[data-stack] > tbody > tr > td[data-lead] { order: -1; font-weight: 500; }
+  /* A name cut short for a hover tip (`title`) is written out in full: there is no hover to show it. The Docs add-on's
+     sidebar keeps its own single-line layout. */
+  [id="app"] .truncate[title] { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+}
+
 /* The running label sweeps from foreground to muted and back. */
 @utility shimmer-label {
   background-image: linear-gradient(90deg, var(--foreground) 40%, var(--muted-foreground) 50%, var(--foreground) 60%);

@@ -8,6 +8,7 @@ import {ReadSkeleton} from '../components/read-skeleton'
 import OfficePreview from '../OfficePreview'
 import {message} from './remote'
 import type {SourceFocus} from './source-documents'
+import {host as pageHost} from '../host'
 
 const imageTypes: Record<string, string> = {png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp'}
 const WorkbookSource = lazy(() => import('./workbook-source').then(module => ({default: module.WorkbookSource})))
@@ -88,7 +89,7 @@ export function RemoteSourcePane({file, roundId, focus, source = productOriginal
       <div className="flex flex-wrap items-center gap-1">
         {canFullscreen && <Button variant="ghost" size="sm" onClick={() => void toggleFullscreen()}>{fullscreen ? <Icon icon={iconCompress}/> : <Icon icon={iconExpand}/>}{fullscreen ? '退出全屏' : '全屏'}</Button>}
         <Button variant="ghost" size="icon-sm" aria-label="重新查看原件" title="重新查看原件" onClick={() => setAttempt(value => value + 1)}><Icon icon={iconArrowsRotate}/></Button>
-        <Button variant="outline" size="sm" asChild><a href={source.url(file, roundId)} download={file.original_filename}><Icon icon={iconDownload}/>下载原件</a></Button>
+        {pageHost.browserDownload && <Button variant="outline" size="sm" asChild><a href={source.url(file, roundId)} download={file.original_filename}><Icon icon={iconDownload}/>下载原件</a></Button>}
       </div>
     </div>
     {focus && <p className="shrink-0 break-words text-sm text-muted-foreground">核对位置：{focus.label}</p>}

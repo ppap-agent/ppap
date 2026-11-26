@@ -13,6 +13,7 @@ import {sameSnapshot, packageOutcomeError, taskPackageScopeError, reportReferenc
 import {readTaskReportPackage, type AuditReportAdapter} from './report-contract'
 import {useReportPackage} from './report-actions'
 import {writeAuditAddress} from './routes'
+import {host} from '../host'
 
 type Job = components['schemas']['AuditReportPackage']
 type Reference = components['schemas']['AuditReportReference']
@@ -50,7 +51,7 @@ export function ReportPackage({job, nameFor, busy, onRead, onDownload, onRetry, 
   const ready = !issue && known && job.state === 'ready'
   const title = issue ? 'ZIP 状态待确认' : known ? labels[job.state] : 'ZIP 提交结果未知'
   const error = downloadError && <Alert variant="destructive"><AlertTitle>ZIP 下载未完成</AlertTitle><AlertDescription>{downloadError}</AlertDescription></Alert>
-  const controls = <div className="flex flex-wrap gap-2">{ready ? <Button variant="outline" size="sm" disabled={busy} onClick={onDownload}>下载已就绪 ZIP</Button> : <Button variant="outline" size="sm" disabled={busy} onClick={onRead}>{busy ? '正在读取 ZIP 状态…' : '读取 ZIP 状态'}</Button>}{!issue && known && job.state === 'failed' && <Button variant="outline" size="sm" disabled={busy || !job.retry_allowed} onClick={onRetry}>重试同一报告集合打包</Button>}</div>
+  const controls = <div className="flex flex-wrap gap-2">{ready ? host.browserDownload && <Button variant="outline" size="sm" disabled={busy} onClick={onDownload}>下载已就绪 ZIP</Button> : <Button variant="outline" size="sm" disabled={busy} onClick={onRead}>{busy ? '正在读取 ZIP 状态…' : '读取 ZIP 状态'}</Button>}{!issue && known && job.state === 'failed' && <Button variant="outline" size="sm" disabled={busy || !job.retry_allowed} onClick={onRetry}>重试同一报告集合打包</Button>}</div>
   return <section aria-label="ZIP 工作" className="min-w-0 space-y-2">
     <div className="flex flex-wrap items-center gap-2">{!ready && <h2 className="text-xs font-medium">{title}</h2>}<Dialog><DialogTrigger asChild><Button variant="ghost" size="sm">打包记录</Button></DialogTrigger><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>打包记录</DialogTitle><DialogDescription className="sr-only">本次打包的报告</DialogDescription></DialogHeader><div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4"><h2 className="font-medium">{title}</h2><Table aria-label="本次打包的报告"><TableHeader><TableRow><TableHead>报告</TableHead><TableHead className="w-24">准备状态</TableHead></TableRow></TableHeader><TableBody>{job.reports.map(reference => {
       const outcome = issue ? undefined : job.outcomes?.find(row => sameSnapshot(row.reference, reference))
