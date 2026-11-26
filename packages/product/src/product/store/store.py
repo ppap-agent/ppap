@@ -40,6 +40,7 @@ from product.feishu_usage import (
     FeishuUsageError,
     PartnerAiItem,
     audit_usage_points,
+    new_trace_id,
     remaining_trial_points,
     split_trial_and_partner,
 )
@@ -4237,7 +4238,7 @@ class AuthStore:
         if deep_mode:
             # Standard payloads stay byte-identical; only deep jobs name a mode.
             execution_payload["analysis_mode"] = "deep"
-        self._check_usage_policy(conn, principal, usage_policy)
+        self._check_usage_policy(conn, principal, usage_policy, audit_usage_points(sum(1 for item in prepared if item["role"] == "target")))
         # The task as confirmed, read before unmatched files left the audit.
         precheck = self._freeze_precheck(principal, task)
         job_id = str(uuid.uuid4())
@@ -4320,7 +4321,8 @@ class AuthStore:
             row = conn.execute("SELECT precheck FROM product.audit_rounds WHERE id = %s AND tenant_id = %s", (round_id, principal.tenant_id)).fetchone()
         return row[0] if row else None
 
-    def _check_usage_policy(self, conn, principal, policy) -> None:
+    def _check_usage_policy(self, conn, principal, policy, charge_points: int = 0) -> None:
+        """``charge_points`` is what this action bills; what the trial does not cover must fit the person's quota."""
         if not self.settings.usage_charge_enabled:
             return
         item_id = self.settings.feishu_ai_item_id.strip()
@@ -4339,6 +4341,8 @@ class AuthStore:
             raise ValueError("usage_ai_disabled")
         remaining = remaining_trial_points(self._trial_quota(conn, principal.tenant_id), self._trial_ledger_consumed(conn, principal.tenant_id, item_id))
         if remaining <= 0 and partner.user_quota <= 0:
+            raise ValueError("usage_balance_empty")
+        if partner.user_quota < max(0, int(charge_points) - remaining):
             raise ValueError("usage_balance_empty")
 
     def _record_round_usage(self, conn, principal, round_id, prepared) -> None:
@@ -4368,7 +4372,7 @@ class AuthStore:
                         amount,
                         trial,
                         "none" if trial else "pending",
-                        round_id + ":" + version + (":trial" if trial else ":partner"),
+                        new_trace_id(),
                         round_id,
                         version,
                     ),
@@ -4926,7 +4930,7 @@ class AuthStore:
             params.append(trace_ids)
         with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                f"""SELECT u.id, u.trace_id, u.consumed_points, u.external_confirmed_at, t.external_key AS tenant_key, i.subject
+                f"""SELECT u.id, u.trace_id, u.consumed_points, u.created_at, u.external_confirmed_at, t.external_key AS tenant_key, i.subject
                 FROM product.usage_events u
                 JOIN product.tenants t ON t.id = u.tenant_id AND t.provider = 'feishu'
                 LEFT JOIN product.identities i ON i.user_id = u.user_id AND i.provider = t.provider

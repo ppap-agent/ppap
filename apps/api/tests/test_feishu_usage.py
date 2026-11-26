@@ -43,7 +43,7 @@ class QuotaSemanticsTests(unittest.TestCase):
         self.assertEqual(split_trial_and_partner(10, 0), [])
 
     def test_estimate_uses_server_cost_and_trial_or_partner(self):
-        partner = PartnerAiItem(True, 80, True)
+        partner = PartnerAiItem(True, 600, True)
         body = estimate_audit(2, 400, partner)
         self.assertEqual(body["estimated_points"], 1000)
         self.assertEqual(body["target_count"], 2)
@@ -60,11 +60,14 @@ class QuotaSemanticsTests(unittest.TestCase):
         self.assertEqual(preview["estimated_points"], 0)
         self.assertEqual(preview["accept_reason"], "current_preview_not_charged")
 
-    def test_estimate_requires_enabled_business_switch_and_only_positive_available_balance(self):
+    def test_estimate_requires_enabled_business_switch_and_a_quota_that_pays_what_the_trial_does_not(self):
         for free, partner, allowed in (
-            (1, PartnerAiItem(True, 0, False), True),
-            (0, PartnerAiItem(True, 1, True), True),
-            (600, PartnerAiItem(True, 0, False), True),
+            (1500, PartnerAiItem(True, 0, False), True),
+            (1000, PartnerAiItem(True, 500, True), True),
+            (1000, PartnerAiItem(True, 499, True), False),
+            (0, PartnerAiItem(True, 1500, True), True),
+            (1, PartnerAiItem(True, 0, False), False),
+            (0, PartnerAiItem(True, 1, True), False),
             (0, PartnerAiItem(True, 0, True), False),
             (10000, PartnerAiItem(False, 10000, True), False),
             (10000, None, False),
@@ -102,6 +105,7 @@ class _PartnerMock:
         self.fail = False
         self.fail_report = False
         self.calls: list[tuple[str, str]] = []
+        self.records: list[dict] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -140,6 +144,7 @@ class _PartnerMock:
             payload = json.loads(request.content.decode())
             if payload.get("report_token") != "report-tik":
                 return httpx.Response(400, json={"code": 1, "msg": "bad report token"})
+            self.records.append(payload["record"])
             return httpx.Response(200, json={"code": 0, "data": {"id": "fs-rec-1"}})
         return httpx.Response(404, json={"code": 1, "msg": "unmocked"})
 
@@ -317,6 +322,10 @@ class FeishuUsageTests(unittest.TestCase):
         self.assertFalse(confirmed.json()["skipped"])
         self.assertEqual(confirmed.json()["external_status"], "confirmed")
         self.assertEqual(confirmed.json()["external_record_id"], "fs-rec-1")
+        # The record carries what legacy PPAP reported and Feishu accepted: the trace, the points and OpenApp_* details.
+        record = self.partner.records[0]
+        self.assertEqual((record["trace_id"], record["usage_amount"]), ("partner-report", {"type": "fixed", "credit": 50}))
+        self.assertEqual(set(json.loads(record["details"])), {"OpenApp_UserID", "OpenApp_OperationTime", "OpenApp_Detail"})
         self.assertTrue(any(url.endswith("/partner_ai/v1/credential/apply") for _method, url in self.partner.calls))
         self.assertTrue(any(url.endswith("/partner_ai/v1/usage_records/report") for _method, url in self.partner.calls))
         replay = self._report(missing["id"])
@@ -371,6 +380,7 @@ class FeishuUsageTests(unittest.TestCase):
         self.store.save_app_ticket("cli_test", "tik")
         owner = self.store.upsert_feishu_identity("isolated-dev-a", "report-owner", "报告发起人")
         created = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "owner-recovery"}, principal=owner)
+        self.partner.item["user_quota"] = 500
         self.assertFalse(dispatch_pending_usage(self.store, self.http, self.settings))
         self.assertEqual(self.partner.calls, [])
         self._login_feishu_user(principal=owner)
@@ -393,7 +403,11 @@ class FeishuUsageTests(unittest.TestCase):
         self.partner.item["user_quota"] = 0
         self.assertFalse(dispatch_pending_usage(self.store, self.http, self.settings))
         self.assertFalse(any(url.endswith("/usage_records/report") for _method, url in self.partner.calls))
-        self.partner.item["user_quota"] = 1
+        # A quota that cannot pay the whole obligation waits as well: Feishu refuses a report it cannot charge.
+        self.partner.item["user_quota"] = 499
+        self.assertFalse(dispatch_pending_usage(self.store, self.http, self.settings))
+        self.assertFalse(any(url.endswith("/usage_records/report") for _method, url in self.partner.calls))
+        self.partner.item["user_quota"] = 500
         self.partner.fail_report = True
         self.assertTrue(dispatch_pending_usage(self.store, self.http, self.settings))
         self.assertEqual(self.store.usage_event(owner, created["id"])["external_status"], "unknown")
@@ -413,6 +427,7 @@ class FeishuUsageTests(unittest.TestCase):
         self._login_feishu_user(principal=ready)
         event = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "ready-21"}, principal=ready)
         self.store.save_app_ticket("cli_test", "tik")
+        self.partner.item["user_quota"] = 500
 
         def provider(request):
             if request.headers.get("authorization") == "Bearer empty-quota-user":
@@ -423,6 +438,20 @@ class FeishuUsageTests(unittest.TestCase):
             self.assertTrue(dispatch_pending_usage(self.store, http, self.settings))
         self.assertEqual(self.store.usage_event(ready, event["id"])["external_status"], "confirmed")
         self.assertEqual(len([url for _method, url in self.partner.calls if url.endswith("/usage_records/report")]), 1)
+
+
+def test_new_trace_ids_have_the_shape_feishu_accepted_from_legacy():
+    from product.feishu_usage import new_trace_id
+
+    traces = {new_trace_id() for _ in range(100)}
+    assert len(traces) == 100 and all(len(trace) == 32 and trace.isalnum() and trace == trace.lower() for trace in traces)
+
+
+def test_usage_details_names_the_person_time_and_points():
+    from product.feishu_usage import usage_details
+
+    details = json.loads(usage_details("ou_1", datetime(2026, 11, 26, 5, 46, tzinfo=timezone.utc), 500))
+    assert details == {"OpenApp_UserID": "ou_1", "OpenApp_OperationTime": "2026-11-26 13:46:00", "OpenApp_Detail": "PPAP 审核 1 份文件，500 点"}
 
 
 if __name__ == "__main__":

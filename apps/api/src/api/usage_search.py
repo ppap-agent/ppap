@@ -19,6 +19,7 @@ import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
+from product.feishu_usage import usage_details
 from product.logs import emit
 from product.settings import Settings
 
@@ -83,7 +84,6 @@ def parse(body: Any) -> dict[str, Any]:
 
 def own_item(row: dict, ai_item_id: str) -> dict[str, Any]:
     points = int(row["consumed_points"])
-    confirmed = row["external_confirmed_at"]
     return {
         "id": str(row["id"]),
         "ai_item_id": ai_item_id,
@@ -95,7 +95,8 @@ def own_item(row: dict, ai_item_id: str) -> dict[str, Any]:
         "user_id_type": "open_id",
         "tenant_key": row["tenant_key"],
         "usage_amount": {"type": "fixed", "credit": points, "minute": 0},
-        "details": json.dumps({"OpenApp_OperationTime": confirmed.isoformat() if confirmed else None, "credit": points}, ensure_ascii=False, separators=(",", ":")),
+        # The details as reported, so Feishu reads back what it received.
+        "details": usage_details(row["subject"] or "", row["created_at"], points),
     }
 
 

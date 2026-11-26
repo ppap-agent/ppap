@@ -3,15 +3,41 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from product.feishu_drive import OPEN_API
 
 AUDIT_COST_PER_FILE = 500
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 class FeishuUsageError(Exception):
-    pass
+    """A Partner AI call that did not succeed. ``reply`` is what Feishu answered (HTTP status, code, msg), empty when
+    no answer arrived; it carries no token."""
+
+    def __init__(self, code: str, reply: str = "") -> None:
+        super().__init__(code)
+        self.reply = reply
+
+
+def _reply(response) -> str:
+    body = _response_json(response)
+    status = int(getattr(response, "status_code", 0) or 0)
+    return f"http {status} code {body.get('code')} {str(body.get('msg') or '')[:200]}".strip()
+
+
+def new_trace_id() -> str:
+    """One report's trace: 32 hex characters, the shape Feishu accepted from legacy PPAP."""
+    return uuid.uuid4().hex
+
+
+def usage_details(subject: str, occurred_at: datetime, points: int) -> str:
+    """The record's ``details`` as legacy PPAP reported it (OpenApp_* fields); the reconciliation answer repeats it."""
+    local = occurred_at.astimezone(SHANGHAI).strftime("%Y-%m-%d %H:%M:%S")
+    return json.dumps({"OpenApp_UserID": subject, "OpenApp_OperationTime": local, "OpenApp_Detail": f"PPAP 审核 1 份文件，{int(points)} 点"}, ensure_ascii=False, separators=(",", ":"))
 
 
 def quota_sufficient(enabled: bool | None, user_quota: int | None) -> bool:
@@ -207,17 +233,18 @@ def apply_report_credential(http, user_token: str, ai_item_id: str, trace_id: st
     data = data_value if isinstance(data_value, dict) else {}
     token = str(data.get("token") or data.get("report_token") or "").strip()
     if not _ok(response) or not token:
-        raise FeishuUsageError("feishu_usage_report_failed")
+        raise FeishuUsageError("feishu_usage_report_failed", _reply(response))
     return token
 
 
-def report_usage_record(http, tenant_token: str, report_token: str, ai_item_id: str, trace_id: str, points: int) -> str:
+def report_usage_record(http, tenant_token: str, report_token: str, ai_item_id: str, trace_id: str, points: int, details: str) -> str:
     payload = {
         "report_token": report_token,
         "record": {
             "ai_item_id": ai_item_id,
             "trace_id": trace_id,
             "usage_amount": {"type": "fixed", "credit": int(points)},
+            "details": details,
         },
     }
     try:
@@ -237,7 +264,7 @@ def report_usage_record(http, tenant_token: str, report_token: str, ai_item_id: 
     data = data_value if isinstance(data_value, dict) else {}
     record_id = str(data.get("id") or "").strip()
     if not _ok(response) or not record_id:
-        raise FeishuUsageError("feishu_usage_report_failed")
+        raise FeishuUsageError("feishu_usage_report_failed", _reply(response))
     return record_id
 
 
@@ -261,7 +288,8 @@ def estimate_audit(
         payload["accept_reason"] = "current_preview_not_charged"
         return payload
     points = audit_usage_points(target_count)
-    allowed = points == 0 or bool(partner and partner.enabled and (remaining > 0 or partner.user_quota > 0))
+    # What the trial does not cover is billed to the person's Feishu AI quota, which must pay all of it.
+    allowed = points == 0 or bool(partner and partner.enabled and partner.user_quota >= max(0, points - remaining))
     if allowed:
         reason = ""
     elif partner is None:
@@ -273,7 +301,7 @@ def estimate_audit(
     elif not partner.ai_package_purchased:
         reason = "提示：试用额度不足，且未采购飞书AI包，请联系管理员在飞书管理后台进行充值或联系我们获取免费额度"
     else:
-        reason = "免费额度和飞书AI包额度均已用完，请充值后重试。"
+        reason = "免费额度和飞书AI包额度不足以支付本次审核，请充值后重试。"
     payload["estimated_points"] = points
     payload["accept_allowed"] = allowed
     payload["accept_reason"] = reason

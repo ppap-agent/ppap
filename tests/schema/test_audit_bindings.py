@@ -2490,7 +2490,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
     def accepted(self, files):
         from product.feishu_usage import PartnerAiItem
 
-        return self.audit_round(self.store, self.alice, files, usage_policy=lambda actor: PartnerAiItem(True, 1, True))
+        return self.audit_round(self.store, self.alice, files, usage_policy=lambda actor: PartnerAiItem(True, 100000, True))
 
     def prepared(self):
         from product.fixtures import RULE_A

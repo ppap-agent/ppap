@@ -35,6 +35,7 @@ def _row(n: int) -> dict:
         "id": f"00000000-0000-0000-0000-00000000000{n}",
         "trace_id": f"cur-{n}",
         "consumed_points": 500,
+        "created_at": datetime(2026, 11, 24, 10, n, tzinfo=timezone.utc),
         "external_confirmed_at": datetime(2026, 11, 24, 10, n, tzinfo=timezone.utc),
         "tenant_key": "tk",
         "subject": f"ou_{n}",

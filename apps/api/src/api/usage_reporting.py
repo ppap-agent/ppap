@@ -8,7 +8,7 @@ import logging
 import threading
 
 import httpx
-from product.feishu_usage import FeishuUsageError, apply_report_credential, query_tenant_ai_item, report_usage_record, tenant_access_token
+from product.feishu_usage import FeishuUsageError, apply_report_credential, query_tenant_ai_item, report_usage_record, tenant_access_token, usage_details
 from product.logs import emit
 
 
@@ -39,18 +39,22 @@ def report_usage(store, http, settings, session, event_id):
     # authorization or quota leaves the same obligation pending, not re-billed.
     try:
         partner = query_tenant_ai_item(http, session.access_token, row["ai_item_id"])
-        if not partner.enabled or partner.user_quota <= 0:
+        if not partner.enabled or partner.user_quota < int(row["consumed_points"]):
             return {"error": "usage_balance_empty" if partner.enabled else "usage_ai_disabled"}, 409
         token = tenant_access_token(http, settings.feishu_app_id, settings.feishu_app_secret, ticket, principal.tenant_key)
         credential = apply_report_credential(http, session.access_token, row["ai_item_id"], row["trace_id"])
-    except FeishuUsageError:
+    except FeishuUsageError as error:
+        emit("feishu_usage_prepare_failed", level=logging.WARNING, usage_id=str(event_id), reply=error.reply)
         return {"error": "feishu_usage_prepare_failed"}, 502
     claim = store.claim_usage_report(principal, event_id)
     if claim is None:
         return store.usage_event_public(store.usage_event(principal, event_id)), 409
     try:
-        record_id = report_usage_record(http, token, credential, row["ai_item_id"], row["trace_id"], row["consumed_points"])
-    except FeishuUsageError:
+        details = usage_details(principal.subject, row["created_at"], row["consumed_points"])
+        record_id = report_usage_record(http, token, credential, row["ai_item_id"], row["trace_id"], row["consumed_points"], details)
+    except FeishuUsageError as error:
+        # What Feishu answered stays in the log: a refusal and a lost reply are both unknown to billing, not to us.
+        emit("feishu_usage_report_unknown", level=logging.WARNING, usage_id=str(event_id), reply=error.reply)
         store.settle_usage_external(principal, event_id, claim, "unknown")
         return {"error": "feishu_usage_report_unknown"}, 502
     settled = store.settle_usage_external(principal, event_id, claim, "confirmed", record_id)

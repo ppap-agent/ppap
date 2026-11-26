@@ -929,9 +929,15 @@ def test_task_list_and_detail_keep_execution_faults_separate_from_round_completi
 def test_charged_confirmation_records_a_split_file_once_and_replay_needs_no_quota(matched_task):
     _client, worker, path, body, _rule = matched_task
     worker.settings.feishu_free_trial_quota_points = 1
-    item = {"enabled": True, "user_quota": 0, "ai_package_purchased": False}
+    # The trial pays 1 point; the person's Feishu quota must pay the other 499, all of it.
+    item = {"enabled": True, "user_quota": 498, "ai_package_purchased": True}
     client, http, calls = billing_client(worker, item)
     try:
+        short = client.post(path + "/confirm", json=confirmation_command(client, path, 0))
+        assert short.status_code == 409 and short.json() == {"error": "usage_balance_empty"}
+        assert usage_of(worker, client) == []
+        item["user_quota"] = 499
+        calls.clear()
         command = confirmation_command(client, path, 0)
         accepted = client.post(path + "/confirm", json=command)
         assert accepted.status_code == 201, accepted.text
@@ -1027,7 +1033,7 @@ def test_charged_task_allocates_only_matched_selected_files_and_p8_counts_files(
     for _ in range(3):
         process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     worker.settings.feishu_free_trial_quota_points = 750
-    charged, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 1, "ai_package_purchased": True})
+    charged, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 250, "ai_package_purchased": True})
     try:
         accepted = charged.post(f"/audit-tasks/{task['id']}/confirm", json=confirmation_command(charged, f"/audit-tasks/{task['id']}", 0))
         assert accepted.status_code == 201, accepted.text
