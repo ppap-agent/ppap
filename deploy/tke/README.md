@@ -27,24 +27,9 @@ ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `
 - 业务代码只读新版自己的 `product.app_tickets`，不知道票据来源。日志只记结果（`updated`、`unchanged`、`legacy_invalid` 等），不记票据、令牌或密码。
 - 回调切到新版后，新版收到的票据带事件时间，同步任务写不进去（结果 `superseded_by_callback`）；确认后删除这个 CronJob 及其 ConfigMap。
 
-## 飞书回调切换（尚未执行）
+## 飞书回调切换
 
-新旧系统共用飞书应用时，不要求两个事件回调地址。当前阶段只准备新版代码与测试，不修改飞书控制台、旧 UAC、旧 Redis、现网 Secret 或请求路由，不执行本节切换。
-
-切换前排查票据时，区分旧端来源与新版存储：
-
-- 旧 UAC 的 `RedisUtils` 将 `feishu-app-ticket` 的键和值按 Java 序列化保存；同名普通字符串键可能是失效旧值。先核对 UAC 的实际 Redis 连接和数据库，再按二进制键读取并解码值。`redis-cli --scan` 可在序列化键的空字节处截断，不能用字符串扫描未命中证明票据不存在。
-- 新版正常运行从自己的 PostgreSQL `product.app_tickets` 读取，不查询 UAC 或旧 Redis。本地客户端模式也须核对当前 API 连接的数据库；有票据记录不代表票据仍有效，须用同一应用的真实飞书接口验证。
-
-正式发布获批后，同一切换窗口内核对以下内容：
-
-1. 先部署匹配的代码与数据库迁移（含 `0033_feishu_ticket_order.sql`），在新版 API 注入现有应用的 ID、Secret 和 Verification Token。沿用当前 HTTPS + Verification Token 模式；若控制台启用了 Encrypt Key，必须先补齐并验证加密支持，不能临时清空加密策略绕过校验。
-2. 记录旧事件回调、应用入口与 OAuth 重定向配置，用于回滚。在切换窗口先阻止新增业务进入旧端，并确认旧端依赖飞书的在途操作已收敛；做不到则不切回调。新版事件地址为 `https://ppap.icoastline.com/ppap/integrations/feishu/events`；既有 `/ppap/` 路由直接到新版 API，不依赖浏览器 cookie，也不经过 UAC。不要把 OAuth 地址当事件地址：新版 OAuth 为 `https://ppap.icoastline.com/ppap/login/feishu/callback`。先核对允许的重定向列表，再在控制台切换事件地址并完成 challenge。
-3. 将飞书应用请求入口切到获批的新版入口，并核对旧书签、直接链接和客户端是否仍向旧端新增业务。现有 `/enter-current` 路由负责选择新版并回到 `/tasks/new`，仍执行租户名单与登录检查。不能只切浏览器 cookie，而让服务器事件仍进入旧端；也不能把 API `/ppap/` 根路径当作前端首页。
-4. 新版内读取 `capabilities` 建立时间基线，显式请求一次飞书 `app_ticket/resend`，确认新事件实际进入新版、提交并更新时间，再做一次不产生业务效果的 `app_access_token` 交换。不得输出 ticket、Secret、access token 或完整请求体；重推 HTTP 200 只表示飞书受理，不证明新版收到。
-5. 在后续自动推送中确认事件时间继续推进，并在 API 重启后再次读取/交换验证持久化。接收端按 provider 事件时间防止倒退；这依赖飞书同一应用的事件时间能反映新旧顺序。只收到 challenge、只导入一次票据或本地协议测试通过，都不能替代连续推送验收。保留旧 UAC 部署用于回滚，但切换后它不再续收票据，不能据此承诺新旧双活；本轮尚未执行切换，因此旧端现有回调和业务不变。
-
-若切换失败，恢复已记录的旧事件地址和旧应用入口，核对旧端重新收到推送；不把新版票据反写旧 Redis，不删除新旧数据，不用转发层掩盖切换未完成。配置恢复本身不证明旧端已恢复，须读回验证。
+尚未执行；计划与回滚步骤见 [#368](https://github.com/ppap-agent/ppap/issues/368)。现网回调仍指向旧版。
 
 `edition-proxy.conf` is the only nginx configuration authority. `kustomization.yaml` generates the ConfigMap with `configMapGenerator`; the generated name hash updates the Deployment volume reference and rolls the proxy when the config changes.
 
@@ -74,9 +59,9 @@ is needed. Only preview caches are ephemeral; originals remain in PPAP storage.
 - **推送前**：在本机跑受影响范围的 CI 等效测试，通过再推：`python3 -m scripts.ci_shards integration`（需要 Docker），`distributions --shard <n>`，以及相关单元测试。本地 API 测试用的开发数据库要先起来。
 - **构建**：`deploy/tke/build-current.py <完整 SHA>` 在云效流水线构建，本机只是发起和等待（细节见下文「构建镜像」）。并发由云效自己排队；中断后用 `--run-id` 续读原运行，不盲目重发。构建期间不改 `deploy/tke/current.yaml`。改 `pyproject.toml` 或 `uv.lock` 会让依赖基础层失效、要求先重建基础层，非依赖改动不要碰这两个文件。
 - **部署**（ppap-test，整套一起）：有新迁移时先更新 ConfigMap `ppap-current-migrations` 并重跑 Job `ppap-current-init-db`，读回 `product.schema_migrations`；再按下文「更新镜像或应用清单」应用 ConfigMap 和 Deployment，等滚动更新完成，再运行 Job `ppap-current-seed-suites` 把本次的检查程序叶子写入 Suite（见下文）；提交 `current.yaml` 的镜像版本。个人标识和密钥只放根目录 `.env` 与 Secret `ppap-current`，容器只按 key 引用，不进 git。
-- **线上验证**：用真实客户端走真实路径，读回页面上看得到的结果；授权页和签字类提议的网页在内置浏览器里点。会改动真实客户数据、且无法撤回的步骤（如关闭真实问卷、往里加卡片），改在单独的测试版本上验证，并告诉产品负责人留下了哪些测试数据。扣点数的操作先说明点数。
+- **线上验证**：用真实客户端走真实路径，读回页面上看得到的结果；授权页和签字类提议的网页在内置浏览器里点。会改动真实客户数据、且无法撤回的步骤（如关闭真实问卷、往里加卡片），改在单独的测试版本上验证，并告诉产品负责人留下了哪些测试数据。扣点数的操作先说明点数；能用预检、报价、结果读取验证的，不发起新审核。
 
-## Authoritative release procedure
+### 部署命令
 
 本节是现有栈的部署入口。部署直接使用 `kubectl`；不运行 Python 部署编排、不自动预加载镜像、不创建临时测试环境。默认先执行本次需要的更新，遇到实际错误再诊断。构建与部署分开，配置变更不触发构建。
 
