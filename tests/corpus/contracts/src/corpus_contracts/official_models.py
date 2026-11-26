@@ -14,9 +14,6 @@ from uuid import UUID, uuid4
 from agent.execution.gateway import LocalGateway, local_gateway
 from documents.model_access import PURPOSES, ModelAccess, ModelPurpose
 
-# CI and development model use is not budget-limited; the gateway still requires a number.
-UNLIMITED = 10**12
-
 
 @dataclass
 class LiveModels:
@@ -26,15 +23,10 @@ class LiveModels:
     """
 
     access: ModelAccess | Callable[[ModelPurpose], ModelAccess] = field(repr=False)
-    max_requests: int = UNLIMITED
     _gateway: LocalGateway | None = field(default=None, init=False, repr=False)
     _execution_id: UUID = field(default_factory=uuid4, init=False, repr=False)
     _used: bool = field(default=False, init=False, repr=False)
-    _usage: dict = field(default_factory=lambda: {"completed_requests": 0, "input_tokens": 0, "output_tokens": 0, "usage_known": True, "in_flight": False, "budget_exhausted": False}, init=False)
-
-    def __post_init__(self) -> None:
-        if type(self.max_requests) is not int or self.max_requests < 1:
-            raise ValueError("official_live_positive_limits_required")
+    _usage: dict = field(default_factory=lambda: {"completed_requests": 0, "input_tokens": 0, "output_tokens": 0, "usage_known": True, "in_flight": False}, init=False)
 
     def resolve(self, purpose: ModelPurpose) -> ModelAccess:
         return self.access if isinstance(self.access, ModelAccess) else self.access(purpose)
@@ -49,7 +41,7 @@ class LiveModels:
 
     def receipt(self) -> dict:
         usage = self._gateway.http.grants.usage(self._execution_id) if self._gateway is not None else self._usage
-        return {"mode": "live", "model_identity": self.identity(), "limits": {"requests": self.max_requests}, "usage": usage, "monetary_cost": "unknown"}
+        return {"mode": "live", "model_identity": self.identity(), "usage": usage, "monetary_cost": "unknown"}
 
     @contextmanager
     def session(self) -> Iterator[dict]:
@@ -65,7 +57,6 @@ class LiveModels:
                 model=text.model,
                 provider_key=lambda: text.api_key.get_secret_value(),
                 require_binding=True,
-                requests=self.max_requests,
             ) as gateway:
                 self._gateway = gateway
                 grants = gateway.http.grants

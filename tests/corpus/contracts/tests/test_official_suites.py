@@ -275,14 +275,14 @@ def test_live_text_and_visual_clients_use_one_bounded_gateway_then_record_and_pu
 
     monkeypatch.setattr("agent.execution.gateway.http.client.HTTPSConnection", ControlledProvider)
     access = ModelAccess(SecretStr("host-only-test-secret"), provider="controlled", base_url="https://provider.example/v1", model="controlled-vision")
-    models = LiveModels(access, max_requests=8)
+    models = LiveModels(access)
     release = ReleaseBoundary(context)
     progress = []
     result = official_suites.validate(release, revision.id, models=models, on_progress=progress.append, record=True, expected_validation_revision=0, **paths)
     assert result["report"]["verified"] and result["report"]["passed_samples"] == 4
     assert result["report"]["model_identity"] == models.identity()
     assert observations == ["visual", "text"] * 4
-    assert result["models"]["usage"] == {"completed_requests": 8, "input_tokens": 136, "output_tokens": 32, "usage_known": True, "in_flight": False, "budget_exhausted": False}
+    assert result["models"]["usage"] == {"completed_requests": 8, "input_tokens": 136, "output_tokens": 32, "usage_known": True, "in_flight": False}
     assert result["models"]["monetary_cost"] == "unknown"
     assert [row["completed_samples"] for row in progress if row["phase"] == "sample_completed"] == [1, 2, 3, 4]
     assert "host-only-test-secret" not in json.dumps([result, progress])

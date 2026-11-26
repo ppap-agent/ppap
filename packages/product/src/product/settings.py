@@ -36,7 +36,6 @@ class Settings(BaseSettings):
     tenant_model_allowed_base_urls: str = Field(default="", alias="PPAP_TENANT_MODEL_ALLOWED_BASE_URLS")
     # A Deep attempt stops after this many model requests. It only halts a runaway loop:
     # it is not a cost settlement and never decides whether an artifact is valid.
-    deep_model_max_requests: int = Field(default=200, ge=1, le=1000, alias="PPAP_DEEP_MODEL_MAX_REQUESTS")
     deep_review_seconds: int = Field(default=DEEP_REVIEW_SECONDS, ge=DEEP_REVIEW_SECONDS_RANGE[0], le=DEEP_REVIEW_SECONDS_RANGE[1], alias="PPAP_DEEP_REVIEW_SECONDS")
 
     # Platform models, one group per use (documents.model_access reads the same names per call).
@@ -194,7 +193,6 @@ class Settings(BaseSettings):
                 "model_revision": config_digest(
                     {
                         "identity": identity,
-                        "max_requests": self.deep_model_max_requests,
                         "review_seconds": self.deep_review_seconds,
                     }
                 ),

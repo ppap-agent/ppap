@@ -217,9 +217,7 @@ def run_batches(revision: str, names: list[str], shard: tuple[int, int], out: Pa
 
     failures = 0
     # As the Controller: an inert default that sends nothing until an execution is bound.
-    with local_gateway(
-        state / "gateway.sock", upstream="https://unconfigured.invalid", model="unconfigured", provider_key=unavailable, require_binding=True, requests=settings.deep_model_max_requests
-    ) as gateway:
+    with local_gateway(state / "gateway.sock", upstream="https://unconfigured.invalid", model="unconfigured", provider_key=unavailable, require_binding=True) as gateway:
         for name, batch in runs:
             started = time.monotonic()
             # run_batch names files f01, f02, … in this order; rows report each by its repository path.

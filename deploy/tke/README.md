@@ -106,7 +106,7 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 | `PPAP_MODEL_DEEPSEEK_MODEL`、`PPAP_MODEL_DEEPSEEK_BASE_URL`（`deepseek-flash`、`https://api.deepseek.com`，DeepSeek 官方 OpenAI 兼容接口；集群出口在中国大陆，OpenRouter 拒绝对话请求） | ConfigMap `ppap-current` | API、Worker、Deep 的 `PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_BASE_URL` |
 | `PPAP_MODEL_DEEPSEEK_API_KEY` | Secret `ppap-current` | API、Worker、Deep Controller 的 `PPAP_MODEL_VISION_API_KEY`；不向 Deep guest 注入 |
 | `PPAP_MODEL_{TEXT,VISION,CODING}_REASONING_EFFORT` | ConfigMap `ppap-current` | 各用途的推理强度，取值见 `current.yaml`，含义见 [AGENTS.md](../../AGENTS.md#开发)「模型来源」 |
-| `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS`、`PPAP_DEEP_MODEL_MAX_REQUESTS`、`PPAP_DEEP_REVIEW_SECONDS` | ConfigMap `ppap-current` | API、Worker、Deep（企业 Key 的允许地址；每个 Deep Attempt 的请求次数熔断；深度复核单份时限，秒，改后重启即可）|
+| `PPAP_TENANT_MODEL_ALLOWED_BASE_URLS`、`PPAP_DEEP_REVIEW_SECONDS` | ConfigMap `ppap-current` | API、Worker、Deep（企业 Key 的允许地址；深度复核单份时限，秒，改后重启即可）|
 | 企业 Key（企业 BYOK） | 表 `product.tenant_model_credentials`（密文） | 运营用 `python -m product.tenant_models` 设置；无客户接口 |
 | `PPAP_FEISHU_USAGE_SEARCH_SIGNING_KEY` | Secret `ppap-current`（值记在仓库根目录不入 Git 的 `.env`；与旧版 UAC 签名用的是同一把） | API（飞书用量对账查询的响应签名）|
 | `PPAP_LEGACY_USAGE_SEARCH_URL` | ConfigMap `ppap-current` | API（对账查询转查旧版 UAC；旧版退役时删除）|

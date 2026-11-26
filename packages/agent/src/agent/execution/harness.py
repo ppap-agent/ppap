@@ -48,7 +48,6 @@ def runtime_from_env(
         model="unconfigured",
         provider_key=unavailable,
         require_binding=True,
-        requests=settings.deep_model_max_requests,
     ) as gateway:
         config = RuntimeConfig(state=state, gateway_socket=gateway.socket_path, gateway_host="127.0.0.1", **policy.model_dump())
         bootstrap = ContainerRuntime(config)

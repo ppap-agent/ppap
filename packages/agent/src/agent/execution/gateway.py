@@ -62,15 +62,10 @@ class CallLog(Protocol):
         """Store one record; raises when it is not stored. ``exchange`` ends a request begun here."""
 
 
-class RequestLimitReached(ValueError):
-    """The attempt reached its model request limit (a runaway-loop circuit breaker)."""
-
-
 @dataclass
 class Lease:
     execution_id: UUID
     expires: float
-    requests_left: int
     models: dict[ModelPurpose, str]
     identity: dict[str, str]
     completed_requests: int = 0
@@ -78,7 +73,6 @@ class Lease:
     output_tokens: int = 0
     usage_known: bool = True
     in_flight: bool = False
-    budget_exhausted: bool = False
     provider_key: Callable[[], str] | None = field(default=None, repr=False)
     access_resolver: Callable[[ModelPurpose], ModelAccess] | None = field(default=None, repr=False)
     transport_failure: dict[str, int | str | bool | None] | None = None
@@ -95,20 +89,18 @@ class Grants:
         model: str,
         *,
         ttl: int = TASK_SECONDS,
-        requests: int = 200,
         per_request_output_tokens: int = 32_768,
         capacity: int = 128,
         provider_key_factory: Callable[[], Callable[[], str]] | None = None,
         require_binding: bool = False,
     ) -> None:
-        if not model or any(type(value) is not int or value < 1 for value in (ttl, requests, per_request_output_tokens, capacity)):
+        if not model or any(type(value) is not int or value < 1 for value in (ttl, per_request_output_tokens, capacity)):
             raise ValueError("Invalid gateway limits")
         self.model = model
         self.require_binding = require_binding
         self.bindings: dict[UUID, tuple[dict[str, str], Callable[[ModelPurpose], ModelAccess], CallLog | None]] = {}
         self.provider_key_factory = provider_key_factory
         self.ttl = ttl
-        self.requests = requests
         self.per_request_output_tokens = per_request_output_tokens
         self.capacity = capacity
         self.leases: dict[str, Lease] = {}
@@ -167,7 +159,6 @@ class Grants:
             self.leases[hashlib.sha256(token.encode()).hexdigest()] = Lease(
                 execution_id,
                 now + self.ttl,
-                self.requests,
                 models,
                 identity,
                 provider_key=self.provider_key_factory() if self.provider_key_factory is not None else None,
@@ -187,16 +178,13 @@ class Grants:
     def authorize(self, token: str, body: dict[str, Any], request_bytes: int) -> tuple[Lease, ModelPurpose]:
         with self.lock:
             lease = self.leases.get(hashlib.sha256(token.encode()).hexdigest())
-            if lease is None or lease.expires <= time.monotonic() or lease.in_flight or lease.budget_exhausted:
+            if lease is None or lease.expires <= time.monotonic() or lease.in_flight:
                 raise ValueError("Invalid execution grant")
             # Only a model frozen for this operation is sent. One model name has one endpoint and
             # key, so any use that froze the name finds them; the request itself is not changed.
             purpose = next((name for name in PURPOSE_ORDER if body.get("model") == lease.models[name]), None)
             if purpose is None:
                 raise ValueError("Model outside the grant")
-            if lease.requests_left <= 0:
-                lease.budget_exhausted = True
-                raise RequestLimitReached("Model request limit reached")
             if body.get("previous_response_id") or body.get("conversation") or body.get("background"):
                 raise ValueError("Stateful provider requests are disabled")
             tools = body.get("tools", [])
@@ -210,7 +198,6 @@ class Grants:
                 raise ValueError("Request byte limit")
             body["store"] = False
             body["max_output_tokens"] = min(requested, self.per_request_output_tokens)
-            lease.requests_left -= 1
             lease.in_flight = True
             return lease, purpose
 
@@ -228,7 +215,7 @@ class Grants:
 
     def finish_failed(self, lease: Lease, failure: dict[str, int | str | bool | None]) -> None:
         """A request that may have reached the provider. The lease stays usable so the
-        agent can retry within its request limit; the counts are no longer complete."""
+        agent can retry; the counts are no longer complete."""
         with self.lock:
             lease.in_flight = False
             lease.usage_known = False
@@ -238,7 +225,6 @@ class Grants:
         """A local credential rejection never reached the provider."""
         with self.lock:
             lease.in_flight = False
-            lease.requests_left += 1
             lease.transport_failure = {
                 "phase": "provider_request",
                 "error_type": "ModelUnavailable",
@@ -255,7 +241,6 @@ class Grants:
             "output_tokens": sum(lease.output_tokens for lease in leases),
             "usage_known": all(lease.usage_known and not lease.in_flight for lease in leases),
             "in_flight": any(lease.in_flight for lease in leases),
-            "budget_exhausted": any(lease.budget_exhausted for lease in leases),
         }
         for lease in leases:
             if lease.transport_failure:
@@ -655,8 +640,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.grants.finish_not_sent(lease)
                 settled = True
             self.send_error(503, "Model unavailable")
-        except RequestLimitReached:
-            self.send_error(429, "Model request limit reached")
         except (ValueError, TypeError, AttributeError, OSError, http.client.HTTPException) as error:
             # Retain fixed metadata, never exception text, response content,
             # request headers, or credentials. The client sees only a failure.
@@ -756,12 +739,11 @@ class LocalGateway:
         provider_key: str | Callable[[], str],
         provider_key_factory: Callable[[], Callable[[], str]] | None = None,
         require_binding: bool = False,
-        requests: int = 200,
     ) -> None:
         if not socket_path.is_absolute() or not provider_key:
             raise ValueError("Invalid local gateway configuration")
         socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        grants = Grants(model, requests=requests, provider_key_factory=provider_key_factory, require_binding=require_binding)
+        grants = Grants(model, provider_key_factory=provider_key_factory, require_binding=require_binding)
         self.http = Gateway(("127.0.0.1", 0), grants, upstream, provider_key)
         try:
             self.control = GrantServer(str(socket_path), grants, f"http://127.0.0.1:{self.http.server_address[1]}/v1")
@@ -799,7 +781,6 @@ def local_gateway(
     provider_key: str | Callable[[], str],
     provider_key_factory: Callable[[], Callable[[], str]] | None = None,
     require_binding: bool = False,
-    requests: int = 200,
 ) -> LocalGateway:
     """Return a context manager for an execution-scoped grant gateway."""
     return LocalGateway(
@@ -809,7 +790,6 @@ def local_gateway(
         provider_key=provider_key,
         provider_key_factory=provider_key_factory,
         require_binding=require_binding,
-        requests=requests,
     )
 
 

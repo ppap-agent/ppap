@@ -249,8 +249,6 @@ def _evaluate(plan: OfficialPlan, *, models: LiveModels | None, grant: dict[str,
             receipt = models.receipt()
             if on_progress is not None:
                 on_progress({"phase": "sample_completed", "completed_samples": len(cases), "models": receipt})
-            if receipt["usage"]["budget_exhausted"]:
-                return _report(plan, cases, ("official_model_usage_incomplete",))
     plan.check_sources()
     return _report(plan, cases)
 

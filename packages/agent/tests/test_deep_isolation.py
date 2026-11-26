@@ -17,7 +17,7 @@ from unittest.mock import patch
 from uuid import UUID, uuid4
 
 from agent.core_program import AuditJobSpec
-from agent.execution.gateway import Grants, RequestLimitReached, grant_request, local_gateway
+from agent.execution.gateway import Grants, grant_request, local_gateway
 from agent.execution.isolation.container import ContainerRuntime, RuntimeConfig
 from agent.execution.isolation.progress import Progress
 from audit.policy import PI_VERSION
@@ -99,7 +99,7 @@ class GatewayGrantTests(unittest.TestCase):
                     self.assertEqual(received_ids, [])
                     self.assertEqual(
                         grant_request(str(gateway.socket_path), "usage", rejected_id),
-                        {"completed_requests": 0, "input_tokens": 0, "output_tokens": 0, "usage_known": True, "in_flight": False, "budget_exhausted": False},
+                        {"completed_requests": 0, "input_tokens": 0, "output_tokens": 0, "usage_known": True, "in_flight": False},
                     )
                     for mode in modes:
                         with self.subTest(mode=mode):
@@ -316,7 +316,6 @@ class GatewayGrantTests(unittest.TestCase):
                 upstream="https://provider.example/v1",
                 model="test-model",
                 provider_key="test-provider-key",
-                requests=2,
             ) as gateway:
                 execution_id = uuid4()
                 token = grant_request(str(gateway.socket_path), "issue", execution_id)["token"]
@@ -343,7 +342,7 @@ class GatewayGrantTests(unittest.TestCase):
                 self.assertTrue(all(UUID(caller_id).version == 4 for caller_id in caller_ids))
                 self.assertEqual(
                     grant_request(str(gateway.socket_path), "usage", execution_id),
-                    {"completed_requests": 2, "input_tokens": 5, "output_tokens": 9, "usage_known": True, "in_flight": False, "budget_exhausted": False},
+                    {"completed_requests": 2, "input_tokens": 5, "output_tokens": 9, "usage_known": True, "in_flight": False},
                 )
 
     def test_gateway_forwards_shell_web_and_hosted_tools(self) -> None:
@@ -394,8 +393,8 @@ class GatewayGrantTests(unittest.TestCase):
         lease, _ = grants.authorize(token, {"model": "test-model", "input": "opaque"}, MAX_BODY)
         grants.record_usage(lease, {"input_tokens": 1, "output_tokens": 1})
 
-    def test_a_failed_request_allows_a_bounded_retry(self) -> None:
-        grants = Grants("test-model", requests=2)
+    def test_a_failed_request_allows_a_retry(self) -> None:
+        grants = Grants("test-model")
         token = grants.issue(uuid4())
         lease, _ = grants.authorize(token, {"model": "test-model", "input": "one"}, 20)
         grants.finish_failed(lease, {"phase": "provider_read", "error_type": "IncompleteRead"})
@@ -404,8 +403,6 @@ class GatewayGrantTests(unittest.TestCase):
         self.assertEqual(usage["transport_failure"]["phase"], "provider_read")
         retried, _ = grants.authorize(token, {"model": "test-model", "input": "one"}, 20)
         grants.record_usage(retried, {"input_tokens": 1, "output_tokens": 1})
-        with self.assertRaises(RequestLimitReached):
-            grants.authorize(token, {"model": "test-model", "input": "one"}, 20)
 
     def test_bound_grant_selects_the_frozen_model_for_each_use(self) -> None:
         from documents.model_access import ModelAccess, ModelUnavailable
@@ -535,8 +532,8 @@ class ContainerBoundaryTests(unittest.TestCase):
             runtime.config = SimpleNamespace(gateway_socket=root / "gateway.sock")
             runtime.journal = root / "journal"
             execution_id = uuid4()
-            pending = {"completed_requests": 1, "input_tokens": 3, "output_tokens": 5, "usage_known": False, "in_flight": True, "budget_exhausted": False}
-            settled = {"completed_requests": 2, "input_tokens": 5, "output_tokens": 9, "usage_known": True, "in_flight": False, "budget_exhausted": False}
+            pending = {"completed_requests": 1, "input_tokens": 3, "output_tokens": 5, "usage_known": False, "in_flight": True}
+            settled = {"completed_requests": 2, "input_tokens": 5, "output_tokens": 9, "usage_known": True, "in_flight": False}
             with patch("agent.execution.isolation.container.grant_request", side_effect=[pending, settled, settled]) as request:
                 runtime._export(run, root / "work", True, execution_id, time.monotonic() + 2, threading.Event())
             self.assertEqual([call.args[1] for call in request.call_args_list], ["usage", "usage", "revoke_and_usage"])
@@ -547,7 +544,7 @@ class ContainerBoundaryTests(unittest.TestCase):
     def test_guest_cannot_report_its_own_model_usage(self) -> None:
         with tempfile.TemporaryDirectory(prefix="pd-zero-", dir="/tmp") as temporary:
             root = Path(temporary)
-            with local_gateway(root / "gateway.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-provider-key", requests=2):
+            with local_gateway(root / "gateway.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-provider-key"):
                 runtime = object.__new__(ContainerRuntime)
                 runtime.model_grant_binding = None
                 runtime.config = RuntimeConfig(
@@ -604,7 +601,7 @@ class ContainerBoundaryTests(unittest.TestCase):
             execute.assert_not_called()
 
     def test_unknown_usage_exports_a_valid_result_without_counts(self) -> None:
-        known = {"completed_requests": 1, "input_tokens": 3, "output_tokens": 2, "usage_known": True, "in_flight": False, "budget_exhausted": False}
+        known = {"completed_requests": 1, "input_tokens": 3, "output_tokens": 2, "usage_known": True, "in_flight": False}
         unknown = [known | {"usage_known": False}, {key: value for key, value in known.items() if key != "input_tokens"}, known | {"completed_requests": True}]
         for usage in unknown:
             with self.subTest(usage=usage), tempfile.TemporaryDirectory() as temporary:
@@ -620,52 +617,6 @@ class ContainerBoundaryTests(unittest.TestCase):
                     runtime._export(run, root / "work", True, uuid4(), time.monotonic() + 2, threading.Event())
                 self.assertEqual(json.loads((root / "work" / "result" / "bundle.json").read_text()), {"ok": True})
 
-    def test_confirmed_budget_exhaustion_is_not_a_model_protocol_error(self) -> None:
-        from types import SimpleNamespace
-
-        runtime = object.__new__(ContainerRuntime)
-        runtime.config = SimpleNamespace(gateway_socket=Path("/unused-gateway.sock"))
-        with patch("agent.execution.isolation.container.grant_request", return_value={"budget_exhausted": True}):
-            with self.assertRaises(ControllerFault) as failure:
-                runtime._export(Path("/unused-run"), Path("/unused-work"), True, uuid4(), time.monotonic() + 2, threading.Event())
-        self.assertEqual(failure.exception.code, "RESOURCE_LIMIT")
-
-    def test_exhausted_guest_fault_remains_resource_limit(self) -> None:
-        from types import SimpleNamespace
-
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            run = root / "run"
-            (run / "work" / "result").mkdir(parents=True)
-            (run / "work" / "result" / "fault.json").write_text('{"ok":false,"code":"MODEL_PROTOCOL_ERROR"}')
-            runtime = object.__new__(ContainerRuntime)
-            runtime.config = SimpleNamespace(gateway_socket=root / "gateway.sock")
-            runtime.journal = root / "journal"
-            with patch("agent.execution.isolation.container.grant_request", return_value={"budget_exhausted": True}):
-                with self.assertRaises(ControllerFault) as failure:
-                    runtime._export(run, root / "work", True, uuid4(), time.monotonic() + 2, threading.Event())
-            self.assertEqual(failure.exception.code, "RESOURCE_LIMIT")
-            self.assertFalse((root / "work" / "result" / "bundle.json").exists())
-
-    def test_request_limit_never_exports_an_artifact(self) -> None:
-        from types import SimpleNamespace
-
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            run = root / "run"
-            (run / "work" / "result").mkdir(parents=True)
-            (run / "work" / "result" / "bundle.json").write_text('{"ok":true}')
-            runtime = object.__new__(ContainerRuntime)
-            runtime.config = SimpleNamespace(gateway_socket=root / "gateway.sock")
-            runtime.journal = root / "journal"
-            usage = {"completed_requests": 200, "input_tokens": 0, "output_tokens": 0, "usage_known": False, "in_flight": False, "budget_exhausted": True}
-            with patch("agent.execution.isolation.container.grant_request", return_value=usage):
-                with self.assertRaises(ControllerFault) as failure:
-                    runtime._export(run, root / "work", True, uuid4(), time.monotonic() + 2, threading.Event())
-            self.assertEqual(failure.exception.code, "RESOURCE_LIMIT")
-            self.assertFalse((root / "work" / "result" / "bundle.json").exists())
-            self.assertFalse(runtime.journal.exists())
-
     def test_interrupted_or_invalid_result_does_not_export(self) -> None:
         from types import SimpleNamespace
 
@@ -677,7 +628,7 @@ class ContainerBoundaryTests(unittest.TestCase):
             runtime = object.__new__(ContainerRuntime)
             runtime.config = SimpleNamespace(gateway_socket=root / "gateway.sock")
             runtime.journal = root / "journal"
-            usage = {"completed_requests": 42, "input_tokens": 4_025_240, "output_tokens": 89_857, "usage_known": True, "in_flight": False, "budget_exhausted": True}
+            usage = {"completed_requests": 42, "input_tokens": 4_025_240, "output_tokens": 89_857, "usage_known": True, "in_flight": False}
             for cancelled, deadline, expected in ((True, time.monotonic() + 2, "CANCELLED"), (False, time.monotonic() - 1, "MODEL_TIMEOUT"), (False, time.monotonic() + 2, "MODEL_PROTOCOL_ERROR")):
                 with self.subTest(expected=expected), patch("agent.execution.isolation.container.grant_request", return_value=usage):
                     event = threading.Event()

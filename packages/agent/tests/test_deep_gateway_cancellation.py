@@ -116,7 +116,7 @@ def test_revocation_interrupts_silent_provider_and_releases_next_execution(stage
                             assert first_result == (200, terminal if stage == "terminal" else created)
                         assert inputs == ["first", "next"]
                         usage = grant_request(str(gateway.socket_path), "usage", next_id)
-                        assert usage == {"completed_requests": 1, "input_tokens": 3, "output_tokens": 2, "usage_known": True, "in_flight": False, "budget_exhausted": False}
+                        assert usage == {"completed_requests": 1, "input_tokens": 3, "output_tokens": 2, "usage_known": True, "in_flight": False}
                     finally:
                         for peer in peers:
                             try:

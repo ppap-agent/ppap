@@ -13,7 +13,7 @@
 
 每个基准批次只按原件和提交角色重新提交，识别与预检走产品路径（同 `corpus_contracts.candidate_run --benchmark`）；审核这一步与线上 Controller 相同：在从 `HEAD` 构建的深度镜像里，以 root 启动本地模型网关和 `ContainerRuntime`，guest 降权为 uid 10001、在 `prlimit` 下运行，由 `CoreRuntime.execute_snapshot` 在一个 guest 中执行整轮、同组共享上下文：逐份运行检查程序，再逐份由 Pi 按 `deep_agent/AGENTS.md` 复核，宿主校验并合并订正。每份的时限取线上值（`PPAP_DEEP_REVIEW_SECONDS` 等，见 [deploy/deep](../../deploy/deep/README.md)）。某份复核未完成时，这份保留程序结论，记为未复核。
 
-- 模型：平台模型（`.env` 中的 `PPAP_MODEL_TEXT_*` / `VISION_*` / `CODING_*`），按未配置企业 Key 的租户冻结身份；推理强度、复核时限、请求上限、沙箱配置取线上值（`deploy/tke/current.yaml`）。`--effort low|medium|high|xhigh` 只改复核强度；实际的复核模型、强度和时限写进 `meta.json`。
+- 模型：平台模型（`.env` 中的 `PPAP_MODEL_TEXT_*` / `VISION_*` / `CODING_*`），按未配置企业 Key 的租户冻结身份；推理强度、复核时限、沙箱配置取线上值（`deploy/tke/current.yaml`）。`--effort low|medium|high|xhigh` 只改复核强度；实际的复核模型、强度和时限写进 `meta.json`。
 - 识别与预检的模型请求先用 `assets/corpus/replay` 中请求完全相同的录音回答，没有才现调，且不保存。
 - 用量与费用：审核的每次模型请求都经过本进程托管的网关，逐次记下用途、模型、实际强度和服务商返回的用量（输入、其中缓存命中、输出、其中推理），按发出时正在进行的任务归到对应文件的检查或复核。费用按 [prices.json](prices.json) 的公开价计算（美元），价格表由人维护，写明来源与读取日期。
 
@@ -59,7 +59,7 @@ uv run --no-sync python bench/deep-audit/deep_eval.py report bench/deep-audit/ru
 | 整轮失败 | 整轮执行失败（如请求数达到上限）的批次没有结论，不计入对照，单列批次、行数、耗时、请求数与费用；已花的费用计入合计 |
 | 订正被拒 | 复核给出的订正没有通过宿主的证据核对，保留程序结论 |
 | 待确认被定下 | 程序结论为 UNABLE 的条款，复核后给出结论的条数，及其中与参考一致的条数 |
-| 费用 | 公开价下的美元费用：合计、按检查 / 复核、按模型与强度，以及每份文件检查和复核费用的中位 / P90 / 最大；缓存命中占输入的比例；单批请求数（对照每个 Attempt 的 `PPAP_DEEP_MODEL_MAX_REQUESTS`） |
+| 费用 | 公开价下的美元费用：合计、按检查 / 复核、按模型与强度，以及每份文件检查和复核费用的中位 / P90 / 最大；缓存命中占输入的比例；单批最多请求数 |
 | 每份检查 / 复核耗时 | guest 每开始一项任务就报告一次进度，一项任务持续到下一项开始；与线上每份检查、复核的时限对照 |
 
 ## 比较两种做法

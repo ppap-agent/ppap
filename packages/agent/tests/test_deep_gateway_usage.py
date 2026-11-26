@@ -13,7 +13,6 @@ from uuid import uuid4
 
 import pytest
 from agent.execution.gateway import grant_request, local_gateway
-from agent.execution.guest_model import ModelGrant
 
 
 def _post(port: int, token: str, body: str) -> tuple[int, bytes, bool]:
@@ -27,28 +26,6 @@ def _post(port: int, token: str, body: str) -> tuple[int, bytes, bool]:
             return response.status, error.partial, False
     finally:
         connection.close()
-
-
-def test_request_limit_rejects_the_next_request_before_the_provider() -> None:
-    event = b'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}\n\n'
-    with tempfile.TemporaryDirectory(prefix="pd-limit-", dir="/tmp") as temporary, patch("agent.execution.gateway.http.client.HTTPSConnection") as upstream:
-        upstream.return_value.getresponse.side_effect = lambda: SimpleNamespace(status=200, read1=BytesIO(event).read1)
-        with local_gateway(Path(temporary) / "g.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-provider-key", requests=2) as gateway:
-            execution_id = uuid4()
-            grant = ModelGrant.model_validate(grant_request(str(gateway.socket_path), "issue", execution_id))
-            body = json.dumps({"model": "test-model", "input": "audit", "stream": True})
-            port = gateway.http.server_address[1]
-            assert [_post(port, grant.token, body)[0] for _ in range(2)] == [200, 200]
-            assert _post(port, grant.token, body)[0] == 429
-            assert upstream.return_value.request.call_count == 2
-            assert grant_request(str(gateway.socket_path), "usage", execution_id) == {
-                "completed_requests": 2,
-                "input_tokens": 2,
-                "output_tokens": 2,
-                "usage_known": True,
-                "in_flight": False,
-                "budget_exhausted": True,
-            }
 
 
 @pytest.mark.parametrize(
@@ -80,7 +57,6 @@ def test_terminal_stream_is_forwarded_whether_or_not_usage_is_reported(terminal:
                 "output_tokens": 7 if known else 0,
                 "usage_known": known,
                 "in_flight": False,
-                "budget_exhausted": False,
             }
             # A missing receipt does not close the grant: the agent may continue.
             assert _post(gateway.http.server_address[1], token, body)[0] == 200

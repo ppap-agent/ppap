@@ -183,7 +183,6 @@ def test_runtime_rejects_queued_change_but_native_work_needs_no_key(monkeypatch)
     policy = DeepExecutionPolicy(app_revision="a" * 40, model="unconfigured", model_revision="b" * 64, sandbox_profile="off")
     settings = SimpleNamespace(
         deep_execution_policy=lambda identity=None: policy.model_copy(update={"model": identity["model"]}) if identity else policy,
-        deep_model_max_requests=7,
     )
     instances, calls = [], []
     grants = Grants("inert-default", require_binding=True)
@@ -191,7 +190,6 @@ def test_runtime_rejects_queued_change_but_native_work_needs_no_key(monkeypatch)
     @contextmanager
     def fake_gateway(path, **kwargs):
         assert kwargs["require_binding"] is True
-        assert kwargs["requests"] == 7
         yield SimpleNamespace(socket_path=path, http=SimpleNamespace(grants=grants))
 
     class Runtime:

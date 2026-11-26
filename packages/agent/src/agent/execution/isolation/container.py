@@ -408,27 +408,14 @@ class ContainerRuntime:
             try:
                 raw = read_regular(result, ("fault.json",), 1024)
             except FileNotFoundError:
-                try:
-                    raw = read_regular(result, ("bundle.json",), MAX_OUTPUT)
-                except FileNotFoundError:
-                    if usage.get("budget_exhausted") is True:
-                        raise ControllerFault("RESOURCE_LIMIT")
-                    raise
-            else:
-                # The request limit stopped a runaway loop: no artifact from it is published.
-                if usage.get("budget_exhausted") is True:
-                    raise ControllerFault("RESOURCE_LIMIT")
+                raw = read_regular(result, ("bundle.json",), MAX_OUTPUT)
             decoded = json.loads(raw)
             if not isinstance(decoded, dict):
                 raise ValueError("Invalid result")
             if decoded.get("ok") is False:
-                if usage.get("budget_exhausted") is True:
-                    raise ControllerFault("RESOURCE_LIMIT")
                 fault = GuestFault.model_validate(decoded)
                 raise ControllerFault(fault.code)
             if model_operation:
-                if usage.get("budget_exhausted") is True:
-                    raise ControllerFault("RESOURCE_LIMIT")
                 # Provider token counts are observations. Unknown counts leave the result
                 # valid; they are reported only when every request reported them.
                 for key in ("input_tokens", "output_tokens", "model_requests"):
@@ -565,7 +552,7 @@ class ContainerRuntime:
                 stages.append(json.loads(raw.replace(token, "[redacted]")) if token else facts)
         payload: dict[str, Any] = {"code": code, "stages": stages}
         if usage is not None:
-            names = ("completed_requests", "input_tokens", "output_tokens", "usage_known", "in_flight", "budget_exhausted")
+            names = ("completed_requests", "input_tokens", "output_tokens", "usage_known", "in_flight")
             payload["usage"] = {key: usage[key] for key in names if type(usage.get(key)) in (int, bool)}
             failure = usage.get("transport_failure")
             if isinstance(failure, dict):
