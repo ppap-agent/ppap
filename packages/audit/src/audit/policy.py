@@ -29,7 +29,8 @@ class DeepExecutionPolicy(BaseModel):
     reasoning_effort: Literal["xhigh", "high", "medium", "low"] = "medium"
     sandbox_profile: Literal["off", "ppap"]
     memory_mib: int = Field(default=1536, ge=512, le=4096, strict=True)
-    max_processes: int = Field(default=256, ge=16, le=1024, strict=True)
+    # Threads uid 10001 may hold, counted across every guest on the node: a round reviewing 4 files peaks near 120.
+    max_processes: int = Field(default=512, ge=16, le=1024, strict=True)
     executor_label: str = Field(default=DEEP_PROTOCOL_REVISION, min_length=1)
 
     def engine_revision(self) -> str:
