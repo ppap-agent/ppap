@@ -1194,7 +1194,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
           </fieldset>
         </section>}
         </PageLayout> : <PageLayout top={<>
-          <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-1"><div className="min-w-0 flex-1 space-y-1">
+          <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-1"><div className="min-w-0 flex-1 basis-80 space-y-1">
             <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold tracking-tight">预检并匹配规则</h1>{reauditing && <Badge variant="info">关联重审</Badge>}</div>
             {task && <p className="text-xs text-muted-foreground">{reauditing ? reauditNote : '系统识别每份文件的要素并匹配客户规则；核对规则后点击【开始审核】。'}</p>}
             {task && foreign && <p className="text-xs text-muted-foreground">{task.creator.name || '同事'} 发起，只有发起人可以确认规则和开始审核。</p>}
