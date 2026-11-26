@@ -34,7 +34,7 @@ export function TaskRail({currentId, tasks, labels, query, onQuery, filter, onFi
   return <nav aria-label="审核任务列表" className="flex min-h-0 flex-1 flex-col">
     <div className="flex items-center justify-between gap-2 border-b px-3.5 py-3"><h2 className="text-base font-semibold">审核任务</h2><div className="flex items-center gap-1">
       <Button variant="soft" size="xs" onClick={onNew}><Icon icon={iconPlus} aria-hidden="true"/>新建审核任务</Button>
-      <Button variant="quiet" size="icon-xs" aria-label="收起审核任务" title="收起审核任务" onClick={onCollapse}><Icon icon={iconAnglesLeft} aria-hidden="true"/></Button>
+      <Button variant="quiet" size="icon-xs" className="max-xl:hidden" aria-label="收起审核任务" title="收起审核任务" onClick={onCollapse}><Icon icon={iconAnglesLeft} aria-hidden="true"/></Button>
     </div></div>
     <div className="flex items-center gap-2 border-b px-3 py-2">
       <div role="search" className="relative min-w-0 flex-1"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Icon icon={iconMagnifyingGlass} aria-hidden="true" className="size-3"/></span><Input type="search" iconStart aria-label="搜索审核任务" placeholder="搜索任务编号 / 车型 / 文件名" value={query} onChange={event => onQuery(event.target.value)}/></div>

@@ -5,6 +5,9 @@ const paths: Record<ProductSurface, string> = {
 }
 
 export const taskAddress = (id: string | null) => id ? `/tasks/${encodeURIComponent(id)}` : paths.audit
+/** The task list as a page of its own. On a narrow screen PPAP Audit opens here; a wide screen keeps the list beside the new-audit page. */
+export const taskListAddress = '/tasks'
+export const isTaskListAddress = (url: URL) => (url.pathname.replace(/\/$/, '') || '/') === taskListAddress
 export const surfaceAddress = (surface: ProductSurface) => paths[surface]
 export const auditAddressChanged = 'ppap-audit-address-changed'
 /** The rules page moved between its list and a rule's page; only the page header follows it. */
@@ -48,6 +51,7 @@ export function rememberRequest(taskId: string, kind: 'recognitionRequest' | 'ac
 
 export function readAuditRoute(url: URL): {surface: ProductSurface; taskId: string | null} {
   const path = url.pathname.replace(/\/$/, '') || '/'
+  if (path === taskListAddress) return {surface: 'audit', taskId: null}
   const task = /^\/tasks\/([^/]+)$/.exec(path)?.[1]
   if (task) return {surface: 'audit', taskId: task === 'new' ? null : decodeURIComponent(task)}
   const natural = (Object.entries(paths) as [ProductSurface, string][]).find(([, value]) => value === path)
@@ -64,7 +68,7 @@ export function canonicalAddress(url: URL): string {
   if (next.searchParams.has('share')) return next.pathname + next.search + next.hash
   if (next.searchParams.has('round')) {next.searchParams.delete('task'); next.pathname = surfaceAddress('audit')}
   const {surface, taskId} = readAuditRoute(next)
-  next.pathname = surface === 'audit' ? taskAddress(taskId) : surfaceAddress(surface)
+  next.pathname = surface === 'audit' ? isTaskListAddress(next) ? taskListAddress : taskAddress(taskId) : surfaceAddress(surface)
   next.searchParams.delete('view')
   if (surface === 'audit') next.searchParams.delete('task')
   return next.pathname + next.search + next.hash

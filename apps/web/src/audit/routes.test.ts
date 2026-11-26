@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {auditAddressChanged, canonicalAddress, readAuditRoute, receiptsAddress, requestAddress, surfaceAddress, taskAddress, taskUsageAddress, writeAuditAddress} from './routes.ts'
+import {auditAddressChanged, canonicalAddress, isTaskListAddress, readAuditRoute, receiptsAddress, requestAddress, surfaceAddress, taskAddress, taskUsageAddress, writeAuditAddress} from './routes.ts'
 import {readUsageQuery} from './usage-contract.ts'
 
 test('local address edits retain history identity and notify without a synthetic back/forward event', () => {
@@ -42,6 +42,14 @@ test('home opens PPAP Audit; navigation does not carry unrelated detail', () => 
   assert.equal(taskAddress(null), '/tasks/new')
   assert.equal(surfaceAddress('archive'), '/files')
   assert.equal(readAuditRoute(new URL('https://ppap.test/tasks/new')).taskId, null)
+})
+
+test('the task list is a page of PPAP Audit and keeps its own address', () => {
+  const list = new URL('https://ppap.test/tasks')
+  assert.deepEqual(readAuditRoute(list), {surface: 'audit', taskId: null})
+  assert.equal(canonicalAddress(list), '/tasks')
+  assert.equal(isTaskListAddress(new URL('https://ppap.test/tasks/')), true)
+  assert.equal(isTaskListAddress(new URL('https://ppap.test/tasks/new')), false)
 })
 
 test('lost command recovery keeps task and request identities through refresh and canonicalization', () => {

@@ -182,7 +182,7 @@ def reaudit_routes(page, *, accept=False):
 def reaudit_page(request):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": 1057, "height": 853})
+        page = browser.new_page(viewport={"width": 1280, "height": 853})
         page.set_default_timeout(5000)
         commands = reaudit_routes(page, accept=getattr(request, "param", False))
         page.goto(WEB + f"/tasks/new?fromRound={ROUND}")

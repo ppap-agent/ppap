@@ -25,16 +25,16 @@ const buttonVariants = cva(
       },
       size: {
         default:
-          "h-8 gap-1.5 px-4 has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3",
-        xs: "h-6 gap-1 rounded-md px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-7 gap-1 rounded-md px-3 text-sm in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
-        lg: "h-10 gap-2.5 px-3 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-        icon: "size-8",
+          "h-8 gap-1.5 px-4 pointer-coarse:h-11 has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3",
+        xs: "h-6 gap-1 rounded-md px-2 text-xs pointer-coarse:h-9 in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
+        sm: "h-7 gap-1 rounded-md px-3 text-sm pointer-coarse:h-10 in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+        lg: "h-10 gap-2.5 px-3 pointer-coarse:h-11 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        icon: "size-8 pointer-coarse:size-11",
         "icon-xs":
-          "size-6 rounded-md in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
+          "size-6 rounded-md pointer-coarse:size-9 in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
         "icon-sm":
-          "size-7 rounded-md in-data-[slot=button-group]:rounded-lg",
-        "icon-lg": "size-9",
+          "size-7 rounded-md pointer-coarse:size-10 in-data-[slot=button-group]:rounded-lg",
+        "icon-lg": "size-9 pointer-coarse:size-11",
         profile: "h-12 w-full justify-start gap-3 rounded-xl px-2 text-left",
         row: "h-auto min-h-16 w-full justify-start gap-3 rounded-none px-3 py-2.5 text-left whitespace-normal aria-pressed:bg-muted/50",
         "profile-icon": "size-8 rounded-full",

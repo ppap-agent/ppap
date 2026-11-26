@@ -5,7 +5,7 @@ import {createPortal} from 'react-dom'
 import {requestTrace} from '../api'
 import {analysisNotice} from '../helpers'
 import {MatchingFeedback, SourceMismatchNotice, isMatchingReason} from './matching-feedback'
-import {iconAnglesRight, iconArrowLeft, iconArrowRight, iconArrowsRotate, iconBookOpen, iconChartPie, iconCheck, iconChevronDown, iconCircleInfo, iconCircleQuestion, iconCloud, iconFileShield, iconFolderOpen, iconLayerGroup, iconSliders, iconWandMagicSparkles, iconXmark} from '../components/icons'
+import {iconAnglesRight, iconArrowLeft, iconArrowRight, iconArrowsRotate, iconBookOpen, iconChartPie, iconCheck, iconChevronDown, iconCircleInfo, iconCircleQuestion, iconCloud, iconFileShield, iconFolderOpen, iconLayerGroup, iconSliders, iconWandMagicSparkles, iconXmark, iconChevronLeft} from '../components/icons'
 import {Icon} from '../components/ui/icon'
 import {Segmented} from '../components/segmented'
 import {PageLayout} from '../components/page-layout'
@@ -49,7 +49,7 @@ import {reconcileTaskDisplay, type DisplayInfo, type DisplayReference} from './d
 import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
 import {ReviewEditorContext} from './review-editor'
 import {reconcileTaskSummary, subjectLabel, summarizeTask, taskIsBehindSummary, type TaskSummary} from './task-summary'
-import {auditAddressChanged, readAuditRoute, ruleAddressChanged, rulesAddressKeys, surfaceAddress, taskAddress as taskHref, writeAuditAddress, type ProductSurface} from './routes'
+import {auditAddressChanged, isTaskListAddress, readAuditRoute, ruleAddressChanged, rulesAddressKeys, surfaceAddress, taskAddress as taskHref, taskListAddress, writeAuditAddress, type ProductSurface} from './routes'
 import {templateName} from './rule-templates'
 import type {ReadRound} from './workspace'
 import {TaskRecovery, type TaskRecoveryState} from './task-recovery'
@@ -168,6 +168,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
   const ruleDetail = () => {const params = new URL(location.href).searchParams; return params.has('systemRule') || params.has('ruleQuestions') || params.has('rulebook')}
   const [ruleDetailOpen, setRuleDetailOpen] = useState(ruleDetail)
+  // The task list as its own page (/tasks): where a narrow screen opens PPAP Audit. A wide screen shows the new-audit page with the list beside it.
+  const [taskListPage, setTaskListPage] = useState(() => isTaskListAddress(new URL(location.href)))
   const [pageActions, setPageActions] = useState<HTMLDivElement | null>(null)
   const [pageTitle, setPageTitle] = useState<HTMLElement | null>(null)
   const [supportSnapshot, setSupportSnapshot] = useState<SupportSnapshot | null>(null)
@@ -631,8 +633,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
   const addressCurrent = useRef(restoreAddress)
   addressCurrent.current = restoreAddress
   useEffect(() => {
-    const changed = () => {addressCurrent.current(); setRuleDetailOpen(ruleDetail())}
-    const remember = () => {setRuleDetailOpen(ruleDetail()); if (readAuditRoute(new URL(location.href)).surface === 'audit') retainAuditAddress()}
+    const changed = () => {addressCurrent.current(); setRuleDetailOpen(ruleDetail()); setTaskListPage(isTaskListAddress(new URL(location.href)))}
+    const remember = () => {setRuleDetailOpen(ruleDetail()); setTaskListPage(isTaskListAddress(new URL(location.href))); if (readAuditRoute(new URL(location.href)).surface === 'audit') retainAuditAddress()}
     const followRule = () => setRuleDetailOpen(ruleDetail())
     changed(); window.addEventListener('popstate', changed); window.addEventListener(auditAddressChanged, remember); window.addEventListener(ruleAddressChanged, followRule)
     return () => {restoreEpoch.current += 1; window.removeEventListener('popstate', changed); window.removeEventListener(auditAddressChanged, remember); window.removeEventListener(ruleAddressChanged, followRule)}
@@ -897,11 +899,19 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
     for (const key of rulesAddressKeys) url.searchParams.delete(key)
     writeAuditAddress(url)
   }
+  /** A narrow screen's PPAP Audit entry: the task list page, from which a task or a new audit opens one level down. */
+  function openTaskList() {
+    if (surfaceRef.current === 'audit') retainAuditAddress()
+    const url = new URL(location.href)
+    url.pathname = taskListAddress; url.search = ''
+    history.pushState(history.state, '', url)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  }
   // One 64px light icon rail (browser shell): each item is its icon over its short name; the current page is highlighted.
   const railItem = 'flex size-11 flex-col items-center justify-center gap-1 rounded-lg text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-[current=page]:bg-sidebar-primary aria-[current=page]:text-sidebar-primary-foreground'
   // Inside Feishu the same entries sit in a top bar as pills (design.md「Page Frame」: two shells, one page).
   const pillItem = 'flex h-8 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm text-foreground transition-colors hover:bg-muted aria-[current=page]:bg-secondary-hover aria-[current=page]:font-medium'
-  const topNavigation = <nav aria-label="产品导航" className="flex min-w-0 items-center gap-1 overflow-x-auto">
+  const topNavigation = <nav aria-label="产品导航" className="flex min-w-0 items-center gap-1 overflow-x-auto max-xl:hidden">
     {productLinks.filter(link => link.view !== 'requirements' || rules).map(({view, label, short, icon}) => {
       const content = <><Icon icon={icon} aria-hidden="true" className="size-3.5 text-muted-foreground"/><span aria-hidden="true">{short}</span></>
       return <button key={view} type="button" className={pillItem} aria-label={label} aria-current={surface === view ? 'page' : undefined} onClick={() => view === 'requirements' ? openRules() : showSurface(view)}>{content}</button>
@@ -912,6 +922,13 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
       const active = surface === view
       const content = <><Icon icon={icon} aria-hidden="true" className="size-4.5"/><span aria-hidden="true" className="text-2xs leading-none">{short}</span></>
       return <Tooltip key={view}><TooltipTrigger asChild><button type="button" className={railItem} aria-label={label} aria-current={active ? 'page' : undefined} onClick={() => view === 'requirements' ? openRules() : showSurface(view)}>{content}</button></TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>
+    })}
+  </nav>
+  // Below 1280px (design.md「Viewport」) the five entries sit in a bottom bar on top-level pages, each icon over its short name.
+  const bottomNavigation = <nav aria-label="产品导航" className="grid shrink-0 auto-cols-fr grid-flow-col border-t bg-card pb-safe xl:hidden">
+    {productLinks.filter(link => link.view !== 'requirements' || rules).map(({view, label, short, icon}) => {
+      const active = view === 'audit' ? surface === 'audit' && taskListPage : surface === view
+      return <button key={view} type="button" className="flex h-14 flex-col items-center justify-center gap-1 text-muted-foreground aria-[current=page]:font-medium aria-[current=page]:text-primary" aria-label={label} aria-current={active ? 'page' : undefined} onClick={() => view === 'audit' ? openTaskList() : view === 'requirements' ? openRules() : showSurface(view)}><Icon icon={icon} aria-hidden="true" className="size-5"/><span aria-hidden="true" className="text-xs leading-none">{short}</span></button>
     })}
   </nav>
   // Files stopped for the same reason need the same action, so the advice appears once above them.
@@ -1000,10 +1017,11 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
   // keep what is decided at the top and the action at the bottom; result pages keep the list open and carry their own heading.
   const pageKind: PageKind = surface !== 'audit' ? 'library' : recovery || workbench || task?.state === 'completed' ? 'results' : step
   const frame = pageFrames[pageKind]
+  const taskListView = <TaskRail currentId={task?.id} tasks={shownTasks} labels={taskLabels} query={query} onQuery={setQuery} filter={filter} onFilter={setFilter} busy={listStatus.busy} ready={listStatus.ready} error={listStatus.error} hasMore={taskListNext !== null} hasTasks={summaries.length > 0} onMore={() => void loadTasks(listStatus.error ? 0 : taskListNext!)} onNew={newTask} onOpen={id => {taskAddress(id); void recover(id)}} onCollapse={() => setRailChoice('folded')}/>
   const railCollapsed = railChoice === 'folded' || railChoice === 'auto' && (frame.taskList === 'folded' || !wideRail && (reportView || fileOpen))
   const taskRail = frame.taskList !== 'none' && (railCollapsed
-    ? <aside aria-label="审核任务" className="flex w-12 shrink-0 flex-col items-center border-r bg-card py-3"><Button variant="quiet" size="icon" aria-label="展开审核任务" onClick={() => setRailChoice('open')}><Icon icon={iconAnglesRight} aria-hidden="true"/></Button></aside>
-    : <aside aria-label="审核任务" className="flex min-h-0 w-70 shrink-0 flex-col self-stretch overflow-hidden border-r bg-card"><TaskRail currentId={task?.id} tasks={shownTasks} labels={taskLabels} query={query} onQuery={setQuery} filter={filter} onFilter={setFilter} busy={listStatus.busy} ready={listStatus.ready} error={listStatus.error} hasMore={taskListNext !== null} hasTasks={summaries.length > 0} onMore={() => void loadTasks(listStatus.error ? 0 : taskListNext!)} onNew={newTask} onOpen={id => {taskAddress(id); void recover(id)}} onCollapse={() => setRailChoice('folded')}/></aside>)
+    ? <aside aria-label="审核任务" className="flex w-12 shrink-0 flex-col items-center border-r bg-card py-3 max-xl:hidden"><Button variant="quiet" size="icon" aria-label="展开审核任务" onClick={() => setRailChoice('open')}><Icon icon={iconAnglesRight} aria-hidden="true"/></Button></aside>
+    : <aside aria-label="审核任务" className="flex min-h-0 w-70 shrink-0 flex-col self-stretch overflow-hidden border-r bg-card max-xl:hidden">{taskListView}</aside>)
   const supportScenario = surface === 'archive' ? '审核文件' : surface === 'requirements' ? '审核规则' : surface === 'usage' ? '用量记录' : surface === 'templates' ? '模板库' : surface === 'receipts' ? '我的回执' : workbench ? '审核结果' : '上传与文件核对'
   function contactReadSupport(current: AuditTask) {openSupport({scenario: '读取审核任务', traceId: readStatus[current.id]?.traceId, facts: [{label: '任务标识', value: current.id}, ...(current.round_id ? [{label: '审核轮次', value: current.round_id}] : []), {label: '服务说明', value: readStatus[current.id]?.error || ''}]})}
   const recognitionSupport = recognitionState && <Button variant="outline" size="sm" onClick={() => openSupport({scenario: '识别文件与匹配规则', traceId: recognitionState.traceId, facts: [{label: '任务标识', value: recognitionState.taskId}, {label: '识别请求', value: recognitionState.requestId}, {label: '文件', value: files.map(row => row.file.original_filename).join('\n')}, {label: '服务说明', value: recognitionState.message}]})}>联系支持</Button>
@@ -1012,7 +1030,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
   const libraryTop = surface === 'archive' || surface === 'templates' || surface === 'usage' || surface === 'receipts' || (surface === 'requirements' && !ruleDetailOpen)
   const quietHeader = libraryTop || (surface === 'audit' && !task && !recovery && step === 'upload')
   // My receipts open from the account menu, not the rail, so they name themselves.
-  const pageContext = surface === 'receipts' ? '我的回执' : surface !== 'audit' ? productLinks.find(link => link.view === surface)?.label : task ? task.number : recovery ? reportView ? '审核报告' : '审核任务' : '新建审核'
+  const pageContext = surface === 'receipts' ? '我的回执' : surface === 'audit' && taskListPage ? '审核任务' : surface !== 'audit' ? productLinks.find(link => link.view === surface)?.label : task ? task.number : recovery ? reportView ? '审核报告' : '审核任务' : '新建审核'
   // Inside Feishu the window title names the current page (Feishu shows the address when it is blank).
   useEffect(() => {if (inFeishu) document.title = pageContext || 'PPAP Audit'}, [inFeishu, pageContext])
   const taskCoverage = task?.customer_preference ? coverageOf(task.customer_preference) : null
@@ -1100,7 +1118,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
   </>
   return <TooltipProvider><SupportEntryContext.Provider value={openSupport}><div className="flex h-dvh overflow-hidden bg-canvas text-sm text-foreground">
     <a href="#audit-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-background focus:p-3 focus-visible:outline-ring focus-visible:ring-2 focus-visible:ring-ring">跳到主要内容</a>
-    {!inFeishu && <aside aria-label="产品侧栏" className="flex h-dvh w-16 shrink-0 flex-col items-center justify-between border-r border-sidebar-border bg-sidebar py-4">
+    {!inFeishu && <aside aria-label="产品侧栏" className="flex h-dvh w-16 shrink-0 flex-col items-center justify-between border-r border-sidebar-border bg-sidebar py-4 max-xl:hidden">
       <div className="grid justify-items-center gap-6"><span className="flex size-10 items-center justify-center rounded-lg bg-linear-135 from-brand-light to-primary text-primary-foreground"><Icon icon={iconWandMagicSparkles} aria-hidden="true" className="size-5"/><span className="sr-only">PPAP Audit</span></span>{navigation}</div>
       <Tooltip><TooltipTrigger asChild><button type="button" className={railItem} aria-label="联系支持" onClick={() => openSupport({scenario: supportScenario})}><Icon icon={iconCircleQuestion} aria-hidden="true" className="size-4.5"/></button></TooltipTrigger><TooltipContent side="right">联系支持</TooltipContent></Tooltip>
     </aside>}
@@ -1111,7 +1129,9 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
         <div ref={setPageActions} role="group" aria-label="页面操作" className="ml-auto flex min-w-0 items-center gap-2"/>
         <Button variant="ghost" size="icon-sm" className="shrink-0" aria-label="联系支持" onClick={() => openSupport({scenario: supportScenario})}><Icon icon={iconCircleQuestion} className="text-muted-foreground"/></Button>
       </div>}
-      {inFeishu && quietHeader ? <h1 className="sr-only">{pageContext}</h1> : <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-6 py-2"><div className="flex min-w-0 items-center gap-3">
+      {inFeishu && quietHeader ? <h1 className="sr-only">{pageContext}</h1> : <header className={`flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-6 py-2 max-xl:px-4 ${surface === 'audit' && taskListPage ? 'max-xl:hidden' : ''}`}><div className="flex min-w-0 items-center gap-3">
+        {/* A narrow screen opens one level at a time; a task's way back is the task list. */}
+        {surface === 'audit' && !taskListPage && <Button variant="ghost" size="icon-sm" className="-ml-2 xl:hidden" aria-label="返回审核任务" onClick={openTaskList}><Icon icon={iconChevronLeft} aria-hidden="true"/></Button>}
         {frame.heading === 'page' && workbench && !reportView ? <div ref={setPageTitle} className="min-w-0"/> : surface === 'audit' && reportView ? <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <li className="flex min-w-0 items-center gap-1">{task && !recovery ? <a href={taskResultsAddress().href} aria-label="返回审核结果" className="font-medium hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showTaskResults()}}}>{task.number}</a> : <span className="text-muted-foreground">审核任务</span>}</li>
           <li aria-hidden="true" className="text-muted-foreground">/</li><li aria-current="page" className="font-medium">审核报告</li>
@@ -1120,7 +1140,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
       {/* PPAP Audit keeps its task list on the left, on the new-audit page and on every task. */}
       <main id="audit-main" tabIndex={-1} className="flex min-h-0 w-full flex-1 overflow-hidden">
         {taskRail}
-        <div className={surface === 'audit' && workbench && !reportView ? 'h-full w-full min-w-0' : flowPage ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden' : surface === 'archive' || surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-6' : 'min-w-0 flex-1 overflow-y-auto p-6'}>
+        {surface === 'audit' && taskListPage && <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card xl:hidden">{taskListView}</div>}
+        <div className={(surface === 'audit' && taskListPage ? 'max-xl:hidden ' : '') + (surface === 'audit' && workbench && !reportView ? 'h-full w-full min-w-0' : flowPage ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden' : surface === 'archive' || surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-6 max-xl:p-4' : 'min-w-0 flex-1 overflow-y-auto p-6 max-xl:p-4')}>
         <div className={surface === 'audit' && workbench && !reportView ? 'h-full' : flowPage ? 'flex min-h-0 min-w-0 flex-1 flex-col' : surface === 'archive' || surface === 'templates' || (surface === 'requirements' && !ruleDetailOpen) ? 'flex min-h-0 min-w-0 flex-1 flex-col' : `mx-auto w-full space-y-6 ${recovery || workbench || surface !== 'audit' ? '' : step === 'match' ? '' : 'max-w-5xl'}`}>
         {archiveOpened && <div className={surface === 'archive' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}><AuditArchive active={surface === 'archive'} headerTitle={surface === 'archive' && !inFeishu ? pageTitle : null} adapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} precheckAdapter={adapter.precheck} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/></div>}
         {rulesOpened && <div className={surface !== 'requirements' ? 'hidden' : ruleDetailOpen ? 'min-w-0' : 'flex min-h-0 min-w-0 flex-1 flex-col'}>{rules?.(surface === 'requirements', surface === 'requirements' ? pageActions : null)}</div>}
@@ -1223,6 +1244,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, renderOriginal,
         </div>
         </div>
       </main>
+      {(libraryTop || surface === 'audit' && taskListPage) && bottomNavigation}
       {displayEditor.dialog}
     </div>
     {driveOpen && adapter.drive && <FeishuPicker source={adapter.drive} onAdd={receiveDrive} onClose={() => setDriveOpen(false)} trigger={driveTrigger.current}/>}

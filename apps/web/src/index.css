@@ -92,6 +92,16 @@
   }
 }
 
+/* A bar fixed to the bottom of a phone screen stays above the home indicator. */
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* The same, for a bar that already has its own bottom padding: whichever is larger. */
+@utility pb-safe-* {
+  padding-bottom: max(--spacing(--value(integer)), env(safe-area-inset-bottom));
+}
+
 /* The running label sweeps from foreground to muted and back. */
 @utility shimmer-label {
   background-image: linear-gradient(90deg, var(--foreground) 40%, var(--muted-foreground) 50%, var(--foreground) 60%);
