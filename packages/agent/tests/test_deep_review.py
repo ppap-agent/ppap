@@ -306,6 +306,10 @@ def test_one_guest_shares_the_round_and_gives_every_file_its_own_time(tmp_path, 
 
 
 def test_files_are_reviewed_side_by_side(tmp_path, monkeypatch):
+    from agent.execution import budget
+
+    # As the host configured with PPAP_DEEP_REVIEW_CONCURRENCY=2; the guest takes it from the job spec.
+    monkeypatch.setattr(budget, "REVIEW_CONCURRENCY", 2)
     snapshot, sources, spec, suite = build()
     # Each review waits until the other one is under way too; reviewed one after another, both would fail.
     together = threading.Barrier(2, timeout=5)

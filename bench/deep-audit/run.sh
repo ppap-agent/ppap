@@ -1,26 +1,28 @@
 #!/usr/bin/env bash
 # Run deep mode with the installed UAES checkers over a rulebook revision's benchmark, in the deep image built from HEAD.
 #
-#   bench/deep-audit/run.sh --revision m4 [--name NAME] [--jobs N] [--effort low|medium|high|xhigh] [-- --batch NAME ...]
+#   bench/deep-audit/run.sh --revision m4 [--name NAME] [--jobs N] [--effort low|medium|high|xhigh] [--concurrency N] [-- --batch NAME ...]
 #
 # --revision is required: the run is read against that revision's benchmark and signed clauses; installed clause
 # text that differs from it is listed in meta.json and the summary.
 #
 # Non-secret deep configuration is the deployed one (deploy/tke/current.yaml); the model endpoints
 # and keys come from the repository-root .env. The models are the configured ones; only the
-# review's reasoning effort can change (--effort). Results go to bench/deep-audit/runs/<name>/.
+# review's reasoning effort (--effort) and how many files a round reviews side by side (--concurrency) can change. Results go to bench/deep-audit/runs/<name>/.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 NAME=""
 JOBS=3
 EFFORT=""
+CONCURRENCY=""
 REVISION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --name) NAME=$2; shift 2 ;;
     --jobs) JOBS=$2; shift 2 ;;
     --effort) EFFORT=$2; shift 2 ;;
+    --concurrency) CONCURRENCY=$2; shift 2 ;;
     --revision) REVISION=$2; shift 2 ;;
     --) shift; break ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
@@ -29,6 +31,7 @@ done
 [[ "$REVISION" =~ ^m[0-9]+$ ]] || { echo "--revision is required, e.g. --revision m4" >&2; exit 2; }
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "--jobs must be a positive integer" >&2; exit 2; }
 [[ -z "$EFFORT" || "$EFFORT" =~ ^(low|medium|high|xhigh)$ ]] || { echo "--effort must be low, medium, high or xhigh" >&2; exit 2; }
+[[ -z "$CONCURRENCY" || "$CONCURRENCY" =~ ^[1-8]$ ]] || { echo "--concurrency must be 1 to 8" >&2; exit 2; }
 
 cd "$ROOT"
 # The image and the benchmark must be the same commit: a dirty tree would evaluate code that no
@@ -52,7 +55,7 @@ chmod 0777 "$OUT"
 
 ENV_FILE=$(mktemp)
 trap 'rm -f "$ENV_FILE" "$ENV_FILE.next"' EXIT
-deploy/tke/configmap-env.sh '^PPAP_(MODEL_[A-Z_]+_REASONING_EFFORT|DEEP_SANDBOX_PROFILE|DEEP_EXECUTOR_REVISION|DEEP_REVIEW_SECONDS)$' >"$ENV_FILE"
+deploy/tke/configmap-env.sh '^PPAP_(MODEL_[A-Z_]+_REASONING_EFFORT|DEEP_SANDBOX_PROFILE|DEEP_EXECUTOR_REVISION|DEEP_REVIEW_SECONDS|DEEP_REVIEW_CONCURRENCY)$' >"$ENV_FILE"
 grep -E '^PPAP_MODEL_(TEXT|VISION|CODING)_(API_KEY|BASE_URL|MODEL)=' .env >>"$ENV_FILE"
 echo "PPAP_BUILD_SHA=$SHA" >>"$ENV_FILE"
 if [[ -n "$EFFORT" ]]; then
@@ -60,11 +63,16 @@ if [[ -n "$EFFORT" ]]; then
   echo "PPAP_MODEL_CODING_REASONING_EFFORT=$EFFORT" >>"$ENV_FILE.next"
   mv "$ENV_FILE.next" "$ENV_FILE"
 fi
+if [[ -n "$CONCURRENCY" ]]; then
+  grep -v '^PPAP_DEEP_REVIEW_CONCURRENCY=' "$ENV_FILE" >"$ENV_FILE.next"
+  echo "PPAP_DEEP_REVIEW_CONCURRENCY=$CONCURRENCY" >>"$ENV_FILE.next"
+  mv "$ENV_FILE.next" "$ENV_FILE"
+fi
 REVIEW_MODEL=$(grep '^PPAP_MODEL_CODING_MODEL=' "$ENV_FILE" | cut -d= -f2-)
 REVIEW_EFFORT=$(grep '^PPAP_MODEL_CODING_REASONING_EFFORT=' "$ENV_FILE" | cut -d= -f2-)
 
 cat >"$OUT/meta.json" <<EOF
-{"name": "$NAME", "revision": "$REVISION", "commit": "$SHA", "image": "$IMAGE", "jobs": $JOBS, "review_model": "$REVIEW_MODEL", "review_effort": "$REVIEW_EFFORT", "review_seconds": "$(grep '^PPAP_DEEP_REVIEW_SECONDS=' "$ENV_FILE" | cut -d= -f2-)", "review_concurrency": "$(sed -n 's/^REVIEW_CONCURRENCY = //p' packages/agent/src/agent/execution/budget.py)", "options": "$*", "started": "$(date -u +%Y-%m-%dT%H:%M:%SZ)", "clauses": $CLAUSES}
+{"name": "$NAME", "revision": "$REVISION", "commit": "$SHA", "image": "$IMAGE", "jobs": $JOBS, "review_model": "$REVIEW_MODEL", "review_effort": "$REVIEW_EFFORT", "review_seconds": "$(grep '^PPAP_DEEP_REVIEW_SECONDS=' "$ENV_FILE" | cut -d= -f2-)", "review_concurrency": "$(grep '^PPAP_DEEP_REVIEW_CONCURRENCY=' "$ENV_FILE" | cut -d= -f2-)", "options": "$*", "started": "$(date -u +%Y-%m-%dT%H:%M:%SZ)", "clauses": $CLAUSES}
 EOF
 
 pids=()

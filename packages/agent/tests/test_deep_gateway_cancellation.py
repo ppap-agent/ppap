@@ -169,6 +169,8 @@ def test_files_reviewed_side_by_side_share_a_grant_and_revocation_interrupts_eve
     try:
         with tempfile.TemporaryDirectory(prefix="pd-c-", dir="/tmp") as directory, patch("agent.execution.gateway.http.client.HTTPSConnection", upstream):
             with local_gateway(Path(directory) / "g.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-only") as gateway:
+                # As configured with PPAP_DEEP_REVIEW_CONCURRENCY=2.
+                gateway.http.inference_slots = threading.BoundedSemaphore(2)
                 execution = uuid4()
                 token = grant_request(str(gateway.socket_path), "issue", execution)["token"]
                 with ThreadPoolExecutor(max_workers=2) as executor:

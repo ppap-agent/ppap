@@ -16,7 +16,7 @@ from typing import Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from audit.checker_core import ExecutionSnapshot, checker_digest
-from audit.policy import DEEP_REVIEW_SECONDS_RANGE
+from audit.policy import DEEP_REVIEW_CONCURRENCY_RANGE, DEEP_REVIEW_SECONDS_RANGE
 from audit.protocol import ControllerFault
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -55,6 +55,8 @@ class AuditJobSpec(BaseModel):
     tasks: int = Field(default=1, ge=1, le=1024)
     # One file's deep review time, from the host's configuration; the guest has no configuration of its own.
     review_seconds: int = Field(default=DEEP_TOTAL_SECONDS, ge=DEEP_REVIEW_SECONDS_RANGE[0], le=DEEP_REVIEW_SECONDS_RANGE[1])
+    # How many files it reviews side by side, from the host's configuration as well.
+    review_concurrency: int = Field(default=REVIEW_CONCURRENCY, ge=DEEP_REVIEW_CONCURRENCY_RANGE[0], le=DEEP_REVIEW_CONCURRENCY_RANGE[1])
 
     @classmethod
     def from_snapshot(
@@ -64,6 +66,7 @@ class AuditJobSpec(BaseModel):
         unavailable_sources: frozenset[str] = frozenset(),
         analysis_mode: AnalysisMode = "standard",
         review_seconds: int = DEEP_TOTAL_SECONDS,
+        review_concurrency: int = REVIEW_CONCURRENCY,
     ) -> AuditJobSpec:
         unavailable = tuple(sorted(unavailable_sources))
         # A restored object cannot replay the outcome of an unavailable attempt.
@@ -78,6 +81,7 @@ class AuditJobSpec(BaseModel):
             unavailable_sources=unavailable,
             tasks=len(snapshot.targets) * (2 if analysis_mode == "deep" else 1),
             review_seconds=review_seconds,
+            review_concurrency=review_concurrency,
         )
 
 
@@ -121,7 +125,9 @@ def write_audit_manifest(
             staged = f"program-{index}-{name}"
             stage(staged, body)
             program_paths[digest][name] = staged
-    job = AuditJobSpec.from_snapshot(snapshot, allow_model_calls, unavailable_sources, analysis_mode)
+    from agent.execution import budget
+
+    job = AuditJobSpec.from_snapshot(snapshot, allow_model_calls, unavailable_sources, analysis_mode, review_concurrency=budget.REVIEW_CONCURRENCY)
     raw = json.dumps(
         {"operation": "execute-audit", "spec": job.model_dump(mode="json"), "snapshot": snapshot.to_dict(), "source_paths": source_paths, "program_paths": program_paths}, ensure_ascii=False
     ).encode()
@@ -151,7 +157,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     snapshot = ExecutionSnapshot.from_dict(manifest["snapshot"])
     job = AuditJobSpec.model_validate(manifest["spec"])
     unavailable = frozenset(job.unavailable_sources)
-    if job != AuditJobSpec.from_snapshot(snapshot, job.allow_model_calls, unavailable, job.analysis_mode, job.review_seconds):
+    if job != AuditJobSpec.from_snapshot(snapshot, job.allow_model_calls, unavailable, job.analysis_mode, job.review_seconds, job.review_concurrency):
         raise ValueError("audit_manifest_identity_mismatch")
     total = 0
 
@@ -223,7 +229,7 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
             work=work / "deep-review",
             unavailable=unavailable,
             review_seconds=job.review_seconds,
-            concurrency=REVIEW_CONCURRENCY,
+            concurrency=job.review_concurrency,
             on_task=lambda index: started("review", index),
         )
     _write_progress(work, Progress(phase="validating", completed_count=tasks, total_count=tasks))

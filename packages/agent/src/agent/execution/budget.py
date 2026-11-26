@@ -2,7 +2,7 @@
 
 import os
 
-from audit.policy import DEEP_REVIEW_SECONDS, DEEP_REVIEW_SECONDS_RANGE
+from audit.policy import DEEP_REVIEW_CONCURRENCY, DEEP_REVIEW_CONCURRENCY_RANGE, DEEP_REVIEW_SECONDS, DEEP_REVIEW_SECONDS_RANGE
 
 # Checking one file: its Suite programs, in standard and deep rounds alike. Clauses it cannot start in time are technical errors.
 CHECK_SECONDS = 3 * 60
@@ -23,7 +23,19 @@ DEEP_TOTAL_SECONDS = _deep_review_seconds()
 # The most a guest may run without starting its next task: the longest task plus guest start and result handling.
 # The host gives the guest, and the guest's model grant, this much again at every task it reports; a round has no time of its own.
 TASK_SECONDS = max(CHECK_SECONDS, DEEP_TOTAL_SECONDS) + 60
-# Files of a round reviewed side by side; each keeps its own time. The gateway sends this many requests at once.
-REVIEW_CONCURRENCY = 4
+
+
+# Files of a round reviewed side by side, each with its own time; the gateway sends this many requests at once.
+# Host processes read PPAP_DEEP_REVIEW_CONCURRENCY; the guest gets the host's value in its job spec.
+def _review_concurrency() -> int:
+    raw = os.environ.get("PPAP_DEEP_REVIEW_CONCURRENCY", "").strip()
+    value = int(raw) if raw else DEEP_REVIEW_CONCURRENCY
+    low, high = DEEP_REVIEW_CONCURRENCY_RANGE
+    if not low <= value <= high:
+        raise ValueError(f"PPAP_DEEP_REVIEW_CONCURRENCY must be within {low}..{high}")
+    return value
+
+
+REVIEW_CONCURRENCY = _review_concurrency()
 MAX_INPUT_TOTAL = 128 * 1024 * 1024
 MAX_INPUT_FILES = 256
