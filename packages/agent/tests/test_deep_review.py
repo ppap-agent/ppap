@@ -6,6 +6,7 @@ The guest runs in-process with a controlled Pi runner; no model is called.
 import hashlib
 import io
 import json
+import threading
 import time
 import uuid
 from dataclasses import replace
@@ -215,7 +216,8 @@ def test_a_checked_correction_replaces_the_verdict_and_keeps_the_program_one(tmp
     seen = controlled_pi(monkeypatch, write)
     result = run(tmp_path, snapshot, sources, spec, suite)
 
-    assert seen == [("file-a", ["UNABLE", "UNABLE"]), ("file-b", ["UNABLE", "UNABLE"])]
+    # Files are reviewed side by side, so only the set of reviews is fixed.
+    assert sorted(seen) == [("file-a", ["UNABLE", "UNABLE"]), ("file-b", ["UNABLE", "UNABLE"])]
     found = by_clause(result)
     corrected = found[("file-a", "A")]
     assert corrected.status == "PASS" and corrected.suggestions.startswith(CORRECTED_PREFIX + "（程序原结论 无法判断：No evidence）")
@@ -270,7 +272,7 @@ def test_a_target_whose_review_fails_or_differs_keeps_its_program_result_and_say
 
     controlled_pi(monkeypatch, write)
     result = run(tmp_path, snapshot, sources, spec, suite)
-    assert calls == ["file-a", "file-a", "file-b"]
+    assert sorted(calls) == ["file-a", "file-a", "file-b"]
     targets = {row["file_version_id"]: row["deep_review"] for row in result.coverage.checker_execution["targets"]}
     assert targets == {"file-a": {"state": "degraded", "reason": "deep_review_invalid"}, "file-b": {"state": "degraded", "reason": "deep_timeout"}}
     assert {row.status for row in result.findings} == {"UNABLE"}
@@ -297,13 +299,27 @@ def test_one_guest_shares_the_round_and_gives_every_file_its_own_time(tmp_path, 
     # Each review has the whole of its own time, not a share of the round's.
     assert deadlines == [DEEP_TOTAL_SECONDS, DEEP_TOTAL_SECONDS]
     # Two files checked and two reviewed: four tasks, each reported as it starts, then the summary.
-    assert [(row.get("stage"), row.get("target"), row["completed_count"]) for row in reported] == [
-        ("check", "file-a", 0),
-        ("check", "file-b", 1),
-        ("review", "file-a", 2),
-        ("review", "file-b", 3),
-        (None, None, 4),
-    ]
+    # Reviews start side by side, so their order is open; the count of tasks begun only grows.
+    rows = [(row.get("stage"), row.get("target"), row["completed_count"]) for row in reported]
+    assert rows[:2] == [("check", "file-a", 0), ("check", "file-b", 1)] and rows[4] == (None, None, 4)
+    assert [row[2] for row in rows[2:4]] == [2, 3] and sorted(row[:2] for row in rows[2:4]) == [("review", "file-a"), ("review", "file-b")]
+
+
+def test_files_are_reviewed_side_by_side(tmp_path, monkeypatch):
+    snapshot, sources, spec, suite = build()
+    # Each review waits until the other one is under way too; reviewed one after another, both would fail.
+    together = threading.Barrier(2, timeout=5)
+
+    def write(target, rows, stage):
+        together.wait()
+        return confirm(target, rows, stage)
+
+    controlled_pi(monkeypatch, write)
+    result = run(tmp_path, snapshot, sources, spec, suite)
+    assert {row["file_version_id"]: row["deep_review"] for row in result.coverage.checker_execution["targets"]} == {
+        "file-a": {"state": "completed"},
+        "file-b": {"state": "completed"},
+    }
 
 
 def test_a_deep_round_whose_guest_fails_fails_and_is_not_run_again(tmp_path, monkeypatch):

@@ -64,7 +64,7 @@ REVIEW_MODEL=$(grep '^PPAP_MODEL_CODING_MODEL=' "$ENV_FILE" | cut -d= -f2-)
 REVIEW_EFFORT=$(grep '^PPAP_MODEL_CODING_REASONING_EFFORT=' "$ENV_FILE" | cut -d= -f2-)
 
 cat >"$OUT/meta.json" <<EOF
-{"name": "$NAME", "revision": "$REVISION", "commit": "$SHA", "image": "$IMAGE", "jobs": $JOBS, "review_model": "$REVIEW_MODEL", "review_effort": "$REVIEW_EFFORT", "review_seconds": "$(grep '^PPAP_DEEP_REVIEW_SECONDS=' "$ENV_FILE" | cut -d= -f2-)", "options": "$*", "started": "$(date -u +%Y-%m-%dT%H:%M:%SZ)", "clauses": $CLAUSES}
+{"name": "$NAME", "revision": "$REVISION", "commit": "$SHA", "image": "$IMAGE", "jobs": $JOBS, "review_model": "$REVIEW_MODEL", "review_effort": "$REVIEW_EFFORT", "review_seconds": "$(grep '^PPAP_DEEP_REVIEW_SECONDS=' "$ENV_FILE" | cut -d= -f2-)", "review_concurrency": "$(sed -n 's/^REVIEW_CONCURRENCY = //p' packages/agent/src/agent/execution/budget.py)", "options": "$*", "started": "$(date -u +%Y-%m-%dT%H:%M:%SZ)", "clauses": $CLAUSES}
 EOF
 
 pids=()
