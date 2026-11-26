@@ -196,7 +196,7 @@ Typography prioritizes tabular alignment, compact tracking, and vertical rhythm.
 
 The layout is built on a condensed 12-column fluid grid tailored for maximum dashboard efficiency and operational visibility.
 
-- **Viewport**: desktop only, at least 1280px wide (see apps/web/README).
+- **Viewport**: desktop at 1280px and wider; below 1280px (including the Feishu mobile client) the same pages drill down one level per screen, with 44px tap targets, cards instead of tables, full-screen or bottom-sheet dialogs and tap-to-expand instead of hover (see apps/web/README「窄屏不另起一套」).
 - **Desktop & Workstations**: Layout leverages side-by-side split panes and persistent audit trails. Gutters sit at `1rem`, with tight element clusters using `0.5rem` and `0.75rem`.
 
 ## Page Frame
