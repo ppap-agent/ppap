@@ -285,8 +285,8 @@ class ContainerRuntime:
         last_task = -1
         progress_offset = 0
 
-        def read_new_progress() -> Progress | None:
-            """The latest record the guest appended since the last read; it never rewrites the file."""
+        def read_new_progress() -> list[Progress]:
+            """The records the guest appended since the last read, in order; it never rewrites the file."""
             nonlocal progress_offset
             try:
                 progress, used = parse_progress(read_appended(run / "work", PROGRESS_FILE, progress_offset, 64 * 1024))
@@ -322,8 +322,9 @@ class ContainerRuntime:
                 _drain_stderr(process.stderr, stderr_tail)
                 if cancelled.is_set() or time.monotonic() >= deadline:
                     raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
-                progress = read_new_progress()
-                if progress is not None and progress != last_progress:
+                for progress in read_new_progress():
+                    if progress == last_progress:
+                        continue
                     started = progress.completed_count
                     if started is not None and last_task < started <= tasks:
                         # A new task of the round: it gets its own time, and so does the model grant.
@@ -361,9 +362,10 @@ class ContainerRuntime:
                 raise ControllerFault("MODEL_PROTOCOL_ERROR")
             raise ControllerFault("ISOLATION_UNAVAILABLE")
         if on_progress is not None:
-            progress = read_new_progress()
-            if progress is not None and progress != last_progress:
-                on_progress(progress)
+            for progress in read_new_progress():
+                if progress != last_progress:
+                    on_progress(progress)
+                    last_progress = progress
         return deadline
 
     def _renew_grant(self, execution_id: UUID) -> None:

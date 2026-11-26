@@ -584,6 +584,23 @@ def render(summary: dict, meta: dict) -> str:
         f"未复核目标：{json.dumps(summary['targets_not_reviewed'], ensure_ascii=False)}；识别与预检未命中录音、现调模型 {summary['recognition_live_calls']} 次。",
         f"失败的模型请求（按服务商状态或错误）：{json.dumps(summary['failed_requests'], ensure_ascii=False) if summary['failed_requests'] else '无'}。",
         "",
+        *(
+            [
+                "## 资源（每 15 秒采样，每个分片一个容器）",
+                "",
+                f"限制：{meta.get('limits', 'none')}。分片同时跑识别、预检与 bench 本身，比线上 deep 容器多一些负载。guest 线程为 uid 10001 的线程数，受 `--nproc` 限制。",
+                "",
+                "| 分片 | 采样 | CPU 中位 / 峰值（核） | 内存峰值（MiB） | 进程峰值 | guest 线程峰值 |",
+                "|---|---|---|---|---|---|",
+                *[
+                    f"| {shard} | {item['samples']} | {item['cpu_median']} / {item['cpu_max']} | {item['memory_mib_max']} | {item['processes_max']} | {item['guest_threads_max']} |"
+                    for shard, item in summary["resources"].items()
+                ],
+                "",
+            ]
+            if summary.get("resources")
+            else []
+        ),
         "## 费用（公开价，美元）",
         "",
         "| | 请求 | 输入 token | 缓存命中 | 输出 token | 其中推理 | 费用 | 无用量 / 无价格 |",
@@ -611,10 +628,40 @@ def render(summary: dict, meta: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _mib(text: str) -> float:
+    value = text.split("/")[0].strip()
+    number = float("".join(ch for ch in value if ch.isdigit() or ch == ".") or 0)
+    return number * {"GiB": 1024, "MiB": 1, "KiB": 1 / 1024, "kB": 1 / 1024, "B": 1 / 1048576}.get(value.lstrip("0123456789. "), 1)
+
+
+def resources(path: Path) -> dict[str, dict[str, float]]:
+    """Per shard, from run.sh's samples: CPU (cores, median and peak), peak memory (MiB), processes and guest threads."""
+    shards: dict[str, list[list[str]]] = {}
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            fields = line.split("\t")
+            if len(fields) >= 5:
+                shards.setdefault(fields[1], []).append(fields)
+    out = {}
+    for shard, rows in sorted(shards.items()):
+        cpu = [float(row[2].rstrip("%") or 0) / 100 for row in rows]
+        guest = [int(row[5]) for row in rows if len(row) > 5 and row[5].isdigit()]
+        out[shard] = {
+            "samples": len(rows),
+            "cpu_median": round(statistics.median(cpu), 2),
+            "cpu_max": round(max(cpu), 2),
+            "memory_mib_max": round(max(_mib(row[3]) for row in rows)),
+            "processes_max": max(int(row[4]) for row in rows if row[4].isdigit()) if any(row[4].isdigit() for row in rows) else 0,
+            "guest_threads_max": max(guest, default=0),
+        }
+    return out
+
+
 def report(run: Path) -> dict:
     meta = json.loads((run / "meta.json").read_text(encoding="utf-8"))
     benchmark, _clauses = revision_paths(meta["revision"])
     summary = summarize(_jsonl(run / "results.jsonl"), benchmark, set((meta.get("clauses") or {}).get("changed", [])), json.loads(PRICES.read_text(encoding="utf-8"))["models"])
+    summary["resources"] = resources(run / "resources.tsv")
     (run / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     (run / "summary.md").write_text(render(summary, meta), encoding="utf-8")
     return summary

@@ -816,8 +816,14 @@ def test_progress_is_an_appended_stream_read_by_complete_lines():
 
     first = b'{"phase":"checking","completed_count":0,"total_count":2,"stage":"check","target":"file-a"}\n'
     second = b'{"phase":"checking","completed_count":1,"total_count":2,"stage":"check","target":"file-b"}\n'
-    assert parse_progress(b"") == (None, 0)
-    # The latest complete record counts; a partial last line waits for its end.
-    assert parse_progress(first + second + b'{"phase":"chec') == (Progress(phase="checking", completed_count=1, total_count=2, stage="check", target="file-b"), len(first + second))
+    assert parse_progress(b"") == ([], 0)
+    # Every complete record counts, in order (files reviewed side by side start within one read); a partial last line waits for its end.
+    assert parse_progress(first + second + b'{"phase":"chec') == (
+        [
+            Progress(phase="checking", completed_count=0, total_count=2, stage="check", target="file-a"),
+            Progress(phase="checking", completed_count=1, total_count=2, stage="check", target="file-b"),
+        ],
+        len(first + second),
+    )
     with pytest.raises(ValidationError):
         parse_progress(b'{"phase":"checking","total_count":2}\n')

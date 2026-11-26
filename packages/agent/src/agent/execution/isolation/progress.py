@@ -34,14 +34,11 @@ class Progress(BaseModel):
         return self
 
 
-def parse_progress(data: bytes) -> tuple[Progress | None, int]:
-    """The latest record among the complete lines in `data`, and how many bytes they used.
+def parse_progress(data: bytes) -> tuple[list[Progress], int]:
+    """Every record among the complete lines in `data`, in order, and how many bytes they used.
 
+    Files reviewed side by side start within one read, so each record counts, not only the latest.
     A partial last line waits for its end. Every complete line must be a valid record.
     """
     end = data.rfind(b"\n") + 1
-    latest = None
-    for line in data[:end].split(b"\n"):
-        if line:
-            latest = Progress.model_validate_json(line)
-    return latest, end
+    return [Progress.model_validate_json(line) for line in data[:end].split(b"\n") if line], end
