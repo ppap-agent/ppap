@@ -7,6 +7,7 @@ The controller resolves the immutable Suite and stages a bounded flat directory.
 from __future__ import annotations
 
 import contextlib
+import itertools
 import json
 import tempfile
 import time
@@ -20,7 +21,7 @@ from audit.protocol import ControllerFault
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.client import DeepError
-from agent.execution.budget import CHECK_SECONDS, DEEP_TOTAL_SECONDS, MAX_INPUT_FILES, MAX_INPUT_TOTAL, TASK_SECONDS
+from agent.execution.budget import CHECK_SECONDS, DEEP_TOTAL_SECONDS, MAX_INPUT_FILES, MAX_INPUT_TOTAL, REVIEW_CONCURRENCY, TASK_SECONDS
 from agent.execution.secure_files import read_json, read_regular
 from agent.run import ExecutionContext
 
@@ -176,10 +177,12 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
     from agent.execution.isolation.progress import Progress
 
     files, tasks = len(snapshot.targets), job.tasks
+    reviews_started = itertools.count()
 
     def started(stage: Literal["check", "review"], index: int) -> None:
         target = snapshot.targets[index].file_version_id
-        task = index if stage == "check" else files + index
+        # Reviews start side by side, not in file order; the count of tasks begun before this one only grows.
+        task = index if stage == "check" else files + next(reviews_started)
         _write_progress(work, Progress(phase="checking", completed_count=task, total_count=tasks, stage=stage, target=target))
 
     with grant.access_scope() if grant is not None else model_access_scope(None), grant.record_calls() if grant is not None else contextlib.nullcontext():
@@ -203,19 +206,24 @@ def run_audit_manifest(inputs: Path, work: Path, credentials: Path) -> None:
         from agent.execution.activity import ACTIVITY_FILE, shown_names
         from agent.execution.guest_model import PiRunner
 
-        runner = PiRunner(grant.model_dump(mode="json"))
-        # Live steps for viewers; the Controller forwards them and nothing stores them.
-        runner.activity = work / ACTIVITY_FILE
-        runner.activity_originals = shown_names(item.filename for item in snapshot.inputs)
+        originals = shown_names(item.filename for item in snapshot.inputs)
+
+        def runner_for(target: str) -> PiRunner:
+            runner = PiRunner(grant.model_dump(mode="json"))
+            # Live steps for viewers, each naming its file; the Controller forwards them and nothing stores them.
+            runner.activity, runner.activity_target, runner.activity_originals = work / ACTIVITY_FILE, target, originals
+            return runner
+
         deep = review_targets(
             snapshot,
             sources,
             programs,
             result["findings"],
-            runner=runner,
+            runner_for=runner_for,
             work=work / "deep-review",
             unavailable=unavailable,
             review_seconds=job.review_seconds,
+            concurrency=REVIEW_CONCURRENCY,
             on_task=lambda index: started("review", index),
         )
     _write_progress(work, Progress(phase="validating", completed_count=tasks, total_count=tasks))

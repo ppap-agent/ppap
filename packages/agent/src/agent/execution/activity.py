@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
@@ -111,6 +112,9 @@ def shown_names(filenames: Iterable[str]) -> frozenset[str]:
     return frozenset(name for name in map(_document, filenames) if name)
 
 
+_APPEND = threading.Lock()
+
+
 class ActivityRelay:
     """Guest side: follows Pi's event stream and appends steps to the run's activity file.
 
@@ -163,7 +167,8 @@ class ActivityRelay:
         if steps:
             self.steps += len(steps)
             try:
-                with self.target.open("a", encoding="utf-8") as out:
+                # Files reviewed side by side append to one file; each batch of whole lines goes in at once.
+                with _APPEND, self.target.open("a", encoding="utf-8") as out:
                     out.writelines(steps)
             except OSError:
                 self.steps = MAX_STEPS

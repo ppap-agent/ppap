@@ -11,7 +11,7 @@
 
 ## 走的是哪条路径
 
-每个基准批次只按原件和提交角色重新提交，识别与预检走产品路径（同 `corpus_contracts.candidate_run --benchmark`）；审核这一步与线上 Controller 相同：在从 `HEAD` 构建的深度镜像里，以 root 启动本地模型网关和 `ContainerRuntime`，guest 降权为 uid 10001、在 `prlimit` 下运行，由 `CoreRuntime.execute_snapshot` 在一个 guest 中执行整轮、同组共享上下文：逐份运行检查程序，再逐份由 Pi 按 `deep_agent/AGENTS.md` 复核，宿主校验并合并订正。每份的时限取线上值（`PPAP_DEEP_REVIEW_SECONDS` 等，见 [deploy/deep](../../deploy/deep/README.md)）。某份复核未完成时，这份保留程序结论，记为未复核。
+每个基准批次只按原件和提交角色重新提交，识别与预检走产品路径（同 `corpus_contracts.candidate_run --benchmark`）；审核这一步与线上 Controller 相同：在从 `HEAD` 构建的深度镜像里，以 root 启动本地模型网关和 `ContainerRuntime`，guest 降权为 uid 10001、在 `prlimit` 下运行，由 `CoreRuntime.execute_snapshot` 在一个 guest 中执行整轮、同组共享上下文：逐份运行检查程序，再由 Pi 按 `deep_agent/AGENTS.md` 几份并行复核（并行数见 `meta.json` 的 `review_concurrency`），宿主校验并合并订正。每份的时限取线上值（`PPAP_DEEP_REVIEW_SECONDS` 等，见 [deploy/deep](../../deploy/deep/README.md)）。某份复核未完成时，这份保留程序结论，记为未复核。
 
 - 模型：平台模型（`.env` 中的 `PPAP_MODEL_TEXT_*` / `VISION_*` / `CODING_*`），按未配置企业 Key 的租户冻结身份；推理强度、复核时限、沙箱配置取线上值（`deploy/tke/current.yaml`）。`--effort low|medium|high|xhigh` 只改复核强度；实际的复核模型、强度和时限写进 `meta.json`。
 - 识别与预检的模型请求先用 `assets/corpus/replay` 中请求完全相同的录音回答，没有才现调，且不保存。
@@ -60,7 +60,8 @@ uv run --no-sync python bench/deep-audit/deep_eval.py report bench/deep-audit/ru
 | 订正被拒 | 复核给出的订正没有通过宿主的证据核对，保留程序结论 |
 | 待确认被定下 | 程序结论为 UNABLE 的条款，复核后给出结论的条数，及其中与参考一致的条数 |
 | 费用 | 公开价下的美元费用：合计、按检查 / 复核、按模型与强度，以及每份文件检查和复核费用的中位 / P90 / 最大；缓存命中占输入的比例；单批最多请求数 |
-| 每份检查 / 复核耗时 | guest 每开始一项任务就报告一次进度，一项任务持续到下一项开始；与线上每份检查、复核的时限对照 |
+| 每份检查 / 复核耗时 | guest 每开始一项任务就报告一次进度；检查逐份进行，持续到下一项开始；复核几份并行，用 guest 自己量的每份用时；与线上每份检查、复核的时限对照 |
+| 复核的每次模型请求 / 失败的模型请求 | 网关从发出到结束的用时（含等网关空位）与服务商返回失败的请求按状态分布，用来看并行复核是否拥塞；几份同时在复核时发出的请求只计入合计，不归到单份文件 |
 
 ## 比较两种做法
 

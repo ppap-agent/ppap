@@ -36,7 +36,7 @@ from audit.checker_core import MODEL_IDENTITY_KEYS
 from documents.model_access import ModelAccess, ModelPurpose, ModelUnavailable, streams_only
 from documents.model_calls import CALL_HEADER, FORMAT, image_sha256
 
-from agent.execution.budget import TASK_SECONDS
+from agent.execution.budget import REVIEW_CONCURRENCY, TASK_SECONDS
 from agent.execution.secure_files import reject_constant, unique_object
 
 MAX_BODY = 8 * 1024 * 1024
@@ -72,12 +72,13 @@ class Lease:
     input_tokens: int = 0
     output_tokens: int = 0
     usage_known: bool = True
-    in_flight: bool = False
+    # Requests sent and not yet settled; files reviewed side by side share the execution's grant.
+    in_flight: int = 0
     provider_key: Callable[[], str] | None = field(default=None, repr=False)
     access_resolver: Callable[[ModelPurpose], ModelAccess] | None = field(default=None, repr=False)
     transport_failure: dict[str, int | str | bool | None] | None = None
-    upstream: http.client.HTTPConnection | None = field(default=None, repr=False)
-    upstream_socket: socket.socket | None = field(default=None, repr=False)
+    # Each open provider connection with its socket, so a revoke can interrupt every one.
+    upstreams: dict[int, tuple[http.client.HTTPConnection, socket.socket | None]] = field(default_factory=dict, repr=False)
     log: CallLog | None = field(default=None, repr=False)
     # Who answered each model name, as last resolved (one name has one endpoint): what a record names, never the key.
     answered_by: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -178,7 +179,7 @@ class Grants:
     def authorize(self, token: str, body: dict[str, Any], request_bytes: int) -> tuple[Lease, ModelPurpose]:
         with self.lock:
             lease = self.leases.get(hashlib.sha256(token.encode()).hexdigest())
-            if lease is None or lease.expires <= time.monotonic() or lease.in_flight:
+            if lease is None or lease.expires <= time.monotonic():
                 raise ValueError("Invalid execution grant")
             # Only a model frozen for this operation is sent. One model name has one endpoint and
             # key, so any use that froze the name finds them; the request itself is not changed.
@@ -198,14 +199,14 @@ class Grants:
                 raise ValueError("Request byte limit")
             body["store"] = False
             body["max_output_tokens"] = min(requested, self.per_request_output_tokens)
-            lease.in_flight = True
+            lease.in_flight += 1
             return lease, purpose
 
     def record_usage(self, lease: Lease, usage: Any) -> None:
         """Count a finished request. Token counts are observed only when reported."""
         counts = [usage.get(name) for name in ("input_tokens", "output_tokens")] if isinstance(usage, dict) else [None, None]
         with self.lock:
-            lease.in_flight = False
+            lease.in_flight -= 1
             lease.completed_requests += 1
             if all(type(value) is int and value >= 0 for value in counts):
                 lease.input_tokens += cast(int, counts[0])
@@ -217,14 +218,14 @@ class Grants:
         """A request that may have reached the provider. The lease stays usable so the
         agent can retry; the counts are no longer complete."""
         with self.lock:
-            lease.in_flight = False
+            lease.in_flight -= 1
             lease.usage_known = False
             lease.transport_failure = failure
 
     def finish_not_sent(self, lease: Lease) -> None:
         """A local credential rejection never reached the provider."""
         with self.lock:
-            lease.in_flight = False
+            lease.in_flight -= 1
             lease.transport_failure = {
                 "phase": "provider_request",
                 "error_type": "ModelUnavailable",
@@ -240,7 +241,7 @@ class Grants:
             "input_tokens": sum(lease.input_tokens for lease in leases),
             "output_tokens": sum(lease.output_tokens for lease in leases),
             "usage_known": all(lease.usage_known and not lease.in_flight for lease in leases),
-            "in_flight": any(lease.in_flight for lease in leases),
+            "in_flight": any(lease.in_flight > 0 for lease in leases),
         }
         for lease in leases:
             if lease.transport_failure:
@@ -271,12 +272,10 @@ class Grants:
                 raise ValueError("Final usage receipt is unavailable")
             usage = self._usage(revoked)
             self.leases = {key: lease for key, lease in self.leases.items() if lease.execution_id != execution_id}
-            connections = [(lease.upstream, lease.upstream_socket) for lease in revoked]
+            connections = [connection for lease in revoked for connection in lease.upstreams.values()]
         # A provider need not send another byte after cancellation. Interrupt the
         # local socket outside the grants lock so the handler can release its slot.
         for upstream, transport in connections:
-            if upstream is None:
-                continue
             transport = transport or getattr(upstream, "sock", None)
             if transport is not None:
                 try:
@@ -297,15 +296,13 @@ class Grants:
         with self.lock:
             if lease.expires <= time.monotonic() or not any(value is lease for value in self.leases.values()):
                 raise ValueError("Invalid execution grant")
-            lease.upstream = upstream
             # getresponse() can detach a Connection: close socket from the
             # HTTPConnection while its response is still blocking in read1().
-            lease.upstream_socket = getattr(upstream, "sock", None)
+            lease.upstreams[id(upstream)] = (upstream, getattr(upstream, "sock", None))
 
-    def release_upstream(self, lease: Lease) -> None:
+    def release_upstream(self, lease: Lease, upstream: http.client.HTTPConnection | None) -> None:
         with self.lock:
-            lease.upstream = None
-            lease.upstream_socket = None
+            lease.upstreams.pop(id(upstream), None)
 
     def active(self, lease: Lease) -> bool:
         with self.lock:
@@ -321,10 +318,9 @@ class Gateway(ThreadingHTTPServer):
             raise ValueError("Invalid provider endpoint")
         self.grants, self.upstream, self.provider_key = grants, url, provider_key
         self.slots = threading.BoundedSemaphore(16)
-        # The runtime executes one audit at a time. The agent can nevertheless issue
-        # an auxiliary request concurrently with its main agent turn. Queue it
-        # here so one request per grant is in flight at a time.
-        self.inference_lock = threading.Lock()
+        # The runtime executes one audit at a time, whose files are reviewed side by side.
+        # Requests beyond that (an agent's auxiliary request beside its turn) queue here.
+        self.inference_slots = threading.BoundedSemaphore(REVIEW_CONCURRENCY)
         super().__init__(address, Handler)
 
     def process_request(self, request: Any, client_address: Any) -> None:
@@ -498,7 +494,7 @@ class Handler(BaseHTTPRequestHandler):
             # Drain the bounded request before queueing inference. Otherwise
             # a large next turn blocks in the client's socket send while an
             # auxiliary provider request is still finishing.
-            acquired = self.server.inference_lock.acquire(timeout=300)
+            acquired = self.server.inference_slots.acquire(timeout=300)
             if not acquired:
                 self.send_error(408, "Model request queue timeout")
                 return
@@ -676,9 +672,9 @@ class Handler(BaseHTTPRequestHandler):
                     upstream.close()
             finally:
                 if lease is not None:
-                    self.server.grants.release_upstream(lease)
+                    self.server.grants.release_upstream(lease, upstream)
                 if acquired:
-                    self.server.inference_lock.release()
+                    self.server.inference_slots.release()
                 # Written after the next request may start: a record never holds up the agent.
                 if exchange is not None and lease is not None:
                     self._write_exchange(

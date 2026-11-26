@@ -25,6 +25,7 @@ import hashlib
 import json
 import statistics
 import sys
+import threading
 import time
 import traceback
 from collections import Counter
@@ -90,10 +91,12 @@ class _Patch:
 
 
 class _Timeline:
-    """Each task the guest starts arrives as a progress line; a task runs until the next one starts."""
+    """Each task the guest starts arrives as a progress line. A check runs until the next task starts; reviews run side by
+    side, each for the time the guest measured it (``ends``)."""
 
     def __init__(self) -> None:
         self.marks: list[tuple[float, str, str]] = []
+        self.ends: dict[str, float] = {}
 
     def __call__(self, progress: dict) -> None:
         if progress.get("stage") and progress.get("target"):
@@ -102,18 +105,26 @@ class _Timeline:
             self.marks.append((time.monotonic(), "", ""))
 
     def task_at(self, moment: float) -> tuple[str, str]:
-        """The task under way at that moment; a request sent before the first line belongs to the first task."""
+        """The task under way at that moment; a request sent before the first line belongs to the first task.
+
+        A review request belongs to a file only when that file's review is the one under way; with several, it has no file.
+        """
         current = next(((stage, target) for _at, stage, target in self.marks if stage), ("", ""))
         for at, stage, target in self.marks:
             if at > moment:
                 break
             current = (stage, target)
-        return current
+        if current[0] != "review":
+            return current
+        open_ = [target for at, stage, target in self.marks if stage == "review" and at <= moment <= self.ends.get(target, float("inf"))]
+        return ("review", open_[0] if len(open_) == 1 else "")
 
     def seconds(self, finished: float) -> dict[tuple[str, str], float]:
         spans: dict[tuple[str, str], float] = {}
         for (at, stage, target), following in zip(self.marks, [*self.marks[1:], (finished, "", "")]):
-            if stage:
+            if stage == "review" and target in self.ends:
+                spans[(stage, target)] = round(self.ends[target] - at, 1)
+            elif stage:
                 spans[(stage, target)] = round(following[0] - at, 1)
         return spans
 
@@ -134,22 +145,26 @@ class _Requests:
         def on_authorize(grants, token, body, size):
             lease, purpose = authorize(grants, token, body, size)
             # The handler adds the deployment's options to this same body before it is sent.
-            requests.sent[id(lease)] = {"at": time.monotonic(), "purpose": purpose, "body": body}
+            requests.sent[id(body)] = {"at": time.monotonic(), "purpose": purpose, "body": body, "lease": lease, "thread": threading.get_ident()}
             return lease, purpose
 
-        def finished(lease, usage):
-            sent = requests.sent.pop(id(lease), None)
+        def finished(lease, usage, failure=None):
+            # Requests of one grant run side by side; the one settled is the one whose handler thread sent it.
+            key = next((key for key, sent in requests.sent.items() if sent["lease"] is lease and sent["thread"] == threading.get_ident()), None)
+            sent = requests.sent.pop(key, None) if key is not None else None
             if sent is not None:
                 body = sent.pop("body")
+                sent.pop("lease"), sent.pop("thread")
                 reasoning = body.get("reasoning") if isinstance(body.get("reasoning"), dict) else {}
-                requests.done.append({**sent, "model": body.get("model"), "effort": reasoning.get("effort"), "usage": usage})
+                status = (failure or {}).get("provider_status") or (failure or {}).get("error_type") if failure else None
+                requests.done.append({**sent, "seconds": round(time.monotonic() - sent["at"], 1), "failure": status, "model": body.get("model"), "effort": reasoning.get("effort"), "usage": usage})
 
         def on_usage(grants, lease, usage):
             finished(lease, usage if isinstance(usage, dict) else None)
             return record_usage(grants, lease, usage)
 
         def on_failed(grants, lease, failure):
-            finished(lease, None)
+            finished(lease, None, failure if isinstance(failure, dict) else {"error_type": "unknown"})
             return finish_failed(grants, lease, failure)
 
         patch.setattr(gateway.Grants, "authorize", on_authorize)
@@ -177,6 +192,9 @@ class _Requests:
                     "cached_tokens": details.get("cached_tokens") or 0,
                     "output_tokens": usage.get("output_tokens"),
                     "reasoning_tokens": output_details.get("reasoning_tokens") or 0,
+                    # From sending to settling, including time queued for one of the gateway's slots; a failure names the provider status or error.
+                    "seconds": request["seconds"],
+                    "failure": request["failure"],
                 }
             )
         return out
@@ -211,6 +229,17 @@ def run_batches(revision: str, names: list[str], shard: tuple[int, int], out: Pa
     requests = _Requests()
     observing = _Patch()
     requests.install(observing)
+    # What the guest measured for each file's review: files are reviewed side by side, so progress lines alone cannot say.
+    import agent.deep_review as deep_review
+
+    guest_reviews: dict[str, Any] = {}
+    merge_reviews = deep_review.merge_reviews
+
+    def merging(snapshot, result, raw):
+        guest_reviews["raw"] = raw
+        return merge_reviews(snapshot, result, raw)
+
+    observing.setattr(deep_review, "merge_reviews", merging)
 
     def unavailable():
         raise ModelUnavailable()
@@ -251,6 +280,12 @@ def run_batches(revision: str, names: list[str], shard: tuple[int, int], out: Pa
                     )
                 finally:
                     gateway.http.grants.revoke_all()
+                    raw = guest_reviews.pop("raw", None)
+                    for target, reviewed in (raw if isinstance(raw, dict) else {}).items():
+                        began = next((at for at, stage, marked in timeline.marks if stage == "review" and marked == target), None)
+                        usage = reviewed.get("usage") if isinstance(reviewed, dict) else None
+                        if began is not None and isinstance(usage, dict) and isinstance(usage.get("seconds"), (int, float)):
+                            timeline.ends[target] = began + usage["seconds"]
                     for target in order:
                         if target not in begun and on_task is not None:
                             begun.append(target)
@@ -421,6 +456,9 @@ def summarize(lines: list[dict], benchmark: Path, changed: set[str], prices: dic
         if line.get("error"):
             continue
         for request in line.get("requests", []):
+            if request["stage"] == "review" and not request["target"]:
+                # Sent while several files were under review: it counts in the totals, not toward any one file.
+                continue
             per_file.setdefault((line["batch"], request["target"]), {"check": [], "review": []}).setdefault(request["stage"] or "check", []).append(request)
     seconds = [float(line["seconds"]) for line in deep_lines if not line.get("error")]
     return {
@@ -467,6 +505,10 @@ def summarize(lines: list[dict], benchmark: Path, changed: set[str], prices: dic
             },
         },
         "usd_per_file": {stage: _spread([_usage(stages.get(stage, []), prices)["usd"] for stages in per_file.values()]) for stage in ("check", "review")},
+        # Congestion: how long each review request took from sending to settling, and which ones the provider failed.
+        "review_request_seconds": _spread([r["seconds"] for r in requests if r["stage"] == "review" and r.get("seconds") is not None]),
+        "review_requests_unattributed": sum(r["stage"] == "review" and not r["target"] for r in requests),
+        "failed_requests": dict(Counter(str(r["failure"]) for r in requests if r.get("failure"))),
         "requests_per_batch_max": max((len(line.get("requests", [])) for line in deep_lines), default=0),
         "details": details,
     }
@@ -500,6 +542,8 @@ def render(summary: dict, meta: dict) -> str:
             lines.append(f"{label}：{'、'.join(clauses[key])}。")
     rows = summary["rows"] or 1
     check, review, batch = summary["check_seconds_per_file"], summary["review_seconds_per_file"], summary["seconds_per_batch"]
+    request = summary.get("review_request_seconds") or _spread([])
+    summary.setdefault("failed_requests", {})
     usage, per_file = summary["usage"], summary["usd_per_file"]
     lines += [
         "",
@@ -535,7 +579,10 @@ def render(summary: dict, meta: dict) -> str:
         f"| 每份复核 | {review['median']:.0f} / {review['p90']:.0f} / {review['max']:.0f} |",
         f"| 每批（含识别与预检） | {batch['median']:.0f} / {batch['p90']:.0f} / {batch['max']:.0f} |",
         "",
+        f"| 复核的每次模型请求 | {request['median']:.0f} / {request['p90']:.0f} / {request['max']:.0f} |",
+        "",
         f"未复核目标：{json.dumps(summary['targets_not_reviewed'], ensure_ascii=False)}；识别与预检未命中录音、现调模型 {summary['recognition_live_calls']} 次。",
+        f"失败的模型请求（按服务商状态或错误）：{json.dumps(summary['failed_requests'], ensure_ascii=False) if summary['failed_requests'] else '无'}。",
         "",
         "## 费用（公开价，美元）",
         "",
@@ -547,7 +594,8 @@ def render(summary: dict, meta: dict) -> str:
         *[_usage_row(name, item) for name, item in usage["by_model"].items()],
         "",
         f"每份文件（中位 / P90 / 最大）：检查 ${per_file['check']['median']:.3f} / ${per_file['check']['p90']:.3f} / ${per_file['check']['max']:.3f}，"
-        f"复核 ${per_file['review']['median']:.3f} / ${per_file['review']['p90']:.3f} / ${per_file['review']['max']:.3f}；单批最多 {summary['requests_per_batch_max']} 次请求。",
+        f"复核 ${per_file['review']['median']:.3f} / ${per_file['review']['p90']:.3f} / ${per_file['review']['max']:.3f}；单批最多 {summary['requests_per_batch_max']} 次请求。"
+        + (f"复核请求中 {summary['review_requests_unattributed']} 次发出时有几份文件同时在复核，只计入合计，不计入单份文件。" if summary.get("review_requests_unattributed") else ""),
         "",
         "## 按文档类型",
         "",

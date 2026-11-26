@@ -127,3 +127,62 @@ def test_revocation_interrupts_silent_provider_and_releases_next_execution(stage
         provider.shutdown()
         provider.server_close()
         serving.join(timeout=2)
+
+
+def test_files_reviewed_side_by_side_share_a_grant_and_revocation_interrupts_every_request() -> None:
+    arrived = threading.Barrier(3, timeout=5)
+    disconnected: list[str] = []
+
+    class Provider(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_args) -> None:
+            pass
+
+        def do_POST(self) -> None:
+            text = json.loads(self.rfile.read(int(self.headers["Content-Length"])))["input"]
+            self.connection.settimeout(5)
+            # Both requests of one execution reach the provider before either is answered.
+            arrived.wait()
+            try:
+                if self.connection.recv(1) == b"":
+                    disconnected.append(text)
+            except OSError:
+                pass
+            self.close_connection = True
+
+    provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+    provider.daemon_threads = True
+    threading.Thread(target=provider.serve_forever, daemon=True).start()
+
+    def upstream(*_args, **_kwargs):
+        return http.client.HTTPConnection("127.0.0.1", provider.server_address[1], timeout=5)
+
+    def post(gateway, token, text):
+        connection = http.client.HTTPConnection("127.0.0.1", gateway.http.server_address[1], timeout=5)
+        try:
+            connection.request("POST", "/v1/responses", body=json.dumps({"model": "test-model", "input": text, "stream": True}), headers={"Authorization": "Bearer " + token})
+            return connection.getresponse().status
+        finally:
+            connection.close()
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="pd-c-", dir="/tmp") as directory, patch("agent.execution.gateway.http.client.HTTPSConnection", upstream):
+            with local_gateway(Path(directory) / "g.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-only") as gateway:
+                execution = uuid4()
+                token = grant_request(str(gateway.socket_path), "issue", execution)["token"]
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    sent = [executor.submit(post, gateway, token, text) for text in ("file-a", "file-b")]
+                    arrived.wait()
+                    assert grant_request(str(gateway.socket_path), "usage", execution)["in_flight"]
+                    assert grant_request(str(gateway.socket_path), "revoke", execution) == {"ok": True}
+                    assert [future.result(timeout=5) for future in sent] == [403, 403]
+                deadline = threading.Event()
+                for _ in range(50):
+                    if len(disconnected) == 2:
+                        break
+                    deadline.wait(0.05)
+                assert sorted(disconnected) == ["file-a", "file-b"]
+    finally:
+        provider.shutdown()
+        provider.server_close()

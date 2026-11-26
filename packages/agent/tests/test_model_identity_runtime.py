@@ -308,7 +308,7 @@ def test_http_request_waiting_in_queue_checks_current_configuration_before_send(
 
     result = []
     with patch("agent.execution.gateway.http.client.HTTPSConnection") as upstream, gateway() as server:
-        server.inference_lock = QueueGate()
+        server.inference_slots = QueueGate()
         execution, token = issue(server.grants, chosen, selected(current, identity(chosen)))
         pending = Thread(target=lambda: result.append(post(server, token, chosen.model)), daemon=True)
         pending.start()
