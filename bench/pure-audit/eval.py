@@ -41,11 +41,16 @@ def _main_checkout() -> Path:
     return Path(common).parent
 
 
-def _revision(revision: str) -> dict[str, Any]:
-    """A rulebook revision's benchmark: signed clauses, batches of originals, a model's reference judgments."""
-    base, clauses = RULEBOOK / "candidates" / revision / "benchmark", RULEBOOK / revision / "条文"
+def _revision(revision: str, wording: str | None = None) -> dict[str, Any]:
+    """A rulebook revision's benchmark: signed clauses, batches of originals, a model's reference judgments.
+
+    The clauses may be read from a later revision of the same version (same clause ids): a reference
+    that was corrected by rulings written into the next revision is a reference for that wording.
+    """
+    wording = wording or revision
+    base, clauses = RULEBOOK / "candidates" / revision / "benchmark", RULEBOOK / wording / "条文"
     if not (base / "reference-judgments.jsonl").is_file() or not clauses.is_dir():
-        sys.exit(f"修订 {revision} 没有基准或签署条文")
+        sys.exit(f"修订 {revision} 没有基准，或修订 {wording} 没有签署条文")
     rules = {}
     for path in sorted(clauses.glob("*.json")):
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -60,7 +65,7 @@ def _revision(revision: str) -> dict[str, Any]:
         target = targets.setdefault((row["batch"], row["file"]), {"document_type": row["document_type"], "title": rule["title"], "rules": []})
         target["rules"].append({key: rule[key] for key in ("id", "category", "rule_to_check")})
     return {
-        "label": f"修订 {revision}",
+        "label": f"修订 {revision}" if wording == revision else f"修订 {revision} 的基准，条文取修订 {wording}",
         "human": False,
         "batches": [row["batch"] for row in _jsonl(base / "batches.jsonl")],
         "files": dict(files),
@@ -107,7 +112,7 @@ def _corpus(customer: str) -> dict[str, Any]:
 
 
 def compared(meta: dict[str, Any]) -> dict[str, Any]:
-    return _corpus(meta["corpus"]) if meta.get("corpus") else _revision(meta["revision"])
+    return _corpus(meta["corpus"]) if meta.get("corpus") else _revision(meta["revision"], meta.get("clauses"))
 
 
 def prepare(given: dict[str, Any], batch: str, out: Path) -> dict[str, str]:
@@ -152,7 +157,9 @@ def _environment(main: Path) -> str:
 def run(args: argparse.Namespace) -> None:
     if bool(args.revision) == bool(args.corpus):
         sys.exit("用 --revision 或 --corpus 指定对照的来源，二者取一")
-    given = compared({"revision": args.revision, "corpus": args.corpus})
+    if args.clauses and not args.revision:
+        sys.exit("--clauses 只和 --revision 一起用")
+    given = compared({"revision": args.revision, "corpus": args.corpus, "clauses": args.clauses})
     if args.all:
         args.batch = given["batches"]
     if not args.batch:
@@ -170,10 +177,13 @@ def run(args: argparse.Namespace) -> None:
         out = HERE / "runs" / name
         if out.exists() and not args.resume:
             sys.exit(f"已有同名运行：{out}（接着跑用 --resume）")
+        if (out / "meta.json").is_file() and json.loads((out / "meta.json").read_text(encoding="utf-8")).get("clauses") != args.clauses:
+            sys.exit(f"{out} 是按另一版条文跑的，不能接着跑；换一个 --name")
         out.mkdir(parents=True, exist_ok=True)
         meta = {
             "name": name,
             "revision": args.revision,
+            "clauses": args.clauses,
             "corpus": args.corpus,
             "batches": args.batch,
             "model": args.model,
@@ -435,6 +445,7 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     sub = commands.add_parser("run")
     sub.add_argument("--revision", help="规则库修订，如 m4：对照它的基准")
+    sub.add_argument("--clauses", help="条文取自同一版本的另一修订，如 m5；不写就是 --revision 那一修订")
     sub.add_argument("--corpus", help="客户，如 li、nio：对照 assets/corpus 里它的人工判定表")
     sub.add_argument("--batch", action="append", default=[], help="批次名（基准的 batches.jsonl，或人工判定表的组合ID）；可重复")
     sub.add_argument("--name")
