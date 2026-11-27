@@ -118,6 +118,13 @@ def compared(meta: dict[str, Any]) -> dict[str, Any]:
         for target in given["targets"].values():
             target["rules"] = [rule for rule in target["rules"] if rule["id"] in only]
         given["reference"] = {key: row for key, row in given["reference"].items() if key[2] in only}
+    if meta.get("rows"):
+        # A run of chosen rows (one clause of one file of one batch each), such as the rows an earlier run differed on.
+        rows = {tuple(row) for row in meta["rows"]}
+        for (batch, source), target in given["targets"].items():
+            target["rules"] = [rule for rule in target["rules"] if (batch, source, rule["id"]) in rows]
+        given["reference"] = {key: row for key, row in given["reference"].items() if key in rows}
+        given["batches"] = [batch for batch in given["batches"] if any(row[0] == batch for row in rows)]
     return given
 
 
@@ -130,12 +137,13 @@ def prepare(given: dict[str, Any], batch: str, out: Path) -> dict[str, str]:
     """
     if batch not in given["files"]:
         sys.exit(f"没有批次 {batch}")
-    (out / "files").mkdir(parents=True)
+    (out / "files").mkdir(parents=True, exist_ok=True)
     names, files = {}, []
     for number, source_path in enumerate(sorted(given["files"][batch]), 1):
         name = f"{number:02d}{Path(source_path).suffix.lower()}"
-        shutil.copyfile(ROOT / source_path, out / "files" / name)
-        (out / "files" / name).chmod(0o444)
+        if not (out / "files" / name).is_file():
+            shutil.copyfile(ROOT / source_path, out / "files" / name)
+            (out / "files" / name).chmod(0o444)
         names[name] = source_path
         files.append({"name": name, "path": f"files/{name}"})
     targets = []
@@ -165,7 +173,14 @@ def run(args: argparse.Namespace) -> None:
         sys.exit("用 --revision 或 --corpus 指定对照的来源，二者取一")
     if args.clauses and not args.revision:
         sys.exit("--clauses 只和 --revision 一起用")
-    given = compared({"revision": args.revision, "corpus": args.corpus, "clauses": args.clauses, "only": args.only})
+    chosen = [json.loads(line) for line in Path(args.rows).read_text(encoding="utf-8").splitlines() if line.strip()] if args.rows else []
+    given = compared({"revision": args.revision, "corpus": args.corpus, "clauses": args.clauses, "only": args.only, "rows": chosen})
+    reading: dict[str, Path] = {}
+    if args.reading_from:
+        # The reading of an earlier run of the same batches (the files, what was derived from them, the dossier) serves again.
+        source = HERE / "runs" / args.reading_from
+        listed = json.loads((source / "meta.json").read_text(encoding="utf-8"))["batches"]
+        reading = {batch: source / f"batch-{number:0{max(2, len(str(len(listed))))}d}" for number, batch in enumerate(listed, 1)}
     if args.all:
         args.batch = given["batches"]
     if not args.batch:
@@ -191,6 +206,8 @@ def run(args: argparse.Namespace) -> None:
             "revision": args.revision,
             "clauses": args.clauses,
             "only": args.only,
+            "rows": chosen,
+            "reading_from": args.reading_from,
             "corpus": args.corpus,
             "batches": args.batch,
             "model": args.model,
@@ -210,6 +227,8 @@ def run(args: argparse.Namespace) -> None:
             if (work / "names.json").is_file():
                 names[batch] = json.loads((work / "names.json").read_text(encoding="utf-8"))
             else:
+                if batch in reading and not work.exists():
+                    shutil.copytree(reading[batch], work, symlinks=True, ignore=shutil.ignore_patterns("audits", "results.json", "batch.json", "names.json"))
                 names[batch] = prepare(given, batch, work)
                 (work / "names.json").write_text(json.dumps(names[batch], ensure_ascii=False, indent=1), encoding="utf-8")
         # One container for the whole run: every batch draws on the same pool of auditors.
@@ -456,6 +475,8 @@ def main() -> None:
     sub.add_argument("--corpus", help="客户，如 li、nio：对照 assets/corpus 里它的人工判定表")
     sub.add_argument("--batch", action="append", default=[], help="批次名（基准的 batches.jsonl，或人工判定表的组合ID）；可重复")
     sub.add_argument("--only", action="append", default=[], help="只审这条条款（如 PCE:2）；可重复。同一文件的其他条款不审也不对照")
+    sub.add_argument("--rows", help="只审这个文件列出的行：每行一个 JSON 数组 [批次, 原件路径, 条款]；配 --all 时只跑有行的批次")
+    sub.add_argument("--reading-from", help="沿用另一次运行对相同批次的阅卷（文件、派生物、案卷），不重读")
     sub.add_argument("--name")
     sub.add_argument("--model", default="local/grok-4.7")
     sub.add_argument("--thinking", default="medium")

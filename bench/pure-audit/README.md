@@ -35,6 +35,8 @@ uv run --no-sync python bench/pure-audit/eval.py run --corpus nio --all --name n
 | `--revision` / `--corpus` | 对照的来源，二者取一 |
 | `--batch` / `--all` | 批次名（基准的 `batches.jsonl`，或人工判定表的组合ID），可重复；`--all` 是全部批次。几个批次在同一个容器里共用一组审核员 |
 | `--only PCE:2` | 只审这条条款，可重复；同一文件的其他条款不审也不对照。用来改一处、重跑一条 |
+| `--rows 文件` | 只审文件里列出的行，每行一个 JSON 数组 `[批次, 原件路径, 条款]`；配 `--all` 时只跑有行的批次。用来重跑上一次有差异的行 |
+| `--reading-from 运行名` | 沿用另一次运行对相同批次的阅卷，不重读 |
 | `--resume` | 接着跑同名运行：已有结论的条款和读完的文件不再做 |
 | `--thinking` / `--hard-thinking` | 阅卷、审核、质证的推理强度 / 专审、裁决的推理强度（默认 medium / high） |
 | `--seconds` | 审一条条款的时限（默认 600）；专审和裁决同此，质证取三分之二 |
