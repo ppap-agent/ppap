@@ -544,6 +544,10 @@ def main(argv: list[str] | None = None) -> int:
     except Unreadable as error:
         outcome = "unreadable"
         print(f"读不了：{error}")
+    except BrokenPipeError:
+        # The auditor piped the reading into something that stopped reading (head): not a failure of the reading.
+        outcome = "cut"
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
     finally:
         # What was looked at, in order: the record of how far the reading went.
         try:

@@ -75,7 +75,7 @@ def standing_instructions() -> Path:
     return Path(path)
 
 
-def pi(work: Path, phase: str, prompt: str, *, options: argparse.Namespace, thinking: str, seconds: int) -> dict[str, Any]:
+def pi(batch: Path, work: Path, phase: str, prompt: str, *, options: argparse.Namespace, thinking: str, seconds: int) -> dict[str, Any]:
     """One auditor at work in ``work`` until it finishes or its time is up. Returns what the step cost."""
     logs = work / "logs"
     logs.mkdir(exist_ok=True)
@@ -85,8 +85,8 @@ def pi(work: Path, phase: str, prompt: str, *, options: argparse.Namespace, thin
     environment = {
         **os.environ,
         "AUDIT_PHASE": phase,
-        "AUDIT_CACHE": str(options.batch / "cache"),
-        "AUDIT_DOSSIER": str(options.batch / "dossier.jsonl"),
+        "AUDIT_CACHE": str(batch / "cache"),
+        "AUDIT_DOSSIER": str(batch / "dossier.jsonl"),
         "AUDIT_DEADLINE": str(time.time() + seconds - GRACE),
         "AUDIT_SECONDS": str(seconds - GRACE),
         "PI_OFFLINE": "1",
@@ -180,7 +180,10 @@ def read_file(batch: Path, number: int, item: dict[str, Any], files: list[dict[s
     """One reader goes through one file and notes what the clause auditors will all need."""
     listed = [{"name": other["name"], "path": other["path"], "role": "target" if other["name"] == item["name"] else "other"} for other in files]
     work = _workdir(batch, f"read/{number:02d}", listed, {"rules": []})
-    step = pi(work, "read", _prompt("read", file=item["name"], seconds=options.read_seconds - GRACE), options=options, thinking=options.thinking, seconds=options.read_seconds)
+    kept = work / "step.json"
+    if kept.is_file():
+        return dict(json.loads(kept.read_text(encoding="utf-8")))
+    step = pi(batch, work, "read", _prompt("read", file=item["name"], seconds=options.read_seconds - GRACE), options=options, thinking=options.thinking, seconds=options.read_seconds)
     lessons = Task(work).lessons()
     kind = kinds.get(item["name"])
     if options.experience and kind and lessons:
@@ -189,6 +192,7 @@ def read_file(batch: Path, number: int, item: dict[str, Any], files: list[dict[s
             learned.parent.mkdir(parents=True, exist_ok=True)
             known = learned.read_text(encoding="utf-8").splitlines() if learned.is_file() else []
             learned.write_text("\n".join([*known, *(f"- {lesson}" for lesson in lessons if f"- {lesson}" not in known)]) + "\n", encoding="utf-8")
+    kept.write_text(json.dumps({**step, "file": item["name"]}, ensure_ascii=False), encoding="utf-8")
     return {**step, "file": item["name"]}
 
 
@@ -250,7 +254,13 @@ def audit_clause(batch: Path, number: int, target: dict[str, Any], rule: dict[st
     clause = rule["id"]
     listed = [{"name": item["name"], "path": item["path"], "role": "target" if item["name"] == target["name"] else "other"} for item in files]
     work = _workdir(batch, f"audits/{number:02d}/{re.sub(r'[^0-9A-Za-z]+', '-', clause)}", listed, {"title": target["rules"].get("title", ""), "rules": [rule]})
+    kept = work / "result.json"
+    if kept.is_file():
+        # A clause already settled by an interrupted run of this batch is not audited again.
+        return dict(json.loads(kept.read_text(encoding="utf-8")))
     task = Task(work)
+    # Clauses refer to one another: the document's whole set is at hand, so nobody goes looking for it elsewhere.
+    (work / "clauses.json").write_text(json.dumps(target["rules"], ensure_ascii=False, indent=1), encoding="utf-8")
     kind = str(target.get("document_type") or "")
     learned = Path(options.experience) / f"{kind}.md" if options.experience and kind else None
     brief = {
@@ -265,24 +275,33 @@ def audit_clause(batch: Path, number: int, target: dict[str, Any], rule: dict[st
     }
     steps = []
     try:
-        steps.append(pi(work, "audit", _prompt("audit", **brief, seconds=options.seconds - GRACE), options=options, thinking=options.thinking, seconds=options.seconds))
+        steps.append(pi(batch, work, "audit", _prompt("audit", **brief, seconds=options.seconds - GRACE), options=options, thinking=options.thinking, seconds=options.seconds))
         # No verdict in time: a fresh auditor at the higher effort, told where the first one looked.
         if clause not in task.recorded() and not options.no_focus:
             steps.append(
-                pi(work, "focus", _prompt("focus", **brief, looked=_looked(work, "audit"), seconds=options.seconds - GRACE), options=options, thinking=options.hard_thinking, seconds=options.seconds)
+                pi(
+                    batch,
+                    work,
+                    "focus",
+                    _prompt("focus", **brief, looked=_looked(work, "audit"), seconds=options.seconds - GRACE),
+                    options=options,
+                    thinking=options.hard_thinking,
+                    seconds=options.seconds,
+                )
             )
         first = task.recorded().get(clause)
         disputed = False
         if first and not options.no_challenge:
             budget = max(180, options.seconds * 2 // 3)
             verdict = json.dumps(first, ensure_ascii=False, indent=1)
-            steps.append(pi(work, "challenge", _prompt("challenge", **brief, verdict=verdict, seconds=budget - GRACE), options=options, thinking=options.thinking, seconds=budget))
+            steps.append(pi(batch, work, "challenge", _prompt("challenge", **brief, verdict=verdict, seconds=budget - GRACE), options=options, thinking=options.thinking, seconds=budget))
             second = task.recorded().get(clause)
             # A changed status is a dispute between two auditors: a third settles it on the originals.
             if second and second.get("phase") == "challenge" and second["status"] != first["status"]:
                 disputed = True
                 steps.append(
                     pi(
+                        batch,
                         work,
                         "arbitrate",
                         _prompt("arbitrate", **brief, first=verdict, second=json.dumps(second, ensure_ascii=False, indent=1), seconds=options.seconds - GRACE),
@@ -330,27 +349,28 @@ def audit_clause(batch: Path, number: int, target: dict[str, Any], rule: dict[st
         row["disputed"] = True
     row["seconds"] = round(time.monotonic() - started)
     seen = work / ".audit" / "seen.jsonl"
-    return {"row": row, "steps": [{**step, "clause": clause} for step in steps], "refused": task.refused(), "looks": len(seen.read_text(encoding="utf-8").splitlines()) if seen.is_file() else 0}
+    result = {"row": row, "steps": [{**step, "clause": clause} for step in steps], "refused": task.refused(), "looks": len(seen.read_text(encoding="utf-8").splitlines()) if seen.is_file() else 0}
+    kept.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    return result
 
 
-def audit_batch(batch: Path, options: argparse.Namespace) -> dict[str, Any]:
+def audit_batch(batch: Path, options: argparse.Namespace, pool: ThreadPoolExecutor) -> dict[str, Any]:
+    """One batch on the shared pool of auditors: its files are read first, then its clauses are audited."""
     started = time.monotonic()
     spec = json.loads((batch / "batch.json").read_text(encoding="utf-8"))
     files, targets = spec["files"], spec["targets"]
     kinds = {target["name"]: str(target["rules"].get("title") or target.get("document_type") or "") for target in targets}
-    options.batch = batch
-    options.instructions = standing_instructions()
     prepared = prepare(batch, files, options)
-    with ThreadPoolExecutor(max_workers=max(1, options.concurrency)) as pool:
-        reading_started = time.monotonic()
-        readers = [] if options.no_read else list(pool.map(lambda pair: read_file(batch, pair[0], pair[1], files, kinds, options), enumerate(files, 1)))
-        reading = round(time.monotonic() - reading_started)
-        jobs = [(number, target, rule) for number, target in enumerate(targets, 1) for rule in target["rules"]["rules"]]
-        # The hardest-looking clauses first, so the long ones are not all left for the end.
-        jobs.sort(key=lambda job: -len(job[2]["rule_to_check"]))
-        auditing_started = time.monotonic()
-        done = dict(zip([(number, rule["id"]) for number, _target, rule in jobs], pool.map(lambda job: audit_clause(batch, job[0], job[1], job[2], files, kinds, options), jobs)))
-        auditing = round(time.monotonic() - auditing_started)
+    reading_started = time.monotonic()
+    readers = [] if options.no_read else [future.result() for future in [pool.submit(read_file, batch, number, item, files, kinds, options) for number, item in enumerate(files, 1)]]
+    reading = round(time.monotonic() - reading_started)
+    jobs = [(number, target, rule) for number, target in enumerate(targets, 1) for rule in target["rules"]["rules"]]
+    # The hardest-looking clauses first, so the long ones are not all left for the end.
+    jobs.sort(key=lambda job: -len(job[2]["rule_to_check"]))
+    auditing_started = time.monotonic()
+    futures = {(number, rule["id"]): pool.submit(audit_clause, batch, number, target, rule, files, kinds, options) for number, target, rule in jobs}
+    done = {key: future.result() for key, future in futures.items()}
+    auditing = round(time.monotonic() - auditing_started)
     results = []
     for number, target in enumerate(targets, 1):
         parts = [done[(number, rule["id"])] for rule in target["rules"]["rules"]]
@@ -381,15 +401,22 @@ def audit_batch(batch: Path, options: argparse.Namespace) -> dict[str, Any]:
     return outcome
 
 
+def audit_batches(batches: list[Path], options: argparse.Namespace) -> list[dict[str, Any]]:
+    """Every batch draws on the same pool, so the number of auditors at work is one limit for the whole run."""
+    options.instructions = standing_instructions()
+    with ThreadPoolExecutor(max_workers=max(1, options.concurrency)) as pool, ThreadPoolExecutor(max_workers=len(batches)) as batchwise:
+        return list(batchwise.map(lambda batch: audit_batch(batch, options, pool), batches))
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m auditor.run", description="审核一个批次")
-    parser.add_argument("batch", type=Path, help="含 batch.json 和 files/ 的目录")
+    parser = argparse.ArgumentParser(prog="python -m auditor.run", description="审核一个或几个批次")
+    parser.add_argument("batch", type=Path, nargs="+", help="含 batch.json 和 files/ 的目录；给几个就共用同一组审核员")
     parser.add_argument("--model", default="local/grok-4.7")
     parser.add_argument("--thinking", default="medium", help="阅卷、审核、质证的推理强度")
     parser.add_argument("--hard-thinking", default="high", help="专审、裁决的推理强度")
     parser.add_argument("--seconds", type=int, default=600, help="审一条条款的时限；专审、裁决同此，质证为三分之二")
     parser.add_argument("--read-seconds", type=int, default=360, help="阅卷一份文件的时限")
-    parser.add_argument("--concurrency", type=int, default=12, help="同时工作的审核员数")
+    parser.add_argument("--concurrency", type=int, default=12, help="同时工作的审核员数，所有批次合计")
     parser.add_argument("--no-read", action="store_true")
     parser.add_argument("--no-focus", action="store_true")
     parser.add_argument("--no-challenge", action="store_true")
@@ -397,12 +424,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--experience", help="读法经验的目录：审前读入，阅卷后追加")
     options = parser.parse_args(argv)
     prepare_pi()
-    outcome = audit_batch(options.batch.resolve(), options)
+    started = time.monotonic()
+    outcomes = audit_batches([batch.resolve() for batch in options.batch], options)
     counts: dict[str, int] = {}
-    for target in outcome["targets"]:
-        for row in target["rows"]:
-            counts[row["status"]] = counts.get(row["status"], 0) + 1
-    print(json.dumps({"targets": len(outcome["targets"]), "statuses": counts, "wall": outcome["wall"]}, ensure_ascii=False))
+    for outcome in outcomes:
+        for target in outcome["targets"]:
+            for row in target["rows"]:
+                counts[row["status"]] = counts.get(row["status"], 0) + 1
+    print(json.dumps({"batches": len(outcomes), "statuses": counts, "seconds": round(time.monotonic() - started)}, ensure_ascii=False))
     return 0
 
 

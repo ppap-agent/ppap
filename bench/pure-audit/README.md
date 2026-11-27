@@ -25,11 +25,12 @@ uv run --no-sync python bench/pure-audit/eval.py run --revision m4 --batch "F01R
 
 | 选项 | 含义 |
 |---|---|
-| `--batch` | 批次名，见基准的 `batches.jsonl`；可重复 |
+| `--batch` / `--all` | 批次名，见基准的 `batches.jsonl`，可重复；`--all` 是基准的全部批次。几个批次在同一个容器里共用一组审核员 |
+| `--resume` | 接着跑同名运行：已有结论的条款和读完的文件不再做 |
 | `--thinking` / `--hard-thinking` | 阅卷、审核、质证的推理强度 / 专审、裁决的推理强度（默认 medium / high） |
 | `--seconds` | 审一条条款的时限（默认 600）；专审和裁决同此，质证取三分之二 |
 | `--read-seconds` | 阅卷一份文件的时限（默认 360） |
-| `--concurrency` | 一个批次里同时工作的审核员数（默认 12） |
+| `--concurrency` | 同时工作的审核员数，所有批次合计（默认 12） |
 | `--repeat` | 同样的输入重复几次，各成一次运行 |
 | `--no-read` `--no-focus` `--no-challenge` `--no-transcribe` | 关掉阅卷、专审、质证（及裁决）、准备阶段的预先转写，用来看每一步带来了什么 |
 | `--experience 目录` | 审前读入、阅卷后追加同类文件的读法经验 |
@@ -53,6 +54,14 @@ uv run --no-sync python bench/pure-audit/eval.py report bench/pure-audit/runs/tr
 ```
 
 给多个运行时，另列出结论不一致的行，以及其中通过与不通过互换的行。`--deep` 与一次深度复核运行逐行对照。
+
+## 看会话
+
+```bash
+uv run --no-sync python bench/pure-audit/sessions.py bench/pure-audit/runs/trial
+```
+
+把一次运行的每个审核员会话读一遍，写出 `sessions.md`：各步骤的耗时、请求数、到首次提交用了多久、没命中缓存的请求、打开了多少图片；工具给审核员的坏消息按种类计数；审核员绕开 `look` 自己跑的命令、走出自己工作目录的次数；最费时的会话。它只计数和列举，用来找工具和任务说明该改的地方。
 
 | 汇总项 | 含义 |
 |---|---|

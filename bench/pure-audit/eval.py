@@ -17,7 +17,6 @@ import sys
 import tempfile
 import time
 from collections import Counter, defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +101,10 @@ def _environment(main: Path) -> str:
 
 def run(args: argparse.Namespace) -> None:
     base, rules = benchmark(args.revision)
+    if args.all:
+        args.batch = [row["batch"] for row in _jsonl(base / "batches.jsonl")]
+    if not args.batch:
+        sys.exit("用 --batch 指定批次，或 --all 跑全部")
     main = _main_checkout()
     if not (main / ".pi" / "agent" / "models.json").is_file():
         sys.exit(f"没有 Pi 配置：{main / '.pi' / 'agent'}")
@@ -112,9 +115,9 @@ def run(args: argparse.Namespace) -> None:
     for repeat in range(1, args.repeat + 1):
         name = (args.name or f"{stamp}-{args.thinking}") + (f"-r{repeat}" if args.repeat > 1 else "")
         out = HERE / "runs" / name
-        if out.exists():
-            sys.exit(f"已有同名运行：{out}")
-        out.mkdir(parents=True)
+        if out.exists() and not args.resume:
+            sys.exit(f"已有同名运行：{out}（接着跑用 --resume）")
+        out.mkdir(parents=True, exist_ok=True)
         meta = {
             "name": name,
             "revision": args.revision,
@@ -130,47 +133,52 @@ def run(args: argparse.Namespace) -> None:
             "commit": subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip(),
         }
         (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+        names = {}
+        for number, batch in enumerate(args.batch, 1):
+            work = out / f"batch-{number:02d}"
+            if (work / "names.json").is_file():
+                names[batch] = json.loads((work / "names.json").read_text(encoding="utf-8"))
+            else:
+                names[batch] = prepare(base, rules, batch, work)
+                (work / "names.json").write_text(json.dumps(names[batch], ensure_ascii=False, indent=1), encoding="utf-8")
+        # One container for the whole run: every batch draws on the same pool of auditors.
         env_file = _environment(main)
+        command = ["docker", "run", "--rm", "--user", "10001:10001", "--env-file", env_file, "-e", "AUDITOR_PI_SOURCE=/pi"]
+        command += ["-v", f"{main / '.pi' / 'agent'}:/pi:ro", "-v", f"{out}:/work/run"]
+        if args.source:
+            command += ["-v", f"{ROOT / 'packages' / 'auditor' / 'src'}:/opt/auditor:ro"]
+        options = ["--model", args.model, "--thinking", args.thinking, "--hard-thinking", args.hard_thinking, "--seconds", str(args.seconds), "--concurrency", str(args.concurrency)]
+        options += ["--read-seconds", str(args.read_seconds)]
+        options += [flag for flag, on in (("--no-read", args.no_read), ("--no-challenge", args.no_challenge), ("--no-focus", args.no_focus), ("--no-transcribe", args.no_transcribe)) if on]
+        if args.experience:
+            experience = Path(args.experience).resolve()
+            experience.mkdir(parents=True, exist_ok=True)
+            command += ["-v", f"{experience}:/work/experience"]
+            options += ["--experience", "/work/experience"]
+        started = time.time()
         try:
-
-            def one(numbered: tuple[int, str]) -> list[dict[str, Any]]:
-                number, batch = numbered
-                work = out / f"batch-{number:02d}"
-                names = prepare(base, rules, batch, work)
-                command = ["docker", "run", "--rm", "--user", "10001:10001", "--env-file", env_file, "-e", "AUDITOR_PI_SOURCE=/pi"]
-                command += ["-v", f"{main / '.pi' / 'agent'}:/pi:ro", "-v", f"{work}:/work/batch"]
-                if args.source:
-                    command += ["-v", f"{ROOT / 'packages' / 'auditor' / 'src'}:/opt/auditor:ro"]
-                options = ["--model", args.model, "--thinking", args.thinking, "--hard-thinking", args.hard_thinking, "--seconds", str(args.seconds), "--concurrency", str(args.concurrency)]
-                options += ["--read-seconds", str(args.read_seconds)]
-                options += [flag for flag, on in (("--no-read", args.no_read), ("--no-challenge", args.no_challenge), ("--no-focus", args.no_focus), ("--no-transcribe", args.no_transcribe)) if on]
-                if args.experience:
-                    experience = Path(args.experience).resolve()
-                    experience.mkdir(parents=True, exist_ok=True)
-                    command += ["-v", f"{experience}:/work/experience"]
-                    options += ["--experience", "/work/experience"]
-                started = time.time()
-                done = subprocess.run([*command, image, "/work/batch", *options], capture_output=True, text=True)
-                (work / "container.log").write_text(done.stdout + done.stderr, encoding="utf-8")
-                rows: list[dict[str, Any]] = []
-                if not (work / "results.json").is_file():
-                    print(f"{batch}：整批失败，见 {work / 'container.log'}", file=sys.stderr)
-                    return [{"kind": "failed", "batch": batch, "seconds": round(time.time() - started)}]
-                result = json.loads((work / "results.json").read_text(encoding="utf-8"))
-                rows.append({"kind": "batch", "batch": batch, "wall": result["wall"], "prepare": result["prepare"], "notes": result["notes"], "steps": result["other_steps"]})
-                for target in result["targets"]:
-                    source = names[target["name"]]
-                    rows.append(
-                        {"kind": "file", "batch": batch, "file": source, "document_type": target["document_type"], "steps": target["steps"], "refused": target["refused"], "looks": target["looks"]}
-                    )
-                    rows += [{"kind": "verdict", "batch": batch, "file": source, **row} for row in target["rows"]]
-                print(f"{batch}：{sum(1 for row in rows if row['kind'] == 'verdict')} 条结论，{round(time.time() - started)} 秒")
-                return rows
-
-            with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-                rows = [row for part in pool.map(one, enumerate(args.batch, 1)) for row in part]
+            done = subprocess.run([*command, image, *(f"/work/run/batch-{number:02d}" for number in range(1, len(args.batch) + 1)), *options], capture_output=True, text=True)
         finally:
             os.unlink(env_file)
+        with (out / "container.log").open("a", encoding="utf-8") as stream:
+            stream.write(done.stdout + done.stderr)
+        earlier = json.loads((out / "wall.json").read_text(encoding="utf-8")) if (out / "wall.json").is_file() else []
+        (out / "wall.json").write_text(json.dumps([*earlier, round(time.time() - started)]), encoding="utf-8")
+        rows: list[dict[str, Any]] = [{"kind": "run", "seconds": sum(earlier) + round(time.time() - started), "sittings": len(earlier) + 1}]
+        for number, batch in enumerate(args.batch, 1):
+            work = out / f"batch-{number:02d}"
+            if not (work / "results.json").is_file():
+                print(f"{batch}：没有跑完，见 {out / 'container.log'}", file=sys.stderr)
+                rows.append({"kind": "failed", "batch": batch})
+                continue
+            result = json.loads((work / "results.json").read_text(encoding="utf-8"))
+            rows.append({"kind": "batch", "batch": batch, "wall": result["wall"], "prepare": result["prepare"], "notes": result["notes"], "steps": result["other_steps"]})
+            for target in result["targets"]:
+                source = names[batch][target["name"]]
+                rows.append(
+                    {"kind": "file", "batch": batch, "file": source, "document_type": target["document_type"], "steps": target["steps"], "refused": target["refused"], "looks": target["looks"]}
+                )
+                rows += [{"kind": "verdict", "batch": batch, "file": source, **row} for row in target["rows"]]
         (out / "results.jsonl").write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
         report(argparse.Namespace(runs=[str(out)], deep=None))
 
@@ -221,7 +229,12 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
         phase["cached"] += step["cached_input_tokens"]
         phase["output"] += step["output_tokens"]
         phase["cents"] += round(_cost([step], prices, meta["model"]) * 100)
+    whole = next((row for row in rows if row["kind"] == "run"), None)
     wall = {key: sum(row["wall"][key] for row in batches) for key in ("total", "prepare", "read", "audit")} if batches else {}
+    if wall and whole:
+        # Batches run side by side: the run's own clock is the time that passed.
+        wall["total"] = whole["seconds"]
+    errors = Counter(str(step["error"])[:80] for step in steps if step.get("error"))
     spent = sorted(verdict["seconds"] for verdict in verdicts.values() if "seconds" in verdict)
     per_file = []
     for row in files:
@@ -252,6 +265,8 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
             "seen_checked": sum(1 for item in seen if "transcription_agrees" in item),
         },
         "failed_batches": [row["batch"] for row in rows if row["kind"] == "failed"],
+        "session_errors": dict(errors),
+        "seconds_per_request": round(sum(step["seconds"] for step in steps) / max(1, sum(step["requests"] for step in steps)), 1),
         "wall": wall,
         "prepare": {key: sum(row["prepare"].get(key, 0) for row in batches) for key in ("pages", "pictures", "transcriptions")},
         "notes": sum(row["notes"] for row in batches),
@@ -283,6 +298,8 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
         f"参考：{'、'.join(f'{STATUS.get(key, key)} {value}' for key, value in summary['reference_statuses'].items())}",
         f"- 未在时限内给出结论：{summary['unaudited']} 条；质证到 {summary['challenged']}/{summary['challengeable']} 条，改变结论 {summary['changed_after_first']} 条，其中交裁决 {summary['disputed']} 条",  # noqa: E501
         f"- 提交被退回 {summary['refused_submissions']} 次；查看原件 {summary['looks']} 次",
+        f"- 模型请求平均 {summary['seconds_per_request']} 秒一次；会话报错 {sum(errors.values())} 次"
+        + ("：" + "；".join(f"{text} ×{count}" for text, count in errors.most_common(5)) if errors else ""),
         f"- 证据：逐字核对通过 {summary['citations']['text']} 项；所见类 {summary['citations']['seen']} 项，其中经视觉模型转写印证 {summary['citations']['seen_transcription_agrees']}/{summary['citations']['seen_checked']} 项",  # noqa: E501
         f"- 用量：输入 {summary['tokens']['input_tokens']}（另缓存命中 {summary['tokens']['cached_input_tokens']}），输出 {summary['tokens']['output_tokens']}；按公开价约 {summary['cost_usd']} 美元（不含转写）",  # noqa: E501
         "",
@@ -348,15 +365,16 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     sub = commands.add_parser("run")
     sub.add_argument("--revision", required=True)
-    sub.add_argument("--batch", action="append", required=True, help="批次名，见基准的 batches.jsonl；可重复")
+    sub.add_argument("--batch", action="append", default=[], help="批次名，见基准的 batches.jsonl；可重复")
     sub.add_argument("--name")
     sub.add_argument("--model", default="local/grok-4.7")
     sub.add_argument("--thinking", default="medium")
     sub.add_argument("--hard-thinking", default="high")
     sub.add_argument("--seconds", type=int, default=600, help="审一条条款的时限")
     sub.add_argument("--read-seconds", type=int, default=360, help="阅卷一份文件的时限")
-    sub.add_argument("--concurrency", type=int, default=12, help="一个批次里同时工作的审核员数")
-    sub.add_argument("--jobs", type=int, default=1, help="同时跑几个批次")
+    sub.add_argument("--concurrency", type=int, default=12, help="同时工作的审核员数，所有批次合计")
+    sub.add_argument("--all", action="store_true", help="基准的全部批次")
+    sub.add_argument("--resume", action="store_true", help="接着跑同名运行：已有结论的条款不再审")
     sub.add_argument("--repeat", type=int, default=1)
     sub.add_argument("--no-read", action="store_true")
     sub.add_argument("--no-transcribe", action="store_true")
