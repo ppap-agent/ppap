@@ -26,11 +26,13 @@ uv run --no-sync python bench/pure-audit/eval.py run --revision m4 --batch "F01R
 | 选项 | 含义 |
 |---|---|
 | `--batch` | 批次名，见基准的 `batches.jsonl`；可重复 |
-| `--thinking` / `--hard-thinking` | 勘查、审核、质证的推理强度 / 专审、裁决的推理强度（默认 medium / high） |
-| `--seconds` | 每份文件审核一遍的时限（默认 1200）；专审和裁决各取一半，质证取三分之二 |
+| `--thinking` / `--hard-thinking` | 阅卷、审核、质证的推理强度 / 专审、裁决的推理强度（默认 medium / high） |
+| `--seconds` | 审一条条款的时限（默认 600）；专审和裁决同此，质证取三分之二 |
+| `--read-seconds` | 阅卷一份文件的时限（默认 360） |
+| `--concurrency` | 一个批次里同时工作的审核员数（默认 12） |
 | `--repeat` | 同样的输入重复几次，各成一次运行 |
-| `--no-survey` `--no-focus` `--no-challenge` | 关掉勘查、专审、质证（及裁决），用来看每一步带来了什么 |
-| `--experience 目录` | 审前读入、审后追加同类文件的读法经验 |
+| `--no-read` `--no-focus` `--no-challenge` `--no-transcribe` | 关掉阅卷、专审、质证（及裁决）、准备阶段的预先转写，用来看每一步带来了什么 |
+| `--experience 目录` | 审前读入、阅卷后追加同类文件的读法经验 |
 | `--source` | 把工作区的 `packages/auditor/src` 挂进容器，改代码不用重建镜像 |
 | `--build` | 先重建镜像 |
 
@@ -59,4 +61,5 @@ uv run --no-sync python bench/pure-audit/eval.py report bench/pure-audit/runs/tr
 | 质证后改变结论 / 交裁决 | 第二名审核员改判的条款，以及交第三名审核员定夺的条款 |
 | 提交被退回 | 引文对不上、声明查过的范围没看全、或结论与要点不符而被拒的提交次数 |
 | 证据 | 逐字核对通过的引文数；所见类引文数，以及其中与视觉模型独立转写一致的数量 |
-| 用量与费用 | Pi 各步骤的 token，按 [prices.json](../deep-audit/prices.json) 的公开价计算；不含转写 |
+| 耗时 | 全程和各阶段的墙上时间；一条条款从开审到定论的中位和最长秒数；各步骤的会话秒数及其中花在工具上的秒数 |
+| 用量与费用 | Pi 各步骤的 token，按 [prices.json](../deep-audit/prices.json) 的公开价计算，分步骤、分文件列出；不含转写 |

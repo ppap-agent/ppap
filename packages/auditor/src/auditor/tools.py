@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -60,8 +61,10 @@ def outline(task: Task, args: argparse.Namespace) -> None:
             print(f"  扫描页：{_ranges(scans)}。扫描页要 look render 看图，或 look ocr 辅助转写。")
         for page in range(1, original.pages + 1):
             text = original.page_text(page).strip()
-            if text:
-                print(f"  第 {page} 页 {len(text)} 字：{_flat(text, 60)}")
+            tables = "、".join(f"{len(table['rows'])} 行 × {max((len(row) for row in table['rows']), default=0)} 列" for table in original.page_tables(page))
+            notes = [f"{len(text)} 字" if text else "扫描页", f"表格 {tables}" if tables else "没有识别出表格", f"图片 {len(original.page_pictures(page))} 张"]
+            print(f"  第 {page} 页：{'，'.join(notes)}。{_flat(text, 60)}")
+        print("look page 按表格的行列读一页；页上的图片（图章、签名、勾选框、贴图的尺寸）用 look pictures 列出。")
 
 
 def _ranges(numbers: list[int]) -> str:
@@ -116,6 +119,13 @@ def cells(task: Task, args: argparse.Namespace) -> None:
     print("\n".join(lines))
     if merged := _areas(sheet, r1, c1, last, c2):
         print(f"合并区域（值只写在左上角，整块同值）：{'、'.join(merged[:60])}{' 等' if len(merged) > 60 else ''}")
+    try:
+        here = [item for item in original.drawings[0] if item.get("sheet") == sheet.name and item.get("cell")]
+    except Unreadable:
+        here = []
+    inside = [item for item in here if r1 <= parse_range(item["cell"])[0] <= last and c1 <= parse_range(item["cell"])[1] <= c2]
+    if inside:
+        print("这个区域里的图片（左上角所在的格）：" + "；".join(f"{item['cell']} {_pictured(original, item['name'])}" for item in inside[:30]) + (" 等" if len(inside) > 30 else ""))
     unshown = []
     if last < r2:
         unshown.append(f"第 {last + 1}–{r2} 行。继续：look cells {args.file!r} --sheet {sheet.name!r} --range {cell_name(last + 1, c1)}:{cell_name(r2, c2)}")
@@ -125,74 +135,168 @@ def cells(task: Task, args: argparse.Namespace) -> None:
     task.saw(args.file, kind="cells", sheet=sheet.name, area=[r1, c1, last, c2])
 
 
-def find(task: Task, args: argparse.Namespace) -> None:
-    needle = squeeze(args.text).lower()
-    if not needle:
-        raise Unreadable("要查找的文字不能为空")
-    names = list(task.files) if args.file == "*" else [args.file]
+def _hits(task: Task, name: str, needle: str, blind: set[str]) -> list[str]:
+    original = task.original(name)
+    label = original.path.name
     hits: list[str] = []
-    blind: list[str] = []
-    for name in names:
+    if original.suffix in SPREADSHEETS:
+        for sheet in original.sheets:
+            hits += [f"{label} {sheet.name}!{cell_name(*key)}={_flat(shown(value), 120)}" for key, value in sorted(sheet.values.items()) if needle in squeeze(shown(value)).lower()]
         try:
-            original = task.original(name)
-            label = original.path.name
-            task.saw(name, kind="find", text=args.text)
-            if original.suffix in SPREADSHEETS:
-                for sheet in original.sheets:
-                    hits += [f"{label} {sheet.name}!{cell_name(*key)}={_flat(shown(value), 120)}" for key, value in sorted(sheet.values.items()) if needle in squeeze(shown(value)).lower()]
-                try:
-                    hits += [
-                        f"{label} 图形文字（{shape['sheet']} {shape['cell']} 附近）：{_flat(shape['text'], 120)}"
-                        for shape in original.drawings[1]
-                        if needle in squeeze(shape.get("text") or "").lower()
-                    ]
-                except Unreadable:
-                    pass
-            elif original.suffix in WORD:
-                hits += [f"{label} paragraph:{number}：{_flat(text, 120)}" for number, text in enumerate(original.paragraphs, 1) if needle in squeeze(text).lower()]
-                hits += [
-                    f"{label} table:{t}:{r}:{c}：{_flat(text, 120)}"
-                    for t, table in enumerate(original.tables, 1)
-                    for r, row in enumerate(table, 1)
-                    for c, text in enumerate(row, 1)
-                    if needle in squeeze(text).lower()
-                ]
-            elif original.suffix in IMAGES:
-                blind.append(f"{label}（图片）")
-            else:
-                for page in range(1, original.pages + 1):
-                    text = original.page_text(page)
-                    if not text.strip():
-                        blind.append(f"{label} 第 {page} 页（扫描）")
-                    elif needle in (squeezed := squeeze(text).lower()):
-                        at = squeezed.index(needle)
-                        hits.append(f"{label} page:{page}：…{squeeze(text)[max(0, at - 30) : at + len(needle) + 30]}…")
-        except Unreadable as error:
-            blind.append(f"{name}（{error}）")
-    print(f"「{args.text}」命中 {len(hits)} 处" + ("（只列前 80 处）" if len(hits) > 80 else ""))
-    print("\n".join(hits[:80]))
+            hits += [f"{label} 图形文字（{shape['sheet']} {shape['cell']} 附近）：{_flat(shape['text'], 120)}" for shape in original.drawings[1] if needle in squeeze(shape.get("text") or "").lower()]
+        except Unreadable:
+            pass
+    elif original.suffix in WORD:
+        hits += [f"{label} paragraph:{number}：{_flat(text, 120)}" for number, text in enumerate(original.paragraphs, 1) if needle in squeeze(text).lower()]
+        hits += [
+            f"{label} table:{t}:{r}:{c}：{_flat(text, 120)}"
+            for t, table in enumerate(original.tables, 1)
+            for r, row in enumerate(table, 1)
+            for c, text in enumerate(row, 1)
+            if needle in squeeze(text).lower()
+        ]
+    elif original.suffix in IMAGES:
+        blind.add(f"{label}（图片）")
+    else:
+        for page in range(1, original.pages + 1):
+            text = original.page_text(page)
+            if not text.strip():
+                read = original.transcription(page)
+                if read and needle in squeeze(read).lower():
+                    hits.append(f"{label} page:{page}（扫描页，转写里有，须看图确认）")
+                else:
+                    blind.add(f"{label} 第 {page} 页（扫描）")
+                continue
+            cells = [
+                f"{label} page:{page} 表{t} 行{r} 列{c}：{_flat(cell, 120)}"
+                for t, table in enumerate(original.page_tables(page), 1)
+                for r, row in enumerate(table["rows"], 1)
+                for c, cell in enumerate(row, 1)
+                if needle in squeeze(cell).lower()
+            ]
+            if cells:
+                hits += cells
+            elif needle in (squeezed := squeeze(text).lower()):
+                at = squeezed.index(needle)
+                hits.append(f"{label} page:{page}：…{squeeze(text)[max(0, at - 30) : at + len(needle) + 30]}…")
+            if original.page_pictures(page):
+                blind.add(f"{label} 第 {page} 页的图片")
+    return hits
+
+
+def find(task: Task, args: argparse.Namespace) -> None:
+    names = list(task.files) if args.file == "*" else [args.file]
+    blind: set[str] = set()
+    missed: list[str] = []
+    for text in args.text:
+        needle = squeeze(text).lower()
+        if not needle:
+            continue
+        hits: list[str] = []
+        for name in names:
+            try:
+                hits += _hits(task, name, needle, blind)
+                task.saw(name, kind="find", text=text)
+            except Unreadable as error:
+                blind.add(f"{name}（{error}）")
+        if not hits:
+            missed.append(text)
+            continue
+        print(f"「{text}」{len(hits)} 处" + ("（只列前 25 处；缩小到一份文件或换更长的词）" if len(hits) > 25 else ""))
+        print("\n".join(f"  {hit}" for hit in hits[:25]))
+    if missed:
+        print(f"没有命中：{'、'.join(missed)}")
     if blind:
-        print(f"没有查到的范围（没有文字可查，不代表不存在）：{'；'.join(blind[:40])}{' 等' if len(blind) > 40 else ''}")
+        listed = sorted(blind)
+        print(f"查不到的范围（没有文字可查，不代表不存在）：{'；'.join(listed[:30])}{' 等' if len(listed) > 30 else ''}")
     print("图片、图章和扫描页里的字查不到；没有命中不等于原件里没有。")
+
+
+def _square(original: Original, page: int, rect: tuple[float, float, float, float]) -> str:
+    """Where a rectangle sits on the page, in the squares look render --grid draws."""
+    area = original._pdf[page - 1].rect
+    x, y = (rect[0] + rect[2]) / 2 / area.width, (rect[1] + rect[3]) / 2 / area.height
+    return f"{chr(65 + min(9, max(0, int(x * 10))))}{min(10, max(1, int(y * 10) + 1))}"
+
+
+def _pictured(original: Original, name: str) -> str:
+    """A picture as it is shown inside a reading: its name and, when one was already made, its transcription."""
+    read = original.picture_reading(name)
+    return f"〔图 {name}，转写（可能有错，关键内容看图）：{_flat(read, 90)}〕" if read else f"〔图 {name}〕"
 
 
 def page(task: Task, args: argparse.Namespace) -> None:
     original = task.original(args.file)
     text = original.page_text(args.page)
     if not text.strip():
-        print(f"第 {args.page} 页没有文字层（扫描页或图片）。用 look render 看图，或 look ocr 辅助转写。")
+        print(f"第 {args.page} 页没有文字层（扫描页或图片）。用 look render 看图；look ocr 给出转写，帮你知道这页写了什么、在哪。")
+        if read := original.transcription(args.page):
+            print(f"这一页已有的转写（视觉模型读的，可能有错字，关键内容要看图确认）：\n{read[:BUDGET]}")
         return
-    part = text[args.offset : args.offset + BUDGET]
-    print(f"{original.path.name} page:{args.page}（共 {original.pages} 页，本页 {len(text)} 字）")
-    print(part)
-    rest = len(text) - args.offset - len(part)
-    if rest <= 0:
-        task.saw(args.file, kind="page", page=args.page)
-    print(
-        f"未显示：本页还有 {rest} 字。继续：look page {args.file!r} {args.page} --offset {args.offset + len(part)}"
-        if rest > 0
-        else "本页文字层已全部显示。文字顺序不等于表格行序，行列关系要对照 look render 的页面图。"
-    )
+    tables = original.page_tables(args.page)
+    if args.raw or not tables:
+        part = text[args.offset : args.offset + BUDGET]
+        print(f"{original.path.name} page:{args.page}（共 {original.pages} 页，本页 {len(text)} 字，文字层原顺序）")
+        print(part)
+        rest = len(text) - args.offset - len(part)
+        if rest <= 0:
+            task.saw(args.file, kind="page", page=args.page)
+        print(
+            f"未显示：本页还有 {rest} 字。继续：look page {args.file!r} {args.page} --raw --offset {args.offset + len(part)}"
+            if rest > 0
+            else "本页文字层已全部显示。文字顺序不等于表格行序，行列关系要对照 look render 的页面图。"
+        )
+        return
+    placed: dict[tuple[int, int, int], list[str]] = {}
+    loose = []
+    for item in original.page_pictures(args.page):
+        if item["cell"]:
+            placed.setdefault(item["cell"], []).append(item["name"])
+        else:
+            loose.append(item)
+    print(f"{original.path.name} page:{args.page}（共 {original.pages} 页）。按表格的行列读：每格写成 列号=内容，空格不列出，〔图 名称〕是放在格里的图片。")
+    used, whole = 0, not args.table and args.start == 1
+    for index, table in enumerate(tables, 1):
+        if args.table and index != args.table:
+            continue
+        rows = table["rows"]
+        print(f"表 {index}：{len(rows)} 行 × {max((len(row) for row in rows), default=0)} 列")
+        blank: list[int] = []
+        number = args.start if args.table == index else 1
+        while number <= len(rows):
+            cells = {column: [_flat(cell)] for column, cell in enumerate(rows[number - 1], 1) if cell}
+            for (t, r, column), names in placed.items():
+                if (t, r) == (index, number):
+                    cells.setdefault(column, []).extend(_pictured(original, name) for name in names)
+            parts = [f"{column}={' '.join(texts)}" for column, texts in sorted(cells.items())]
+            line = f"行{number} | " + " | ".join(parts)
+            if used and used + len(line) > BUDGET:
+                break
+            if parts:
+                if blank:
+                    print(f"（行 {_ranges(blank)} 为空）")
+                    blank = []
+                print(line)
+                used += len(line)
+            else:
+                blank.append(number)
+            number += 1
+        if blank:
+            print(f"（行 {_ranges(blank)} 为空）")
+        if number <= len(rows):
+            whole = False
+            print(f"未显示：表 {index} 的行 {number}–{len(rows)} 以及之后的内容。继续：look page {args.file!r} {args.page} --table {index} --start {number}")
+            break
+    else:
+        if outside := original.page_outside(args.page):
+            print(f"表外文字：\n{outside[:3000]}")
+        if loose:
+            print("表外图片：" + "、".join(f"{_pictured(original, item['name'])}（网格 {_square(original, args.page, item['rect'])}）" for item in loose))
+        if whole:
+            task.saw(args.file, kind="page", page=args.page)
+            print("本页的表格和表外文字已全部显示。合并的格只在左上角有内容；表格线画得不规整时行列可能错位，拿不准就 look render 看页面图。图片里的内容要看图。")
+        else:
+            print(f"只显示了一部分；整页读完才能声明查过 page:{args.page}。")
 
 
 def paragraphs(task: Task, args: argparse.Namespace) -> None:
@@ -236,7 +340,13 @@ def _drawings(original: Original, brief: bool = False) -> None:
         return
     print(f"{original.path.name}：内嵌图片 {len(pictures)} 张")
     for item in pictures:
-        print(f"  image:{item['name']}  位置：{(item['sheet'] + ' ' + (item['cell'] or '')) if item['sheet'] else '未知'}")
+        if "rect" in item:
+            x0, y0, x1, y1 = item["rect"]
+            at = f"第 {item['page']} 页 " + (f"表{item['cell'][0]} 行{item['cell'][1]} 列{item['cell'][2]}" if item["cell"] else "表外") + f"，网格 {_square(original, item['page'], item['rect'])}"
+            small = "，很小，多半是勾选框或符号" if max(x1 - x0, y1 - y0) < 9 else ""
+            print(f"  image:{item['name']}  位置：{at}{small}")
+        else:
+            print(f"  image:{item['name']}  位置：{(item['sheet'] + ' ' + (item['cell'] or '')) if item['sheet'] else '未知'}")
     drawn = [shape for shape in shapes if shape["kind"] == "图形"]
     print(f"绘制的图形 {len(drawn)} 个，连线 {len(shapes) - len(drawn)} 条")
     for shape in drawn[:200]:
@@ -298,9 +408,9 @@ def ocr(task: Task, args: argparse.Namespace) -> None:
 
 def submit(task: Task, args: argparse.Namespace) -> None:
     try:
-        verdicts = json.loads(Path(args.path).read_text(encoding="utf-8"))
+        verdicts = json.loads(sys.stdin.read() if args.path == "-" else Path(args.path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
-        raise Unreadable(f"读不了结论文件 {args.path}（{type(error).__name__}）") from None
+        raise Unreadable(f"结论不是合法的 JSON（{type(error).__name__}：{str(error)[:160]}）") from None
     for clause, problems in task.record(verdicts):
         print(f"{clause}：已记录" if not problems else f"{clause}：被退回，没有记录\n  - " + "\n  - ".join(problems))
     status(task, args)
@@ -325,6 +435,27 @@ def status(task: Task, _args: argparse.Namespace) -> None:
 def note(task: Task, args: argparse.Namespace) -> None:
     problem = task.note(args.topic, args.fact, {"file": args.file, "where": args.where, "quote": args.quote, "seen": args.seen})
     print(f"没有记下：{problem}" if problem else f"已记入案卷：{args.topic} — {args.fact}")
+
+
+def notes(task: Task, args: argparse.Namespace) -> None:
+    kept = [item for item in task.notes() if (not args.file or item["file"] == task.name(args.file)) and (not args.topic or args.topic in item["topic"] or args.topic in item["fact"])]
+    for item in kept:
+        print(f"[{item['file']} {item['where']}] {item['topic']}：{item['fact']}")
+    print(f"案卷里符合的事实 {len(kept)} 条。每条的出处都重新核对过；用到关键事实时仍要自己到出处看一眼。")
+
+
+def _clock(task: Task) -> None:
+    """Tell the auditor how much time is left: a verdict not submitted in time is a clause not audited."""
+    try:
+        left, total = float(os.environ["AUDIT_DEADLINE"]) - time.time(), float(os.environ["AUDIT_SECONDS"])
+    except (KeyError, ValueError):
+        return
+    if task.phase == "read":
+        print(f"〔剩余 {max(0, int(left))} 秒〕" if left > total * 0.25 else f"〔剩余 {max(0, int(left))} 秒：把已经确认的事实记入案卷，然后结束。〕")
+    elif left > total * 0.4:
+        print(f"〔剩余 {int(left)} 秒〕")
+    else:
+        print(f"〔剩余 {max(0, int(left))} 秒：现在就按已经读到的写出结论并提交；还确定不了的要点写 unknown 并说明缺什么。没有提交等于没有审。〕")
 
 
 def remember(task: Task, args: argparse.Namespace) -> None:
@@ -353,12 +484,15 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_argument("--sheet")
     sub.add_argument("--range", help="如 A1:Q60；不写则从头读")
     sub.add_argument("--rows", type=int, default=80, help="一次最多读多少行")
-    sub = command("find", find, "在一份文件（或 * 表示本批全部文件）里查找文字")
+    sub = command("find", find, "在一份文件（或 * 表示本批全部文件）里查找文字，可一次查多个词")
     sub.add_argument("file")
-    sub.add_argument("text")
-    sub = command("page", page, "读 PDF 一页的文字层")
+    sub.add_argument("text", nargs="+")
+    sub = command("page", page, "读 PDF 的一页：有表格按行列读，没有表格读文字层")
     sub.add_argument("file")
     sub.add_argument("page", type=int)
+    sub.add_argument("--table", type=int, help="只读这一张表")
+    sub.add_argument("--start", type=int, default=1, help="配合 --table：从第几行读起")
+    sub.add_argument("--raw", action="store_true", help="读文字层的原顺序")
     sub.add_argument("--offset", type=int, default=0)
     sub = command("paragraphs", paragraphs, "读 Word 的段落")
     sub.add_argument("file")
@@ -389,11 +523,14 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_argument("--where", required=True)
     sub.add_argument("--quote", required=True)
     sub.add_argument("--seen", action="store_true", help="所见类：图章、签名、扫描页上的内容")
+    sub = command("notes", notes, "读案卷：同批审核员记下的、带出处的事实")
+    sub.add_argument("file", nargs="?")
+    sub.add_argument("--topic")
     command("remember", remember, "记下一条这类文件的读法经验").add_argument("lesson")
     sub = command("uphold", uphold, "质证后维持一条结论")
     sub.add_argument("clause")
     sub.add_argument("reason")
-    command("submit", submit, "提交结论（一个结论或一组结论的 JSON 文件）").add_argument("path")
+    command("submit", submit, "提交结论：JSON 文件的路径，或 - 表示从标准输入读").add_argument("path")
     command("status", status, "哪些条款还没有结论")
 
     warnings.filterwarnings("ignore")
@@ -403,6 +540,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         task = Task()
         args.run(task, args)
+        _clock(task)
     except Unreadable as error:
         outcome = "unreadable"
         print(f"读不了：{error}")
@@ -412,7 +550,7 @@ def main(argv: list[str] | None = None) -> int:
             (Path(".") / STATE).mkdir(exist_ok=True)
             entry = {key: value for key, value in vars(args).items() if key != "run" and value is not None}
             with (Path(".") / STATE / "looks.jsonl").open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps({**entry, "outcome": outcome, "seconds": round(time.time() - started, 2)}, ensure_ascii=False) + "\n")
+                stream.write(json.dumps({**entry, "phase": os.environ.get("AUDIT_PHASE", "audit"), "outcome": outcome, "seconds": round(time.time() - started, 2)}, ensure_ascii=False) + "\n")
         except OSError:
             pass
     return 0 if outcome == "ok" else 1

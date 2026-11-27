@@ -6,6 +6,7 @@ Locations are written the way an auditor would write them:
     工作表名!B7        one cell (a merged cell reads as its top-left cell)
     工作表名!A5:F9     a range
     page:3             a PDF page (text layer, or what is seen when the page is a scan)
+    image:p3-2         the second picture placed on page 3 of a PDF
     paragraph:12       a Word paragraph, from 1
     table:1:3:2        a Word table cell: table, row, column, from 1
     image:xl/media/image2.emf   a picture embedded in the original
@@ -14,6 +15,7 @@ Locations are written the way an auditor would write them:
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import os
 import re
@@ -249,6 +251,8 @@ class Original:
             raise Unreadable(f"没有这份文件：{path}")
         self.suffix = self.path.suffix.lower()
         self.scratch = Path(scratch) / ".derived" / self.path.name
+        self._tables: dict[int, list[dict[str, Any]]] = {}
+        self._pictures: dict[int, list[dict[str, Any]]] = {}
 
     # Spreadsheets
 
@@ -308,6 +312,62 @@ class Original:
             raise Unreadable(f"{self.path.name} 没有第 {page} 页（共 {self.pages} 页）")
         return "" if self.suffix in IMAGES else self._pdf[page - 1].get_text()
 
+    def page_tables(self, page: int) -> list[dict[str, Any]]:
+        """The ruled tables of a PDF page: rows of cell texts, with each cell's rectangle (None where merged away)."""
+        if self.suffix != ".pdf":
+            return []
+        if page not in self._tables:
+            found = []
+            try:
+                for table in self._pdf[page - 1].find_tables().tables:
+                    found.append({"bbox": tuple(table.bbox), "rows": [[(cell or "").strip() for cell in row] for row in table.extract()], "cells": [list(row.cells) for row in table.rows]})
+            except Exception:
+                # Table finding is a reading aid: a page it cannot analyse is still read as text.
+                found = []
+            self._tables[page] = found
+        return self._tables[page]
+
+    def page_pictures(self, page: int) -> list[dict[str, Any]]:
+        """Every picture placed on a PDF page, top to bottom: name, rectangle, and the table cell it sits in."""
+        if self.suffix != ".pdf":
+            return []
+        if page not in self._pictures:
+            sheet = self._pdf[page - 1]
+            placed = []
+            for image in sheet.get_images(full=True):
+                try:
+                    placed += [rect for rect in sheet.get_image_rects(image[0]) if rect.width > 0 and rect.height > 0]
+                except Exception:
+                    continue
+            unique = sorted({(round(rect.y0, 1), round(rect.x0, 1), round(rect.y1, 1), round(rect.x1, 1)) for rect in placed})
+            found = []
+            for number, (y0, x0, y1, x1) in enumerate(unique, 1):
+                at = None
+                middle = ((x0 + x1) / 2, (y0 + y1) / 2)
+                for index, table in enumerate(self.page_tables(page), 1):
+                    for row, cells in enumerate(table["cells"], 1):
+                        for column, box in enumerate(cells, 1):
+                            if box and box[0] <= middle[0] <= box[2] and box[1] <= middle[1] <= box[3]:
+                                at = (index, row, column)
+                found.append({"name": f"p{page}-{number}", "page": page, "rect": (x0, y0, x1, y1), "cell": at, "sheet": None})
+            self._pictures[page] = found
+        return self._pictures[page]
+
+    def page_outside(self, page: int) -> str:
+        """The text of a PDF page that lies outside its tables."""
+        boxes = [table["bbox"] for table in self.page_tables(page)]
+        kept = []
+        for block in self._pdf[page - 1].get_text("blocks"):
+            x, y = (block[0] + block[2]) / 2, (block[1] + block[3]) / 2
+            if block[6] == 0 and not any(box[0] <= x <= box[2] and box[1] <= y <= box[3] for box in boxes):
+                kept.append(str(block[4]).strip())
+        return "\n".join(text for text in kept if text)
+
+    def transcription(self, page: int) -> str | None:
+        """What the vision model read on a page, when that reading was already made. Never asks the model."""
+        note = _cached(self.scratch / f"page-{page}-200.png", "")
+        return note.read_text(encoding="utf-8") if note.is_file() else None
+
     def render(self, page: int = 1, dpi: int = 110, clip: tuple[float, float, float, float] | None = None, grid: bool = False) -> Path:
         """A page as a picture. ``clip`` is left, top, right, bottom as fractions of the page, to look closer.
 
@@ -344,7 +404,7 @@ class Original:
             for step in range(10):
                 pen.text((image.width * step // 10 + 4, 2), chr(65 + step), fill=(220, 0, 0), font=font)
                 pen.text((2, image.height * step // 10 + 4), str(step + 1), fill=(220, 0, 0), font=font)
-        image.save(out)
+        _save(image, out)
         return out
 
     # Embedded pictures and drawn shapes
@@ -362,6 +422,8 @@ class Original:
 
     @cached_property
     def drawings(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if self.suffix == ".pdf":
+            return [item for page in range(1, self.pages + 1) for item in self.page_pictures(page)], []
         if self._package.suffix.lower() == ".docx":
             with zipfile.ZipFile(self._package) as archive:
                 return [{"name": name, "sheet": None, "cell": None} for name in archive.namelist() if "/media/" in name and not name.endswith("/")], []
@@ -371,11 +433,21 @@ class Original:
         """An embedded picture as PNG; EMF and WMF are drawn by LibreOffice first."""
         from PIL import Image
 
-        if name not in {item["name"] for item in self.drawings[0]}:
+        placed = {item["name"]: item for item in self.drawings[0]}
+        if name not in placed:
             raise Unreadable(f"{self.path.name} 没有内嵌图片 {name}")
         self.scratch.mkdir(parents=True, exist_ok=True)
         out = self.scratch / (name.replace("/", "_").rsplit(".", 1)[0] + ".png")
         if out.is_file():
+            return out
+        if self.suffix == ".pdf":
+            import fitz
+
+            # Drawn from the page, so masks, rotation and what is written over the picture come out as printed.
+            x0, y0, x1, y1 = placed[name]["rect"]
+            zoom = min(10.0, max(2.0, 700 / max(x1 - x0, y1 - y0)))
+            pixels = self._pdf[placed[name]["page"] - 1].get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=fitz.Rect(x0 - 2, y0 - 2, x1 + 2, y1 + 2))
+            _save(Image.open(io.BytesIO(pixels.tobytes("png"))).convert("RGB"), out)
             return out
         with zipfile.ZipFile(self._package) as archive:
             content = archive.read(name)
@@ -385,8 +457,55 @@ class Original:
             return convert(raw, "png", self.scratch)
         image = Image.open(io.BytesIO(content)).convert("RGB")
         image.thumbnail((MAX_PIXELS, MAX_PIXELS))
-        image.save(out)
+        _save(image, out)
         return out
+
+    def picture_reading(self, name: str) -> str | None:
+        """What the vision model read in an embedded picture, when that reading was already made."""
+        note = _cached(self.scratch / (name.replace("/", "_").rsplit(".", 1)[0] + ".png"), "")
+        return note.read_text(encoding="utf-8") if note.is_file() else None
+
+    def warm(self, read: bool = True, limit: int = 60) -> dict[str, int]:
+        """Make once what every auditor of the batch would otherwise make again: conversions, page tables,
+        and the vision model's reading of scanned pages and embedded pictures."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        made = {"pages": 0, "pictures": 0, "transcriptions": 0}
+        wanted: list[Path] = []
+        try:
+            if self.suffix in SPREADSHEETS | WORD:
+                pictures = self.drawings[0]
+            elif self.suffix in IMAGES:
+                pictures = []
+                wanted.append(self.render(1, 200))
+            else:
+                pictures = self.drawings[0]
+                for page in range(1, self.pages + 1):
+                    self.page_tables(page)
+                    made["pages"] += 1
+                    if not self.page_text(page).strip():
+                        wanted.append(self.render(page, 200))
+            for item in pictures[:limit]:
+                if "rect" in item and max(item["rect"][2] - item["rect"][0], item["rect"][3] - item["rect"][1]) < 9:
+                    continue
+                try:
+                    wanted.append(self.picture(item["name"]))
+                    made["pictures"] += 1
+                except Unreadable:
+                    continue
+        except Unreadable:
+            return made
+        if read and wanted:
+
+            def one(picture: Path) -> int:
+                try:
+                    return 1 if transcribe(picture) else 0
+                except Unreadable:
+                    return 0
+
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                made["transcriptions"] = sum(pool.map(one, wanted))
+        return made
 
     # Citations
 
@@ -398,7 +517,10 @@ class Original:
         where = where.strip()
         kind, _, rest = where.partition(":")
         if kind == "page" and rest.isdigit():
-            return self.page_text(int(rest)).strip() or None
+            text = self.page_text(int(rest)).strip()
+            # A cell read from the page's table is the same text in table order: either reading may be quoted.
+            by_cell = "\n".join(cell for table in self.page_tables(int(rest)) for row in table["rows"] for cell in row if cell)
+            return f"{text}\n{by_cell}" if text else None
         if kind == "paragraph" and rest.isdigit():
             if not 1 <= int(rest) <= len(self.paragraphs):
                 raise Unreadable(f"{self.path.name} 没有第 {rest} 段（共 {len(self.paragraphs)} 段）")
@@ -427,9 +549,27 @@ class Original:
         raise Unreadable(f"位置写法不对：{where}（应如 工作表名!B7、page:3、paragraph:12、table:1:3:2、image:名称）")
 
 
+def _save(image: Any, out: Path) -> None:
+    """Write a derived picture whole: several auditors share the derived files."""
+    part = out.with_name(f".{os.getpid()}-{out.name}")
+    image.save(part)
+    os.replace(part, out)
+
+
+def _cached(picture: Path, ask: str) -> Path:
+    return picture.with_name(f"{picture.name}.{hashlib.sha1(ask.encode()).hexdigest()[:8]}.txt")
+
+
 def transcribe(picture: Path, ask: str = "") -> str:
-    """Ask the vision model to transcribe a picture. A transcription is a reading aid, not the original's text."""
+    """Ask the vision model to transcribe a picture. A transcription is a reading aid, not the original's text.
+
+    The same picture and question are asked once: the answer is kept beside the picture.
+    """
     import httpx
+
+    kept = _cached(picture, ask)
+    if kept.is_file():
+        return kept.read_text(encoding="utf-8")
 
     base, key, model = (os.environ.get(f"PPAP_MODEL_VISION_{name}", "") for name in ("BASE_URL", "API_KEY", "MODEL"))
     if not (base and key and model):
@@ -449,4 +589,9 @@ def transcribe(picture: Path, ask: str = "") -> str:
         output = response.json().get("output", [])
     except (httpx.HTTPError, ValueError) as error:
         raise Unreadable(f"转写失败（{type(error).__name__}）；请直接查看图片") from None
-    return "".join(part.get("text", "") for item in output if isinstance(item, dict) for part in item.get("content") or [] if isinstance(part, dict)).strip()
+    text = "".join(part.get("text", "") for item in output if isinstance(item, dict) for part in item.get("content") or [] if isinstance(part, dict)).strip()
+    if text:
+        part = kept.with_name(f".{os.getpid()}-{kept.name}")
+        part.write_text(text, encoding="utf-8")
+        os.replace(part, kept)
+    return text

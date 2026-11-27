@@ -16,8 +16,8 @@ docker build -f deploy/auditor/Dockerfile -t ppap-auditor:dev .
 
 | 项 | 给法 |
 |---|---|
-| Pi 的模型配置 | 把 Pi 的 agent 目录只读挂到容器里，并设 `AUDITOR_PI_SOURCE` 指向它。启动时复制到容器内的临时目录再用（Pi 要在配置旁写锁文件）。 |
-| 转写用的视觉模型 | `PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_API_KEY`、`PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_REASONING_EFFORT`，与产品同名同义。不给则 `look ocr` 不可用，审核员直接看图。 |
+| Pi 的模型配置 | 把 Pi 的 agent 目录只读挂到容器里，并设 `AUDITOR_PI_SOURCE` 指向它。启动时复制到容器内的临时目录再用（Pi 要在配置旁写锁文件），并在副本里声明模型接受图片。 |
+| 转写用的视觉模型 | `PPAP_MODEL_VISION_BASE_URL`、`PPAP_MODEL_VISION_API_KEY`、`PPAP_MODEL_VISION_MODEL`、`PPAP_MODEL_VISION_REASONING_EFFORT`，与产品同名同义。不给则没有转写（准备阶段的预先转写和 `look ocr`），审核员直接看图。 |
 | 批次目录 | 挂到容器里，作为 `python -m auditor.run` 的参数。 |
 
 这是实验环境：容器直接持有模型凭据并能联网，审核员用 Pi 的 `bash` 运行 `look`。它没有 Deep 的网关、短期凭证和沙箱，不能直接用于客户数据的线上审核。

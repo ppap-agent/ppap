@@ -49,8 +49,12 @@ class Task:
         self.files: dict[str, Path] = {item["name"]: self.work / item["path"] for item in files}
         self.clauses: list[str] = [rule["id"] for rule in rules["rules"]]
         self.state = self.work / STATE
-        # survey, audit or challenge: which pass of the work a record belongs to.
+        # read, audit, focus, challenge or arbitrate: which pass of the work a record belongs to.
         self.phase = os.environ.get("AUDIT_PHASE", "audit")
+        # What is derived from the originals (renders, transcriptions) is shared by every auditor of the batch.
+        self.cache = Path(os.environ.get("AUDIT_CACHE") or self.work / "scratch")
+        # The dossier is the batch's too: a fact one auditor notes is there for the next.
+        self.dossier = Path(os.environ.get("AUDIT_DOSSIER") or self.state / "notes.jsonl")
         self._originals: dict[str, Original] = {}
 
     def name(self, file: str) -> str:
@@ -65,7 +69,7 @@ class Task:
     def original(self, file: str) -> Original:
         name = self.name(file)
         if name not in self._originals:
-            self._originals[name] = Original(self.files[name], self.work / "scratch")
+            self._originals[name] = Original(self.files[name], self.cache)
         return self._originals[name]
 
     def _append(self, name: str, entry: dict[str, Any]) -> None:
@@ -141,7 +145,8 @@ class Task:
             text = self.original(name).text_at(where)
         except Unreadable as error:
             return str(error)
-        if item.get("seen") is True or text is None:
+        # A stored citation says "verified": "seen"; one being submitted says "seen": true. Both are the same claim.
+        if item.get("seen") is True or item.get("verified") == "seen" or text is None:
             # What is seen (a stamp, a signature, a drawn symbol, a scanned page) has no text to compare.
             if not where.startswith(("page:", "image:")):
                 return "所见类证据（seen）只能引用 page: 或 image: 位置；单元格和段落要逐字引用原值"
@@ -162,8 +167,8 @@ class Task:
             problems.append(f"result 只能是 {' / '.join(RESULTS)}")
         evidence = point.get("evidence") or []
         searched = point.get("searched") or []
-        if not isinstance(evidence, list) or not isinstance(searched, list) or len(evidence) > 12 or len(searched) > 40:
-            return None, ["evidence 最多 12 项，searched 最多 40 项，都是列表"]
+        if not isinstance(evidence, list) or not isinstance(searched, list) or len(evidence) > 20 or len(searched) > 60:
+            return None, [f"要点「{point['need'][:30]}」：evidence 最多 20 项，searched 最多 60 项。只留最能说明问题的几项，其余写进 why"]
         cited = []
         for number, item in enumerate(evidence, 1):
             outcome = self.citation(item)
@@ -276,11 +281,18 @@ class Task:
             return outcome
         if not topic.strip() or not fact.strip():
             return "topic 和 fact 不能为空"
-        self._append("notes.jsonl", {"topic": topic.strip(), "fact": fact.strip(), **outcome})
+        self.dossier.parent.mkdir(parents=True, exist_ok=True)
+        with self.dossier.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"topic": topic.strip(), "fact": fact.strip(), **outcome, "by": f"{self.work.name}/{self.phase}"}, ensure_ascii=False) + "\n")
         return None
 
     def notes(self) -> list[dict[str, Any]]:
-        return [note for note in _lines(self.state / "notes.jsonl") if isinstance(note, dict) and not isinstance(self.citation(note), str)]
+        """The dossier, each fact read again from its source; the same fact noted twice is kept once."""
+        kept: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for note in _lines(self.dossier):
+            if isinstance(note, dict) and not isinstance(self.citation(note), str):
+                kept.setdefault((note["file"], note["where"], squeeze(note["fact"])), note)
+        return list(kept.values())
 
     def remember(self, lesson: str) -> None:
         """A lesson about how to read this kind of document, for the next audit of the kind. Never a verdict."""

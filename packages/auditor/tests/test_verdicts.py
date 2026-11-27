@@ -93,3 +93,22 @@ def test_recorded_verdicts_are_read_again_and_the_last_one_stands(work: Path) ->
 def test_seen_evidence_is_for_pages_and_pictures_only(work: Path) -> None:
     refused, problems = Task().check(verdict("PASS", {"need": "有受控章", "result": "met", "evidence": [{**cite("流程!A2", "受控"), "seen": True}]}))
     assert refused is None and "所见类证据" in problems[0]
+
+
+def test_what_was_seen_on_a_page_with_text_is_still_on_record_when_read_again(work: Path) -> None:
+    import fitz
+
+    document = fitz.open()
+    document.new_page().insert_text((72, 72), "Control Plan")
+    document.save(work / "files" / "02.pdf")
+    (work / "files.json").write_text(json.dumps([{"name": "01.xlsx", "path": "files/01.xlsx"}, {"name": "02.pdf", "path": "files/02.pdf"}]), encoding="utf-8")
+    task = Task()
+    stamp = {"file": "02.pdf", "where": "page:1", "quote": "右上角红色受控章", "seen": True}
+    assert task.record(verdict("PASS", {"need": "有受控章", "result": "met", "evidence": [stamp]})) == [("PFD:1", [])]
+    assert task.recorded()["PFD:1"]["points"][0]["evidence"][0]["verified"] == "seen"
+
+
+def test_each_word_of_one_search_counts_as_searched(work: Path) -> None:
+    assert tools.main(["find", "01.xlsx", "返工", "报废"]) == 0
+    absent = verdict("NG", {"need": "有异常处理节点", "result": "unmet", "why": "没有", "searched": [{"file": "01.xlsx", "where": "find:返工"}, {"file": "01.xlsx", "where": "find:报废"}]})
+    assert Task().check(absent)[0] is not None

@@ -123,7 +123,8 @@ def run(args: argparse.Namespace) -> None:
             "thinking": args.thinking,
             "hard_thinking": args.hard_thinking,
             "seconds": args.seconds,
-            "survey": not args.no_survey,
+            "concurrency": args.concurrency,
+            "read": not args.no_read,
             "challenge": not args.no_challenge,
             "experience": bool(args.experience),
             "commit": subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip(),
@@ -141,8 +142,8 @@ def run(args: argparse.Namespace) -> None:
                 if args.source:
                     command += ["-v", f"{ROOT / 'packages' / 'auditor' / 'src'}:/opt/auditor:ro"]
                 options = ["--model", args.model, "--thinking", args.thinking, "--hard-thinking", args.hard_thinking, "--seconds", str(args.seconds), "--concurrency", str(args.concurrency)]
-                options += ["--survey-seconds", str(args.survey_seconds)]
-                options += [flag for flag, on in (("--no-survey", args.no_survey), ("--no-challenge", args.no_challenge), ("--no-focus", args.no_focus)) if on]
+                options += ["--read-seconds", str(args.read_seconds)]
+                options += [flag for flag, on in (("--no-read", args.no_read), ("--no-challenge", args.no_challenge), ("--no-focus", args.no_focus), ("--no-transcribe", args.no_transcribe)) if on]
                 if args.experience:
                     experience = Path(args.experience).resolve()
                     experience.mkdir(parents=True, exist_ok=True)
@@ -156,7 +157,7 @@ def run(args: argparse.Namespace) -> None:
                     print(f"{batch}：整批失败，见 {work / 'container.log'}", file=sys.stderr)
                     return [{"kind": "failed", "batch": batch, "seconds": round(time.time() - started)}]
                 result = json.loads((work / "results.json").read_text(encoding="utf-8"))
-                rows.append({"kind": "survey", "batch": batch, **result["survey"]})
+                rows.append({"kind": "batch", "batch": batch, "wall": result["wall"], "prepare": result["prepare"], "notes": result["notes"], "steps": result["other_steps"]})
                 for target in result["targets"]:
                     source = names[target["name"]]
                     rows.append(
@@ -194,7 +195,8 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
     verdicts = {(row["batch"], row["file"], row["clause"]): row for row in rows if row["kind"] == "verdict"}
     prices = json.loads(PRICES.read_text(encoding="utf-8"))["models"]
     files = [row for row in rows if row["kind"] == "file"]
-    steps = [step for row in files for step in row["steps"]] + [row["step"] for row in rows if row["kind"] == "survey" and row.get("step")]
+    batches = [row for row in rows if row["kind"] == "batch"]
+    steps = [step for row in [*files, *batches] for step in row["steps"]]
     table: Counter[tuple[str, str]] = Counter()
     first_agree = final_agree = 0
     differences = []
@@ -215,6 +217,20 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
         phase["timed_out"] += bool(step["timed_out"])
         phase["requests"] += step["requests"]
         phase["tool_calls"] += step["tool_calls"]
+        phase["look_seconds"] += step.get("look_seconds", 0)
+        phase["cached"] += step["cached_input_tokens"]
+        phase["output"] += step["output_tokens"]
+        phase["cents"] += round(_cost([step], prices, meta["model"]) * 100)
+    wall = {key: sum(row["wall"][key] for row in batches) for key in ("total", "prepare", "read", "audit")} if batches else {}
+    spent = sorted(verdict["seconds"] for verdict in verdicts.values() if "seconds" in verdict)
+    per_file = []
+    for row in files:
+        mine = {key: verdict for key, verdict in verdicts.items() if key[:2] == (row["batch"], row["file"])}
+        own = list(mine.values())
+        done = [verdict for verdict in own if not verdict.get("unaudited")]
+        agree = sum(1 for key, verdict in mine.items() if reference.get(key, {}).get("verdict") == verdict["status"])
+        dollars = round(_cost(row["steps"], prices, meta["model"]), 2)
+        per_file.append(f"| {Path(row['file']).name[:40]} | {row['document_type']} | {len(own)} | {len(done)} | {agree} | {sum(step['seconds'] for step in row['steps'])} | {dollars} |")
     summary = {
         "name": meta["name"],
         "rows": len(reference),
@@ -236,6 +252,10 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
             "seen_checked": sum(1 for item in seen if "transcription_agrees" in item),
         },
         "failed_batches": [row["batch"] for row in rows if row["kind"] == "failed"],
+        "wall": wall,
+        "prepare": {key: sum(row["prepare"].get(key, 0) for row in batches) for key in ("pages", "pictures", "transcriptions")},
+        "notes": sum(row["notes"] for row in batches),
+        "clause_seconds": {"median": spent[len(spent) // 2], "max": spent[-1]} if spent else {},
         "cost_usd": round(_cost(steps, prices, meta["model"]), 3),
         "tokens": {key: sum(step[key] for step in steps) for key in ("input_tokens", "cached_input_tokens", "output_tokens")},
         "phases": {phase: dict(counts) for phase, counts in by_phase.items()},
@@ -244,10 +264,20 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
     lines = [
         f"# {meta['name']}",
         "",
-        f"修订 {meta['revision']}，模型 {meta['model']}，推理强度 {meta['thinking']}（专审与裁决 {meta['hard_thinking']}），每份文件审核时限 {meta['seconds']} 秒。"
-        f"勘查{'开' if meta['survey'] else '关'}，质证{'开' if meta['challenge'] else '关'}，经验{'开' if meta['experience'] else '关'}。",
+        f"修订 {meta['revision']}，模型 {meta['model']}，推理强度 {meta['thinking']}（专审与裁决 {meta['hard_thinking']}），每条条款审核时限 {meta['seconds']} 秒，"
+        f"同时 {meta.get('concurrency', '?')} 名审核员。"
+        f"阅卷{'开' if meta.get('read', meta.get('survey')) else '关'}，质证{'开' if meta['challenge'] else '关'}，经验{'开' if meta['experience'] else '关'}。",
         "参考判定是模型判定，不是人工真值：下面只是差异，不是准确率。",
         "",
+        *(
+            [
+                f"- 耗时：全程 {wall['total']} 秒（准备 {wall['prepare']}，阅卷 {wall['read']}，审核到裁决 {wall['audit']}）；"
+                f"一条条款从开审到定论中位 {summary['clause_seconds'].get('median', '?')} 秒，最长 {summary['clause_seconds'].get('max', '?')} 秒",
+                f"- 准备：分析 PDF {summary['prepare']['pages']} 页，取出图片 {summary['prepare']['pictures']} 张，预先转写 {summary['prepare']['transcriptions']} 处；案卷 {summary['notes']} 条",
+            ]
+            if wall
+            else []
+        ),
         f"- 对照行数：{summary['rows']}；与参考一致：{final_agree}（第一遍审核后为 {first_agree}）",
         f"- 结论分布：{'、'.join(f'{STATUS.get(key, key)} {value}' for key, value in summary['statuses'].items())}；"
         f"参考：{'、'.join(f'{STATUS.get(key, key)} {value}' for key, value in summary['reference_statuses'].items())}",
@@ -256,9 +286,16 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
         f"- 证据：逐字核对通过 {summary['citations']['text']} 项；所见类 {summary['citations']['seen']} 项，其中经视觉模型转写印证 {summary['citations']['seen_transcription_agrees']}/{summary['citations']['seen_checked']} 项",  # noqa: E501
         f"- 用量：输入 {summary['tokens']['input_tokens']}（另缓存命中 {summary['tokens']['cached_input_tokens']}），输出 {summary['tokens']['output_tokens']}；按公开价约 {summary['cost_usd']} 美元（不含转写）",  # noqa: E501
         "",
-        "| 步骤 | 次数 | 合计秒 | 超时 | 模型请求 | 工具调用 |",
-        "|---|---|---|---|---|---|",
-        *(f"| {phase} | {counts['runs']} | {counts['seconds']} | {counts['timed_out']} | {counts['requests']} | {counts['tool_calls']} |" for phase, counts in by_phase.items()),
+        "| 步骤 | 次数 | 合计秒 | 其中工具秒 | 超时 | 模型请求 | 工具调用 | 缓存输入 | 输出 | 约美元 |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+        *(
+            f"| {phase} | {counts['runs']} | {counts['seconds']} | {counts['look_seconds']} | {counts['timed_out']} | {counts['requests']} | {counts['tool_calls']} | {counts['cached']} | {counts['output']} | {counts['cents'] / 100:.2f} |"  # noqa: E501
+            for phase, counts in by_phase.items()
+        ),
+        "",
+        "| 文件 | 类型 | 条款 | 有结论 | 与参考一致 | 会话秒 | 约美元 |",
+        "|---|---|---|---|---|---|---|",
+        *per_file,
         "",
         "| 参考 → 本次 | 条数 |",
         "|---|---|",
@@ -316,12 +353,13 @@ def main() -> None:
     sub.add_argument("--model", default="local/grok-4.7")
     sub.add_argument("--thinking", default="medium")
     sub.add_argument("--hard-thinking", default="high")
-    sub.add_argument("--seconds", type=int, default=1200)
-    sub.add_argument("--survey-seconds", type=int, default=600)
-    sub.add_argument("--concurrency", type=int, default=3, help="一个批次里同时审核几份文件")
+    sub.add_argument("--seconds", type=int, default=600, help="审一条条款的时限")
+    sub.add_argument("--read-seconds", type=int, default=360, help="阅卷一份文件的时限")
+    sub.add_argument("--concurrency", type=int, default=12, help="一个批次里同时工作的审核员数")
     sub.add_argument("--jobs", type=int, default=1, help="同时跑几个批次")
     sub.add_argument("--repeat", type=int, default=1)
-    sub.add_argument("--no-survey", action="store_true")
+    sub.add_argument("--no-read", action="store_true")
+    sub.add_argument("--no-transcribe", action="store_true")
     sub.add_argument("--no-focus", action="store_true")
     sub.add_argument("--no-challenge", action="store_true")
     sub.add_argument("--experience", help="读法经验目录；给了就审前读入、审后追加")
