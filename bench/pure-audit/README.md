@@ -1,15 +1,18 @@
 # pure-audit：不用检查程序的审核
 
-让 [auditor](../../packages/auditor/README.md) 只凭条款和原件审一个规则库修订的基准批次，看它与参考判定差在哪里、证据站不站得住、重复运行结论稳不稳，以及花多少时间和费用。对照的另一边是 [deep-audit](../deep-audit/README.md)（检查程序先判、模型再订正）。
+让 [auditor](../../packages/auditor/README.md) 只凭条款和原件审，看它与对照的判定差在哪里、证据站不站得住、重复运行结论稳不稳，以及花多少时间和费用。对照有两种来源：
+
+- `--revision m4`：UAES 规则库修订的基准批次。参考判定是模型判定，汇总只列差异，不算准确率。
+- `--corpus li`、`--corpus nio`：`assets/corpus` 里该客户的人工判定表（每份样本、每条条款一个人工结论）和已审条款。审核员没有针对这两家调过，用来看换一家客户、不写任何程序时能做到什么程度。
+
+对照的另一边是 [deep-audit](../deep-audit/README.md)（检查程序先判、模型再订正）。
 
 ## 给它什么、不给什么
 
-- 给：该修订的签署条文（`assets/uaes/rulebook/v1.0/<修订>/条文`）和批次的原件。
-- 不给：检查程序及其结论、表头线索、参考判定、期望角色。
+- 给：条款原文（修订的签署条文 `assets/uaes/rulebook/v1.0/<修订>/条文`，或人工判定表旁的 `<客户>-reviewed-rules.json`）和批次的原件。
+- 不给：检查程序及其结论、表头线索、参考判定、人工判定、期望角色。
 - 待审文件的文档类型取自基准，用来选条款；识别不是这里要测的。
 - 文件在工作目录里改成中性名字（`01.xls`、`02.pdf`）：基准的文件名和目录名写着植入的缺陷，而文件名本来就不是证据。
-
-参考判定是模型判定，不是人工真值：汇总只列差异，不算准确率。
 
 ## 运行
 
@@ -23,9 +26,14 @@ uv run --no-sync python bench/pure-audit/eval.py run --revision m4 --batch "F01R
 uv run --no-sync python bench/pure-audit/eval.py run --revision m4 --batch "F01R20V040_磁性罩" --thinking high --repeat 3 --name v040-high
 ```
 
+```bash
+uv run --no-sync python bench/pure-audit/eval.py run --corpus nio --all --name nio-1
+```
+
 | 选项 | 含义 |
 |---|---|
-| `--batch` / `--all` | 批次名，见基准的 `batches.jsonl`，可重复；`--all` 是基准的全部批次。几个批次在同一个容器里共用一组审核员 |
+| `--revision` / `--corpus` | 对照的来源，二者取一 |
+| `--batch` / `--all` | 批次名（基准的 `batches.jsonl`，或人工判定表的组合ID），可重复；`--all` 是全部批次。几个批次在同一个容器里共用一组审核员 |
 | `--resume` | 接着跑同名运行：已有结论的条款和读完的文件不再做 |
 | `--thinking` / `--hard-thinking` | 阅卷、审核、质证的推理强度 / 专审、裁决的推理强度（默认 medium / high） |
 | `--seconds` | 审一条条款的时限（默认 600）；专审和裁决同此，质证取三分之二 |
@@ -65,6 +73,7 @@ uv run --no-sync python bench/pure-audit/sessions.py bench/pure-audit/runs/trial
 
 | 汇总项 | 含义 |
 |---|---|
+| 按文件类型 | 每种文件类型的对照行数、一致行数、通过与不通过相反的行数、没有结论的行数 |
 | 与参考一致（第一遍审核后） | 最终结论与第一遍结论各自等于参考判定的行数，差值是专审、质证和裁决带来的变化 |
 | 未在时限内给出结论 | 所有步骤之后仍没有结论的条款，记为待确认 |
 | 质证后改变结论 / 交裁决 | 第二名审核员改判的条款，以及交第三名审核员定夺的条款 |

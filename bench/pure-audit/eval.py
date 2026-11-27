@@ -1,14 +1,17 @@
 """Run the auditor over a rulebook revision's benchmark and read its verdicts against the reference.
 
     eval.py run --revision m4 --batch NAME [--batch NAME ...] [--name RUN] [--thinking medium] [--repeat 3]
+    eval.py run --corpus li --all
     eval.py report RUN [RUN ...] [--deep bench/deep-audit/runs/NAME]
 
-The reference judgments are a model's, not human truth: the report shows differences, not accuracy.
+A rulebook revision's reference judgments are a model's: the report shows differences, not accuracy.
+A corpus (``assets/corpus/<customer>-oracle.csv``) carries a person's judgments on that customer's samples.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import shutil
@@ -23,6 +26,7 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 RULEBOOK = ROOT / "assets" / "uaes" / "rulebook" / "v1.0"
+CORPUS = ROOT / "assets" / "corpus"
 PRICES = ROOT / "bench" / "deep-audit" / "prices.json"
 STATUS = {"PASS": "通过", "NG": "不通过", "NA": "不适用", "UNABLE": "待确认"}
 
@@ -37,7 +41,8 @@ def _main_checkout() -> Path:
     return Path(common).parent
 
 
-def benchmark(revision: str) -> tuple[Path, dict[str, dict[str, Any]]]:
+def _revision(revision: str) -> dict[str, Any]:
+    """A rulebook revision's benchmark: signed clauses, batches of originals, a model's reference judgments."""
     base, clauses = RULEBOOK / "candidates" / revision / "benchmark", RULEBOOK / revision / "条文"
     if not (base / "reference-judgments.jsonl").is_file() or not clauses.is_dir():
         sys.exit(f"修订 {revision} 没有基准或签署条文")
@@ -46,42 +51,87 @@ def benchmark(revision: str) -> tuple[Path, dict[str, dict[str, Any]]]:
         document = json.loads(path.read_text(encoding="utf-8"))
         for rule in document["rules"]:
             rules[rule["id"]] = {"id": rule["id"], "category": rule.get("category", ""), "rule_to_check": rule["rule_to_check"], "title": document["title"]}
-    return base, rules
+    files: dict[str, list[str]] = defaultdict(list)
+    for row in _jsonl(base / "file-inventory.jsonl"):
+        files[row["batch"]].append(row["file"])
+    targets: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in _jsonl(base / "expected-rows.jsonl"):
+        rule = rules[row["clause"]]
+        target = targets.setdefault((row["batch"], row["file"]), {"document_type": row["document_type"], "title": rule["title"], "rules": []})
+        target["rules"].append({key: rule[key] for key in ("id", "category", "rule_to_check")})
+    return {
+        "label": f"修订 {revision}",
+        "human": False,
+        "batches": [row["batch"] for row in _jsonl(base / "batches.jsonl")],
+        "files": dict(files),
+        "targets": targets,
+        "reference": {(row["batch"], row["file"], row["clause"]): {"verdict": row["verdict"], "reason": row["reason"]} for row in _jsonl(base / "reference-judgments.jsonl")},
+    }
 
 
-def prepare(base: Path, rules: dict[str, dict[str, Any]], batch: str, out: Path) -> dict[str, str]:
+def _corpus(customer: str) -> dict[str, Any]:
+    """One customer's samples with a person's judgment on every clause: a batch is one submitted combination."""
+    cases, oracle, reviewed = (CORPUS / f"{customer}-cases.csv", CORPUS / f"{customer}-oracle.csv", CORPUS / f"{customer}-reviewed-rules.json")
+    if not cases.is_file() or not oracle.is_file() or not reviewed.is_file():
+        sys.exit(f"没有 {customer} 的人工判定表")
+    suites = json.loads(reviewed.read_text(encoding="utf-8"))
+    files: dict[str, list[str]] = defaultdict(list)
+    targets: dict[tuple[str, str], dict[str, Any]] = {}
+    sources = {}
+    with cases.open(encoding="utf-8-sig", newline="") as stream:
+        for row in csv.DictReader(stream):
+            files[row["组合ID"]].append(row["原件"])
+            sources[(row["组合ID"], row["文件ID"])] = row["原件"]
+            if row["角色"] == "target":
+                suite = suites[row["Suite版本"]]
+                wanted = set(row["Binding"].split(";"))
+                targets[(row["组合ID"], row["原件"])] = {
+                    "document_type": suite["document_type"],
+                    "title": suite["rules"]["title"],
+                    "rules": [{key: rule.get(key, "") for key in ("id", "category", "rule_to_check")} for rule in suite["rules"]["rules"] if rule["id"] in wanted],
+                }
+    reference = {}
+    judges: Counter[str] = Counter()
+    with oracle.open(encoding="utf-8-sig", newline="") as stream:
+        for row in csv.DictReader(stream):
+            judges[row["判定人"]] += 1
+            reference[(row["组合ID"], sources[(row["组合ID"], row["文件ID"])], row["条款ID"])] = {"verdict": row["人工真值"], "reason": row["人工判定依据"], "gap": row["已知差距"]}
+    return {
+        "label": f"{customer} 人工判定表（判定人：{'、'.join(judges)}）",
+        "human": not any("LLM" in judge for judge in judges),
+        "batches": list(files),
+        "files": dict(files),
+        "targets": targets,
+        "reference": reference,
+    }
+
+
+def compared(meta: dict[str, Any]) -> dict[str, Any]:
+    return _corpus(meta["corpus"]) if meta.get("corpus") else _revision(meta["revision"])
+
+
+def prepare(given: dict[str, Any], batch: str, out: Path) -> dict[str, str]:
     """Lay out one batch for the auditor. Returns the auditor's file name → repository path.
 
-    Files get neutral names: benchmark file and folder names describe planted defects, and a name is
-    not evidence. The target's clauses are the ones the benchmark fixes for it; the document type of
-    a target comes from the benchmark, since recognition is not what this bench measures.
+    Files get neutral names: sample file and folder names describe planted defects, and a name is
+    not evidence. A target's clauses and document type come from the source, since recognition is
+    not what this bench measures.
     """
-    inventory = [row for row in _jsonl(base / "file-inventory.jsonl") if row["batch"] == batch]
-    expected = [row for row in _jsonl(base / "expected-rows.jsonl") if row["batch"] == batch]
-    if not inventory:
-        sys.exit(f"基准里没有批次 {batch}")
+    if batch not in given["files"]:
+        sys.exit(f"没有批次 {batch}")
     (out / "files").mkdir(parents=True)
     names, files = {}, []
-    for number, row in enumerate(sorted(inventory, key=lambda row: row["file"]), 1):
-        name = f"{number:02d}{Path(row['file']).suffix.lower()}"
-        shutil.copyfile(ROOT / row["file"], out / "files" / name)
+    for number, source_path in enumerate(sorted(given["files"][batch]), 1):
+        name = f"{number:02d}{Path(source_path).suffix.lower()}"
+        shutil.copyfile(ROOT / source_path, out / "files" / name)
         (out / "files" / name).chmod(0o444)
-        names[name] = row["file"]
+        names[name] = source_path
         files.append({"name": name, "path": f"files/{name}"})
-    by_file = defaultdict(list)
-    for row in expected:
-        by_file[row["file"]].append(row)
     targets = []
-    for name, source in names.items():
-        if source in by_file:
-            wanted = [rules[row["clause"]] for row in by_file[source]]
-            targets.append(
-                {
-                    "name": name,
-                    "document_type": by_file[source][0]["document_type"],
-                    "rules": {"title": wanted[0]["title"], "rules": [{"id": rule["id"], "category": rule["category"], "rule_to_check": rule["rule_to_check"]} for rule in wanted]},
-                }
-            )
+    for name, source_path in names.items():
+        target = given["targets"].get((batch, source_path))
+        if target and target["rules"]:
+            targets.append({"name": name, "document_type": target["document_type"], "rules": {"title": target["title"], "rules": target["rules"]}})
     (out / "batch.json").write_text(json.dumps({"files": files, "targets": targets}, ensure_ascii=False, indent=1), encoding="utf-8")
     return names
 
@@ -100,11 +150,14 @@ def _environment(main: Path) -> str:
 
 
 def run(args: argparse.Namespace) -> None:
-    base, rules = benchmark(args.revision)
+    if bool(args.revision) == bool(args.corpus):
+        sys.exit("用 --revision 或 --corpus 指定对照的来源，二者取一")
+    given = compared({"revision": args.revision, "corpus": args.corpus})
     if args.all:
-        args.batch = [row["batch"] for row in _jsonl(base / "batches.jsonl")]
+        args.batch = given["batches"]
     if not args.batch:
         sys.exit("用 --batch 指定批次，或 --all 跑全部")
+    width = max(2, len(str(len(args.batch))))
     main = _main_checkout()
     if not (main / ".pi" / "agent" / "models.json").is_file():
         sys.exit(f"没有 Pi 配置：{main / '.pi' / 'agent'}")
@@ -121,6 +174,7 @@ def run(args: argparse.Namespace) -> None:
         meta = {
             "name": name,
             "revision": args.revision,
+            "corpus": args.corpus,
             "batches": args.batch,
             "model": args.model,
             "thinking": args.thinking,
@@ -135,11 +189,11 @@ def run(args: argparse.Namespace) -> None:
         (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
         names = {}
         for number, batch in enumerate(args.batch, 1):
-            work = out / f"batch-{number:02d}"
+            work = out / f"batch-{number:0{width}d}"
             if (work / "names.json").is_file():
                 names[batch] = json.loads((work / "names.json").read_text(encoding="utf-8"))
             else:
-                names[batch] = prepare(base, rules, batch, work)
+                names[batch] = prepare(given, batch, work)
                 (work / "names.json").write_text(json.dumps(names[batch], ensure_ascii=False, indent=1), encoding="utf-8")
         # One container for the whole run: every batch draws on the same pool of auditors.
         env_file = _environment(main)
@@ -157,7 +211,7 @@ def run(args: argparse.Namespace) -> None:
             options += ["--experience", "/work/experience"]
         started = time.time()
         try:
-            done = subprocess.run([*command, image, *(f"/work/run/batch-{number:02d}" for number in range(1, len(args.batch) + 1)), *options], capture_output=True, text=True)
+            done = subprocess.run([*command, image, *(f"/work/run/batch-{number:0{width}d}" for number in range(1, len(args.batch) + 1)), *options], capture_output=True, text=True)
         finally:
             os.unlink(env_file)
         with (out / "container.log").open("a", encoding="utf-8") as stream:
@@ -166,7 +220,7 @@ def run(args: argparse.Namespace) -> None:
         (out / "wall.json").write_text(json.dumps([*earlier, round(time.time() - started)]), encoding="utf-8")
         rows: list[dict[str, Any]] = [{"kind": "run", "seconds": sum(earlier) + round(time.time() - started), "sittings": len(earlier) + 1}]
         for number, batch in enumerate(args.batch, 1):
-            work = out / f"batch-{number:02d}"
+            work = out / f"batch-{number:0{width}d}"
             if not (work / "results.json").is_file():
                 print(f"{batch}：没有跑完，见 {out / 'container.log'}", file=sys.stderr)
                 rows.append({"kind": "failed", "batch": batch})
@@ -197,9 +251,9 @@ def _cost(steps: list[dict[str, Any]], prices: dict[str, Any], model: str) -> fl
 def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, str, str], dict[str, Any]]]:
     meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
     rows = _jsonl(run_dir / "results.jsonl")
-    base, _rules = benchmark(meta["revision"])
+    given = compared(meta)
     ran = {row["batch"] for row in rows if row["kind"] == "verdict"}
-    reference = {(row["batch"], row["file"], row["clause"]): row for row in _jsonl(base / "reference-judgments.jsonl") if row["batch"] in ran}
+    reference = {key: row for key, row in given["reference"].items() if key[0] in ran}
     verdicts = {(row["batch"], row["file"], row["clause"]): row for row in rows if row["kind"] == "verdict"}
     prices = json.loads(PRICES.read_text(encoding="utf-8"))["models"]
     files = [row for row in rows if row["kind"] == "file"]
@@ -236,6 +290,16 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
         wall["total"] = whole["seconds"]
     errors = Counter(str(step["error"])[:80] for step in steps if step.get("error"))
     spent = sorted(verdict["seconds"] for verdict in verdicts.values() if "seconds" in verdict)
+    # By document type: where the auditor and the reference part ways, a type at a time.
+    by_type: dict[str, Counter[str]] = defaultdict(Counter)
+    types = {(row["batch"], row["file"]): row["document_type"] for row in files}
+    for key, expected in reference.items():
+        verdict = verdicts.get(key, {"status": "无输出"})
+        kind = by_type[types.get(key[:2], "?")]
+        kind["rows"] += 1
+        kind["agree"] += verdict["status"] == expected["verdict"]
+        kind["unaudited"] += bool(verdict.get("unaudited")) or verdict["status"] == "无输出"
+        kind["pass_ng"] += {verdict["status"], expected["verdict"]} == {"PASS", "NG"}
     per_file = []
     for row in files:
         mine = {key: verdict for key, verdict in verdicts.items() if key[:2] == (row["batch"], row["file"])}
@@ -275,14 +339,16 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
         "tokens": {key: sum(step[key] for step in steps) for key in ("input_tokens", "cached_input_tokens", "output_tokens")},
         "phases": {phase: dict(counts) for phase, counts in by_phase.items()},
         "table": {f"{expected}→{got}": count for (expected, got), count in sorted(table.items())},
+        "human": given["human"],
+        "types": {kind: dict(counts) for kind, counts in sorted(by_type.items())},
     }
     lines = [
         f"# {meta['name']}",
         "",
-        f"修订 {meta['revision']}，模型 {meta['model']}，推理强度 {meta['thinking']}（专审与裁决 {meta['hard_thinking']}），每条条款审核时限 {meta['seconds']} 秒，"
+        f"{given['label']}，模型 {meta['model']}，推理强度 {meta['thinking']}（专审与裁决 {meta['hard_thinking']}），每条条款审核时限 {meta['seconds']} 秒，"
         f"同时 {meta.get('concurrency', '?')} 名审核员。"
         f"阅卷{'开' if meta.get('read', meta.get('survey')) else '关'}，质证{'开' if meta['challenge'] else '关'}，经验{'开' if meta['experience'] else '关'}。",
-        "参考判定是模型判定，不是人工真值：下面只是差异，不是准确率。",
+        "对照的是人工判定。" if given["human"] else "参考判定是模型判定，不是人工真值：下面只是差异，不是准确率。",
         "",
         *(
             [
@@ -310,6 +376,10 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
             for phase, counts in by_phase.items()
         ),
         "",
+        "| 文件类型 | 对照行数 | 与参考一致 | 通过与不通过相反 | 没有结论 |",
+        "|---|---|---|---|---|",
+        *(f"| {kind} | {counts['rows']} | {counts['agree']} | {counts['pass_ng']} | {counts['unaudited']} |" for kind, counts in sorted(by_type.items())),
+        "",
         "| 文件 | 类型 | 条款 | 有结论 | 与参考一致 | 会话秒 | 约美元 |",
         "|---|---|---|---|---|---|---|",
         *per_file,
@@ -326,7 +396,7 @@ def _summary(run_dir: Path) -> tuple[dict[str, Any], list[str], dict[tuple[str, 
         lines += [
             f"### {clause}《{Path(file).name}》",
             f"- 批次：{batch}",
-            f"- 参考 {STATUS.get(expected['verdict'], expected['verdict'])}：{expected['reason']}",
+            f"- 参考 {STATUS.get(expected['verdict'], expected['verdict'])}：{expected['reason']}" + (f"（已知差距：{expected['gap']}）" if expected.get("gap") else ""),
             f"- 本次 {STATUS.get(verdict['status'], verdict['status'])}{trail}：{verdict['reason']}",
             *(f"  - {point['result']}：{point['need']}{'。' + point['why'] if point['why'] else ''}" for point in verdict.get("points", [])),
             "",
@@ -364,8 +434,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     sub = commands.add_parser("run")
-    sub.add_argument("--revision", required=True)
-    sub.add_argument("--batch", action="append", default=[], help="批次名，见基准的 batches.jsonl；可重复")
+    sub.add_argument("--revision", help="规则库修订，如 m4：对照它的基准")
+    sub.add_argument("--corpus", help="客户，如 li、nio：对照 assets/corpus 里它的人工判定表")
+    sub.add_argument("--batch", action="append", default=[], help="批次名（基准的 batches.jsonl，或人工判定表的组合ID）；可重复")
     sub.add_argument("--name")
     sub.add_argument("--model", default="local/grok-4.7")
     sub.add_argument("--thinking", default="medium")
