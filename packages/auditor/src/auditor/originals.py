@@ -34,6 +34,8 @@ WORD = {".docx", ".doc"}
 IMAGES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 # The longest side of an image handed to the model.
 MAX_PIXELS = 2200
+# The shortest side a picture handed to the model may have.
+SMALLEST = 96
 
 _CELL = re.compile(r"^\$?([A-Za-z]{1,3})\$?(\d{1,7})$")
 _XDR = "{http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing}"
@@ -191,6 +193,70 @@ def convert(source: Path, target: str, out: Path) -> Path:
     return result
 
 
+_AFTER_SETUP = frozenset(
+    "headerFooter rowBreaks colBreaks customProperties cellWatches ignoredErrors smartTags drawing legacyDrawing legacyDrawingHF picture oleObjects controls webPublishItems tableParts extLst".split()
+)
+
+
+def _print_copy(package: Path, sheet_name: str, area: str | None, out: Path) -> None:
+    """A copy of a workbook that prints one sheet only, and with ``area`` that range alone on one page.
+
+    Only what is printed changes (which sheets are visible, the print area, fit to page): cells,
+    pictures and drawn shapes are the original's, so the page shows the range as the original draws it.
+    """
+    with zipfile.ZipFile(package) as archive:
+        workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+        listed = workbook.find(f"{_MAIN}sheets")
+        sheets = list(listed) if listed is not None else []
+        chosen = [sheet for sheet in sheets if sheet.get("name") == sheet_name]
+        if len(chosen) != 1:
+            raise Unreadable(f"{package.name} 没有工作表「{sheet_name}」；有：{'、'.join(str(sheet.get('name')) for sheet in sheets)}")
+        index = sheets.index(chosen[0])
+        for sheet in sheets:
+            sheet.set("state", "visible" if sheet is chosen[0] else "hidden")
+        for view in workbook.findall(f"{_MAIN}bookViews/{_MAIN}workbookView"):
+            view.set("activeTab", str(index))
+            view.set("firstSheet", str(index))
+        replaced = {}
+        if area:
+            names = workbook.find(f"{_MAIN}definedNames")
+            if names is None:
+                names = ET.Element(f"{_MAIN}definedNames")
+                after = workbook.find(f"{_MAIN}sheets")
+                workbook.insert(list(workbook).index(after) + 1 if after is not None else len(workbook), names)
+            for name in list(names):
+                if name.get("name") in {"_xlnm.Print_Area", "_xlnm.Print_Titles"} and name.get("localSheetId") in (None, str(index)):
+                    names.remove(name)
+            r1, c1, r2, c2 = parse_range(area)
+            printed = ET.SubElement(names, f"{_MAIN}definedName", name="_xlnm.Print_Area", localSheetId=str(index))
+            quoted = sheet_name.replace("'", "''")
+            printed.text = f"'{quoted}'!${column_letter(c1)}${r1}:${column_letter(c2)}${r2}"
+            _kind, part = _relationships(archive, "xl/workbook.xml").get(chosen[0].get(f"{_R}id", ""), ("", ""))
+            if part not in archive.namelist():
+                raise Unreadable(f"{package.name} 的工作表「{sheet_name}」画不出来")
+            worksheet = ET.fromstring(archive.read(part))
+            properties = worksheet.find(f"{_MAIN}sheetPr")
+            if properties is None:
+                properties = ET.Element(f"{_MAIN}sheetPr")
+                worksheet.insert(0, properties)
+            fit = properties.find(f"{_MAIN}pageSetUpPr")
+            if fit is None:
+                fit = ET.SubElement(properties, f"{_MAIN}pageSetUpPr")
+            fit.set("fitToPage", "1")
+            for old in worksheet.findall(f"{_MAIN}pageSetup") + worksheet.findall(f"{_MAIN}rowBreaks") + worksheet.findall(f"{_MAIN}colBreaks"):
+                worksheet.remove(old)
+            # A wide range lies better across the page, a tall one along it.
+            wide = (c2 - c1 + 1) * 3 >= (r2 - r1 + 1)
+            setup = ET.Element(f"{_MAIN}pageSetup", {"paperSize": "8", "orientation": "landscape" if wide else "portrait", "fitToWidth": "1", "fitToHeight": "1"})
+            later = [position for position, child in enumerate(worksheet) if child.tag.removeprefix(_MAIN) in _AFTER_SETUP]
+            worksheet.insert(later[0] if later else len(worksheet), setup)
+            replaced[part] = ET.tostring(worksheet, encoding="utf-8", xml_declaration=True)
+        replaced["xl/workbook.xml"] = ET.tostring(workbook, encoding="utf-8", xml_declaration=True)
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as copy:
+            for info in archive.infolist():
+                copy.writestr(info, replaced.get(info.filename, archive.read(info.filename)))
+
+
 def _relationships(archive: zipfile.ZipFile, part: str) -> dict[str, tuple[str, str]]:
     """A part's relationships: id → (type, target part)."""
     folder, _, name = part.rpartition("/")
@@ -253,6 +319,7 @@ class Original:
         self.scratch = Path(scratch) / ".derived" / self.path.name
         self._tables: dict[int, list[dict[str, Any]]] = {}
         self._pictures: dict[int, list[dict[str, Any]]] = {}
+        self._sheet_pages: dict[tuple[str, str], Any] = {}
 
     # Spreadsheets
 
@@ -368,31 +435,69 @@ class Original:
         note = _cached(self.scratch / f"page-{page}-200.png", "")
         return note.read_text(encoding="utf-8") if note.is_file() else None
 
-    def render(self, page: int = 1, dpi: int = 110, clip: tuple[float, float, float, float] | None = None, grid: bool = False) -> Path:
+    def sheet_pages(self, sheet: str, area: str | None = None) -> Any:
+        """One worksheet as printed pages of its own; with ``area``, that cell range alone on a single page."""
+        import fitz
+
+        if self.suffix not in SPREADSHEETS:
+            raise Unreadable(f"{self.path.name} 不是表格文件，没有工作表；按页看用 --page")
+        key = (sheet, area or "")
+        if key not in self._sheet_pages:
+            self.sheet(sheet)
+            if area:
+                r1, c1, r2, c2 = parse_range(area)
+                if (r2 - r1 + 1) * (c2 - c1 + 1) > 40000:
+                    raise Unreadable("区域太大，一页上看不清；缩小到要看的那几行几列")
+            self.scratch.mkdir(parents=True, exist_ok=True)
+            stem = "sheet-" + hashlib.sha1("\0".join(key).encode()).hexdigest()[:12]
+            if not (self.scratch / f"{stem}.pdf").is_file():
+                copy = self.scratch / f"{stem}.xlsx"
+                try:
+                    _print_copy(self._package, sheet, area, copy)
+                except (KeyError, zipfile.BadZipFile, ET.ParseError):
+                    raise Unreadable(f"{self.path.name} 的工作表「{sheet}」画不出来；用 look render --page 看整本的排版页") from None
+                convert(copy, "pdf", self.scratch)
+                copy.unlink(missing_ok=True)
+            self._sheet_pages[key] = fitz.open(self.scratch / f"{stem}.pdf")
+        return self._sheet_pages[key]
+
+    def render(self, page: int = 1, dpi: int = 110, clip: tuple[float, float, float, float] | None = None, grid: bool = False, sheet: str | None = None, area: str | None = None) -> Path:
         """A page as a picture. ``clip`` is left, top, right, bottom as fractions of the page, to look closer.
 
         ``grid`` draws ten columns A–J and ten rows 1–10 over the picture, so a place can be named and clipped.
+        ``sheet`` takes the pages of that worksheet alone; with ``area`` the page is that cell range.
         """
         import fitz
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageChops, ImageDraw, ImageFont
 
-        if not 1 <= page <= self.pages:
-            raise Unreadable(f"{self.path.name} 没有第 {page} 页（共 {self.pages} 页）")
+        document = self.sheet_pages(sheet, area) if sheet else None
+        count = len(document) if document is not None else self.pages
+        if not 1 <= page <= count:
+            raise Unreadable(f"{self.path.name}{'「' + sheet + '」' if sheet else ''} 没有第 {page} 页（共 {count} 页）")
         if clip and not (0 <= clip[0] < clip[2] <= 1 and 0 <= clip[1] < clip[3] <= 1):
             raise Unreadable("clip 是 左,上,右,下 四个 0 到 1 之间的比例，例如 0,0,0.5,0.3")
         self.scratch.mkdir(parents=True, exist_ok=True)
         label = f"page-{page}-{dpi}" + ("-" + "-".join(f"{value:.3f}" for value in clip) if clip else "") + ("-grid" if grid else "")
+        if sheet:
+            label = "sheet-" + hashlib.sha1(f"{sheet}\0{area or ''}".encode()).hexdigest()[:12] + "-" + label
         out = self.scratch / f"{label}.png"
         if self.suffix in IMAGES:
             image = Image.open(self.path).convert("RGB")
             if clip:
                 image = image.crop((int(clip[0] * image.width), int(clip[1] * image.height), int(clip[2] * image.width), int(clip[3] * image.height)))
         else:
-            sheet = self._pdf[page - 1]
-            area = sheet.rect
+            leaf = (document if document is not None else self._pdf)[page - 1]
+            box = leaf.rect
+            if area:
+                # A range seldom fills its page: keep the part that has ink, so the range fills the picture.
+                probe = Image.open(io.BytesIO(leaf.get_pixmap(dpi=36).tobytes("png"))).convert("RGB")
+                inked = ImageChops.difference(probe, Image.new("RGB", probe.size, (255, 255, 255))).getbbox()
+                if inked:
+                    across, down = box.width / probe.width, box.height / probe.height
+                    box = fitz.Rect(max(box.x0, inked[0] * across - 6), max(box.y0, inked[1] * down - 6), min(box.x1, inked[2] * across + 6), min(box.y1, inked[3] * down + 6))
             if clip:
-                area = fitz.Rect(area.x0 + clip[0] * area.width, area.y0 + clip[1] * area.height, area.x0 + clip[2] * area.width, area.y0 + clip[3] * area.height)
-            pixels = sheet.get_pixmap(dpi=dpi, clip=area)
+                box = fitz.Rect(box.x0 + clip[0] * box.width, box.y0 + clip[1] * box.height, box.x0 + clip[2] * box.width, box.y0 + clip[3] * box.height)
+            pixels = leaf.get_pixmap(dpi=dpi, clip=box)
             image = Image.open(io.BytesIO(pixels.tobytes("png"))).convert("RGB")
         image.thumbnail((MAX_PIXELS, MAX_PIXELS))
         if grid:
@@ -429,13 +534,23 @@ class Original:
                 return [{"name": name, "sheet": None, "cell": None} for name in archive.namelist() if "/media/" in name and not name.endswith("/")], []
         return _workbook_drawings(self._package)
 
+    def picture_name(self, name: str) -> str:
+        """The full name of an embedded picture; a bare file name is enough when only one picture has it."""
+        known = [item["name"] for item in self.drawings[0]]
+        if name in known:
+            return name
+        same = [full for full in known if full.rsplit("/", 1)[-1] == name]
+        if len(same) != 1:
+            listed = "、".join(known[:12]) + (" 等" if len(known) > 12 else "")
+            raise Unreadable(f"{self.path.name} 没有内嵌图片 {name}；有：{listed or '（没有图片）'}。名称照 look pictures 列出的写")
+        return same[0]
+
     def picture(self, name: str) -> Path:
         """An embedded picture as PNG; EMF and WMF are drawn by LibreOffice first."""
         from PIL import Image
 
+        name = self.picture_name(name)
         placed = {item["name"]: item for item in self.drawings[0]}
-        if name not in placed:
-            raise Unreadable(f"{self.path.name} 没有内嵌图片 {name}")
         self.scratch.mkdir(parents=True, exist_ok=True)
         out = self.scratch / (name.replace("/", "_").rsplit(".", 1)[0] + ".png")
         if out.is_file():
@@ -454,7 +569,11 @@ class Original:
         if name.lower().endswith((".emf", ".wmf")):
             raw = self.scratch / name.replace("/", "_")
             raw.write_bytes(content)
-            return convert(raw, "png", self.scratch)
+            drawn = convert(raw, "png", self.scratch)
+            with Image.open(drawn) as made:
+                if min(made.size) < SMALLEST:
+                    _save(made.convert("RGB"), drawn)
+            return drawn
         image = Image.open(io.BytesIO(content)).convert("RGB")
         image.thumbnail((MAX_PIXELS, MAX_PIXELS))
         _save(image, out)
@@ -550,7 +669,15 @@ class Original:
 
 
 def _save(image: Any, out: Path) -> None:
-    """Write a derived picture whole: several auditors share the derived files."""
+    """Write a derived picture whole: several auditors share the derived files.
+
+    A picture a few pixels across (a checkbox, a tick) is enlarged: the model refuses pictures that
+    small, and one refused picture ends the auditor's whole session.
+    """
+    if 0 < min(image.size) < SMALLEST:
+        factor = -(-SMALLEST // min(image.size))
+        image = image.resize((image.width * factor, image.height * factor))
+        image.thumbnail((MAX_PIXELS, MAX_PIXELS))
     part = out.with_name(f".{os.getpid()}-{out.name}")
     image.save(part)
     os.replace(part, out)

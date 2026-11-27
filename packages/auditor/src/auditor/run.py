@@ -17,6 +17,8 @@ The batch directory holds ``batch.json`` and ``files/``; results are written to 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import re
@@ -39,6 +41,7 @@ SKILL = AGENT / "skills" / "ppap-audit"
 # Seconds between the limit an auditor is told and the moment its session is stopped.
 GRACE = 30
 _lessons = threading.Lock()
+_printing = threading.Lock()
 
 
 def prepare_pi() -> None:
@@ -183,7 +186,8 @@ def read_file(batch: Path, number: int, item: dict[str, Any], files: list[dict[s
     kept = work / "step.json"
     if kept.is_file():
         return dict(json.loads(kept.read_text(encoding="utf-8")))
-    step = pi(batch, work, "read", _prompt("read", file=item["name"], seconds=options.read_seconds - GRACE), options=options, thinking=options.thinking, seconds=options.read_seconds)
+    prompt = _prompt("read", file=item["name"], outline=_outline(Task(work), item["name"]), seconds=options.read_seconds - GRACE)
+    step = pi(batch, work, "read", prompt, options=options, thinking=options.thinking, seconds=options.read_seconds)
     lessons = Task(work).lessons()
     kind = kinds.get(item["name"])
     if options.experience and kind and lessons:
@@ -202,6 +206,24 @@ def _dossier(task: Task) -> str:
         return "案卷目前是空的。"
     lines = [f"- [{note['file']} {note['where']}] {note['topic']}：{note['fact']}" for note in notes]
     return "案卷（同批审核员记下的事实，出处都重新核对过；用到关键事实时仍要自己到出处看一眼）：\n" + "\n".join(lines)
+
+
+def _outline(task: Task, name: str) -> str:
+    """What ``look outline`` says of a file, put into the task so nobody spends a request asking for it."""
+    from auditor.tools import outline
+
+    shown = io.StringIO()
+    try:
+        # Standard output is the process's: one capture at a time.
+        with _printing, contextlib.redirect_stdout(shown):
+            outline(task, argparse.Namespace(file=name))
+    except Exception:
+        return "（概况读不出来，用 look outline 看）"
+    return shown.getvalue().strip()
+
+
+def _listed(files: list[dict[str, Any]], kinds: dict[str, str], target: str) -> str:
+    return "\n".join(f"  - `{item['name']}`{'（' + kinds[item['name']] + '）' if kinds.get(item['name']) else ''}{'：要审的这一份' if item['name'] == target else ''}" for item in files)
 
 
 def _looked(work: Path, phase: str) -> str:
@@ -266,7 +288,8 @@ def audit_clause(batch: Path, number: int, target: dict[str, Any], rule: dict[st
     brief = {
         "target": target["name"],
         "kind": f"（{target['rules'].get('title') or kind}）" if target["rules"].get("title") or kind else "",
-        "files": "、".join(f"{item['name']}{'（' + kinds[item['name']] + '）' if item['name'] in kinds else ''}" for item in files),
+        "files": _listed(files, kinds, target["name"]),
+        "outline": _outline(task, target["name"]),
         "clause": clause,
         "category": rule.get("category") or "",
         "rule": rule["rule_to_check"],
@@ -283,7 +306,7 @@ def audit_clause(batch: Path, number: int, target: dict[str, Any], rule: dict[st
                     batch,
                     work,
                     "focus",
-                    _prompt("focus", **brief, looked=_looked(work, "audit"), seconds=options.seconds - GRACE),
+                    _prompt("focus", **brief, looked=_looked(work, "audit"), seconds=options.seconds - GRACE, early=(options.seconds - GRACE) // 2),
                     options=options,
                     thinking=options.hard_thinking,
                     seconds=options.seconds,

@@ -135,15 +135,16 @@ def cells(task: Task, args: argparse.Namespace) -> None:
     task.saw(args.file, kind="cells", sheet=sheet.name, area=[r1, c1, last, c2])
 
 
-def _hits(task: Task, name: str, needle: str, blind: set[str]) -> list[str]:
+def _hits(task: Task, name: str, needle: str, blind: set[str], only: str | None = None) -> list[str]:
     original = task.original(name)
     label = original.path.name
     hits: list[str] = []
     if original.suffix in SPREADSHEETS:
-        for sheet in original.sheets:
+        for sheet in [original.sheet(only)] if only else original.sheets:
             hits += [f"{label} {sheet.name}!{cell_name(*key)}={_flat(shown(value), 120)}" for key, value in sorted(sheet.values.items()) if needle in squeeze(shown(value)).lower()]
         try:
-            hits += [f"{label} 图形文字（{shape['sheet']} {shape['cell']} 附近）：{_flat(shape['text'], 120)}" for shape in original.drawings[1] if needle in squeeze(shape.get("text") or "").lower()]
+            shapes = [shape for shape in original.drawings[1] if not only or shape["sheet"] == only]
+            hits += [f"{label} 图形文字（{shape['sheet']} {shape['cell']} 附近）：{_flat(shape['text'], 120)}" for shape in shapes if needle in squeeze(shape.get("text") or "").lower()]
         except Unreadable:
             pass
     elif original.suffix in WORD:
@@ -186,6 +187,8 @@ def _hits(task: Task, name: str, needle: str, blind: set[str]) -> list[str]:
 
 def find(task: Task, args: argparse.Namespace) -> None:
     names = list(task.files) if args.file == "*" else [args.file]
+    if args.sheet and args.file == "*":
+        raise Unreadable("--sheet 只能用在一份文件上")
     blind: set[str] = set()
     missed: list[str] = []
     for text in args.text:
@@ -195,8 +198,10 @@ def find(task: Task, args: argparse.Namespace) -> None:
         hits: list[str] = []
         for name in names:
             try:
-                hits += _hits(task, name, needle, blind)
-                task.saw(name, kind="find", text=text)
+                hits += _hits(task, name, needle, blind, args.sheet)
+                # A search of one sheet is not a search of the file: only the whole-file search can be declared.
+                if not args.sheet:
+                    task.saw(name, kind="find", text=text)
             except Unreadable as error:
                 blind.add(f"{name}（{error}）")
         if not hits:
@@ -360,9 +365,12 @@ def pictures(task: Task, args: argparse.Namespace) -> None:
 
 
 def picture(task: Task, args: argparse.Namespace) -> None:
-    out = task.original(args.file).picture(args.name.removeprefix("image:"))
-    task.saw(args.file, kind="image", name=args.name.removeprefix("image:"))
-    print(f"已取出：{out}（用读取工具查看这张图）。引用位置写 image:{args.name.removeprefix('image:')}")
+    original = task.original(args.file)
+    for given in args.name:
+        name = original.picture_name(given.removeprefix("image:"))
+        out = original.picture(name)
+        task.saw(args.file, kind="image", name=name)
+        print(f"已取出：{out}（用读取工具查看这张图）。引用位置写 image:{name}")
 
 
 def _clip(value: str | None) -> tuple[float, float, float, float] | None:
@@ -376,17 +384,34 @@ def _clip(value: str | None) -> tuple[float, float, float, float] | None:
     try:
         left_, top_, right_, bottom_ = (float(part) for part in value.split(","))
     except ValueError:
-        raise Unreadable("clip 写网格（如 C3 或 C3:E5，对应 --grid 画出的格子），或 左,上,右,下 四个 0 到 1 的比例") from None
+        raise Unreadable(
+            "--clip 写页面网格（--grid 画出的 A–J × 1–10，如 C3 或 C3:E5）或 左,上,右,下 四个 0 到 1 的比例，不是单元格。"
+            "要看表格文件里的一块单元格区域：look render 文件 --sheet 工作表名 --range A1:S10"
+        ) from None
     return left_, top_, right_, bottom_
 
 
 def render(task: Task, args: argparse.Namespace) -> None:
     original = task.original(args.file)
     clip = _clip(args.clip)
-    out = original.render(args.page, args.dpi, clip, grid=args.grid)
+    if args.range and not args.sheet:
+        if original.suffix not in SPREADSHEETS or len(original.sheets) != 1:
+            raise Unreadable("--range 是表格文件里的单元格区域，要同时用 --sheet 指定工作表")
+        args.sheet = original.sheets[0].name
+    if args.sheet:
+        # One worksheet's own pages, or one cell range on a page: pictures, stamps and drawn shapes where the original puts them.
+        out = original.render(args.page, args.dpi or (260 if args.range else 110), clip, grid=args.grid, sheet=args.sheet, area=args.range)
+        count = len(original.sheet_pages(args.sheet, args.range))
+        what = f"区域 {args.range}" if args.range else f"共 {count} 页，这是第 {args.page} 页"
+        print(f"已渲染：{out}（用读取工具查看这张图）。{original.path.name}「{args.sheet}」{what}{'的局部' if clip else ''}。")
+        print("这是排版后的样子，用来看图形、图章、签名和版面；引用单元格内容仍以 look cells 读到的原值为准。看过这张图不等于读过这些单元格。")
+        return
+    out = original.render(args.page, args.dpi or 110, clip, grid=args.grid)
     if not clip:
         task.saw(args.file, kind="page", page=args.page)
     print(f"已渲染：{out}（用读取工具查看这张图）。{original.path.name} 共 {original.pages} 页，这是第 {args.page} 页{'的局部' if clip else ''}。")
+    if original.suffix in SPREADSHEETS:
+        print("表格文件也可以只看一张工作表或一块区域：look render 文件 --sheet 工作表名 [--range A1:S10]。")
     if original.suffix in SPREADSHEETS | WORD:
         print("这是 LibreOffice 排版后的页面，用来看图形、图章和版面；引用单元格内容仍以 look cells 读到的原值为准。")
     print("看不清时先加 --grid 画出 A–J × 1–10 的格子，再用 --clip C3:E5 放大那几格，可同时提高 --dpi。")
@@ -396,10 +421,11 @@ def ocr(task: Task, args: argparse.Namespace) -> None:
     original = task.original(args.file)
     clip = _clip(args.clip)
     if args.picture:
-        out = original.picture(args.picture.removeprefix("image:"))
-        task.saw(args.file, kind="image", name=args.picture.removeprefix("image:"))
+        name = original.picture_name(args.picture.removeprefix("image:"))
+        out = original.picture(name)
+        task.saw(args.file, kind="image", name=name)
     else:
-        out = original.render(args.page, args.dpi, clip)
+        out = original.render(args.page, args.dpi or 200, clip)
     print(transcribe(out, args.ask or ""))
     if not args.picture and not clip:
         task.saw(args.file, kind="page", page=args.page)
@@ -451,11 +477,26 @@ def _clock(task: Task) -> None:
     except (KeyError, ValueError):
         return
     if task.phase == "read":
-        print(f"〔剩余 {max(0, int(left))} 秒〕" if left > total * 0.25 else f"〔剩余 {max(0, int(left))} 秒：把已经确认的事实记入案卷，然后结束。〕")
+        print(f"〔剩余 {max(0, int(left))} 秒〕" if left > total * 0.5 else f"〔剩余 {max(0, int(left))} 秒：现在就把已经读到的事实逐条记入案卷，没记下的等于没读；记完再看别的。〕")
     elif left > total * 0.4:
         print(f"〔剩余 {int(left)} 秒〕")
     else:
         print(f"〔剩余 {max(0, int(left))} 秒：现在就按已经读到的写出结论并提交；还确定不了的要点写 unknown 并说明缺什么。没有提交等于没有审。〕")
+
+
+def clause(_task: Task, args: argparse.Namespace) -> None:
+    listed = Path("clauses.json")
+    rules = json.loads(listed.read_text(encoding="utf-8")).get("rules", []) if listed.is_file() else []
+    if not rules:
+        print("这里没有别的条款可查。")
+        return
+    wanted = [rule for rule in rules if rule["id"] in args.id or rule["id"].rsplit(":", 1)[-1] in args.id]
+    if not wanted:
+        print("这份文件的条款：" + "、".join(f"{rule['id']}（{rule.get('category') or ''}）" for rule in rules))
+        return
+    for rule in wanted:
+        print(f"条款 {rule['id']}（{rule.get('category') or ''}）：\n{rule['rule_to_check']}\n")
+    print("别的条款只用来弄清你这一条引用了什么；你只审任务说明里的那一条。")
 
 
 def remember(task: Task, args: argparse.Namespace) -> None:
@@ -487,6 +528,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = command("find", find, "在一份文件（或 * 表示本批全部文件）里查找文字，可一次查多个词")
     sub.add_argument("file")
     sub.add_argument("text", nargs="+")
+    sub.add_argument("--sheet", help="只查这一张工作表（这样查过的不能当作整份文件查过）")
     sub = command("page", page, "读 PDF 的一页：有表格按行列读，没有表格读文字层")
     sub.add_argument("file")
     sub.add_argument("page", type=int)
@@ -502,17 +544,19 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_argument("table", type=int)
     sub.add_argument("--start", type=int, default=1)
     command("pictures", pictures, "列出内嵌图片和绘制的图形").add_argument("file")
-    sub = command("picture", picture, "取出一张内嵌图片")
+    sub = command("picture", picture, "取出内嵌图片，可一次取几张")
     sub.add_argument("file")
-    sub.add_argument("name")
+    sub.add_argument("name", nargs="+", help="look pictures 列出的名称；只写文件名（image2.png）也行")
     for name, run, summary in (("render", render, "把一页渲染成图片来看"), ("ocr", ocr, "让视觉模型转写一页或一张图")):
         sub = command(name, run, summary)
         sub.add_argument("file")
         sub.add_argument("--page", type=int, default=1)
-        sub.add_argument("--dpi", type=int, default=110 if name == "render" else 200)
-        sub.add_argument("--clip", help="放大局部：网格如 C3:E5，或 左,上,右,下 的比例")
+        sub.add_argument("--dpi", type=int)
+        sub.add_argument("--clip", help="放大局部：页面网格如 C3:E5（不是单元格），或 左,上,右,下 的比例")
         if name == "render":
             sub.add_argument("--grid", action="store_true", help="画出 A–J × 1–10 的格子，便于指位置")
+            sub.add_argument("--sheet", help="表格文件：只看这张工作表排版出的页")
+            sub.add_argument("--range", help="表格文件：只看这块单元格区域（如 A1:S10），排在一页上")
         if name == "ocr":
             sub.add_argument("--picture", help="转写一张内嵌图片，而不是一页")
             sub.add_argument("--ask", help="换一个转写要求")
@@ -527,6 +571,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_argument("file", nargs="?")
     sub.add_argument("--topic")
     command("remember", remember, "记下一条这类文件的读法经验").add_argument("lesson")
+    command("clause", clause, "查这份文件的另一条条款的原文；不写编号则列出全部条款").add_argument("id", nargs="*")
     sub = command("uphold", uphold, "质证后维持一条结论")
     sub.add_argument("clause")
     sub.add_argument("reason")

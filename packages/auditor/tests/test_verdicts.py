@@ -112,3 +112,18 @@ def test_each_word_of_one_search_counts_as_searched(work: Path) -> None:
     assert tools.main(["find", "01.xlsx", "返工", "报废"]) == 0
     absent = verdict("NG", {"need": "有异常处理节点", "result": "unmet", "why": "没有", "searched": [{"file": "01.xlsx", "where": "find:返工"}, {"file": "01.xlsx", "where": "find:报废"}]})
     assert Task().check(absent)[0] is not None
+
+
+def test_a_search_of_one_sheet_is_not_a_search_of_the_file(work: Path) -> None:
+    assert tools.main(["find", "01.xlsx", "返工", "--sheet", "流程"]) == 0
+    absent = verdict("NG", {"need": "有异常处理节点", "result": "unmet", "why": "没有", "searched": [{"file": "01.xlsx", "where": "find:返工"}]})
+    assert Task().check(absent)[0] is None
+
+
+def test_a_picture_a_few_pixels_across_is_enlarged_before_the_model_sees_it(tmp_path: Path) -> None:
+    from auditor.originals import SMALLEST, _save
+    from PIL import Image
+
+    _save(Image.new("RGB", (13, 37), "white"), tmp_path / "tick.png")
+    with Image.open(tmp_path / "tick.png") as made:
+        assert min(made.size) >= SMALLEST and made.height > made.width
