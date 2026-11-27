@@ -279,7 +279,10 @@ def audit_clause(batch: Path, number: int, target: dict[str, Any], rule: dict[st
     kept = work / "result.json"
     if kept.is_file():
         # A clause already settled by an interrupted run of this batch is not audited again.
-        return dict(json.loads(kept.read_text(encoding="utf-8")))
+        # One left without a verdict (time ran out, the model was unreachable) is taken up again.
+        settled = dict(json.loads(kept.read_text(encoding="utf-8")))
+        if not settled["row"].get("unaudited"):
+            return settled
     task = Task(work)
     # Clauses refer to one another: the document's whole set is at hand, so nobody goes looking for it elsewhere.
     (work / "clauses.json").write_text(json.dumps(target["rules"], ensure_ascii=False, indent=1), encoding="utf-8")
