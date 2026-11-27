@@ -127,3 +127,54 @@ def test_a_picture_a_few_pixels_across_is_enlarged_before_the_model_sees_it(tmp_
     _save(Image.new("RGB", (13, 37), "white"), tmp_path / "tick.png")
     with Image.open(tmp_path / "tick.png") as made:
         assert min(made.size) >= SMALLEST and made.height > made.width
+
+
+def test_the_same_block_of_every_sheet_is_read_at_once_and_counts_as_read(work: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from openpyxl import load_workbook
+
+    book = load_workbook(work / "files" / "01.xlsx")
+    for name, value in (("甲", 1.7), ("乙", 1.2)):
+        sheet = book.create_sheet(name)
+        sheet["T72"] = value
+    book.save(work / "files" / "01.xlsx")
+    assert tools.main(["cells", "01.xlsx", "--sheet", "*", "--range", "T72", "A1"]) == 0
+    read = capsys.readouterr().out
+    assert "「甲」T72:T72　T72=1.7" in read and "「乙」T72:T72　T72=1.2" in read and "「流程」A1:A1　A1=工序" in read
+    low = verdict("NG", {"need": "各表能力指数达标", "result": "unmet", "evidence": [{"file": "01.xlsx", "where": "乙!T72", "quote": "1.2"}]})
+    assert Task().check(low)[0] is not None
+
+
+def test_parsed_cells_are_kept_for_the_next_look_and_dropped_when_the_original_changes(work: Path) -> None:
+    from auditor.originals import Original
+    from openpyxl import load_workbook
+
+    assert Original(work / "files" / "01.xlsx", work / "cache").sheet("流程").text(2, 1) == "气密"
+    assert list((work / "cache").rglob("cells-*.pickle"))
+    assert Original(work / "files" / "01.xlsx", work / "cache").sheet("流程").text(2, 1) == "气密"
+    book = load_workbook(work / "files" / "01.xlsx")
+    book["流程"]["A2"] = "清洗"
+    book.save(work / "files" / "01.xlsx")
+    assert Original(work / "files" / "01.xlsx", work / "cache").sheet("流程").text(2, 1) == "清洗"
+
+
+def test_a_picture_is_shown_in_the_cell_it_sits_on(work: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from openpyxl import load_workbook
+    from openpyxl.drawing.image import Image as Placed
+    from PIL import Image
+
+    Image.new("RGB", (120, 120), "white").save(work / "mark.png")
+    book = load_workbook(work / "files" / "01.xlsx")
+    book["流程"].add_image(Placed(work / "mark.png"), "C3")
+    book.save(work / "files" / "01.xlsx")
+    assert tools.main(["cells", "01.xlsx", "--sheet", "流程", "--range", "A3:C3"]) == 0
+    assert "C3=〔图 " in capsys.readouterr().out
+
+
+def test_in_the_closing_turn_nothing_more_is_read_but_a_verdict_is_taken(work: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    assert tools.main(["cells", "01.xlsx", "--sheet", "流程"]) == 0
+    monkeypatch.setenv("AUDIT_CLOSING", "1")
+    assert tools.main(["cells", "01.xlsx", "--sheet", "流程"]) == 1
+    assert "时间到了" in capsys.readouterr().out
+    (work / "v.json").write_text(json.dumps(verdict("PASS", {"need": "有气密工序", "result": "met", "evidence": [cite("流程!A2", "气密")]}), ensure_ascii=False), encoding="utf-8")
+    assert tools.main(["submit", "v.json"]) == 0
+    assert Task().recorded()["PFD:1"]["status"] == "PASS"

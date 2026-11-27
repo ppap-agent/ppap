@@ -112,7 +112,13 @@ def _corpus(customer: str) -> dict[str, Any]:
 
 
 def compared(meta: dict[str, Any]) -> dict[str, Any]:
-    return _corpus(meta["corpus"]) if meta.get("corpus") else _revision(meta["revision"], meta.get("clauses"))
+    given = _corpus(meta["corpus"]) if meta.get("corpus") else _revision(meta["revision"], meta.get("clauses"))
+    if only := set(meta.get("only") or []):
+        # A run of a few clauses: the other clauses of the same files are neither audited nor compared.
+        for target in given["targets"].values():
+            target["rules"] = [rule for rule in target["rules"] if rule["id"] in only]
+        given["reference"] = {key: row for key, row in given["reference"].items() if key[2] in only}
+    return given
 
 
 def prepare(given: dict[str, Any], batch: str, out: Path) -> dict[str, str]:
@@ -159,7 +165,7 @@ def run(args: argparse.Namespace) -> None:
         sys.exit("用 --revision 或 --corpus 指定对照的来源，二者取一")
     if args.clauses and not args.revision:
         sys.exit("--clauses 只和 --revision 一起用")
-    given = compared({"revision": args.revision, "corpus": args.corpus, "clauses": args.clauses})
+    given = compared({"revision": args.revision, "corpus": args.corpus, "clauses": args.clauses, "only": args.only})
     if args.all:
         args.batch = given["batches"]
     if not args.batch:
@@ -184,6 +190,7 @@ def run(args: argparse.Namespace) -> None:
             "name": name,
             "revision": args.revision,
             "clauses": args.clauses,
+            "only": args.only,
             "corpus": args.corpus,
             "batches": args.batch,
             "model": args.model,
@@ -448,6 +455,7 @@ def main() -> None:
     sub.add_argument("--clauses", help="条文取自同一版本的另一修订，如 m5；不写就是 --revision 那一修订")
     sub.add_argument("--corpus", help="客户，如 li、nio：对照 assets/corpus 里它的人工判定表")
     sub.add_argument("--batch", action="append", default=[], help="批次名（基准的 batches.jsonl，或人工判定表的组合ID）；可重复")
+    sub.add_argument("--only", action="append", default=[], help="只审这条条款（如 PCE:2）；可重复。同一文件的其他条款不审也不对照")
     sub.add_argument("--name")
     sub.add_argument("--model", default="local/grok-4.7")
     sub.add_argument("--thinking", default="medium")

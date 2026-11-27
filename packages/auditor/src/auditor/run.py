@@ -40,6 +40,8 @@ AGENT = Path(__file__).parent / "agent"
 SKILL = AGENT / "skills" / "ppap-audit"
 # Seconds between the limit an auditor is told and the moment its session is stopped.
 GRACE = 30
+# How long an auditor that ran out of time has to put on record what it read.
+CLOSE = 240
 _lessons = threading.Lock()
 _printing = threading.Lock()
 
@@ -78,15 +80,22 @@ def standing_instructions() -> Path:
     return Path(path)
 
 
-def pi(batch: Path, work: Path, phase: str, prompt: str, *, options: argparse.Namespace, thinking: str, seconds: int) -> dict[str, Any]:
-    """One auditor at work in ``work`` until it finishes or its time is up. Returns what the step cost."""
+def pi(batch: Path, work: Path, phase: str, prompt: str, *, options: argparse.Namespace, thinking: str, seconds: int, closing: bool = False) -> dict[str, Any]:
+    """One auditor at work in ``work`` until it finishes or its time is up. Returns what the step cost.
+
+    ``closing`` gives the same auditor one more turn after its time ran out: it keeps everything it
+    read (the session is continued), may read nothing more, and puts on record what it has.
+    """
     logs = work / "logs"
     logs.mkdir(exist_ok=True)
-    command = ["pi", "-p", "--mode", "json", "--no-session", "--no-context-files", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-mcp"]
-    command += ["--append-system-prompt", str(options.instructions), "--tools", "read,bash,write", "--model", options.model, "--thinking", thinking, prompt]
+    kept = logs / f"session-{phase}"
+    step = f"{phase}-close" if closing else phase
+    command = ["pi", "-p", "--mode", "json", "--session-dir", str(kept), *(["--continue"] if closing else []), "--no-context-files", "--no-extensions", "--no-skills", "--no-prompt-templates"]
+    command += ["--no-themes", "--no-mcp", "--append-system-prompt", str(options.instructions), "--tools", "read,bash,write", "--model", options.model, "--thinking", thinking, prompt]
     started = time.monotonic()
     environment = {
         **os.environ,
+        **({"AUDIT_CLOSING": "1"} if closing else {}),
         "AUDIT_PHASE": phase,
         "AUDIT_CACHE": str(batch / "cache"),
         "AUDIT_DOSSIER": str(batch / "dossier.jsonl"),
@@ -96,7 +105,7 @@ def pi(batch: Path, work: Path, phase: str, prompt: str, *, options: argparse.Na
         "PI_TELEMETRY": "0",
     }
     timed_out = False
-    with (logs / f"{phase}.jsonl").open("wb") as stdout, (logs / f"{phase}.err").open("wb") as stderr:
+    with (logs / f"{step}.jsonl").open("wb") as stdout, (logs / f"{step}.err").open("wb") as stderr:
         process = subprocess.Popen(command, cwd=work, env=environment, stdout=stdout, stderr=stderr, start_new_session=True)
         try:
             process.wait(timeout=seconds)
@@ -108,10 +117,10 @@ def pi(batch: Path, work: Path, phase: str, prompt: str, *, options: argparse.Na
             except ProcessLookupError:
                 pass
             process.wait()
-    cost: dict[str, Any] = {"phase": phase, "thinking": thinking, "seconds": round(time.monotonic() - started), "timed_out": timed_out, "exit": process.returncode}
+    cost: dict[str, Any] = {"phase": step, "thinking": thinking, "seconds": round(time.monotonic() - started), "timed_out": timed_out, "exit": process.returncode}
     usage = {"input": 0, "output": 0, "cacheRead": 0}
     requests = tools = 0
-    for line in (logs / f"{phase}.jsonl").read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in (logs / f"{step}.jsonl").read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             event = json.loads(line)
         except ValueError:
@@ -233,7 +242,11 @@ def _looked(work: Path, phase: str) -> str:
         if entry.get("phase") != phase or entry.get("command") in ("submit", "status", "note", "notes", "remember", "uphold"):
             continue
         parts = [str(entry.get("command")), str(entry.get("file") or "")]
-        parts += [f"--{key} {entry[key]}" for key in ("sheet", "range", "page", "clip", "picture", "name") if entry.get(key) not in (None, "")]
+        parts += [
+            f"--{key} {' '.join(map(str, entry[key])) if isinstance(entry[key], list) else entry[key]}"
+            for key in ("sheet", "range", "page", "clip", "picture", "name")
+            if entry.get(key) not in (None, "")
+        ]
         if isinstance(entry.get("text"), list):
             parts.append(" ".join(map(str, entry["text"])))
         line = " ".join(part for part in parts if part)
@@ -299,22 +312,20 @@ def audit_clause(batch: Path, number: int, target: dict[str, Any], rule: dict[st
         "dossier": _dossier(task),
         "experience": f"\n以前审同类文件记下的读法（只是线索，不是这份文件的事实）：\n{learned.read_text(encoding='utf-8')}\n" if learned and learned.is_file() else "",
     }
-    steps = []
+    steps: list[dict[str, Any]] = []
+
+    def sit(phase: str, prompt: str, thinking: str) -> None:
+        """One auditor's sitting. Out of time without a verdict, the same auditor closes on what it read:
+        most of a sitting is reading, and a fresh auditor would read it all again."""
+        steps.append(pi(batch, work, phase, prompt, options=options, thinking=thinking, seconds=options.seconds))
+        if steps[-1]["timed_out"] and clause not in task.recorded():
+            steps.append(pi(batch, work, phase, _prompt("close", clause=clause), options=options, thinking=thinking, seconds=CLOSE, closing=True))
+
     try:
-        steps.append(pi(batch, work, "audit", _prompt("audit", **brief, seconds=options.seconds - GRACE), options=options, thinking=options.thinking, seconds=options.seconds))
-        # No verdict in time: a fresh auditor at the higher effort, told where the first one looked.
+        sit("audit", _prompt("audit", **brief, seconds=options.seconds - GRACE), options.thinking)
+        # Still no verdict: a fresh auditor at the higher effort, told where the first one looked.
         if clause not in task.recorded() and not options.no_focus:
-            steps.append(
-                pi(
-                    batch,
-                    work,
-                    "focus",
-                    _prompt("focus", **brief, looked=_looked(work, "audit"), seconds=options.seconds - GRACE, early=(options.seconds - GRACE) // 2),
-                    options=options,
-                    thinking=options.hard_thinking,
-                    seconds=options.seconds,
-                )
-            )
+            sit("focus", _prompt("focus", **brief, looked=_looked(work, "audit"), seconds=options.seconds - GRACE, early=(options.seconds - GRACE) // 2), options.hard_thinking)
         first = task.recorded().get(clause)
         disputed = False
         if first and options.challenge:

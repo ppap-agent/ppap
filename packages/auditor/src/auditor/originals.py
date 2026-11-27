@@ -18,6 +18,7 @@ import base64
 import hashlib
 import io
 import os
+import pickle
 import re
 import subprocess
 import tempfile
@@ -327,12 +328,30 @@ class Original:
     def sheets(self) -> list[Sheet]:
         if self.suffix not in SPREADSHEETS:
             raise Unreadable(f"{self.path.name} 不是表格文件")
+        # Every look is its own process, and a workbook of dozens of sheets takes seconds to parse:
+        # the parsed cells are kept beside the other derived files, for this original as it is now.
+        stat = self.path.stat()
+        kept = self.scratch / f"cells-{stat.st_size}-{stat.st_mtime_ns}.pickle"
         try:
-            return _xls_sheets(self.path) if self.suffix == ".xls" else _xlsx_sheets(self.path)
+            with kept.open("rb") as stream:
+                return list(pickle.load(stream))
+        except (OSError, pickle.PickleError, EOFError, AttributeError, ValueError):
+            pass
+        try:
+            sheets = _xls_sheets(self.path) if self.suffix == ".xls" else _xlsx_sheets(self.path)
         except Unreadable:
             raise
         except Exception as error:
             raise Unreadable(f"表格打不开：{self.path.name}（{type(error).__name__}）") from None
+        try:
+            self.scratch.mkdir(parents=True, exist_ok=True)
+            part = kept.with_name(f".{os.getpid()}-{kept.name}")
+            with part.open("wb") as stream:
+                pickle.dump(sheets, stream, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(part, kept)
+        except (OSError, pickle.PickleError, TypeError):
+            pass
+        return sheets
 
     def sheet(self, name: str) -> Sheet:
         for sheet in self.sheets:

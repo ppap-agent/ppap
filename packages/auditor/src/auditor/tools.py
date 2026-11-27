@@ -80,28 +80,59 @@ def _ranges(numbers: list[int]) -> str:
 
 def cells(task: Task, args: argparse.Namespace) -> None:
     original = task.original(args.file)
-    if not args.sheet and len(original.sheets) > 1:
+    wanted = args.sheet or []
+    if not wanted and len(original.sheets) > 1:
         raise Unreadable(f"请用 --sheet 指定工作表：{'、'.join(sheet.name for sheet in original.sheets)}")
-    sheet = original.sheet(args.sheet) if args.sheet else original.sheets[0]
-    if not sheet.rows:
+    # Several sheets, or every sheet (*), in one reading: a workbook of one form per sheet is read across, not sheet by sheet.
+    sheets = [sheet for sheet in original.sheets if not sheet.hidden or len(original.sheets) == 1] if "*" in wanted else [original.sheet(name) for name in wanted] or [original.sheets[0]]
+    areas = args.range or [None]
+    try:
+        drawn = [item for item in original.drawings[0] if item.get("cell")]
+    except Unreadable:
+        drawn = []
+    several = len(sheets) * len(areas) > 1
+    budget = max(600, BUDGET * 3 // (len(sheets) * len(areas))) if several else BUDGET
+    for sheet in sheets:
+        for area in areas:
+            _cells(task, args, original, sheet, area, [item for item in drawn if item.get("sheet") == sheet.name], budget, several)
+    if several:
+        print("几张表、几块区域一起读时每块只列内容；要看某一块的合并区域和未显示的部分，单独读那一块。")
+
+
+def _cells(task: Task, args: argparse.Namespace, original: Original, sheet: Any, area: str | None, drawn: list[dict[str, Any]], budget: int, brief: bool = False) -> None:
+    if not sheet.rows and not drawn:
         print(f"工作表「{sheet.name}」的单元格没有内容（图形和图片另见 look pictures）。")
         return
-    r1, c1, r2, c2 = parse_range(args.range) if args.range else (1, 1, sheet.rows, sheet.columns)
-    r2, c2 = min(r2, sheet.rows), min(c2, sheet.columns)
+    # A picture sits in a cell as much as a value does: a cell that holds only a symbol is not an empty cell.
+    pictures: dict[tuple[int, int], list[str]] = {}
+    for item in drawn:
+        pictures.setdefault(parse_range(item["cell"])[:2], []).append(item["name"])
+    rows = max(sheet.rows, max((row for row, _ in pictures), default=0))
+    columns = max(sheet.columns, max((column for _, column in pictures), default=0))
+    r1, c1, r2, c2 = parse_range(area) if area else (1, 1, rows, columns)
+    r2, c2 = min(r2, rows), min(c2, columns)
+    if r1 > r2 or c1 > c2:
+        print(f"「{sheet.name}」{area}：在本表之外（本表共 {sheet.rows} 行 {sheet.columns} 列）")
+        return
     lines: list[str] = []
     blank: list[int] = []
     used, row = 0, r1
     while row <= r2 and row - r1 < args.rows:
         parts = []
         for column in range(c1, c2 + 1):
+            shown_here = "".join(_pictured(original, name) for name in pictures.get((row, column), []))
             if sheet.anchor(row, column) != (row, column):
+                if shown_here:
+                    parts.append(f"{cell_name(row, column)}={shown_here}")
                 continue
             if (row, column) in sheet.values:
-                parts.append(f"{cell_name(row, column)}={_flat(shown(sheet.values[(row, column)]))}")
+                parts.append(f"{cell_name(row, column)}={_flat(shown(sheet.values[(row, column)]))}{shown_here}")
             elif (row, column) in sheet.formulas:
-                parts.append(f"{cell_name(row, column)}=〔公式无缓存值，值未知：{_flat(sheet.formulas[(row, column)], 60)}〕")
+                parts.append(f"{cell_name(row, column)}=〔公式无缓存值，值未知：{_flat(sheet.formulas[(row, column)], 60)}〕{shown_here}")
+            elif shown_here:
+                parts.append(f"{cell_name(row, column)}={shown_here}")
         line = " | ".join(parts)
-        if used and used + len(line) > BUDGET:
+        if used and used + len(line) > budget:
             break
         if parts:
             if blank:
@@ -115,21 +146,25 @@ def cells(task: Task, args: argparse.Namespace) -> None:
     if blank:
         lines.append(f"（第 {_ranges(blank)} 行在所选列内为空）")
     last = row - 1
+    if brief:
+        # One line for a small block, so the same block of thirty sheets reads as thirty lines.
+        cut = f"〔只到第 {last} 行〕" if last < r2 else ""
+        if len(lines) <= 1:
+            print(f"「{sheet.name}」{cell_name(r1, c1)}:{cell_name(last, c2)}　{lines[0] if lines else '（空）'}{cut}")
+        else:
+            print(f"「{sheet.name}」{cell_name(r1, c1)}:{cell_name(last, c2)}{cut}\n" + "\n".join(f"  {line}" for line in lines))
+        task.saw(args.file, kind="cells", sheet=sheet.name, area=[r1, c1, last, c2])
+        return
     print(f"「{sheet.name}」{cell_name(r1, c1)}:{cell_name(last, c2)}（本表共 {sheet.rows} 行 {sheet.columns} 列）")
     print("\n".join(lines))
     if merged := _areas(sheet, r1, c1, last, c2):
         print(f"合并区域（值只写在左上角，整块同值）：{'、'.join(merged[:60])}{' 等' if len(merged) > 60 else ''}")
-    try:
-        here = [item for item in original.drawings[0] if item.get("sheet") == sheet.name and item.get("cell")]
-    except Unreadable:
-        here = []
-    inside = [item for item in here if r1 <= parse_range(item["cell"])[0] <= last and c1 <= parse_range(item["cell"])[1] <= c2]
-    if inside:
-        print("这个区域里的图片（左上角所在的格）：" + "；".join(f"{item['cell']} {_pictured(original, item['name'])}" for item in inside[:30]) + (" 等" if len(inside) > 30 else ""))
+    if any(r1 <= at[0] <= last and c1 <= at[1] <= c2 for at in pictures):
+        print("〔图 …〕是放在那一格上的图片（符号、图章、签名）：格里有图就不是空格，图上是什么用 look picture 看。")
     unshown = []
     if last < r2:
         unshown.append(f"第 {last + 1}–{r2} 行。继续：look cells {args.file!r} --sheet {sheet.name!r} --range {cell_name(last + 1, c1)}:{cell_name(r2, c2)}")
-    if args.range and (r1 > 1 or r2 < sheet.rows or c1 > 1 or c2 < sheet.columns):
+    if area and (r1 > 1 or r2 < sheet.rows or c1 > 1 or c2 < sheet.columns):
         unshown.append("所选区域之外的行列")
     print("未显示：" + "；".join(unshown) if unshown else "本表的单元格内容已全部显示。")
     task.saw(args.file, kind="cells", sheet=sheet.name, area=[r1, c1, last, c2])
@@ -470,8 +505,14 @@ def notes(task: Task, args: argparse.Namespace) -> None:
     print(f"案卷里符合的事实 {len(kept)} 条。每条的出处都重新核对过；用到关键事实时仍要自己到出处看一眼。")
 
 
+# What an auditor may still do in its closing turn, after its reading time is up.
+CLOSING = frozenset({"submit", "status", "clause", "uphold"})
+
+
 def _clock(task: Task) -> None:
     """Tell the auditor how much time is left: a verdict not submitted in time is a clause not audited."""
+    if os.environ.get("AUDIT_CLOSING"):
+        return
     try:
         left, total = float(os.environ["AUDIT_DEADLINE"]) - time.time(), float(os.environ["AUDIT_SECONDS"])
     except (KeyError, ValueError):
@@ -522,8 +563,8 @@ def main(argv: list[str] | None = None) -> int:
     command("outline", outline, "一份文件有什么：工作表、页、段落、图片").add_argument("file")
     sub = command("cells", cells, "读一张工作表的单元格")
     sub.add_argument("file")
-    sub.add_argument("--sheet")
-    sub.add_argument("--range", help="如 A1:Q60；不写则从头读")
+    sub.add_argument("--sheet", nargs="+", help="工作表名；可写几张，* 表示每一张（每张一份表单的工作簿，一次读各表的同一块）")
+    sub.add_argument("--range", nargs="+", help="如 A1:Q60，可写几块；不写则从头读")
     sub.add_argument("--rows", type=int, default=80, help="一次最多读多少行")
     sub = command("find", find, "在一份文件（或 * 表示本批全部文件）里查找文字，可一次查多个词")
     sub.add_argument("file")
@@ -584,6 +625,9 @@ def main(argv: list[str] | None = None) -> int:
     outcome = "ok"
     try:
         task = Task()
+        if os.environ.get("AUDIT_CLOSING") and args.command not in CLOSING:
+            # The time for reading is over: what is left is to put on record what was read.
+            raise Unreadable("时间到了，不能再读。现在用已经读到的提交结论（look submit）；没查清的要点写 unknown，说明还差什么。")
         args.run(task, args)
         _clock(task)
     except Unreadable as error:
