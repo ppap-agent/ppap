@@ -182,7 +182,7 @@ def run(args: argparse.Namespace) -> None:
             "seconds": args.seconds,
             "concurrency": args.concurrency,
             "read": not args.no_read,
-            "challenge": not args.no_challenge,
+            "challenge": args.challenge,
             "experience": bool(args.experience),
             "commit": subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip(),
         }
@@ -203,7 +203,7 @@ def run(args: argparse.Namespace) -> None:
             command += ["-v", f"{ROOT / 'packages' / 'auditor' / 'src'}:/opt/auditor:ro"]
         options = ["--model", args.model, "--thinking", args.thinking, "--hard-thinking", args.hard_thinking, "--seconds", str(args.seconds), "--concurrency", str(args.concurrency)]
         options += ["--read-seconds", str(args.read_seconds)]
-        options += [flag for flag, on in (("--no-read", args.no_read), ("--no-challenge", args.no_challenge), ("--no-focus", args.no_focus), ("--no-transcribe", args.no_transcribe)) if on]
+        options += [flag for flag, on in (("--no-read", args.no_read), ("--challenge", args.challenge), ("--no-focus", args.no_focus), ("--no-transcribe", args.no_transcribe)) if on]
         if args.experience:
             experience = Path(args.experience).resolve()
             experience.mkdir(parents=True, exist_ok=True)
@@ -450,7 +450,7 @@ def main() -> None:
     sub.add_argument("--no-read", action="store_true")
     sub.add_argument("--no-transcribe", action="store_true")
     sub.add_argument("--no-focus", action="store_true")
-    sub.add_argument("--no-challenge", action="store_true")
+    sub.add_argument("--challenge", action="store_true", help="打开质证和裁决")
     sub.add_argument("--experience", help="读法经验目录；给了就审前读入、审后追加")
     sub.add_argument("--image-tag", default="dev")
     sub.add_argument("--build", action="store_true", help="先重建镜像")

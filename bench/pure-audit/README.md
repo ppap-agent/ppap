@@ -40,7 +40,8 @@ uv run --no-sync python bench/pure-audit/eval.py run --corpus nio --all --name n
 | `--read-seconds` | 阅卷一份文件的时限（默认 360） |
 | `--concurrency` | 同时工作的审核员数，所有批次合计（默认 12） |
 | `--repeat` | 同样的输入重复几次，各成一次运行 |
-| `--no-read` `--no-focus` `--no-challenge` `--no-transcribe` | 关掉阅卷、专审、质证（及裁决）、准备阶段的预先转写，用来看每一步带来了什么 |
+| `--no-read` `--no-focus` `--no-transcribe` | 关掉阅卷、专审、准备阶段的预先转写，用来看每一步带来了什么 |
+| `--challenge` | 打开质证和裁决。默认关：m4 全量 648 条里只改判 2 条，占三成费用 |
 | `--experience 目录` | 审前读入、阅卷后追加同类文件的读法经验 |
 | `--source` | 把工作区的 `packages/auditor/src` 挂进容器，改代码不用重建镜像 |
 | `--build` | 先重建镜像 |

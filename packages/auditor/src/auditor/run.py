@@ -4,7 +4,7 @@
     read       one reader per file notes cited facts into the dossier every auditor of the batch shares
     audit      one auditor per clause gives that clause a verdict
     focus      a clause left without a verdict goes to another auditor at the higher effort
-    challenge  a second auditor tries to overturn the verdict
+    challenge  a second auditor tries to overturn the verdict (off unless asked for)
     arbitrate  a clause the challenger overturned goes to a third, who settles it on the originals
 
 A clause is a session of its own, with its own time limit: a hard clause cannot starve the others,
@@ -291,7 +291,7 @@ def audit_clause(batch: Path, number: int, target: dict[str, Any], rule: dict[st
             )
         first = task.recorded().get(clause)
         disputed = False
-        if first and not options.no_challenge:
+        if first and options.challenge:
             budget = max(180, options.seconds * 2 // 3)
             verdict = json.dumps(first, ensure_ascii=False, indent=1)
             steps.append(pi(batch, work, "challenge", _prompt("challenge", **brief, verdict=verdict, seconds=budget - GRACE), options=options, thinking=options.thinking, seconds=budget))
@@ -340,7 +340,7 @@ def audit_clause(batch: Path, number: int, target: dict[str, Any], rule: dict[st
         row.update(status=final["status"], reason=final["reason"], points=final["points"], settled_by=final.get("phase"))
     if first:
         row["first_status"] = first["status"]
-        if not options.no_challenge:
+        if options.challenge:
             # Whether the second auditor reached a decision before its time ran out.
             row["challenged"] = clause in upheld or final is not None and final.get("phase") in ("challenge", "arbitrate")
     if clause in upheld:
@@ -419,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--concurrency", type=int, default=12, help="同时工作的审核员数，所有批次合计")
     parser.add_argument("--no-read", action="store_true")
     parser.add_argument("--no-focus", action="store_true")
-    parser.add_argument("--no-challenge", action="store_true")
+    parser.add_argument("--challenge", action="store_true", help="每条结论再由第二名审核员质证，改判的交第三名裁决")
     parser.add_argument("--no-transcribe", action="store_true", help="准备阶段不预先转写扫描页和图片")
     parser.add_argument("--experience", help="读法经验的目录：审前读入，阅卷后追加")
     options = parser.parse_args(argv)
