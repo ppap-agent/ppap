@@ -34,6 +34,7 @@ members = [
     "packages/agent",
     "packages/audit",
     "packages/documents",
+    "packages/auditor",
     "apps/api",
     "apps/worker",
     "tests/corpus/contracts",
@@ -44,6 +45,7 @@ product = { workspace = true }
 agent = { workspace = true }
 audit = { workspace = true }
 documents = { workspace = true }
+auditor = { workspace = true }
 api = { workspace = true }
 worker = { workspace = true }
 corpus-contracts = { workspace = true }
